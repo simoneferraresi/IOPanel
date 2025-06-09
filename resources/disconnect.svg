@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24px" height="24px">
+    <path d="M0 0h24v24H0V0z" fill="none"/>
+    <!-- Chain links (greyed out or less prominent) -->
+    <path d="M17 7h-4v2h4c1.65 0 3 1.35 3 3s-1.35 3-3 3h-4v2h4c2.76 0 5-2.24 5-5s-2.24-5-5-5zm-6 8H7c-1.65 0-3-1.35-3-3s1.35-3 3-3h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-2zM8 11h8v2H8v-2z" fill="dimgray"/>
+    <!-- Red X or Slash -->
+    <path d="M18.36 5.64L5.64 18.36M18.36 18.36L5.64 5.64" stroke="red" stroke-width="2.5" stroke-linecap="round"/>
+</svg>

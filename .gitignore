@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+*.so
+*.log
+*.log.*
+*.sqlite3
+*.db
+
+# Virtual Environment (if you create one directly in the project folder)
+.venv/
+venv/
+env/
+ENV/
+*/activate_this.py
+
+# IDE and Editor specific files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+desktop.ini
+
+# Compiled resources (if you recompile it often and don't want to track the .py version)
+# Or, if you *do* want to track the compiled resources_rc.py, then REMOVE this line:
+# resources_rc.py
+
+# Config files you might not want to share (e.g., with sensitive info)
+# If config.ini contains secrets, add it. Otherwise, you might want to track a template.
+# config.ini
+config.ini.local

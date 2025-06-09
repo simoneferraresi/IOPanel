@@ -1,0 +1,16 @@
+<!DOCTYPE RCC><RCC version="1.0">
+<qresource prefix="/">
+    <file alias="icons/laser.svg">resources/laser.svg</file>
+    <file alias="icons/play.svg">resources/play.svg</file>
+    <file alias="icons/save.svg">resources/save.svg</file>
+    <file alias="icons/play-circle.svg">resources/play-circle.svg</file>
+    <file alias="icons/exit.svg">resources/exit.svg</file>
+    <file alias="icons/stop.svg">resources/stop.svg</file>
+    <file alias="icons/stop-circle.svg">resources/stop-circle.svg</file>
+    <file alias="icons/chevron-down.svg">resources/chevron-down.svg</file>
+    <file alias="icons/check.svg">resources/check.svg</file>
+    <file alias="icons/radio-checked.svg">resources/radio-checked.svg</file>
+    <file alias="icons/connect.svg">resources/connect.svg</file>
+    <file alias="icons/disconnect.svg">resources/disconnect.svg</file>
+</qresource>
+</RCC>
