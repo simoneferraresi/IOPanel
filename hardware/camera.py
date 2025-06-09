@@ -360,34 +360,42 @@ class VimbaCam(QObject):
                     return
                 try:
                     feat = self.device.get_feature_by_name("AcquisitionMode")
-                    feat.set("Continuous") if feat.is_writeable() else logger.warning(
-                        "AcqMode not writeable"
+                    (
+                        feat.set("Continuous")
+                        if feat.is_writeable()
+                        else logger.warning("AcqMode not writeable")
                     )
                     logger.debug("Set AcqMode.")
                 except VmbCameraError as e:
                     logger.warning(f"Could not set AcqMode: {e}")
                 try:
                     feat = self.device.get_feature_by_name("TriggerMode")
-                    feat.set("Off") if feat.is_writeable() else logger.warning(
-                        "TrigMode not writeable"
+                    (
+                        feat.set("Off")
+                        if feat.is_writeable()
+                        else logger.warning("TrigMode not writeable")
                     )
                     logger.debug("Set TrigMode Off.")
                 except VmbCameraError as e:
                     logger.warning(f"Could not set TrigMode: {e}")
                 try:
                     feat = self.device.get_feature_by_name("ExposureAuto")
-                    feat.set(
-                        "Off"
-                    ) if feat.is_writeable() and "Off" in feat.get_available_entries() else None
+                    (
+                        feat.set("Off")
+                        if feat.is_writeable() and "Off" in feat.get_available_entries()
+                        else None
+                    )
                     self.settings.is_auto_exposure_on = False
                     logger.debug("Set ExposureAuto Off.")
                 except VmbCameraError as e:
                     logger.warning(f"Could not disable ExposureAuto: {e}")
                 try:
                     feat = self.device.get_feature_by_name("GainAuto")
-                    feat.set(
-                        "Off"
-                    ) if feat.is_writeable() and "Off" in feat.get_available_entries() else None
+                    (
+                        feat.set("Off")
+                        if feat.is_writeable() and "Off" in feat.get_available_entries()
+                        else None
+                    )
                     self.settings.is_auto_gain_on = False
                     logger.debug("Set GainAuto Off.")
                 except VmbCameraError as e:

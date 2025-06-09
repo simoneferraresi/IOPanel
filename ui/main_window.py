@@ -75,9 +75,9 @@ class MainWindow(QMainWindow):
         self.shared_scan_settings = ScanSettings()
         self.vmb_instance: Optional[VmbSystem] = None
         self.is_ct400_connected_state = False  # Track explicit connection state
-        self.camera_control_actions: Dict[
-            str, QAction
-        ] = {}  # For camera control menu items
+        self.camera_control_actions: Dict[str, QAction] = (
+            {}
+        )  # For camera control menu items
         self.cameras_menu: Optional[QMenu] = None  # To hold camera control actions
 
         self._start_vimbasystem()
