@@ -50,3 +50,11 @@ Homepage = "https://github.com/simoneferraresi/IOPanel"
 # ensuring consistency across environments.
 # Choose the lowest version you actively support.
 python = "3.10"
+
+[tool.ruff]
+# See https://docs.astral.sh/ruff/settings/
+line-length = 88
+select = ["E", "F", "W", "I"] # Standard checks + isort
+
+[tool.black]
+line-length = 88
