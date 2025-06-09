@@ -1,20 +1,20 @@
 import logging
 import os
 import sys
-from typing import Any, Dict, List, Optional
+from enum import Enum, auto
+from typing import Dict, List, Optional
 
 import numpy as np
-
-# Make sure PySide6 is used consistently
-from PySide6 import QtGui
-from PySide6.QtCore import Qt, QTimer, Slot  # Added QTimer
-from PySide6.QtGui import QAction, QIcon
+from PySide6 import QtGui, QtWidgets
+from PySide6.QtCore import QSize, Qt, QTimer, Slot
+from PySide6.QtGui import QAction, QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QMainWindow,
-    QMenu,  # Added QMenu
+    QMenu,
     QMessageBox,
     QSizePolicy,
     QSplitter,
@@ -25,31 +25,46 @@ from PySide6.QtWidgets import (
 )
 from vmbpy import VmbCameraError, VmbSystem, VmbSystemError
 
+from config_model import AppConfig
+
 try:
-    import resources_rc
+    import resources.resources_rc as resources_rc  # noqa: F401
 except ImportError:
     print(
         "Warning: Compiled resource file (resources_rc.py) not found. Icons might be missing.",
         file=sys.stderr,
     )
 
-from camera import VimbaCam
-from control_panel import CT400ControlPanel, HistogramControlPanel, ScanSettings
-from CT400_updated import (
+from hardware.camera import VimbaCam
+from hardware.ct400 import (
     CT400,
     CT400Error,
     Enable,
     LaserInput,
     LaserSource,
 )
-from gui_panels import CameraPanel, HistogramWidget, PlotWidget
+from ui.camera_widgets import CameraPanel
+from ui.control_panel import CT400ControlPanel, HistogramControlPanel, ScanSettings
+from ui.plot_widgets import HistogramWidget, PlotWidget
 
 VIDEO_TIMER_INTERVAL = 50
 logger = logging.getLogger("LabApp.main_window")
 
 
+class CT400Status(Enum):
+    """Defines the possible connection states for the CT400 device."""
+
+    CONNECTED = auto()
+    DISCONNECTED = auto()
+    CONNECTING = auto()
+    DISCONNECTING = auto()
+    ERROR = auto()
+    UNAVAILABLE = auto()
+    UNKNOWN = auto()
+
+
 class MainWindow(QMainWindow):
-    def __init__(self, config: Dict[str, Any], parent=None):
+    def __init__(self, config: AppConfig, parent=None):
         super().__init__(parent)
         self.config = config
         logger.info("Initializing MainWindow...")
@@ -129,117 +144,92 @@ class MainWindow(QMainWindow):
         """Load default values from config into UI elements."""
         logger.debug("Loading UI defaults from configuration...")
         try:
-            # Scan Panel Defaults
+            # --- Scan Panel Defaults ---
             if hasattr(self, "control_panel") and self.control_panel:
-                scan_defaults = self.config.get("ScanDefaults", {})
+                scan_defaults = self.config.scan_defaults
                 self.control_panel.initial_wl.setText(
-                    str(scan_defaults.get("start_wavelength_nm", "1550.0"))
+                    str(scan_defaults.start_wavelength_nm)
                 )
                 self.control_panel.final_wl.setText(
-                    str(scan_defaults.get("end_wavelength_nm", "1560.0"))
+                    str(scan_defaults.end_wavelength_nm)
                 )
-                self.control_panel.resolution.setText(
-                    str(scan_defaults.get("resolution_pm", "1"))
-                )
-                self.control_panel.motor_speed.setText(
-                    str(scan_defaults.get("speed_nm_s", "10"))
-                )
-                self.control_panel.laser_power.setText(
-                    str(scan_defaults.get("laser_power", "1.0"))
-                )
+                self.control_panel.resolution.setText(str(scan_defaults.resolution_pm))
+                self.control_panel.motor_speed.setText(str(scan_defaults.speed_nm_s))
+                self.control_panel.laser_power.setText(str(scan_defaults.laser_power))
+
                 power_unit_idx = self.control_panel.power_unit.findText(
-                    scan_defaults.get("power_unit", "mW")
+                    scan_defaults.power_unit
                 )
                 if power_unit_idx != -1:
                     self.control_panel.power_unit.setCurrentIndex(power_unit_idx)
 
-                # Ensure input_port is handled correctly
-                input_port_text = str(scan_defaults.get("input_port", "1"))
-                input_port_idx = self.control_panel.input_port.findText(input_port_text)
+                input_port_idx = self.control_panel.input_port.findText(
+                    str(scan_defaults.input_port)
+                )
                 if input_port_idx != -1:
                     self.control_panel.input_port.setCurrentIndex(input_port_idx)
-                else:
-                    logger.warning(
-                        f"ScanDefaults: Input port '{input_port_text}' not found in ComboBox. Using default."
-                    )
-                    self.control_panel.input_port.setCurrentIndex(
-                        0
-                    )  # Fallback to first item
 
-                # Update shared settings initially
-                self.control_panel.update_shared_settings()
-
-            # Histogram Panel Defaults
+            # --- Histogram Panel Defaults ---
             if hasattr(self, "histogram_control") and self.histogram_control:
-                hist_defaults = self.config.get("HistogramDefaults", {})
+                hist_defaults = self.config.histogram_defaults
                 self.histogram_control.wavelength_input.setText(
-                    str(hist_defaults.get("wavelength_nm", "1550.0"))
+                    str(hist_defaults.wavelength_nm)
                 )
                 self.histogram_control.laser_power.setText(
-                    str(hist_defaults.get("laser_power", "1.0"))
+                    str(hist_defaults.laser_power)
                 )
+
                 power_unit_idx_hist = self.histogram_control.power_unit.findText(
-                    hist_defaults.get("power_unit", "mW")
+                    hist_defaults.power_unit
                 )
                 if power_unit_idx_hist != -1:
                     self.histogram_control.power_unit.setCurrentIndex(
                         power_unit_idx_hist
                     )
 
-                # Ensure input_port for histogram is handled correctly
-                hist_input_port_text = str(hist_defaults.get("input_port", "1"))
                 input_port_idx_hist = self.histogram_control.input_port.findText(
-                    hist_input_port_text
+                    str(hist_defaults.input_port)
                 )
-
                 if input_port_idx_hist != -1:
                     self.histogram_control.input_port.setCurrentIndex(
                         input_port_idx_hist
                     )
-                else:
-                    logger.warning(
-                        f"HistogramDefaults: Input port '{hist_input_port_text}' not found in ComboBox. Using default."
-                    )
-                    self.histogram_control.input_port.setCurrentIndex(
-                        0
-                    )  # Fallback to first item
 
-                # Set detector checkboxes
                 if hasattr(self.histogram_control, "detector_cbs"):
-                    for i, cb in enumerate(self.histogram_control.detector_cbs):
-                        key = f"detector_{i + 1}_enabled"
-                        # Default to "true" if not found in config for safety
-                        enabled = str(hist_defaults.get(key, "true")).lower() == "true"
-                        cb.setChecked(enabled)
-                else:
-                    logger.warning(
-                        "Histogram control panel does not have 'detector_cbs' attribute."
+                    self.histogram_control.detector_cbs[0].setChecked(
+                        hist_defaults.detector_1_enabled
+                    )
+                    self.histogram_control.detector_cbs[1].setChecked(
+                        hist_defaults.detector_2_enabled
+                    )
+                    self.histogram_control.detector_cbs[2].setChecked(
+                        hist_defaults.detector_3_enabled
+                    )
+                    self.histogram_control.detector_cbs[3].setChecked(
+                        hist_defaults.detector_4_enabled
                     )
 
         except Exception as e:
             logger.error(f"Error loading defaults from config: {e}", exc_info=True)
-            if (
-                hasattr(self, "statusBar") and self.statusBar
-            ):  # Check if statusBar exists
+            if hasattr(self, "statusBar") and self.statusBar:
                 self.statusBar.showMessage("Error loading defaults from config", 5000)
             else:
                 logger.error("Cannot show status message: statusBar not available.")
 
     def _init_instruments(self):
         logger.info("Initializing instruments...")
-        dll_path = self.config.get("Instruments", {}).get("ct400_dll_path")
+        # --- REFACTOR: Direct attribute access ---
+        dll_path = self.config.instruments.ct400_dll_path
         self.ct400_device = None  # Ensure it's None before attempting init
 
         if not dll_path:
             msg = "CT400 DLL path not found in configuration."
             logger.error(msg)
-            # Status updated in _init_ui
             return
 
         if not os.path.exists(dll_path):
             msg = f"CT400 DLL path does not exist: {dll_path}"
             logger.error(msg)
-            # Status updated in _init_ui
             return
 
         try:
@@ -251,17 +241,16 @@ class MainWindow(QMainWindow):
             logger.critical(
                 f"Unexpected error during CT400 initialization: {e}", exc_info=True
             )
-        # Visual status updated in _init_ui after this call
 
     def _init_ui(self):
         logger.debug("Initializing UI...")
-        app_name = self.config.get("App", {}).get("name", "Lab Control")
+        app_name = self.config.app_name
         self.setWindowTitle(app_name)
 
         icon_path = ":/icons/laser.svg"
-        if QIcon.hasThemeIcon(icon_path):  # Check with QIcon directly
+        if QIcon.hasThemeIcon(icon_path):
             self.setWindowIcon(QIcon(icon_path))
-        else:  # Fallback if resources_rc not compiled or icon missing
+        else:
             fallback_icon_path = os.path.join(
                 os.path.dirname(os.path.abspath(__file__)), "resources", "laser.svg"
             )
@@ -275,12 +264,9 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1200, 800)
         try:
             screen = QApplication.primaryScreen().availableGeometry()
-            width_ratio = float(
-                self.config.get("UI", {}).get("initial_width_ratio", 0.8)
-            )
-            height_ratio = float(
-                self.config.get("UI", {}).get("initial_height_ratio", 0.8)
-            )
+            # --- REFACTOR: Direct attribute access ---
+            width_ratio = self.config.ui.initial_width_ratio
+            height_ratio = self.config.ui.initial_height_ratio
             self.resize(
                 int(screen.width() * width_ratio), int(screen.height() * height_ratio)
             )
@@ -326,108 +312,101 @@ class MainWindow(QMainWindow):
             self.shared_scan_settings, self.ct400_device, self.config
         )
         self.plot_widget = PlotWidget(self.shared_scan_settings)
-        first_tab_layout.addWidget(
-            self.control_panel, stretch=0
-        )  # Control panel takes preferred width
-        first_tab_layout.addWidget(
-            self.plot_widget, stretch=1
-        )  # Plot widget takes all remaining space
+        first_tab_layout.addWidget(self.control_panel, stretch=0)
+        first_tab_layout.addWidget(self.plot_widget, stretch=1)
         self.tab_widget.addTab(self.first_tab, "Wavelength Scan")
 
         self.second_tab = QWidget()
         second_tab_layout = QHBoxLayout(self.second_tab)
         second_tab_layout.setSpacing(5)
         self.histogram_control = HistogramControlPanel(self.ct400_device, self.config)
-        hist_detector_keys = [
-            cb.text() for cb in self.histogram_control.detector_cbs
-        ]  # Get names
+        hist_detector_keys = [cb.text() for cb in self.histogram_control.detector_cbs]
         self.histogram_widget = HistogramWidget(
             self.histogram_control, hist_detector_keys
         )
-        second_tab_layout.addWidget(
-            self.histogram_control, stretch=0
-        )  # Control panel takes minimum width
-        second_tab_layout.addWidget(
-            self.histogram_widget, stretch=1
-        )  # Histogram widget takes all remaining space
+        second_tab_layout.addWidget(self.histogram_control, stretch=0)
+        second_tab_layout.addWidget(self.histogram_widget, stretch=1)
         self.tab_widget.addTab(self.second_tab, "Power Monitor")
 
         self.statusBar = QStatusBar()
         self.setStatusBar(self.statusBar)
         self.ct400_status_label = QLabel("CT400: Unknown")
         self.ct400_status_label.setObjectName("ct400StatusLabel")
-        self.ct400_status_label.setMinimumWidth(180)  # Adjusted width
+        self.ct400_status_label.setMinimumWidth(180)
         self.ct400_status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.statusBar.addPermanentWidget(self.ct400_status_label)
         self.statusBar.showMessage("Ready.")
 
-        self._create_menus()  # Creates self.ct400_connect_action and self.cameras_menu
+        self._create_menus()
 
-        # No more toolbar for the time being...
-        # self.instrument_toolbar = self.addToolBar("Instruments")
-        # self.instrument_toolbar.setObjectName("instrumentToolbar")
-        # if hasattr(self, "ct400_connect_action"):
-        #     self.instrument_toolbar.addAction(self.ct400_connect_action)
-        # else:
-        #     logger.error("ct400_connect_action not found for toolbar.")
-
-        # Set initial visual status after all UI elements are created
         if self.ct400_device:
-            # Device object exists, but not necessarily "connected" in terms of laser enabled
             self._update_ct400_visuals(
-                state="disconnected", message="CT400 Ready (Disconnected)"
+                state=CT400Status.DISCONNECTED, message="CT400 Ready (Disconnected)"
             )
         else:
             self._update_ct400_visuals(
-                state="unavailable", message="CT400 Unavailable/Not Initialized"
+                state=CT400Status.UNAVAILABLE,
+                message="CT400 Unavailable/Not Initialized",
             )
 
         logger.debug("UI Initialization finished.")
 
     def _update_ct400_visuals(
-        self, state: str, message: Optional[str] = None, status_bar_timeout: int = 5000
+        self,
+        state: CT400Status,
+        message: Optional[str] = None,
+        status_bar_timeout: int = 5000,
     ):
         """
-        Centralized method to update all CT400 related visual elements.
-        States: "connected", "disconnected", "connecting", "disconnecting", "error", "unavailable", "unknown"
+        Updates all UI elements related to the CT400 connection status using a typesafe Enum.
+
+        This is the single source of truth for the visual state of the CT400.
+        It updates the menu/toolbar action, the status bar label, and informs
+        the control panels so they can enable/disable their own widgets.
+
+        Args:
+            state: A CT400Status enum member representing the new state.
+            message: An optional message to display in the main status bar.
+            status_bar_timeout: The duration (in ms) to show the status bar message.
         """
         action_enabled = True
         action_checked = False
 
-        # Update Action Button (Toolbar/Menu)
         if hasattr(self, "ct400_connect_action"):
             action = self.ct400_connect_action
-            if state == "connected":
+            if state == CT400Status.CONNECTED:
                 action.setText("Disconnect CT400")
                 action.setIcon(QIcon(":/icons/disconnect.svg"))
                 action_checked = True
-            elif state == "connecting":
+            elif state == CT400Status.CONNECTING:
                 action.setText("Connecting...")
                 action.setIcon(QIcon(":/icons/spinner.svg"))
                 action_enabled = False
                 action_checked = True
-            elif state == "disconnecting":
+            elif state == CT400Status.DISCONNECTING:
                 action.setText("Disconnecting...")
                 action.setIcon(QIcon(":/icons/spinner.svg"))
                 action_enabled = False
                 action_checked = False
-            elif state == "error":
+            elif state == CT400Status.ERROR:
                 action.setText("Connect CT400 (Error)")
                 action.setIcon(QIcon(":/icons/laser.svg"))
                 action_checked = False
+                # Use a class constant for the timeout
+                _ERROR_STATE_RESET_MS = 3000
                 QTimer.singleShot(
-                    3000,
+                    _ERROR_STATE_RESET_MS,
                     lambda: self._update_ct400_visuals(
-                        state="disconnected",
+                        state=CT400Status.DISCONNECTED,
                         message="Error occurred. Ready to connect.",
                     ),
                 )
-            elif state == "unavailable":
+            elif state == CT400Status.UNAVAILABLE:
                 action.setText("CT400 Unavailable")
                 action.setIcon(QIcon(":/icons/laser.svg"))
                 action_enabled = False
                 action_checked = False
-            else:  # "disconnected" or "unknown"
+            else:  # DISCONNECTED or UNKNOWN
                 action.setText("Connect CT400")
                 action.setIcon(QIcon(":/icons/connect.svg"))
                 action_checked = False
@@ -435,58 +414,42 @@ class MainWindow(QMainWindow):
             action.setEnabled(action_enabled and (self.ct400_device is not None))
             action.setChecked(action_checked)
 
-        # Update Status Label in StatusBar
         if hasattr(self, "ct400_status_label"):
             label = self.ct400_status_label
-            base_text = "CT400: "
-            label_text = base_text
-            status_property = state  # For QSS
-
-            if state == "connected":
-                label_text += "Connected"
-            elif state == "connecting":
-                label_text += "Connecting..."
-            elif state == "disconnecting":
-                label_text += "Disconnecting..."
-            elif state == "error":
-                label_text += "Error"
-            elif state == "unavailable":
-                label_text += "Unavailable"
-            elif state == "unknown":
-                label_text += "Unknown"
-            else:  # "disconnected"
-                label_text += "Disconnected"
+            label_text = f"CT400: {state.name.title()}"
+            status_property = state.name.lower()  # e.g., "connected", "error"
 
             label.setText(label_text)
-            label.setProperty("status", status_property)
-            label.style().unpolish(label)
-            label.style().polish(label)
-            label.update()
+            try:
+                # This ensures the style is reapplied based on the new property
+                label.setProperty("status", status_property)
+                label.style().unpolish(label)
+                label.style().polish(label)
+                label.update()
+            except Exception as e:
+                logger.warning(f"Could not apply style for CT400 status label: {e}")
 
-        # Update Main Status Bar Message
         if message:
-            self.statusBar.showMessage(
-                message,
-                status_bar_timeout
-                if state not in ["connecting", "disconnecting", "error", "unavailable"]
-                else 0,
-            )
+            is_transient = state in [
+                CT400Status.CONNECTING,
+                CT400Status.DISCONNECTING,
+                CT400Status.ERROR,
+                CT400Status.UNAVAILABLE,
+            ]
+            timeout = 0 if is_transient else status_bar_timeout
+            self.statusBar.showMessage(message, timeout)
 
-        # Update Control Panels
-        is_logically_connected = state == "connected"
-        if (
-            self.is_ct400_connected_state != is_logically_connected
-            or state == "unavailable"
-        ):  # Update if state changes
-            self.is_ct400_connected_state = is_logically_connected
-            if hasattr(self, "control_panel") and self.control_panel:
-                self.control_panel.on_instrument_connected(
-                    is_logically_connected and (self.ct400_device is not None)
-                )
-            if hasattr(self, "histogram_control") and self.histogram_control:
-                self.histogram_control.on_instrument_connected(
-                    is_logically_connected and (self.ct400_device is not None)
-                )
+        is_mw_logically_connected = state == CT400Status.CONNECTED
+        panel_can_use_device = is_mw_logically_connected and (
+            self.ct400_device is not None
+        )
+
+        if hasattr(self, "control_panel") and self.control_panel:
+            self.control_panel.on_instrument_connected(panel_can_use_device)
+        if hasattr(self, "histogram_control") and self.histogram_control:
+            self.histogram_control.on_instrument_connected(panel_can_use_device)
+
+        self.is_ct400_connected_state = is_mw_logically_connected
 
     def _create_menus(self):
         logger.debug("Creating menus...")
@@ -507,9 +470,7 @@ class MainWindow(QMainWindow):
         )
         self.instrument_menu.addAction(self.ct400_connect_action)
 
-        # Create Cameras menu
         self.cameras_menu = menu_bar.addMenu("&Cameras")
-        # Actions for this menu will be populated in _init_cameras
 
         help_menu = menu_bar.addMenu("&Help")
         about_action = QAction("&About", self)
@@ -528,83 +489,78 @@ class MainWindow(QMainWindow):
             self._update_ct400_visuals(
                 state="unavailable", message="CT400 Not Initialized."
             )
-            if hasattr(self, "ct400_connect_action"):  # Ensure action exists
+            if hasattr(self, "ct400_connect_action"):
                 self.ct400_connect_action.setChecked(False)
             return
 
-        if checked:  # User intends to connect (action is now checked)
+        if checked:
             self._initiate_ct400_connection()
-        else:  # User intends to disconnect (action is now unchecked)
+        else:
             self._initiate_ct400_disconnection()
 
     def _initiate_ct400_connection(self):
         self._update_ct400_visuals(
-            state="connecting", message="CT400: Attempting to connect..."
+            state=CT400Status.CONNECTING, message="CT400: Attempting to connect..."
         )
-        QApplication.processEvents()  # Allow UI to update
+        QApplication.processEvents()
 
         try:
-            gpib_str = self.config.get("Instruments", {}).get(
-                "tunics_gpib_address", "10"
-            )
-            gpib = int(gpib_str)
-            port_str = self.config.get("ScanDefaults", {}).get("input_port", "1")
-            laser_input = LaserInput(int(port_str))
-            min_wl = float(
-                self.config.get("ScanDefaults", {}).get("min_wavelength_nm", 1440)
-            )
-            max_wl = float(
-                self.config.get("ScanDefaults", {}).get("max_wavelength_nm", 1640)
-            )
-            speed = int(
-                self.config.get("ScanDefaults", {}).get("speed_nm_s", 10)
-            )  # Default speed
+            gpib = self.config.instruments.tunics_gpib_address
+            laser_input = LaserInput(self.config.scan_defaults.input_port)
+            min_wl = self.config.scan_defaults.min_wavelength_nm
+            max_wl = self.config.scan_defaults.max_wavelength_nm
+            speed = self.config.scan_defaults.speed_nm_s
 
             self.ct400_device.set_laser(
                 laser_input=laser_input,
                 enable=Enable.ENABLE,
                 gpib_address=gpib,
-                laser_type=LaserSource.LS_TunicsT100s_HP,  # Make configurable
+                laser_type=LaserSource.LS_TunicsT100s_HP,
                 min_wavelength=min_wl,
                 max_wavelength=max_wl,
                 speed=speed,
             )
             logger.info(f"CT400 Connected (GPIB: {gpib}, Input: {laser_input.value}).")
             self._update_ct400_visuals(
-                state="connected",
+                state=CT400Status.CONNECTED,
                 message=f"CT400 Connected (Input {laser_input.value})",
             )
         except (CT400Error, ValueError, KeyError, Exception) as e:
             logger.error(f"CT400 connection failed: {e}", exc_info=True)
-            self._update_ct400_visuals(state="error", message=f"Connection Failed: {e}")
+            self._update_ct400_visuals(
+                state=CT400Status.ERROR, message=f"Connection Failed: {e}"
+            )
 
     def _initiate_ct400_disconnection(self):
         self._update_ct400_visuals(
-            state="disconnecting", message="CT400: Disconnecting..."
+            state=CT400Status.DISCONNECTING, message="CT400: Disconnecting..."
         )
         QApplication.processEvents()
 
         try:
-            port_str_disconnect = self.config.get("ScanDefaults", {}).get(
-                "input_port", "1"
-            )  # Use a default or configured port for disconnect
-            laser_input_disconnect = LaserInput(int(port_str_disconnect))
+            laser_input_disconnect = LaserInput(self.config.scan_defaults.input_port)
+            safe_wl = self.config.scan_defaults.safe_parking_wavelength
+            safe_power = self.config.scan_defaults.laser_power
+
             self.ct400_device.cmd_laser(
                 laser_input=laser_input_disconnect,
                 enable=Enable.DISABLE,
-                wavelength=1550.0,  # A typical safe wavelength
-                power=1.0,  # Typically power is 0 for disable
+                wavelength=safe_wl,
+                power=safe_power,
             )
             logger.info("CT400 Disconnected.")
             self._update_ct400_visuals(
-                state="disconnected", message="CT400 Disconnected"
+                state=CT400Status.DISCONNECTED, message="CT400 Disconnected"
             )
         except (CT400Error, ValueError, KeyError, Exception) as e:
             logger.error(f"Error during CT400 disconnection: {e}", exc_info=True)
-            self._update_ct400_visuals(state="error", message=f"Disconnect Failed: {e}")
+            self._update_ct400_visuals(
+                state=CT400Status.ERROR, message=f"Disconnect Failed: {e}"
+            )
 
     def _show_about_dialog(self):
-        app_name = self.config.get("App", {}).get("name", "Lab Control")
+        # --- REFACTOR: Direct attribute access ---
+        app_name = self.config.app_name
         app_version = QApplication.applicationVersion()
         QMessageBox.about(
             self,
@@ -618,7 +574,9 @@ class MainWindow(QMainWindow):
     def _init_cameras(self):
         logger.info("Initializing cameras dynamically from config...")
         if not self.camera_container or not self.camera_container.layout():
-            logger.error("Camera container or layout not found.")
+            logger.error(
+                "Camera container or layout not found. Cannot initialize cameras."
+            )
             return
         if not self.cameras_menu:
             logger.error(
@@ -626,97 +584,193 @@ class MainWindow(QMainWindow):
             )
             return
 
-        self._cleanup_cameras()  # Clear previous camera widgets and menu actions
+        self._cleanup_cameras()
         camera_layout = self.camera_container.layout()
+        if (
+            not isinstance(camera_layout, QtWidgets.QHBoxLayout)
+            and not isinstance(camera_layout, QtWidgets.QVBoxLayout)
+            and not isinstance(camera_layout, QtWidgets.QGridLayout)
+        ):
+            logger.error(
+                f"Camera container layout is not a recognized QLayout type: {type(camera_layout)}"
+            )
+            if self.camera_container.layout() is None:
+                new_layout = QHBoxLayout(self.camera_container)
+                new_layout.setContentsMargins(0, 0, 0, 0)
+                new_layout.setSpacing(5)
+                camera_layout = new_layout
+            else:
+                return
 
         cameras_initialized_count = 0
-        for section_name in self.config.keys():
-            if section_name.lower().startswith("camera:"):
-                cam_config = self.config[section_name]
-                is_enabled = str(cam_config.get("enabled", "false")).lower() == "true"
-                if not is_enabled:
-                    logger.info(f"Skipping disabled camera: {section_name}")
+        cameras_attempted_count = 0
+
+        # --- REFACTOR: This loop now correctly uses the typed AppConfig object ---
+        for section_name, cam_config in self.config.cameras.items():
+            cameras_attempted_count += 1
+
+            if not cam_config.enabled:
+                logger.info(f"Skipping disabled camera: {cam_config.name}")
+                continue
+
+            if not cam_config.identifier or cam_config.identifier.startswith("PUT_"):
+                logger.warning(
+                    f"Skipping camera '{cam_config.name}': Invalid or placeholder identifier."
+                )
+                error_msg = f"{cam_config.name}\n(Config Error: Invalid ID)"
+                placeholder = self._create_camera_error_placeholder(error_msg)
+                camera_layout.addWidget(placeholder)
+                continue
+
+            logger.info(
+                f"Attempting to initialize camera: {cam_config.name} (ID: {cam_config.identifier})"
+            )
+            cam_instance = None
+            try:
+                cam_instance = VimbaCam(
+                    identifier=cam_config.identifier,
+                    camera_name=cam_config.name,
+                    flip_horizontal=cam_config.flip_horizontal,
+                    parent=self,
+                )
+
+                if not cam_instance.open():
+                    logger.error(
+                        f"Failed to open camera {cam_config.name} (ID: {cam_config.identifier}). Skipping panel."
+                    )
+                    error_msg = f"{cam_config.name}\n(Failed to Open)"
+                    placeholder = self._create_camera_error_placeholder(error_msg)
+                    camera_layout.addWidget(placeholder)
+                    if cam_instance:
+                        cam_instance.close()
                     continue
 
-                identifier = cam_config.get("identifier")
-                name = cam_config.get(
-                    "name", section_name
-                )  # This is panel._panel_title
-                flip = str(cam_config.get("flip_horizontal", "false")).lower() == "true"
-                if not identifier or identifier.startswith("PUT_"):
-                    logger.warning(f"Skipping camera '{name}': Invalid identifier.")
-                    continue
+                panel = CameraPanel(
+                    cam_instance,
+                    cam_config.name,
+                    config=cam_config,
+                    parent=self.camera_container,
+                )
+                camera_layout.addWidget(panel)
+                self.cameras.append(cam_instance)
+                self.camera_panels[cam_config.identifier] = panel
+
+                cam_instance.new_frame.connect(panel.process_new_frame_data)
+                if hasattr(panel, "update_fps"):
+                    cam_instance.fps_updated.connect(panel.update_fps)
+
+                action = QAction(self)
+                action.setCheckable(True)
+                action.setChecked(panel.get_controls_visible())
+                action.setText(
+                    f"{'Hide' if panel.get_controls_visible() else 'Show'} {cam_config.name} Controls"
+                )
+                action.setData(cam_config.identifier)
+                action.triggered.connect(self._handle_camera_control_toggle)
+                self.cameras_menu.addAction(action)
+                self.camera_control_actions[cam_config.identifier] = action
 
                 logger.info(
-                    f"Attempting to initialize camera: {name} (ID: {identifier})"
+                    f"Successfully initialized and connected signals for camera: {cam_config.name}"
                 )
-                try:
-                    cam = VimbaCam(
-                        identifier=identifier,
-                        camera_name=name,
-                        flip_horizontal=flip,
-                        parent=self,
-                    )
-                    if not cam.open():
-                        logger.error(f"Failed to open camera {name}. Skipping panel.")
-                        cam.close()
-                        continue
+                cameras_initialized_count += 1
 
-                    panel = CameraPanel(
-                        cam, name, config=cam_config, parent=self.camera_container
-                    )
-                    camera_layout.addWidget(panel)
-                    self.cameras.append(cam)
-                    self.camera_panels[identifier] = panel
+            except VmbCameraError as e:
+                logger.error(
+                    f"Vimba Error initializing camera {cam_config.name} (ID: {cam_config.identifier}): {e}"
+                )
+                QMessageBox.warning(
+                    self, "Camera Error", f"Vimba error for {cam_config.name}:\n{e}"
+                )
+                error_msg = f"{cam_config.name}\n(Vimba Error)"
+                placeholder = self._create_camera_error_placeholder(error_msg)
+                camera_layout.addWidget(placeholder)
+                if cam_instance:
+                    cam_instance.close()
+            except Exception as e:
+                logger.error(
+                    f"Unexpected error initializing camera {cam_config.name} (ID: {cam_config.identifier}): {e}",
+                    exc_info=True,
+                )
+                QMessageBox.critical(
+                    self, "Camera Error", f"Critical error for {cam_config.name}:\n{e}"
+                )
+                error_msg = f"{cam_config.name}\n(Initialization Error)"
+                placeholder = self._create_camera_error_placeholder(error_msg)
+                camera_layout.addWidget(placeholder)
+                if cam_instance:
+                    cam_instance.close()
 
-                    cam.new_frame.connect(panel.process_new_frame_data)
-                    if hasattr(panel, "update_fps"):
-                        cam.fps_updated.connect(panel.update_fps)
-
-                    # Create menu action for this camera panel's controls
-                    action = QAction(self)  # Text set below
-                    action.setCheckable(True)
-                    # panel.get_controls_visible() should be False initially by CameraPanel's default
-                    action.setChecked(panel.get_controls_visible())
-                    action.setText(
-                        f"{'Hide' if panel.get_controls_visible() else 'Show'} {name} Controls"
-                    )
-                    action.setData(identifier)  # Store camera identifier
-                    action.triggered.connect(self._handle_camera_control_toggle)
-
-                    self.cameras_menu.addAction(action)
-                    self.camera_control_actions[identifier] = action
-
-                    logger.info(
-                        f"Successfully initialized and connected signals for camera: {name}"
-                    )
-                    cameras_initialized_count += 1
-                except VmbCameraError as e:
-                    logger.error(f"Vimba Error initializing camera {name}: {e}")
-                    QMessageBox.warning(
-                        self, "Camera Error", f"Vimba error for {name}:\n{e}"
-                    )
-                except Exception as e:
-                    logger.error(
-                        f"Unexpected error initializing camera {name}: {e}",
-                        exc_info=True,
-                    )
-                    QMessageBox.critical(
-                        self, "Camera Error", f"Critical error for {name}:\n{e}"
-                    )
-
-        if cameras_initialized_count == 0:
-            logger.warning("No cameras were successfully initialized.")
-            placeholder_label = QLabel("No cameras available or configured.")
-            placeholder_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            camera_layout.addWidget(placeholder_label)
-            if self.cameras_menu:  # If no cameras, add a disabled placeholder
-                no_cam_action = QAction("No cameras available", self)
+        if cameras_attempted_count > 0 and cameras_initialized_count == 0:
+            logger.warning(
+                "No cameras were successfully initialized out of those attempted."
+            )
+            if self.cameras_menu and not self.cameras_menu.actions():
+                no_cam_action = QAction("No cameras available/configured", self)
                 no_cam_action.setEnabled(False)
                 self.cameras_menu.addAction(no_cam_action)
 
+        elif cameras_attempted_count == 0:
+            logger.info("No camera sections found in configuration.")
+            placeholder_label = QLabel("No cameras configured in settings.")
+            placeholder_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            camera_layout.addWidget(placeholder_label)
+            if self.cameras_menu:
+                no_cam_action = QAction("No cameras configured", self)
+                no_cam_action.setEnabled(False)
+                self.cameras_menu.addAction(no_cam_action)
         else:
-            logger.info(f"Total cameras initialized: {cameras_initialized_count}")
+            logger.info(
+                f"Total cameras initialized: {cameras_initialized_count} out of {cameras_attempted_count} attempted."
+            )
+
+    def _create_camera_error_placeholder(self, message: str) -> QWidget:
+        """Helper to create a consistent placeholder for camera errors."""
+        placeholder_widget = QFrame()
+        placeholder_widget.setObjectName("cameraErrorPlaceholder")
+        placeholder_widget.setStyleSheet(
+            "QFrame#cameraErrorPlaceholder {"
+            "  border: 1px solid #ffcdd2;"
+            "  border-radius: 5px;"
+            "  background-color: #ffebee;"
+            "}"
+            "QLabel { color: #c62828; font-weight: normal; background: transparent; }"
+        )
+        placeholder_widget.setMinimumSize(220, 120)
+        placeholder_widget.setMaximumWidth(350)
+        placeholder_widget.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred
+        )
+
+        layout = QVBoxLayout(placeholder_widget)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(5)
+
+        icon_label = QLabel()
+        try:
+            std_icon = self.style().standardIcon(
+                QtWidgets.QStyle.StandardPixmap.SP_MessageBoxWarning
+            )
+            if not std_icon.isNull():
+                icon_label.setPixmap(std_icon.pixmap(QSize(32, 32)))
+        except Exception as e_icon:
+            logger.warning(f"Could not load standard warning icon: {e_icon}")
+            icon_label.setText("⚠️")
+            icon_label.setFont(QFont("Segoe UI Symbol", 20))
+
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        text_label = QLabel(message)
+        text_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        text_label.setWordWrap(True)
+
+        layout.addWidget(icon_label)
+        layout.addWidget(text_label)
+
+        placeholder_widget.setToolTip(
+            f"Camera Initialization Error: {message.replace('\n', ' ')}"
+        )
+        return placeholder_widget
 
     @Slot(bool)
     def _handle_camera_control_toggle(self, checked: bool):
@@ -728,7 +782,6 @@ class MainWindow(QMainWindow):
         if camera_identifier in self.camera_panels:
             panel = self.camera_panels[camera_identifier]
             panel.set_controls_visibility(checked)
-            # panel._panel_title is the same as 'name' used when creating the action
             action.setText(
                 f"{'Hide' if checked else 'Show'} {panel._panel_title} Controls"
             )
@@ -736,8 +789,8 @@ class MainWindow(QMainWindow):
             logger.warning(
                 f"Camera panel not found for identifier: {camera_identifier} during toggle."
             )
-            action.setChecked(not checked)  # Revert UI if panel not found
-            action.setEnabled(False)  # Disable action if problematic
+            action.setChecked(not checked)
+            action.setEnabled(False)
 
     @Slot(object, object, object)
     def _handle_scan_data(self, wavelengths, plotting_power_data, final_pout):
@@ -777,31 +830,27 @@ class MainWindow(QMainWindow):
     def _cleanup_cameras(self):
         logger.info(f"Closing {len(self.cameras)} camera(s)...")
 
-        # Remove camera control actions from menu and dict
         if hasattr(self, "cameras_menu") and self.cameras_menu is not None:
-            for cam_id in list(
-                self.camera_control_actions.keys()
-            ):  # Iterate copy of keys
+            for cam_id in list(self.camera_control_actions.keys()):
                 action = self.camera_control_actions.pop(cam_id, None)
                 if action:
                     self.cameras_menu.removeAction(action)
                     action.deleteLater()
         self.camera_control_actions.clear()
 
-        # Clear panels from layout first
         if (
             hasattr(self, "camera_container")
             and self.camera_container.layout() is not None
         ):
             layout = self.camera_container.layout()
-            while layout.count():  # Remove all widgets from layout
+            while layout.count():
                 item = layout.takeAt(0)
                 widget = item.widget()
                 if widget is not None:
-                    widget.setParent(None)  # Remove from layout
-                    widget.deleteLater()  # Schedule for deletion
+                    widget.setParent(None)
+                    widget.deleteLater()
 
-        cameras_to_close = list(self.cameras)  # Iterate a copy
+        cameras_to_close = list(self.cameras)
         self.cameras.clear()
         self.camera_panels.clear()
 
@@ -818,12 +867,12 @@ class MainWindow(QMainWindow):
 
     def cleanup(self):
         logger.info("Performing MainWindow cleanup...")
-        if hasattr(self, "histogram_control") and self.histogram_control.monitoring:
-            logger.debug("Stopping histogram monitoring...")
-            self.histogram_control._stop_monitoring()
+        if hasattr(self, "histogram_control"):
+            self.histogram_control.cleanup_worker_thread()  # Already well-named
         if hasattr(self, "control_panel") and self.control_panel.scanning:
-            logger.debug("Requesting scan stop via control panel...")
             self.control_panel._stop_scan(cancelled=True)
+        if hasattr(self, "plot_widget"):
+            self.plot_widget.cleanup()  # Call the new method
 
         self._cleanup_cameras()
 
@@ -832,15 +881,15 @@ class MainWindow(QMainWindow):
             try:
                 if self.is_ct400_connected_state:
                     try:
-                        port_str_disconnect = self.config.get("ScanDefaults", {}).get(
-                            "input_port", "1"
+                        # --- REFACTOR: Direct attribute access ---
+                        laser_input_disconnect = LaserInput(
+                            self.config.scan_defaults.input_port
                         )
-                        laser_input_disconnect = LaserInput(int(port_str_disconnect))
                         self.ct400_device.cmd_laser(
                             laser_input_disconnect,
                             Enable.DISABLE,
                             1550.0,
-                            1.0,  # power 1.0
+                            1.0,
                         )
                         logger.info("CT400 laser disabled during cleanup.")
                     except Exception as e_cmd:
@@ -858,7 +907,6 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QtGui.QCloseEvent):
         logger.info("Close event triggered for MainWindow.")
-        # self.cleanup() # Cleanup is now handled by app.aboutToQuit
         event.accept()
 
     def _connect_signals(self):
@@ -882,102 +930,3 @@ class MainWindow(QMainWindow):
             logger.warning(
                 "Histogram Control Panel not initialized, skipping signal connection."
             )
-
-
-if __name__ == "__main__":
-    import sys
-
-    test_config = {
-        "Logging": {"level": "DEBUG", "file": "main_window_test.log"},
-        "Instruments": {
-            "ct400_dll_path": "path/to/your/CT400_lib.dll"  # IMPORTANT: Update this path
-        },
-        "Camera:TopCam": {  # Example Camera
-            "enabled": "true",
-            "identifier": "DEV_000F31024699",  # Example, replace with your camera ID
-            "name": "Top View Camera",
-            "flip_horizontal": "false",
-        },
-        "Camera:SideCam": {  # Example Camera
-            "enabled": "true",
-            "identifier": "DEV_000F3102469A",  # Example, replace with your camera ID
-            "name": "Side View Camera",
-            "flip_horizontal": "true",
-        },
-        "ScanDefaults": {
-            "start_wavelength_nm": "1550.0",
-            "end_wavelength_nm": "1560.0",
-            "resolution_pm": "1",
-            "speed_nm_s": "10",
-            "laser_power": "1.0",
-            "power_unit": "mW",
-            "input_port": "1",
-            "min_wavelength_nm": "1440",
-            "max_wavelength_nm": "1640",
-        },
-        "HistogramDefaults": {
-            "wavelength_nm": "1550",
-            "laser_power": "1",
-            "power_unit": "mW",
-            "input_port": "1",
-        },
-        "App": {"name": "Test Lab Control"},
-        "UI": {"initial_width_ratio": "0.7", "initial_height_ratio": "0.7"},
-    }
-    try:
-        import configparser
-
-        cfg_parser = configparser.ConfigParser()
-        # Try to find config.ini in the script's directory
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        config_file_path = os.path.join(script_dir, "config.ini")
-
-        if os.path.exists(config_file_path):
-            cfg_parser.read(config_file_path)
-            loaded_config = {}
-            for section in cfg_parser.sections():
-                loaded_config[section] = {}
-                for key, value in cfg_parser.items(section):
-                    if value.lower() in ["true", "yes", "on"]:
-                        loaded_config[section][key] = True
-                    elif value.lower() in ["false", "no", "off"]:
-                        loaded_config[section][key] = False
-                    elif value.isdigit():
-                        loaded_config[section][key] = int(value)
-                    else:
-                        try:
-                            loaded_config[section][key] = float(value)
-                        except ValueError:
-                            loaded_config[section][key] = value
-            test_config = loaded_config
-            print(f"Loaded {config_file_path} for testing.")
-        else:
-            print(
-                f"{config_file_path} not found, using dummy config. Update ct400_dll_path and camera IDs."
-            )
-    except Exception as e:
-        print(f"Error loading config.ini for test: {e}")
-
-    logging.basicConfig(
-        level=logging.DEBUG, format="%(asctime)s %(levelname)s:%(name)s:%(message)s"
-    )
-    # If using styles.py, ensure it's available and uncomment:
-    # try:
-    #     from styles import APP_STYLESHEET, apply_global_styles
-    # except ImportError:
-    #     APP_STYLESHEET = "" # Default empty stylesheet
-    #     def apply_global_styles(app): pass
-    #     logging.warning("styles.py not found or APP_STYLESHEET/apply_global_styles not defined.")
-
-    app = QApplication(sys.argv)
-    # if APP_STYLESHEET:
-    #     app.setStyleSheet(APP_STYLESHEET)
-    # apply_global_styles(app) # If you have a function for more complex styling
-
-    window = MainWindow(config=test_config)
-    window.show()
-
-    # Connect cleanup to application's aboutToQuit signal
-    app.aboutToQuit.connect(window.cleanup)
-
-    sys.exit(app.exec())

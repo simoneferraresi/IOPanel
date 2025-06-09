@@ -1,10 +1,20 @@
 import logging
 from ctypes import create_string_buffer
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 import numpy as np
 from PySide6 import QtCore, QtGui
-from PySide6.QtCore import Qt, QTimer, Slot
+from PySide6.QtCore import (
+    QMetaObject,
+    QMutex,
+    QMutexLocker,
+    QObject,
+    Qt,
+    QThread,
+    QTimer,
+    Signal,
+    Slot,
+)
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -20,9 +30,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from config_model import AppConfig
+
 # Import CT400 types
 try:
-    from CT400_updated import (
+    from hardware.ct400 import (
         CT400,
         CT400Error,
         Detector,
@@ -59,15 +71,15 @@ except ImportError:
     class CT400Error(Exception):
         pass
 
-    class PowerData:  # Dummy for type hint
+    class PowerData:
         def __init__(self, pout, detectors):
             self.pout = pout
             self.detectors = detectors
 
 
-from styles import CT400_CONTROL_PANEL_STYLE
+from ui.theme import CT400_CONTROL_PANEL_STYLE
 
-MONITOR_TIMER_INTERVAL_MS = 100  # Increased from 50ms for less load, can be tuned
+MONITOR_TIMER_INTERVAL_MS = 250
 logger = logging.getLogger("LabApp.control_panel")
 
 
@@ -86,7 +98,11 @@ class ScanSettings:
 # ScanWorker
 ###############################################################################
 class ScanWorker(QtCore.QThread):
-    completed_signal = QtCore.Signal(object, object, object)
+    _ERROR_BUFFER_SIZE = 1024
+    _LASER_COMMAND_DELAY_MS = 150
+    _SCAN_POLL_INTERVAL_MS = 100
+
+    completed_signal = QtCore.Signal(object, object, float)
     progress_signal = QtCore.Signal(int)
     error_signal = QtCore.Signal(str)
 
@@ -116,14 +132,46 @@ class ScanWorker(QtCore.QThread):
         self._running = True
 
     def run(self):
-        error_buf = create_string_buffer(1024)
+        error_buf = create_string_buffer(self._ERROR_BUFFER_SIZE)
         scan_started = False
         try:
+            if self._running:
+                logger.info(
+                    f"ScanWorker: Ensuring laser is disabled on input {self.input_port.name} before starting scan operations."
+                )
+                self.ct400.cmd_laser(
+                    laser_input=self.input_port,
+                    enable=Enable.DISABLE,
+                    wavelength=float(self.disable_wl),
+                    power=float(self.disable_power),
+                )
+                logger.info(
+                    f"ScanWorker: Defensive laser disable command sent for input {self.input_port.name}."
+                )
+                self.msleep(self._LASER_COMMAND_DELAY_MS)
+            else:
+                logger.info(
+                    "ScanWorker: Run started but worker already stopped. Aborting."
+                )
+                self.error_signal.emit("Scan aborted before start.")
+                return
+
+            if not self._running:
+                raise CT400Error("Scan cancelled before set_scan")
+
             logger.info(
-                f"ScanWorker: {self.start_wl}nm to {self.end_wl}nm, Res: {self.resolution}pm"
+                f"ScanWorker: Setting up scan from {self.start_wl}nm to {self.end_wl}nm, Res: {self.resolution}pm, Power: {self.laser_power}mW"
             )
             self.ct400.set_scan(self.laser_power, self.start_wl, self.end_wl)
+
+            if not self._running:
+                raise CT400Error("Scan cancelled after set_scan")
+
             self.ct400.set_sampling_res(self.resolution)
+
+            if not self._running:
+                raise CT400Error("Scan cancelled after set_sampling_res")
+
             self.ct400.start_scan()
             scan_started = True
             logger.info("ScanWorker: CT400 scan started.")
@@ -140,7 +188,7 @@ class ScanWorker(QtCore.QThread):
                         f"ScanWorker: Scan error (ScanWaitEnd): {error_msg} (Code: {error_status})"
                     )
                     raise CT400Error(f"Scan failed: {error_msg}")
-                self.msleep(100)
+                self.msleep(self._SCAN_POLL_INTERVAL_MS)
 
             if not self._running:
                 logger.info("ScanWorker: Scan cancelled by user.")
@@ -152,6 +200,32 @@ class ScanWorker(QtCore.QThread):
             logger.info(
                 f"ScanWorker: Data retrieved. WL: {len(wavelengths)}, Power Shape: {powers_scan_data.shape}"
             )
+
+            log_tail_count = min(100, len(wavelengths))
+            if log_tail_count > 0:
+                logger.info(
+                    f"  ScanWorker Wavelengths (last {log_tail_count}):\n{wavelengths[-log_tail_count:]}"
+                )
+                if (
+                    powers_scan_data.ndim == 2
+                    and powers_scan_data.shape[0] > 0
+                    and powers_scan_data.shape[1] >= log_tail_count
+                ):
+                    logger.info(
+                        f"  ScanWorker Powers (Det 0, last {log_tail_count}):\n{powers_scan_data[0, -log_tail_count:]}"
+                    )
+                elif (
+                    powers_scan_data.ndim == 1
+                    and len(powers_scan_data) >= log_tail_count
+                ):
+                    logger.info(
+                        f"  ScanWorker Powers (1D, last {log_tail_count}):\n{powers_scan_data[-log_tail_count:]}"
+                    )
+                elif powers_scan_data.size > 0:
+                    logger.info(
+                        f"  ScanWorker Powers (Det 0, all points as less than {log_tail_count}):\n{powers_scan_data[0, :] if powers_scan_data.ndim == 2 else powers_scan_data[:]}"
+                    )
+
             final_pout = None
             try:
                 final_power_reading = self.ct400.get_all_powers()
@@ -168,17 +242,19 @@ class ScanWorker(QtCore.QThread):
         finally:
             try:
                 if scan_started:
-                    logger.info("ScanWorker: Ensuring scan is stopped...")
+                    logger.info(
+                        "ScanWorker: Ensuring scan is stopped in finally block..."
+                    )
                     self.ct400.stop_scan()
-                logger.info("ScanWorker: Disabling laser...")
+                logger.info("ScanWorker: Disabling laser in finally block...")
                 self.ct400.cmd_laser(
                     laser_input=self.input_port,
                     enable=Enable.DISABLE,
                     wavelength=float(self.disable_wl),
                     power=float(self.disable_power),
                 )
-            except Exception as e:  # Catch broadly during cleanup
-                logger.error(f"ScanWorker: Error during cleanup: {e}")
+            except Exception as e:
+                logger.error(f"ScanWorker: Error during cleanup in finally block: {e}")
             logger.info("ScanWorker: Finished.")
 
     def stop(self):
@@ -187,17 +263,88 @@ class ScanWorker(QtCore.QThread):
 
 
 ###############################################################################
+# PowerFetchWorker
+###############################################################################
+class PowerFetchWorker(QObject):
+    data_ready = Signal(PowerData)
+    error_occurred = Signal(str)
+
+    def __init__(self, ct400_device: Optional[CT400], parent: Optional[QObject] = None):
+        super().__init__(parent)
+        self.ct400 = ct400_device
+        self._is_running_lock = QMutex()
+        self._is_actually_running = True
+        self._is_busy = False
+        self._busy_lock = QMutex()
+
+    def is_worker_running(self) -> bool:
+        with QMutexLocker(self._is_running_lock):
+            return self._is_actually_running
+
+    @Slot()
+    def fetch_power(self):
+        with QMutexLocker(self._busy_lock):
+            if self._is_busy:
+                return
+            self._is_busy = True
+
+        if not self.is_worker_running():
+            with QMutexLocker(self._busy_lock):
+                self._is_busy = False
+            return
+
+        if QThread.currentThread().isInterruptionRequested():
+            logger.info(
+                "PowerFetchWorker: Thread interruption requested, bailing from fetch_power."
+            )
+            return
+
+        if not self.ct400:
+            if self.is_worker_running():
+                self.error_occurred.emit("CT400 device is not available in worker.")
+            return
+
+        try:
+            if not self.is_worker_running():
+                return
+            power_data_tuple: PowerData = self.ct400.get_all_powers()
+            if self.is_worker_running():
+                self.data_ready.emit(power_data_tuple)
+        except CT400Error as e:
+            if self.is_worker_running():
+                self.error_occurred.emit(f"CT400 Error: {e}")
+        except OSError as e:
+            if self.is_worker_running():
+                logger.error(f"PowerFetchWorker: OSError reading power: {e}")
+                self.error_occurred.emit(f"OS Error: {e}")
+        except Exception as e:
+            if self.is_worker_running():
+                self.error_occurred.emit(f"Unexpected error: {e}")
+        finally:
+            with QMutexLocker(self._busy_lock):
+                self._is_busy = False
+
+    @Slot()
+    def request_stop(self):
+        logger.debug("PowerFetchWorker: request_stop() received.")
+        with QMutexLocker(self._is_running_lock):
+            self._is_actually_running = False
+        logger.debug("PowerFetchWorker: _is_actually_running flag set to False.")
+
+
+###############################################################################
 # CT400ControlPanel
 ###############################################################################
 class CT400ControlPanel(QWidget):
-    scan_data_ready = QtCore.Signal(object, object, object)
+    scan_data_ready = QtCore.Signal(object, object, float)
     progress_updated = QtCore.Signal(int)
 
     def __init__(
         self,
         shared_settings: ScanSettings,
         ct400_device: Optional[CT400],
-        config: Dict[str, Any],
+        # --- REFACTOR: Use specific AppConfig type hint ---
+        config: AppConfig,
         parent: Optional[QWidget] = None,
     ):
         super().__init__(parent)
@@ -257,7 +404,9 @@ class CT400ControlPanel(QWidget):
         current_row += 1
         scan_config_layout.addWidget(QLabel("Laser Input Port:"), current_row, 0)
         self.input_port = QComboBox()
-        self.input_port.addItems(["1", "2", "3", "4"])
+        for member in LaserInput:
+            display_text = member.name.split("_")[-1]
+            self.input_port.addItem(display_text, userData=member)
         scan_config_layout.addWidget(self.input_port, current_row, 1)
         scan_config_layout.setColumnStretch(0, 0)
         scan_config_layout.setColumnStretch(1, 1)
@@ -266,24 +415,10 @@ class CT400ControlPanel(QWidget):
         control_group = QGroupBox("Operation")
         control_layout = QVBoxLayout()
         self.scan_btn = QPushButton("Start Scan")
+        self.scan_btn.setObjectName("scanButton")
         self.scan_btn.setIcon(QtGui.QIcon(":/icons/play.svg"))
         self.scan_btn.setMinimumHeight(35)
         self.scan_btn.setMinimumWidth(130)
-        # Initial style: Green for "Start Scan"
-        self.scan_btn.setStyleSheet(
-            "QPushButton {"
-            "   background-color: #007200;"  # Green
-            "   color: white;"
-            "   font-weight: bold;"
-            "   font-size: 15;"
-            "   border: none;"
-            "   padding: 8px 12px;"  # Adjust padding as needed
-            "   border-radius: 3px;"  # Slightly rounded corners
-            "}"
-            "QPushButton:hover { background-color: #006400; }"  # Darker green on hover
-            "QPushButton:pressed { background-color: #004b23; }"  # Even darker on press
-            "QPushButton:disabled { background-color: #e0e0e0; color: #bdbdbd; }"  # Disabled style
-        )
         control_layout.addWidget(self.scan_btn)
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
@@ -306,10 +441,7 @@ class CT400ControlPanel(QWidget):
         logger.info(f"Scan Panel notified: Instrument connected = {is_connected}")
         self.is_instrument_connected = is_connected
 
-        # Configuration inputs are disabled during scanning
-        enable_config_inputs = (
-            is_connected and not self.scanning
-        )  # Use self.scanning here
+        enable_config_inputs = is_connected and not self.scanning
         config_widgets = [
             self.initial_wl,
             self.final_wl,
@@ -322,10 +454,9 @@ class CT400ControlPanel(QWidget):
         for widget in config_widgets:
             widget.setEnabled(enable_config_inputs)
 
-        # Scan button is enabled if instrument is connected. Its text/role changes based on scanning state.
         self.scan_btn.setEnabled(is_connected)
 
-        if not is_connected and self.scanning:  # Use self.scanning here
+        if not is_connected and self.scanning:
             logger.warning("Instrument disconnected during scan. Forcing stop.")
             self._stop_scan(cancelled=True)
 
@@ -352,7 +483,7 @@ class CT400ControlPanel(QWidget):
         return value
 
     def _start_scan(self):
-        if not self.is_instrument_connected or self.ct400 is None:
+        if not self.is_instrument_connected:
             QMessageBox.warning(self, "Not Connected", "CT400 device is not connected.")
             return
         if self.scanning:
@@ -362,28 +493,26 @@ class CT400ControlPanel(QWidget):
             end_wl = float(self.final_wl.text())
             resolution = int(self.resolution.text())
             laser_power_mw = self._get_laser_power_mw()
-            # speed = int(self.motor_speed.text()) # Speed not directly used by worker CT400.set_scan
-            input_port_enum = LaserInput(int(self.input_port.currentText()))
+            input_port_enum = self.input_port.currentData()
+            if not isinstance(input_port_enum, LaserInput):
+                logger.error(
+                    f"Invalid data type for input port: {type(input_port_enum)}. Expected LaserInput."
+                )
+                QMessageBox.critical(
+                    self, "Internal Error", "Invalid laser input port configuration."
+                )
+                self._reset_scan_ui()
+                return
             if start_wl >= end_wl or resolution <= 0:
                 raise ValueError("Invalid scan parameters.")
 
             self.scanning = True
             self.scan_btn.setText("Stop Scan")
             self.scan_btn.setIcon(QtGui.QIcon(":/icons/stop.svg"))
-            self.scan_btn.setStyleSheet(
-                "QPushButton {"
-                "   background-color: #85182a;"  # Red
-                "   color: white;"
-                "   font-weight: bold;"
-                "   border: none;"
-                "   padding: 8px 12px;"
-                "   border-radius: 3px;"
-                "}"
-                "QPushButton:hover { background-color: #6e1423; }"
-                "QPushButton:pressed { background-color: #641220; }"
-                # Disabled state will be handled by the button's enabled state
-            )
-            self.on_instrument_connected(True)  # Updates config input states
+            self.scan_btn.setProperty("scanning", True)
+            self.scan_btn.style().unpolish(self.scan_btn)
+            self.scan_btn.style().polish(self.scan_btn)
+            self.on_instrument_connected(True)
             self.progress_bar.setValue(0)
             self.progress_bar.setVisible(True)
 
@@ -394,6 +523,8 @@ class CT400ControlPanel(QWidget):
                 resolution,
                 laser_power_mw,
                 input_port_enum,
+                disable_wl=self.config.scan_defaults.safe_parking_wavelength,
+                disable_power=self.config.scan_defaults.laser_power,
             )
             self.scan_worker.progress_signal.connect(self.progress_updated.emit)
             self.scan_worker.completed_signal.connect(self._handle_scan_completed)
@@ -413,7 +544,6 @@ class CT400ControlPanel(QWidget):
         logger.info(f"Stopping scan (Cancelled: {cancelled}).")
         if self.scan_worker and self.scan_worker.isRunning():
             self.scan_worker.stop()
-        # UI reset will be handled by _scan_worker_finished or if cancelled, more immediately here
         if cancelled:
             self._reset_scan_ui(status_msg="Scan cancelled by user.")
 
@@ -422,8 +552,10 @@ class CT400ControlPanel(QWidget):
         if self.progress_bar.isVisible():
             self.progress_bar.setValue(value)
 
-    @Slot(object, object, object)
-    def _handle_scan_completed(self, wavelengths, powers_scan_data, final_pout):
+    @Slot(object, object, float)
+    def _handle_scan_completed(
+        self, wavelengths: np.ndarray, powers_scan_data: np.ndarray, final_pout: float
+    ):
         logger.info("ScanPanel: Scan completed signal received.")
         plotting_power_data = np.array([])
         try:
@@ -437,19 +569,17 @@ class CT400ControlPanel(QWidget):
     def _handle_scan_error(self, error_msg: str):
         logger.error(f"ScanPanel: Scan error signal: {error_msg}")
         QMessageBox.critical(self, "Scan Error", f"Scan error:\n{error_msg}")
-        # UI reset handled by _scan_worker_finished
 
     @Slot()
     def _scan_worker_finished(self):
         logger.info("ScanPanel: Scan worker finished.")
-        # Determine appropriate status message
         status_msg = "Scan finished."
         if (
             self.scan_worker
             and hasattr(self.scan_worker, "_running")
             and not self.scan_worker._running
             and self.scanning
-        ):  # Check if it was scanning and user requested stop
+        ):
             status_msg = "Scan cancelled."
 
         self._reset_scan_ui(status_msg=status_msg)
@@ -459,25 +589,12 @@ class CT400ControlPanel(QWidget):
         self.scanning = False
         self.scan_btn.setText("Start Scan")
         self.scan_btn.setIcon(QtGui.QIcon(":/icons/play.svg"))
-        self.scan_btn.setStyleSheet(
-            "QPushButton {"
-            "   background-color: #007200;"  # Green
-            "   color: white;"
-            "   font-weight: bold;"
-            "   font-size: 15;"
-            "   border: none;"
-            "   padding: 8px 12px;"  # Adjust padding as needed
-            "   border-radius: 3px;"  # Slightly rounded corners
-            "}"
-            "QPushButton:hover { background-color: #006400; }"  # Darker green on hover
-            "QPushButton:pressed { background-color: #004b23; }"  # Even darker on press
-            "QPushButton:disabled { background-color: #e0e0e0; color: #bdbdbd; }"  # Disabled style
-        )
+        self.scan_btn.setProperty("scanning", False)
+        self.scan_btn.style().unpolish(self.scan_btn)
+        self.scan_btn.style().polish(self.scan_btn)
         self.progress_bar.setVisible(False)
         self.progress_bar.setValue(0)
-        self.on_instrument_connected(
-            self.is_instrument_connected
-        )  # Re-evaluate input enable states
+        self.on_instrument_connected(self.is_instrument_connected)
         logger.info(f"Scan panel UI reset. Status: {status_msg}")
 
 
@@ -485,12 +602,15 @@ class CT400ControlPanel(QWidget):
 # HistogramControlPanel
 ###############################################################################
 class HistogramControlPanel(QWidget):
+    _THREAD_WAIT_TIMEOUT_MS = 2000
+
     power_data_ready = QtCore.Signal(dict)
 
     def __init__(
         self,
         ct400_device: Optional[CT400],
-        config: Dict[str, Any],
+        # --- REFACTOR: Use specific AppConfig type hint ---
+        config: AppConfig,
         parent: Optional[QWidget] = None,
     ):
         super().__init__(parent)
@@ -498,18 +618,36 @@ class HistogramControlPanel(QWidget):
         self.config = config
         self.is_instrument_connected = self.ct400 is not None
         self.monitoring = False
+
+        self.power_fetch_thread = QThread(self)
+        self.power_fetch_worker = PowerFetchWorker(self.ct400)
+        self.power_fetch_worker.moveToThread(self.power_fetch_thread)
+        self.power_fetch_worker.data_ready.connect(self._handle_worker_data_ready)
+        self.power_fetch_worker.error_occurred.connect(self._handle_worker_error)
+        self.power_fetch_thread.started.connect(
+            lambda: logger.info("Power fetch worker thread started.")
+        )
+        self.power_fetch_thread.finished.connect(self.power_fetch_worker.deleteLater)
+        self.power_fetch_thread.finished.connect(self.power_fetch_thread.deleteLater)
+        self.power_fetch_thread.finished.connect(
+            lambda: logger.info("Power fetch worker thread finished and cleaned up.")
+        )
+
         self.timer = QTimer(self)
         self.timer.setInterval(MONITOR_TIMER_INTERVAL_MS)
-        self.timer.timeout.connect(self._fetch_power_update)
+        self.timer.timeout.connect(self._request_power_fetch_from_worker)
+
         self.setObjectName("ct400MonitorPanel")
         try:
             self.setStyleSheet(CT400_CONTROL_PANEL_STYLE)
         except NameError:
             logger.warning("CT400_CONTROL_PANEL_STYLE not found.")
+
         self._init_ui()
         self.laser_power.setValidator(QtGui.QDoubleValidator(0.1, 50.0, 3))
         self.wavelength_input.setValidator(QtGui.QDoubleValidator(1440.0, 1640.0, 3))
         self.on_instrument_connected(self.is_instrument_connected)
+        self.power_fetch_thread.start()
 
     def _init_ui(self):
         panel_layout = QGridLayout(self)
@@ -531,7 +669,9 @@ class HistogramControlPanel(QWidget):
         config_internal_layout.addLayout(power_layout, 1, 1)
         config_internal_layout.addWidget(QLabel("Laser Input Port:"), 2, 0)
         self.input_port = QComboBox()
-        self.input_port.addItems(["1", "2", "3", "4"])
+        for member in LaserInput:
+            display_text = member.name.split("_")[-1]
+            self.input_port.addItem(display_text, userData=member)
         config_internal_layout.addWidget(self.input_port, 2, 1)
         config_internal_layout.setColumnStretch(1, 1)
         config_group.setLayout(config_internal_layout)
@@ -551,21 +691,8 @@ class HistogramControlPanel(QWidget):
         operation_group = QGroupBox("Operation")
         operation_button_wrapper_layout = QVBoxLayout()
         self.monitor_btn = QPushButton("Start Monitoring")
-        # Initial style: Blue for "Start Monitoring"
-        self.monitor_btn.setStyleSheet(
-            "QPushButton {"
-            "   background-color: #0077b6;"  # Blue
-            "   color: white;"
-            "   font-weight: bold;"
-            "   border: none;"
-            "   padding: 10px 15px;"  # Adjust padding as needed
-            "   border-radius: 3px;"
-            "}"
-            "QPushButton:hover { background-color: #023e8a; }"
-            "QPushButton:pressed { background-color: #03045e; }"
-            "QPushButton:disabled { background-color: #e0e0e0; color: #bdbdbd; }"
-        )
-        self.monitor_btn.setIcon(QtGui.QIcon(":/icons/play-circle.svg"))
+        self.monitor_btn.setObjectName("monitorButton")
+        self.monitor_btn.setIcon(QtGui.QIcon(":/icons/play.svg"))
         self.monitor_btn.setMinimumHeight(100)
         self.monitor_btn.setMinimumWidth(150)
         operation_button_wrapper_layout.addWidget(self.monitor_btn)
@@ -579,6 +706,8 @@ class HistogramControlPanel(QWidget):
     def on_instrument_connected(self, is_connected: bool):
         logger.info(f"Monitor Panel: Instrument connected = {is_connected}")
         self.is_instrument_connected = is_connected
+        if hasattr(self, "power_fetch_worker"):
+            self.power_fetch_worker.ct400 = self.ct400 if is_connected else None
 
         enable_config_and_detectors = is_connected and not self.monitoring
         config_widgets = [
@@ -592,9 +721,7 @@ class HistogramControlPanel(QWidget):
         for cb in self.detector_cbs:
             cb.setEnabled(is_connected)
 
-        self.monitor_btn.setEnabled(
-            is_connected
-        )  # Button itself is enabled if connected
+        self.monitor_btn.setEnabled(is_connected)
 
         if not is_connected and self.monitoring:
             logger.warning(
@@ -613,10 +740,10 @@ class HistogramControlPanel(QWidget):
         if not self.monitoring:
             self._start_monitoring()
         else:
-            self._stop_monitoring()  # User-initiated stop
+            self._stop_monitoring()
 
     def _apply_monitoring_settings(self) -> bool:
-        if not self.is_instrument_connected or self.ct400 is None:
+        if not self.is_instrument_connected:
             logger.error(
                 "Monitor Panel: Cannot apply settings, instrument not connected."
             )
@@ -624,7 +751,15 @@ class HistogramControlPanel(QWidget):
         try:
             wavelength = float(self.wavelength_input.text())
             power_mw = self._get_laser_power_mw()
-            input_port_enum = LaserInput(int(self.input_port.currentText()))
+            input_port_enum = self.input_port.currentData()
+            if not isinstance(input_port_enum, LaserInput):
+                logger.error(
+                    f"Invalid data type for input port: {type(input_port_enum)}. Expected LaserInput."
+                )
+                QMessageBox.critical(
+                    self, "Internal Error", "Invalid laser input port configuration."
+                )
+                return False
             det_enables = [
                 Enable.ENABLE if cb.isChecked() else Enable.DISABLE
                 for cb in self.detector_cbs
@@ -674,204 +809,201 @@ class HistogramControlPanel(QWidget):
 
         logger.info("Monitor Panel: Starting power monitoring.")
         self.monitoring = True
+        with QMutexLocker(self.power_fetch_worker._is_running_lock):
+            self.power_fetch_worker._is_actually_running = True
         self.monitor_btn.setText("Stop Monitoring")
         self.monitor_btn.setIcon(QtGui.QIcon(":/icons/stop-circle.svg"))
-        # Style for "Stop Monitoring":
-        self.monitor_btn.setStyleSheet(
-            "QPushButton {"
-            "   background-color: #85182a;"  # Red
-            "   color: white;"
-            "   font-weight: bold;"
-            "   border: none;"
-            "   padding: 10px 15px;"
-            "   border-radius: 3px;"
-            "}"
-            "QPushButton:hover { background-color: #6e1423; }"
-            "QPushButton:pressed { background-color: #641220; }"
-        )
-        self.on_instrument_connected(True)  # Updates UI enable states for config parts
+        self.monitor_btn.setProperty("monitoring", True)
+        self.monitor_btn.style().unpolish(self.monitor_btn)
+        self.monitor_btn.style().polish(self.monitor_btn)
+        self.on_instrument_connected(True)
         self.timer.start()
         logger.debug(
-            f"Monitor Panel: Timer started (Interval: {self.timer.interval()}ms)."
+            f"Monitor Panel: Timer started (Interval: {self.timer.interval()}ms) to trigger worker."
         )
 
     def _stop_monitoring(self, instrument_error_or_disconnect=False):
         if not self.monitoring and not instrument_error_or_disconnect:
-            # If not monitoring and not forced by an error/disconnect, nothing to do.
-            # This check is important to prevent issues if called multiple times.
-            logger.debug(
-                "Monitor Panel: _stop_monitoring called but not active or not forced."
-            )
             return
 
         logger.info(
             f"Monitor Panel: Stopping power monitoring. Forced by error/disconnect: {instrument_error_or_disconnect}"
         )
-
-        # Store current state to know if we need to attempt laser disable
         was_actively_monitoring = self.monitoring
-        self.monitoring = False  # Set state first to prevent re-entry
+        self.monitoring = False
 
         if self.timer.isActive():
             logger.debug("Monitor Panel: Stopping QTimer.")
             self.timer.stop()
 
-        self.monitor_btn.setText("Start Monitoring")
-        self.monitor_btn.setIcon(QtGui.QIcon(":/icons/play-circle.svg"))
-        # Style for "Start Monitoring": Blue (back to initial)
-        self.monitor_btn.setStyleSheet(
-            "QPushButton {"
-            "   background-color: #0077b6;"  # Blue
-            "   color: white;"
-            "   font-weight: bold;"
-            "   border: none;"
-            "   padding: 10px 15px;"  # Adjust padding as needed
-            "   border-radius: 3px;"
-            "}"
-            "QPushButton:hover { background-color: #023e8a; }"
-            "QPushButton:pressed { background-color: #03045e; }"
-            "QPushButton:disabled { background-color: #e0e0e0; color: #bdbdbd; }"
-        )
-
-        # This call will re-enable config inputs if instrument is still connected
-        self.on_instrument_connected(self.is_instrument_connected)
-
-        # Attempt to disable laser only if it was actively monitoring AND
-        # it wasn't stopped due to an instrument error/disconnect (because CT400 might be unresponsive)
-        if (
-            was_actively_monitoring
-            and self.is_instrument_connected
-            and self.ct400
-            and not instrument_error_or_disconnect
-        ):
-            try:
-                logger.info("Monitor Panel: Disabling laser after monitoring.")
-                # Use last configured input port for disabling
-                input_port_str = (
-                    self.input_port.currentText()
-                )  # Get from UI as it should hold last used
-                input_port_enum = LaserInput(int(input_port_str))
-
-                # Use a safe, common wavelength and low power for disable command
-                safe_wavelength = 1550.0
-                safe_power = 1.0  # mW
-
-                self.ct400.cmd_laser(
-                    input_port_enum, Enable.DISABLE, safe_wavelength, safe_power
-                )
-                logger.info(f"Monitor Panel: Laser disabled on port {input_port_str}.")
-            except (CT400Error, ValueError) as e:
-                logger.error(f"Monitor Panel: Failed to disable laser on stop: {e}")
-            except Exception as e:
-                logger.exception(
-                    f"Monitor Panel: Unexpected error disabling laser on stop: {e}"
-                )
-        elif instrument_error_or_disconnect:
-            logger.warning(
-                "Monitor Panel: Skipped disabling laser due to instrument error or disconnect event."
+        if hasattr(self, "power_fetch_worker"):
+            QMetaObject.invokeMethod(
+                self.power_fetch_worker,
+                "request_stop",
+                Qt.ConnectionType.QueuedConnection,
             )
 
-        logger.debug("Monitor Panel: _stop_monitoring finished.")
+        if was_actively_monitoring and not instrument_error_or_disconnect:
+            self._perform_laser_disable()
+
+        self.monitor_btn.setText("Start Monitoring")
+        self.monitor_btn.setIcon(QtGui.QIcon(":/icons/play.svg"))
+        self.monitor_btn.setProperty("monitoring", False)
+        self.monitor_btn.style().unpolish(self.monitor_btn)
+        self.monitor_btn.style().polish(self.monitor_btn)
+        self.on_instrument_connected(self.is_instrument_connected)
+        logger.debug("Monitor Panel: UI reset and stop requested.")
+
+    def _perform_laser_disable(self):
+        if self.is_instrument_connected and self.ct400:
+            try:
+                logger.info(
+                    "Monitor Panel: Disabling laser via _perform_laser_disable."
+                )
+                input_port_data = self.input_port.currentData()
+                if not isinstance(input_port_data, LaserInput):
+                    logger.warning(
+                        f"Monitor Panel: input_port.currentData() was not LaserInput type ({type(input_port_data)}). Falling back to currentText."
+                    )
+                    input_port_str = self.input_port.currentText()
+                    input_port_enum = LaserInput(int(input_port_str))
+                else:
+                    input_port_enum = input_port_data
+
+                default_wl_disable = 1550.0
+                default_power_disable = 1.0
+                self.ct400.cmd_laser(
+                    input_port_enum,
+                    Enable.DISABLE,
+                    float(default_wl_disable),
+                    float(default_power_disable),
+                )
+                logger.info(
+                    f"Monitor Panel: Laser disable command sent for port {input_port_enum.name}."
+                )
+
+            except (CT400Error, ValueError) as e:
+                logger.error(f"Monitor Panel: Failed to disable laser: {e}")
+            except Exception as e_unexp:
+                logger.error(
+                    f"Monitor Panel: Unexpected error disabling laser: {e_unexp}",
+                    exc_info=True,
+                )
+        else:
+            logger.warning(
+                "Monitor Panel: Cannot disable laser, CT400 not connected/available or instrument flag is false."
+            )
 
     @Slot()
-    def _fetch_power_update(self):
+    def _request_power_fetch_from_worker(self):
         if not self.monitoring:
-            if self.timer.isActive():
-                self.timer.stop()
             return
 
-        if not self.is_instrument_connected or self.ct400 is None:
-            logger.error(
-                "Monitor Panel: Cannot fetch power, instrument not connected or None."
-            )
-            self._stop_monitoring(instrument_error_or_disconnect=True)
-            QMessageBox.critical(
-                self, "Connection Error", "CT400 connection lost. Monitoring stopped."
-            )
-            return
+        if hasattr(self, "power_fetch_worker") and self.power_fetch_worker is not None:
+            if not self.power_fetch_worker.is_worker_running():
+                return
 
-        try:
-            power_data_tuple: PowerData = self.ct400.get_all_powers()
+            QMetaObject.invokeMethod(
+                self.power_fetch_worker,
+                "fetch_power",
+                Qt.ConnectionType.QueuedConnection,
+            )
+
+    @Slot(object)
+    def _handle_worker_data_ready(self, power_data_tuple: PowerData):
+        if not self.monitoring:
             logger.debug(
-                f"Monitor Panel: Raw CT400 power data: Pout={power_data_tuple.pout}, Detectors={power_data_tuple.detectors}"
+                "Monitor Panel: Received worker data but no longer monitoring. Discarding."
             )
+            return
 
+        logger.debug(
+            f"Monitor Panel (Main Thread): Received power data from worker: Pout={power_data_tuple.pout}, Detectors={power_data_tuple.detectors}"
+        )
+        try:
             detector_string_map = {
                 Detector.DE_1: "Det 1",
                 Detector.DE_2: "Det 2",
                 Detector.DE_3: "Det 3",
                 Detector.DE_4: "Det 4",
             }
-
             mapped_detector_values = {}
             if power_data_tuple.detectors:
-                for i, enum_key in enumerate(
-                    detector_string_map.keys()
-                ):  # Iterate in a defined order
-                    # Check if detector_string_map has this enum_key and if self.detector_cbs has corresponding checkbox
+                for i, enum_key in enumerate(detector_string_map.keys()):
                     if enum_key in power_data_tuple.detectors and i < len(
                         self.detector_cbs
                     ):
                         str_key = detector_string_map[enum_key]
-                        is_checked = self.detector_cbs[
-                            i
-                        ].isChecked()  # Check the state of the corresponding checkbox
-
+                        is_checked = self.detector_cbs[i].isChecked()
                         if is_checked:
                             mapped_detector_values[str_key] = (
                                 power_data_tuple.detectors[enum_key]
                             )
                         else:
-                            mapped_detector_values[str_key] = (
-                                0.0  # Substitute with 0.0 if unchecked
-                            )
+                            mapped_detector_values[str_key] = 0.0
                     elif enum_key not in power_data_tuple.detectors:
-                        # If CT400 doesn't provide data for an expected detector (even if checked), set to 0 or error indicator
                         str_key = detector_string_map.get(enum_key)
                         if str_key:
-                            mapped_detector_values[str_key] = (
-                                0.0  # Or perhaps -np.inf if 0 is a valid reading
-                            )
+                            mapped_detector_values[str_key] = 0.0
                             logger.debug(
                                 f"Monitor Panel: No data from CT400 for {str_key}, setting to 0."
                             )
-                    # else:
-                    #     logger.warning(f"Monitor Panel: Mismatch or missing data for detector enum {enum_key}")
 
             emit_data = {
                 "pout": power_data_tuple.pout,
                 "detectors": mapped_detector_values,
             }
-
-            logger.debug(f"Monitor Panel: Emitting processed power data: {emit_data}")
+            logger.debug(
+                f"Monitor Panel (Main Thread): Emitting processed power data for UI: {emit_data}"
+            )
             self.power_data_ready.emit(emit_data)
 
-            # (Optional: your check for all low values can remain)
+        except Exception as e:
+            logger.exception(
+                f"Monitor Panel (Main Thread): Error processing worker data: {e}"
+            )
 
-        except CT400Error as e:
-            logger.error(f"Monitor Panel: CT400 Error reading power: {e}")
+    @Slot(str)
+    def _handle_worker_error(self, error_msg: str):
+        logger.error(
+            f"Monitor Panel (Main Thread): Error from power fetch worker: {error_msg}"
+        )
+        if self.monitoring:
             self._stop_monitoring(instrument_error_or_disconnect=True)
             QMessageBox.critical(
                 self,
                 "Monitoring Error",
-                f"Failed to read power: {e}\nMonitoring stopped.",
+                f"Failed to read power: {error_msg}\nMonitoring stopped.",
             )
-        except Exception as e:
-            logger.exception(f"Monitor Panel: Unexpected error reading power: {e}")
-            self._stop_monitoring(instrument_error_or_disconnect=True)
-            QMessageBox.critical(
-                self, "Monitoring Error", f"Unexpected error: {e}\nMonitoring stopped."
+
+    def cleanup_worker_thread(self):
+        logger.info(
+            "HistogramControlPanel: Initiating cleanup of power fetch worker thread."
+        )
+
+        if self.monitoring:
+            logger.info(
+                "HistogramControlPanel.cleanup: Monitoring was active, stopping it first."
             )
+            self._stop_monitoring()
+
+        if hasattr(self, "power_fetch_thread") and self.power_fetch_thread.isRunning():
+            logger.info("HistogramControlPanel.cleanup: Quitting power fetch thread.")
+            self.power_fetch_thread.quit()
+            if not self.power_fetch_thread.wait(self._THREAD_WAIT_TIMEOUT_MS):
+                logger.warning(
+                    "Power fetch worker thread did not quit gracefully during cleanup. Terminating."
+                )
+                self.power_fetch_thread.terminate()
+                self.power_fetch_thread.wait()
+            else:
+                logger.info("Power fetch worker thread quit gracefully during cleanup.")
+        elif hasattr(self, "power_fetch_thread"):
+            logger.info("Power fetch worker thread was not running at cleanup.")
 
     @Slot()
     def _detector_selection_changed(self):
-        """Called when a detector checkbox state changes."""
-        # This method is now fine to be called during monitoring.
-        # _fetch_power_update will use the latest checkbox states.
-
-        if (
-            self.is_instrument_connected and self.ct400
-        ):  # Only try to command CT400 if connected
+        if self.is_instrument_connected and self.ct400:
             logger.info(
                 "Monitor Panel: Detector selection changed, re-applying to CT400."
             )
@@ -881,8 +1013,6 @@ class HistogramControlPanel(QWidget):
                     for cb in self.detector_cbs
                 ]
                 if len(det_enables) == 4:
-                    # Tell the CT400 hardware which detectors to actually read data from.
-                    # If a detector is unchecked here, CT400 might return a default low value for it.
                     self.ct400.set_detector_array(
                         det_enables[1], det_enables[2], det_enables[3], Enable.DISABLE
                     )
@@ -894,8 +1024,6 @@ class HistogramControlPanel(QWidget):
                 logger.error(
                     f"Monitor Panel: Failed to update CT400 detector array: {e}"
                 )
-                # Decide if this error should stop monitoring or just show a warning.
-                # For now, let's assume monitoring can continue, but CT400 might not reflect the change.
                 QMessageBox.warning(
                     self,
                     "Detector Error",
@@ -908,4 +1036,8 @@ class HistogramControlPanel(QWidget):
                 QMessageBox.warning(
                     self, "Detector Error", f"Error updating detectors on CT400: {e}"
                 )
-        # No need to stop/start monitoring here. _fetch_power_update will pick up the changes.
+
+    def closeEvent(self, event: QtGui.QCloseEvent):
+        """Handle widget close event to clean up the worker thread."""
+        self.cleanup_worker_thread()
+        super().closeEvent(event)

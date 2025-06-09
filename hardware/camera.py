@@ -6,8 +6,20 @@ from typing import Any, Dict, List, Optional
 
 import cv2
 import numpy as np
-from PySide6.QtCore import QMutex, QMutexLocker, QObject, Signal, Slot
-from vmbpy import *
+from PySide6.QtCore import QMutex, QMutexLocker, QObject, QThread, Signal, Slot
+from vmbpy import (
+    COLOR_PIXEL_FORMATS,
+    MONO_PIXEL_FORMATS,
+    OPENCV_PIXEL_FORMATS,
+    Camera,
+    Frame,
+    FrameStatus,
+    PixelFormat,
+    Stream,
+    VmbCameraError,
+    VmbSystem,
+    intersect_pixel_formats,
+)
 
 logger = logging.getLogger("LabApp.camera")
 
@@ -67,7 +79,20 @@ class FrameBuffer:
             self.buffer.clear()
 
 
-class VimbaCam(QObject):  # Inherit QObject for signals
+class VimbaCam(QObject):
+    """
+    Manages a single Vimba-compatible camera, handling connection, streaming, and settings.
+
+    This class abstracts the Vimba API details. It operates on its own by registering
+    a callback (`_frame_handler`) with the Vimba transport layer. This callback runs
+    in a separate, high-priority Vimba thread.
+
+    - Emits `new_frame` signal with a processed numpy array for each valid frame.
+    - Provides thread-safe methods for setting camera features (e.g., exposure, gamma).
+    - Manages camera state (open, streaming, closing) and emits status signals.
+    - Includes a recovery mechanism (`attempt_recovery`) to re-establish a lost stream.
+    """
+
     # Signals emitted from the Vimba callback thread (via invokeMethod or direct if safe)
     # We'll emit the numpy array directly
     new_frame = Signal(object)
@@ -129,6 +154,45 @@ class VimbaCam(QObject):  # Inherit QObject for signals
             logger.error(f"Could not list cameras: {e}")
         return cameras_info
 
+    def _set_auto_mode_once(self, feature_name: str) -> bool:
+        """Private helper to set an 'Auto' feature to 'Once' mode."""
+        if not self.device:
+            logger.warning(f"Cannot set {feature_name}: Camera not connected.")
+            return False
+
+        try:
+            with QMutexLocker(self.lock):
+                if not self.device:
+                    return False
+
+                feat_auto = self.device.get_feature_by_name(feature_name)
+
+                if not feat_auto.is_writeable():
+                    logger.warning(f"{feature_name} feature is not writable.")
+                    return False
+
+                available_entries = [str(e) for e in feat_auto.get_available_entries()]
+                if "Once" not in available_entries:
+                    logger.error(
+                        f"{feature_name} mode 'Once' is not available. Options: {available_entries}"
+                    )
+                    return False
+
+                feat_auto.set("Once")  # vmbpy allows setting by string name
+                logger.info(f"{feature_name} successfully set to 'Once'.")
+                return True
+
+        except VmbCameraError as e:
+            error_msg = f"VimbaError setting {feature_name} 'Once': {e}"
+            logger.error(error_msg)
+            self.error.emit(error_msg)
+            return False
+        except Exception as e:
+            error_msg = f"Unexpected error setting {feature_name}: {e}"
+            logger.error(error_msg, exc_info=True)
+            self.error.emit(error_msg)
+            return False
+
     # --- Vimba Frame Callback Handler ---
     def _frame_handler(self, cam: Camera, stream: Stream, frame: Frame):
         """
@@ -151,16 +215,20 @@ class VimbaCam(QObject):  # Inherit QObject for signals
             # Attempt to queue back even if status check failed
             try:
                 cam.queue_frame(frame)
-            except:
-                pass
-            return
+            except Exception as e_requeue:
+                logger.error(
+                    f"Also failed to re-queue frame after status error: {e_requeue}"
+                )
+            return  # Important to return here
         except Exception as e_stat_unexp:
             logger.error(f"Unexpected error getting frame status: {e_stat_unexp}")
             try:
                 cam.queue_frame(frame)
-            except:
-                pass
-            return
+            except Exception as e_requeue:
+                logger.error(
+                    f"Also failed to re-queue frame after unexpected status error: {e_requeue}"
+                )
+            return  # Important to return here
 
         # --- Process Complete Frame ---
         try:
@@ -168,10 +236,6 @@ class VimbaCam(QObject):  # Inherit QObject for signals
             current_image = frame.as_opencv_image()
 
             if current_image is not None and current_image.size > 0:
-                min_val, max_val = np.min(current_image), np.max(current_image)
-                # logger.debug(
-                #     f"Handler {self.camera_name}: Frame RAW min/max: {min_val}/{max_val}, dtype: {current_image.dtype}, shape: {current_image.shape}"
-                # )
                 if np.all(current_image == 0):  # Specifically check if it's ALL black
                     logger.warning(
                         f"Handler {self.camera_name}: Frame from as_opencv_image() is ALL BLACK!"
@@ -442,12 +506,16 @@ class VimbaCam(QObject):  # Inherit QObject for signals
                 return
             if self.is_streaming:
                 logger.warning("Streaming already started.")
-                return  # Already streaming
+                return
 
             logger.debug(f"_start_stream_internal for {self.camera_name}")
+
+            # Assume failure until proven otherwise
+            self.is_streaming = False
+
             try:
-                # --- Use Callback Handler ---
                 self.device.start_streaming(self._frame_handler, buffer_count=5)
+                # If we reach here, it was successful
                 self.is_streaming = True
                 logger.info(
                     f"Vimba streaming started with callback for {self.camera_name}."
@@ -456,19 +524,26 @@ class VimbaCam(QObject):  # Inherit QObject for signals
             except VmbCameraError as e:
                 logger.error(f"Failed to start Vimba streaming: {e}")
                 self.error.emit(f"Streaming start error: {e}")
-                self.is_streaming = False
-                try:
-                    self.device.stop_streaming()  # Attempt cleanup
-                except:
-                    pass
+                # The 'finally' block will handle cleanup
+
             except Exception as e:
                 logger.error(f"Unexpected error starting stream: {e}", exc_info=True)
                 self.error.emit(f"Unexpected streaming start error: {e}")
-                self.is_streaming = False
-                try:
-                    self.device.stop_streaming()
-                except:
-                    pass
+                # The 'finally' block will handle cleanup
+
+            finally:
+                # This block runs regardless of whether an exception occurred or not.
+                # If streaming failed, we attempt to clean up.
+                if not self.is_streaming and self.device:
+                    logger.debug("Attempting stream cleanup after a start failure.")
+                    try:
+                        self.device.stop_streaming()
+                    except Exception as cleanup_e:  # <--- CORRECTED: Specific exception
+                        logger.error(
+                            f"Error during cleanup after a failed stream start: {cleanup_e}"
+                        )
+                        # Pass is appropriate as we don't want to raise a new exception here.
+                        pass
 
     def _stop_stream_internal(self):
         """Internal: Stops Vimba stream. Assumes VimbaSystem is ACTIVE."""
@@ -549,19 +624,21 @@ class VimbaCam(QObject):  # Inherit QObject for signals
         self._is_closing = False
 
     @Slot()
-    def _attempt_recovery(self):
-        """Attempts to close and reopen the camera."""
+    def attempt_recovery(self):
+        """Attempts to close and reopen the camera. Public slot for recovery mechanisms."""
         logger.warning(f"Executing recovery attempt for {self.camera_name}...")
         self.close()
-        QThread.msleep(500)  # Allow time for resources to release
+        # Use QThread.msleep() for a non-blocking delay if this is called from the GUI thread
+        QThread.msleep(500)
         if not self._is_closing:
             self.open()
             if self.is_streaming:
-                logger.info("Recovery successful.")
-                self.error.emit("Camera connection restored.")
+                logger.info(f"Recovery successful for {self.camera_name}.")
+                # Use a more descriptive message for the user
+                self.error.emit(f"Connection to '{self.camera_name}' restored.")
             else:
-                logger.error("Recovery failed.")
-                self.error.emit("Failed to reconnect camera.")
+                logger.error(f"Recovery failed for {self.camera_name}.")
+                self.error.emit(f"Failed to reconnect '{self.camera_name}'.")
 
     # --- Feature Access Methods ---
     def get_latest_frame(self) -> Optional[np.ndarray]:
@@ -754,178 +831,13 @@ class VimbaCam(QObject):  # Inherit QObject for signals
             return False
 
     def set_auto_exposure_once(self) -> bool:
-        if not self.device:
-            logger.warning("Cannot set auto exposure: Camera not connected.")
-            return False
-        try:
-            with QMutexLocker(self.lock):
-                if not self.device:  # Re-check after acquiring lock
-                    return False
-
-                feat_auto = self.device.get_feature_by_name("ExposureAuto")
-
-                current_mode_obj = None
-                current_mode_str = "N/A"
-                is_currently_writable = feat_auto.is_writeable()
-                available_entries_objs = []
-                available_entry_names = []  # List of string names for the modes
-
-                try:
-                    if feat_auto.is_readable():
-                        current_mode_obj = feat_auto.get()  # Gets the EnumEntry object
-                        current_mode_str = str(
-                            current_mode_obj
-                        )  # Get string representation for logging
-
-                    available_entries_objs = list(
-                        feat_auto.get_available_entries()
-                    )  # Make it a list for easier iteration
-                    available_entry_names = [
-                        str(entry) for entry in available_entries_objs
-                    ]
-
-                except VmbCameraError as e_log:
-                    logger.warning(f"Could not fully log ExposureAuto state: {e_log}")
-
-                logger.debug(
-                    f"Attempting ExposureAuto 'Once'. Current mode: {current_mode_str}, "
-                    f"Writable: {is_currently_writable}, Available Names: {available_entry_names}"
-                )
-
-                if not is_currently_writable:
-                    logger.warning("ExposureAuto feature is not writable.")
-                    return False
-
-                if "Once" not in available_entry_names:
-                    logger.error(
-                        f"ExposureAuto mode 'Once' is not in available entry names: {available_entry_names}."
-                    )
-                    # Log the actual names if "Once" is not found for detailed debugging
-                    if not available_entry_names:
-                        logger.warning(
-                            "No available entries found for ExposureAuto at all."
-                        )
-                    else:
-                        logger.info("Detailed available ExposureAuto entries:")
-                        for entry_obj in available_entries_objs:
-                            logger.info(
-                                f"  - Name: {str(entry_obj)}, Int Value: {entry_obj.value}"
-                            )  # Log both
-                    return False
-
-                # If we reach here, "Once" should be available.
-                # We need to find the EnumEntry object whose string representation is "Once"
-                entry_to_set = None
-                for entry_obj in available_entries_objs:
-                    if str(entry_obj) == "Once":  # Compare string representation
-                        entry_to_set = entry_obj
-                        break
-
-                if entry_to_set is None:
-                    logger.error(
-                        "Critical: 'Once' was in available_entry_names but could not find corresponding EnumEntry object."
-                    )
-                    return False
-
-                feat_auto.set(entry_to_set)  # Set using the EnumEntry object
-                self.settings.is_auto_exposure_on = True
-                logger.info("ExposureAuto successfully set to 'Once'.")
-
-                return True
-
-        except VmbCameraError as e:
-            error_msg = f"VimbaError setting ExposureAuto 'Once': {e}"
-            logger.error(error_msg)
-            self.error.emit(error_msg)
-            return False
-        except Exception as e:
-            error_msg = f"Unexpected error setting auto exposure: {e}"
-            logger.error(error_msg, exc_info=True)
-            self.error.emit(error_msg)
-            return False
+        if self._set_auto_mode_once("ExposureAuto"):
+            self.settings.is_auto_exposure_on = True
+            return True
+        return False
 
     def set_auto_gain_once(self) -> bool:
-        if not self.device:
-            logger.warning("Cannot set auto gain: Camera not connected.")
-            return False
-        try:
-            with QMutexLocker(self.lock):
-                if not self.device:  # Re-check
-                    return False
-
-                feat_auto_gain = self.device.get_feature_by_name("GainAuto")
-
-                current_mode_obj = None
-                current_mode_str = "N/A"
-                is_currently_writable = feat_auto_gain.is_writeable()
-                available_entries_objs = []
-                available_entry_names = []
-
-                try:
-                    if feat_auto_gain.is_readable():
-                        current_mode_obj = feat_auto_gain.get()
-                        current_mode_str = str(current_mode_obj)
-
-                    available_entries_objs = list(
-                        feat_auto_gain.get_available_entries()
-                    )
-                    available_entry_names = [
-                        str(entry) for entry in available_entries_objs
-                    ]
-
-                except VmbCameraError as e_log:
-                    logger.warning(f"Could not fully log GainAuto state: {e_log}")
-
-                logger.debug(
-                    f"Attempting GainAuto 'Once'. Current mode: {current_mode_str}, "
-                    f"Writable: {is_currently_writable}, Available Names: {available_entry_names}"
-                )
-
-                if not is_currently_writable:
-                    logger.warning("GainAuto feature is not writable.")
-                    return False
-
-                if "Once" not in available_entry_names:
-                    logger.error(
-                        f"GainAuto mode 'Once' is not in available entry names: {available_entry_names}."
-                    )
-                    if not available_entry_names:
-                        logger.warning(
-                            "No available entries found for GainAuto at all."
-                        )
-                    else:
-                        logger.info("Detailed available GainAuto entries:")
-                        for entry_obj in available_entries_objs:
-                            logger.info(
-                                f"  - Name: {str(entry_obj)}, Int Value: {entry_obj.value}"
-                            )
-                    return False
-
-                entry_to_set = None
-                for entry_obj in available_entries_objs:
-                    if str(entry_obj) == "Once":
-                        entry_to_set = entry_obj
-                        break
-
-                if entry_to_set is None:
-                    logger.error(
-                        "Critical: 'Once' was in available_entry_names but could not find corresponding EnumEntry object for GainAuto."
-                    )
-                    return False
-
-                feat_auto_gain.set(entry_to_set)  # Set using the EnumEntry object
-                self.settings.is_auto_gain_on = True
-                logger.info("GainAuto successfully set to 'Once'.")
-
-                return True
-
-        except VmbCameraError as e:
-            error_msg = f"VimbaError setting GainAuto 'Once': {e}"
-            logger.error(error_msg)
-            self.error.emit(error_msg)
-            return False
-        except Exception as e:
-            error_msg = f"Unexpected error setting auto gain: {e}"
-            logger.error(error_msg, exc_info=True)
-            self.error.emit(error_msg)
-            return False
+        if self._set_auto_mode_once("GainAuto"):
+            self.settings.is_auto_gain_on = True
+            return True
+        return False

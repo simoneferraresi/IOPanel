@@ -8,10 +8,9 @@ from typing import Any, Dict
 
 from PySide6.QtWidgets import QApplication
 
-from main_window import (
-    MainWindow,
-)
-from styles import APP_STYLESHEET
+from config_model import AppConfig
+from ui.main_window import MainWindow
+from ui.theme import APP_STYLESHEET
 
 # Application Metadata
 APP_NAME = "IOP Lab @ UniFe"
@@ -25,7 +24,7 @@ def setup_logger(
     log_level: int = logging.INFO,
     log_file: str = DEFAULT_LOG_FILE,
     file_mode: str = "w",
-    max_bytes: int = 5 * 1024 * 1024,  # 5 MB
+    max_bytes: int = 5 * 1024 * 1024,
     backup_count: int = 3,
 ) -> logging.Logger:
     """
@@ -110,14 +109,8 @@ def global_exception_hook(exctype, value, tb):
 
 def load_config(config_file: str) -> Dict[str, Any]:
     """
-    Loads application configuration from an INI file.
-
-    Args:
-        config_file: Path to the configuration file.
-
-    Returns:
-        A dictionary containing the configuration settings. Returns an empty
-        dict if the file doesn't exist or is invalid.
+    Loads application configuration from an INI file into a raw dictionary.
+    No type conversion is performed here.
     """
     config = configparser.ConfigParser()
     app_config = {}
@@ -125,28 +118,12 @@ def load_config(config_file: str) -> Dict[str, Any]:
         try:
             config.read(config_file, encoding="utf-8")
             for section in config.sections():
-                app_config[section] = {}
-                for key, value in config.items(section):
-                    # Basic type inference (can be expanded)
-                    if value.lower() in ["true", "yes", "on"]:
-                        app_config[section][key] = True
-                    elif value.lower() in ["false", "no", "off"]:
-                        app_config[section][key] = False
-                    elif value.isdigit():
-                        app_config[section][key] = int(value)
-                    else:
-                        try:
-                            app_config[section][key] = float(value)
-                        except ValueError:
-                            app_config[section][key] = value  # Keep as string
+                # Just read all values as strings. AppConfig will handle conversion.
+                app_config[section] = dict(config.items(section))
             logging.getLogger("LabApp").info(f"Loaded configuration from {config_file}")
         except configparser.Error as e:
             logging.getLogger("LabApp").error(
                 f"Error parsing config file {config_file}: {e}"
-            )
-        except Exception as e:
-            logging.getLogger("LabApp").error(
-                f"Unexpected error loading config file {config_file}: {e}"
             )
     else:
         logging.getLogger("LabApp").warning(
@@ -202,31 +179,27 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     """
     Entry point for the GUI application.
-
-    Sets up logging, configuration, exception handling, the QApplication,
-    the main window, and starts the event loop.
-
-    Returns:
-        Application exit code (0 for success, non-zero for errors).
+    ...
     """
     args = parse_args()
-    app_config = load_config(args.config)
+    raw_config_dict = load_config(args.config)
+    app_config = AppConfig.from_dict(raw_config_dict)
 
     # Determine configuration precedence: Defaults < Config File < Command Line Args
-    log_level_str = args.log_level or app_config.get("Logging", {}).get("level", "INFO")
-    log_file_path = args.log_file or app_config.get("Logging", {}).get(
-        "file", DEFAULT_LOG_FILE
-    )
-    file_mode_val = args.file_mode or app_config.get("Logging", {}).get(
-        "mode", "a"
-    )  # Default to append for rotation
+    log_level_str = args.log_level or app_config.logging.level
+    log_file_path = args.log_file or app_config.logging.file
+    file_mode_val = args.file_mode or app_config.logging.mode  # Now this will be used
 
     # Convert log level string to logging constant
     log_level_int = getattr(logging, log_level_str.upper(), logging.INFO)
 
     # Setup logger *after* loading config and parsing args
     logger = setup_logger(
-        log_level=log_level_int, log_file=log_file_path, file_mode=file_mode_val
+        log_level=log_level_int,
+        log_file=log_file_path,  # <--- USE THE VARIABLE
+        file_mode=file_mode_val,  # <--- USE THE VARIABLE
+        max_bytes=app_config.logging.max_bytes,
+        backup_count=app_config.logging.backup_count,
     )
     logger.info(f"Starting {APP_NAME} v{APP_VERSION}")
     logger.info(f"Using log level: {log_level_str}")
