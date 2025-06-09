@@ -1,0 +1,52 @@
+[project]
+name = "IOPanel"
+version = "0.3.0"
+description = "A robust GUI for controlling photonics lab equipment, including cameras and wavelength scanners."
+authors = [
+    { name = "Simone Ferraresi", email = "simone.ferraresi@unife.it" },
+]
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: Microsoft :: Windows",
+    "Topic :: Scientific/Engineering",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+]
+
+# --- Core Dependencies ---
+# These are required for the application to run.
+dependencies = [
+    "PySide6>=6.6.0",
+    "numpy>=1.23.0",
+    "pyqtgraph>=0.13.0",
+    "scipy>=1.9.0", # For .mat file saving
+    "opencv-python-headless>=4.7.0", # Headless version is smaller and sufficient
+    "vmbpy>=1.10.0", # Make sure to specify the version you are using
+]
+
+[project.optional-dependencies]
+# --- Optional Dependencies ---
+# Use this for features that are not strictly required, like MATLAB integration.
+# To install: uv pip install -e ".[matlab]"
+matlab = [
+    "matlabengine", # The package name for the MATLAB Engine
+]
+
+[project.urls]
+Homepage = "https://github.com/simoneferraresi/IOPanel"
+"Bug Tracker" = "https://github.com/simoneferraresi/IOPanel/issues"
+
+# --- Tool Configuration ---
+
+[tool.uv]
+# Tells uv which version of Python to resolve dependencies for,
+# ensuring consistency across environments.
+# Choose the lowest version you actively support.
+python = "3.10"
