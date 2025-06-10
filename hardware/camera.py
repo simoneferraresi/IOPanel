@@ -2,7 +2,7 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import cv2
 import numpy as np
@@ -29,7 +29,7 @@ class CameraSettings:
     exposure_us: float = 10000.0
     gamma: float = 1.0
     gain_db: float = 0.0
-    pixel_format: Optional[PixelFormat] = None
+    pixel_format: PixelFormat | None = None
     is_auto_exposure_on: bool = False
     is_auto_gain_on: bool = False
 
@@ -68,7 +68,7 @@ class FrameBuffer:
         with QMutexLocker(self.lock):
             self.buffer.append(frame)
 
-    def get_latest_frame(self) -> Optional[np.ndarray]:
+    def get_latest_frame(self) -> np.ndarray | None:
         with QMutexLocker(self.lock):
             if not self.buffer:
                 return None
@@ -93,6 +93,9 @@ class VimbaCam(QObject):
     - Includes a recovery mechanism (`attempt_recovery`) to re-establish a lost stream.
     """
 
+    _DEFAULT_STREAM_BUFFER_COUNT = 5
+    _RECOVERY_DELAY_MS = 500
+
     # Signals emitted from the Vimba callback thread (via invokeMethod or direct if safe)
     # We'll emit the numpy array directly
     new_frame = Signal(object)
@@ -105,9 +108,9 @@ class VimbaCam(QObject):
     def __init__(
         self,
         identifier: str,
-        camera_name: Optional[str] = None,
+        camera_name: str | None = None,
         flip_horizontal: bool = False,
-        parent: Optional[QObject] = None,
+        parent: QObject | None = None,
     ):
         super().__init__(parent)
         if not identifier:
@@ -115,9 +118,9 @@ class VimbaCam(QObject):
         self.identifier = identifier
         self.camera_name = camera_name or identifier
         self.flip_horizontal = flip_horizontal
-        self.device: Optional[Camera] = None
+        self.device: Camera | None = None
         self.lock = QMutex()
-        self.is_mono: Optional[bool] = None
+        self.is_mono: bool | None = None
         self.is_streaming: bool = False
         self._is_closing: bool = False
         self.frame_monitor = FrameRateMonitor()
@@ -129,7 +132,7 @@ class VimbaCam(QObject):
         )
 
     @staticmethod
-    def list_cameras() -> List[Dict[str, Any]]:
+    def list_cameras() -> list[dict[str, Any]]:
         cameras_info = []
         logger.info("Listing available Vimba cameras...")
         try:
@@ -200,98 +203,82 @@ class VimbaCam(QObject):
         Processes the frame and emits signals.
         IMPORTANT: This runs in a Vimba internal thread, not the Qt GUI thread.
         """
-        # Check frame status first
         try:
-            frame_status = frame.get_status()
-            if frame_status != FrameStatus.Complete:
-                logger.warning(
-                    f"Received incomplete frame for {self.camera_name}: {frame_status}"
-                )
-                # Queue back incomplete frames immediately
-                cam.queue_frame(frame)
-                return
-        except VmbCameraError as e_stat:
-            logger.error(f"Error getting frame status for {self.camera_name}: {e_stat}")
-            # Attempt to queue back even if status check failed
-            try:
-                cam.queue_frame(frame)
-            except Exception as e_requeue:
-                logger.error(
-                    f"Also failed to re-queue frame after status error: {e_requeue}"
-                )
-            return  # Important to return here
-        except Exception as e_stat_unexp:
-            logger.error(f"Unexpected error getting frame status: {e_stat_unexp}")
-            try:
-                cam.queue_frame(frame)
-            except Exception as e_requeue:
-                logger.error(
-                    f"Also failed to re-queue frame after unexpected status error: {e_requeue}"
-                )
-            return  # Important to return here
-
-        # --- Process Complete Frame ---
-        try:
-            # Convert frame to OpenCV image
-            current_image = frame.as_opencv_image()
-
-            if current_image is not None and current_image.size > 0:
-                if np.all(current_image == 0):  # Specifically check if it's ALL black
-                    logger.warning(
-                        f"Handler {self.camera_name}: Frame from as_opencv_image() is ALL BLACK!"
-                    )
-            elif current_image is not None:  # size is 0 but not None
-                logger.warning(
-                    f"Handler {self.camera_name}: Frame from as_opencv_image() has size 0. Shape: {current_image.shape}"
-                )
-            else:  # current_image is None
-                logger.warning(
-                    f"Handler {self.camera_name}: Frame from as_opencv_image() is None."
-                )
-
-            # Apply horizontal flip if configured
-            if self.flip_horizontal:
-                current_image = cv2.flip(current_image, 1)
-
-            # Update frame buffer (optional, but can be useful for latest frame access)
-            # Need to copy as the underlying buffer will be reused by Vimba
-            processed_image = current_image.copy()
-            self.frame_buffer.add_frame(processed_image)
-
-            # --- Emit signals (must be thread-safe to Qt) ---
-            # Directly emitting the numpy array should be safe if the receiver
-            # makes a copy or processes it quickly in the Qt event loop.
-            self.new_frame.emit(processed_image)  # Emit the processed numpy array
-
-            # Update FPS monitor
-            fps = self.frame_monitor.update()
-            # Emit FPS update (Qt signals are thread-safe)
-            self.fps_updated.emit(fps)
-
-        except VmbCameraError as e_proc:
-            logger.error(
-                f"Handler {self.camera_name}: VimbaError during frame processing: {e_proc}"
-            )
-        except Exception as e_proc_unexp:
+            if self._is_frame_valid(frame):
+                self._process_and_emit_frame(frame)
+        except Exception as e:
+            # This top-level catch handles unexpected errors during processing
             logger.exception(
-                f"Handler {self.camera_name}: Unexpected error processing frame: {e_proc_unexp}"
+                f"Handler {self.camera_name}: Unhandled error in frame processing: {e}"
             )
         finally:
-            # --- CRITICAL: Queue frame back to Vimba acquisition engine ---
-            try:
-                cam.queue_frame(frame)
-            except VmbCameraError as e_queue:
-                logger.error(
-                    f"Handler {self.camera_name}: CRITICAL - Failed to queue frame back: {e_queue}"
+            # Re-queue the frame regardless of whether it was valid or if processing failed.
+            # This is the most robust pattern.
+            self._requeue_frame(cam, frame)
+
+    def _is_frame_valid(self, frame: Frame) -> bool:
+        """Checks frame status. Returns True if frame is complete, False otherwise."""
+        try:
+            frame_status = frame.get_status()
+            if frame_status == FrameStatus.Complete:
+                return True
+            else:
+                logger.warning(
+                    f"Received invalid frame for {self.camera_name}: {frame_status.name}"
                 )
-                # This is serious, might indicate stream is broken.
-                # Consider signaling a major error state.
-                self.error.emit(f"CRITICAL Frame queueing error: {e_queue}")
-            except Exception as e_queue_unexp:
-                logger.exception(
-                    f"Handler {self.camera_name}: CRITICAL - Unexpected error queueing frame: {e_queue_unexp}"
-                )
-                self.error.emit("CRITICAL Unexpected frame queueing error")
+                return False
+        except VmbCameraError as e:
+            logger.error(f"Error getting frame status for {self.camera_name}: {e}")
+            return False
+
+    def _process_and_emit_frame(self, frame: Frame):
+        """
+        Converts a valid frame to a numpy array, processes it (e.g., flip),
+        and emits the necessary signals for the GUI.
+        This method assumes the frame is valid.
+        """
+        # Convert frame to OpenCV image
+        current_image = frame.as_opencv_image()
+
+        if current_image is None or current_image.size == 0:
+            logger.warning(
+                f"Handler {self.camera_name}: Frame from as_opencv_image() is None or empty."
+            )
+            return
+
+        # Apply horizontal flip if configured
+        if self.flip_horizontal:
+            current_image = cv2.flip(current_image, 1)
+
+        # Update frame buffer. Must copy as the underlying buffer will be reused by Vimba.
+        processed_image = current_image.copy()
+        self.frame_buffer.add_frame(processed_image)
+
+        # --- Emit signals (must be thread-safe to Qt) ---
+        self.new_frame.emit(processed_image)
+
+        # Update FPS monitor and emit signal
+        fps = self.frame_monitor.update()
+        self.fps_updated.emit(fps)
+
+    def _requeue_frame(self, cam: Camera, frame: Frame):
+        """
+        CRITICAL: Always attempts to queue the frame back to the Vimba acquisition engine.
+        This must be called for every frame that is received, regardless of its status.
+        """
+        try:
+            cam.queue_frame(frame)
+        except VmbCameraError as e:
+            logger.error(
+                f"Handler {self.camera_name}: CRITICAL - Failed to queue frame back: {e}"
+            )
+            # This is serious, might indicate stream is broken.
+            self.error.emit(f"CRITICAL Frame queueing error: {e}")
+        except Exception as e_unexp:
+            logger.exception(
+                f"Handler {self.camera_name}: CRITICAL - Unexpected error queueing frame: {e_unexp}"
+            )
+            self.error.emit("CRITICAL Unexpected frame queueing error")
 
     def open(self) -> bool:
         """Opens camera and starts streaming using the callback handler."""
@@ -416,53 +403,78 @@ class VimbaCam(QObject):
             self.error.emit(f"Config error: {e}")
 
     def _set_pixel_format(self):
+        """
+        Determines and sets the best OpenCV-compatible pixel format.
+        This method now guarantees that `self.is_mono` will be either True or False.
+        If a suitable format cannot be found or set, it raises a VmbCameraError.
+        """
         if not self.device:
-            return
+            raise VmbCameraError("Cannot set pixel format: device not open.")
+
         try:
             dev_formats = self.device.get_pixel_formats()
+            # Find all formats that are compatible with Vimba's OpenCV transform
             cv_formats = intersect_pixel_formats(dev_formats, OPENCV_PIXEL_FORMATS)
+
             if not cv_formats:
-                logger.error("No OpenCV compatible formats!")
-                self.error.emit("No OpenCV format.")
-                self.settings.pixel_format = self.device.get_pixel_format()
-                self.is_mono = None
-                return
+                raise VmbCameraError(
+                    "No OpenCV-compatible pixel formats found on this camera."
+                )
+
+            # --- Determine the best format to use ---
             preferred_format = None
+            is_mono = None
+
+            # 1. Prioritize monochrome formats for simplicity and performance
             mono_cv = intersect_pixel_formats(cv_formats, MONO_PIXEL_FORMATS)
-            color_cv = intersect_pixel_formats(cv_formats, COLOR_PIXEL_FORMATS)
             if mono_cv:
-                preferred_format = mono_cv[0]
-                self.is_mono = True
+                # Prefer 8-bit mono if available
+                preferred_format = next(
+                    (f for f in mono_cv if f.name == "Mono8"), mono_cv[0]
+                )
+                is_mono = True
                 logger.info(f"Selecting Mono format: {preferred_format.name}")
-            elif color_cv:
-                for fmt in color_cv:
-                    if fmt.name in ["RGB8", "BGR8"]:
-                        preferred_format = fmt
-                        break
-                if not preferred_format:
-                    preferred_format = color_cv[0]
-                self.is_mono = False
-                logger.info(f"Selecting Color format: {preferred_format.name}")
+
+            # 2. If no mono, look for common color formats
             else:
-                logger.warning("No suitable Mono/Color format.")
-                preferred_format = cv_formats[0]
-                self.is_mono = None
+                color_cv = intersect_pixel_formats(cv_formats, COLOR_PIXEL_FORMATS)
+                if color_cv:
+                    # Prefer 8-bit BGR or RGB as they are most common for OpenCV
+                    preferred_format = next(
+                        (f for f in color_cv if f.name in ["BGR8", "RGB8"]), None
+                    )
+                    if not preferred_format:
+                        # Fallback to the first available color format
+                        preferred_format = color_cv[0]
+                    is_mono = False
+                    logger.info(f"Selecting Color format: {preferred_format.name}")
+
+            # 3. If no suitable mono or color format was found, this is an error
+            if preferred_format is None or is_mono is None:
+                raise VmbCameraError(
+                    f"Could not find a supported mono or color format. Available CV formats: {[f.name for f in cv_formats]}"
+                )
+
+            # --- Set the format and update state ---
             self.device.set_pixel_format(preferred_format)
             self.settings.pixel_format = preferred_format
+            self.is_mono = is_mono  # This is now guaranteed to be True or False
             logger.info(
-                f"Pixel format set to: {preferred_format.name}. Is Mono: {self.is_mono}"
+                f"Pixel format set to: {self.settings.pixel_format.name}. Is Mono: {self.is_mono}"
             )
+
         except VmbCameraError as e:
-            logger.error(f"Pixel format error: {e}")
+            # Re-raise Vimba errors to be caught by the calling `open` method
+            logger.error(
+                f"Failed to configure pixel format for {self.camera_name}: {e}"
+            )
             self.error.emit(f"Pixel format error: {e}")
-        try:
-            self.settings.pixel_format = self.device.get_pixel_format()
+            raise  # Let the caller handle this failure
         except Exception as e:
-            pass
-            self.is_mono = None
+            # Wrap unexpected errors in a VmbCameraError
             logger.error(f"Unexpected pixel format error: {e}", exc_info=True)
             self.error.emit(f"Unexpected pixel format error: {e}")
-            self.is_mono = None
+            raise VmbCameraError(f"Unexpected error setting pixel format: {e}") from e
 
     def _update_settings_cache(self):
         logger.debug(f"Updating settings cache for {self.camera_name}...")
@@ -522,7 +534,9 @@ class VimbaCam(QObject):
             self.is_streaming = False
 
             try:
-                self.device.start_streaming(self._frame_handler, buffer_count=5)
+                self.device.start_streaming(
+                    self._frame_handler, buffer_count=self._DEFAULT_STREAM_BUFFER_COUNT
+                )
                 # If we reach here, it was successful
                 self.is_streaming = True
                 logger.info(
@@ -637,7 +651,7 @@ class VimbaCam(QObject):
         logger.warning(f"Executing recovery attempt for {self.camera_name}...")
         self.close()
         # Use QThread.msleep() for a non-blocking delay if this is called from the GUI thread
-        QThread.msleep(500)
+        QThread.msleep(self._RECOVERY_DELAY_MS)
         if not self._is_closing:
             self.open()
             if self.is_streaming:
@@ -649,7 +663,7 @@ class VimbaCam(QObject):
                 self.error.emit(f"Failed to reconnect '{self.camera_name}'.")
 
     # --- Feature Access Methods ---
-    def get_latest_frame(self) -> Optional[np.ndarray]:
+    def get_latest_frame(self) -> np.ndarray | None:
         return self.frame_buffer.get_latest_frame()
 
     def get_setting(self, setting_name: str) -> Any:
@@ -681,7 +695,7 @@ class VimbaCam(QObject):
             )
             return default_value
 
-    def get_exposure(self) -> Optional[float]:
+    def get_exposure(self) -> float | None:
         if not self.device:
             return self.settings.exposure_us
         try:
@@ -701,40 +715,7 @@ class VimbaCam(QObject):
             self.error.emit(f"Unexpected exposure read error: {e}")
             return self.settings.exposure_us
 
-    def set_exposure(self, value_us: float) -> bool:
-        if not self.device:
-            logger.warning("Cannot set exposure: Camera not connected.")
-            return False
-        try:
-            with QMutexLocker(self.lock):
-                if not self.device:
-                    return False
-                try:
-                    feat_auto = self.device.get_feature_by_name("ExposureAuto")
-                    feat_auto.set("Off") if feat_auto.is_writeable() else None
-                    self.settings.is_auto_exposure_on = False
-                except VmbCameraError as e_auto:
-                    logger.warning(f"Could not disable ExposureAuto: {e_auto}")
-                feat_exp = self.device.get_feature_by_name("ExposureTimeAbs")
-                min_val, max_val = feat_exp.get_range()
-                set_val = max(min_val, min(max_val, value_us))
-                if abs(set_val - value_us) > 1:
-                    logger.warning(f"Exposure {value_us} us clamped to {set_val} us")
-                feat_exp.set(set_val)
-                self.settings.exposure_us = set_val
-                return True
-        except VmbCameraError as e:
-            error_msg = f"Error setting exposure: {e}"
-            logger.error(error_msg)
-            self.error.emit(error_msg)
-            return False
-        except Exception as e:
-            error_msg = f"Unexpected error setting exposure: {e}"
-            logger.error(error_msg, exc_info=True)
-            self.error.emit(error_msg)
-            return False
-
-    def get_gamma(self) -> Optional[float]:  # ...
+    def get_gamma(self) -> float | None:  # ...
         if not self.device:
             return self.settings.gamma
         try:
@@ -753,37 +734,7 @@ class VimbaCam(QObject):
             self.error.emit(f"Unexpected gamma read error: {e}")
             return self.settings.gamma
 
-    def set_gamma(self, value: float) -> bool:  # ...
-        if not self.device:
-            logger.warning("Cannot set gamma: not connected.")
-            return False
-        try:
-            with QMutexLocker(self.lock):
-                if not self.device:
-                    return False
-                feat = self.device.get_feature_by_name("Gamma")
-                if not feat.is_writeable():
-                    logger.warning("Gamma not writeable.")
-                    return False
-                min_val, max_val = feat.get_range()
-                set_val = max(min_val, min(max_val, value))
-                if abs(set_val - value) > 0.01:
-                    logger.warning(f"Gamma {value:.2f} clamped to {set_val:.2f}")
-                feat.set(set_val)
-                self.settings.gamma = set_val
-                return True
-        except VmbCameraError as e:
-            error_msg = f"Error setting gamma: {e}"
-            logger.error(error_msg)
-            self.error.emit(error_msg)
-            return False
-        except Exception as e:
-            error_msg = f"Unexpected error setting gamma: {e}"
-            logger.error(error_msg, exc_info=True)
-            self.error.emit(error_msg)
-            return False
-
-    def get_gain(self) -> Optional[float]:  # ...
+    def get_gain(self) -> float | None:  # ...
         if not self.device:
             return self.settings.gain_db
         try:
@@ -803,40 +754,101 @@ class VimbaCam(QObject):
             self.error.emit(f"Unexpected gain read error: {e}")
             return self.settings.gain_db
 
-    def set_gain(self, value_db: float) -> bool:  # ...
+    def _set_feature_value(
+        self,
+        feature_name: str,
+        value: float,
+        setting_attr: str,
+        auto_feature_name: str | None = None,
+        auto_setting_attr: str | None = None,
+    ) -> bool:
+        """
+        Generic helper to set a camera feature's value, optionally disabling its 'Auto' mode.
+        This method is thread-safe.
+
+        Args:
+            feature_name: The Vimba name of the feature to set (e.g., "ExposureTimeAbs").
+            value: The desired value for the feature.
+            setting_attr: The attribute name in `self.settings` to update (e.g., "exposure_us").
+            auto_feature_name: The Vimba name of the corresponding 'Auto' feature (e.g., "ExposureAuto").
+            auto_setting_attr: The attribute name in `self.settings` for the auto status.
+
+        Returns:
+            True on success, False on failure.
+        """
         if not self.device:
-            logger.warning("Cannot set gain: not connected.")
+            logger.warning(f"Cannot set {feature_name}: Camera not connected.")
             return False
         try:
             with QMutexLocker(self.lock):
                 if not self.device:
                     return False
-                try:
-                    feat_auto = self.device.get_feature_by_name("GainAuto")
-                    feat_auto.set("Off") if feat_auto.is_writeable() else None
-                    self.settings.is_auto_gain_on = False
-                except VmbCameraError as e_auto:
-                    logger.warning(f"Could not disable GainAuto: {e_auto}")
-                feat_gain = self.device.get_feature_by_name("Gain")
-                min_val, max_val = feat_gain.get_range()
-                set_val = max(min_val, min(max_val, value_db))
-                if abs(set_val - value_db) > 0.1:
-                    logger.warning(
-                        f"Gain {value_db:.1f} dB clamped to {set_val:.1f} dB"
-                    )
-                feat_gain.set(set_val)
-                self.settings.gain_db = set_val
+
+                # 1. Disable Auto mode if applicable
+                if auto_feature_name:
+                    try:
+                        feat_auto = self.device.get_feature_by_name(auto_feature_name)
+                        if (
+                            feat_auto.is_writeable()
+                            and "Off" in feat_auto.get_available_entries()
+                        ):
+                            feat_auto.set("Off")
+                            if auto_setting_attr:
+                                setattr(self.settings, auto_setting_attr, False)
+                    except VmbCameraError as e_auto:
+                        logger.warning(
+                            f"Could not disable {auto_feature_name}: {e_auto}"
+                        )
+
+                # 2. Set the primary feature value
+                feat = self.device.get_feature_by_name(feature_name)
+                if not feat.is_writeable():
+                    logger.warning(f"Feature '{feature_name}' is not writable.")
+                    return False
+
+                min_val, max_val = feat.get_range()
+                set_val = max(min_val, min(max_val, value))
+                feat.set(set_val)
+
+                # 3. Update the local settings cache
+                setattr(self.settings, setting_attr, set_val)
+                logger.debug(f"Set {feature_name} to {set_val} (requested {value})")
                 return True
+
         except VmbCameraError as e:
-            error_msg = f"Error setting gain: {e}"
+            error_msg = f"Error setting {feature_name}: {e}"
             logger.error(error_msg)
             self.error.emit(error_msg)
             return False
         except Exception as e:
-            error_msg = f"Unexpected error setting gain: {e}"
+            error_msg = f"Unexpected error setting {feature_name}: {e}"
             logger.error(error_msg, exc_info=True)
             self.error.emit(error_msg)
             return False
+
+    def set_exposure(self, value_us: float) -> bool:
+        return self._set_feature_value(
+            feature_name="ExposureTimeAbs",
+            value=value_us,
+            setting_attr="exposure_us",
+            auto_feature_name="ExposureAuto",
+            auto_setting_attr="is_auto_exposure_on",
+        )
+
+    def set_gamma(self, value: float) -> bool:
+        # Gamma typically does not have an "Auto" mode to disable
+        return self._set_feature_value(
+            feature_name="Gamma", value=value, setting_attr="gamma"
+        )
+
+    def set_gain(self, value_db: float) -> bool:
+        return self._set_feature_value(
+            feature_name="Gain",
+            value=value_db,
+            setting_attr="gain_db",
+            auto_feature_name="GainAuto",
+            auto_setting_attr="is_auto_gain_on",
+        )
 
     def set_auto_exposure_once(self) -> bool:
         if self._set_auto_mode_once("ExposureAuto"):

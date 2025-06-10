@@ -1,9 +1,9 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict
+from typing import Any
 
 
 # A helper function to safely get typed values from the config dict
-def get_typed_value(data: Dict, key: str, default: Any, target_type: type) -> Any:
+def get_typed_value(data: dict, key: str, default: Any, target_type: type) -> Any:
     """Safely retrieves and casts a value from a dictionary."""
     value = data.get(key, default)
     try:
@@ -14,6 +14,8 @@ def get_typed_value(data: Dict, key: str, default: Any, target_type: type) -> An
 
 @dataclass
 class LoggingConfig:
+    """Configuration for the application's logging behavior."""
+
     level: str = "INFO"
     file: str = "lab_app.log"
     mode: str = "a"
@@ -23,12 +25,17 @@ class LoggingConfig:
 
 @dataclass
 class InstrumentsConfig:
+    """Configuration for physical hardware addresses and paths."""
+
     ct400_dll_path: str = ""
     tunics_gpib_address: int = 10
+    tunics_laser_type: str = "LS_TunicsT100s_HP"
 
 
 @dataclass
 class CameraConfig:
+    """Configuration for a single camera instance."""
+
     enabled: bool = False
     identifier: str = ""
     name: str = "Camera"
@@ -39,6 +46,8 @@ class CameraConfig:
 
 @dataclass
 class ScanDefaults:
+    """Default parameters for the CT400 Wavelength Scan panel."""
+
     start_wavelength_nm: float = 1550.0
     end_wavelength_nm: float = 1560.0
     resolution_pm: int = 1
@@ -53,6 +62,8 @@ class ScanDefaults:
 
 @dataclass
 class HistogramDefaults:
+    """Default parameters for the Power Monitor (Histogram) panel."""
+
     wavelength_nm: float = 1550.0
     laser_power: float = 1.0
     power_unit: str = "mW"
@@ -66,6 +77,8 @@ class HistogramDefaults:
 
 @dataclass
 class UIConfig:
+    """Configuration for general user interface behavior."""
+
     initial_width_ratio: float = 0.8
     initial_height_ratio: float = 0.8
 
@@ -80,10 +93,10 @@ class AppConfig:
     histogram_defaults: HistogramDefaults = field(default_factory=HistogramDefaults)
     ui: UIConfig = field(default_factory=UIConfig)
     app_name: str = "IOPanel"
-    cameras: Dict[str, CameraConfig] = field(default_factory=dict)
+    cameras: dict[str, CameraConfig] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, config_dict: Dict[str, Any]) -> "AppConfig":
+    def from_dict(cls, config_dict: dict[str, Any]) -> "AppConfig":
         """Creates an AppConfig instance from a raw dictionary loaded from config.ini."""
 
         # --- PARSE SECTIONS WITH EXPLICIT TYPE CONVERSION ---
@@ -102,6 +115,9 @@ class AppConfig:
             ct400_dll_path=get_typed_value(instr_data, "ct400_dll_path", "", str),
             tunics_gpib_address=get_typed_value(
                 instr_data, "tunics_gpib_address", 10, int
+            ),
+            tunics_laser_type=get_typed_value(
+                instr_data, "tunics_laser_type", "LS_TunicsT100s_HP", str
             ),
         )
 

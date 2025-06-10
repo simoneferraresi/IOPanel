@@ -1,5 +1,3 @@
-# CT400_updated.py
-
 """
 Python wrapper for the Yenista CT400 Component Tester using CT400_lib.dll.
 
@@ -52,7 +50,8 @@ Basic Usage:
 
 import logging
 import os
-from collections import namedtuple
+
+# from collections import namedtuple
 from ctypes import (
     POINTER,
     WinDLL,
@@ -63,8 +62,8 @@ from ctypes import (
     c_uint32,
     c_uint64,
 )
+from dataclasses import dataclass
 from enum import IntEnum
-from typing import List, Optional, Tuple
 
 import numpy as np
 
@@ -138,9 +137,12 @@ class Unit(IntEnum):
     Unit_dBm = 1
 
 
-# --- Named Tuple for Structured Data Return ---
+@dataclass(frozen=True)  # frozen=True makes it immutable, similar to a tuple
+class PowerData:
+    """Represents an instantaneous power reading from all CT400 detectors."""
 
-PowerData = namedtuple("PowerData", ["pout", "detectors"])
+    pout: float
+    detectors: "dict[Detector, float]"
 
 
 class CT400:
@@ -188,7 +190,7 @@ class CT400:
 
         # The CT400_Init function uses a pointer to an integer to return an error code.
         init_error = c_int32()
-        self.handle: Optional[int] = self.dll.CT400_Init(byref(init_error))
+        self.handle: int | None = self.dll.CT400_Init(byref(init_error))
 
         if not self.handle:
             raise CT400InitializationError(
@@ -547,8 +549,8 @@ class CT400:
         return result
 
     def get_data_points(
-        self, dets_used: List[Detector]
-    ) -> Tuple[np.ndarray, np.ndarray]:
+        self, dets_used: list[Detector]
+    ) -> tuple[np.ndarray, np.ndarray]:
         """
         Retrieves the resampled wavelength and power data after a scan has completed.
 

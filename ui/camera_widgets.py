@@ -1,7 +1,7 @@
 import logging
 import math
 import time
-from typing import Literal, Optional
+from typing import Literal
 
 import cv2
 import numpy as np
@@ -57,7 +57,7 @@ class ParameterControl(QWidget):
         initial_val: float,
         scale: Literal["linear", "log"] = "linear",
         decimals: int = 0,
-        parent: Optional[QWidget] = None,
+        parent: QWidget | None = None,
     ):
         super().__init__(parent)
         self.param_name = name
@@ -204,9 +204,9 @@ class ParameterControl(QWidget):
 
 
 class AspectLockedLabel(QLabel):
-    def __init__(self, parent: Optional[QWidget] = None):
+    def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
-        self._aspect_ratio: Optional[float] = None
+        self._aspect_ratio: float | None = None
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setScaledContents(False)
 
@@ -251,7 +251,7 @@ class AutoOpWorker(QRunnable):
 
     def run(self):
         try:
-            result_value: Optional[float] = None
+            result_value: float | None = None
             success = False
             camera_method_success = False
 
@@ -343,14 +343,14 @@ class CameraPanel(QFrame):
         camera: VimbaCam,
         title: str,
         config: CameraConfig,
-        parent: Optional[QWidget] = None,
+        parent: QWidget | None = None,
     ):
         super().__init__(parent)
         self.camera = camera
         self.config = config
         self._panel_title = title
-        self._latest_pixmap: Optional[QPixmap] = None
-        self._display_size_cache: Optional[QtCore.QSize] = None
+        self._latest_pixmap: QPixmap | None = None
+        self._display_size_cache: QtCore.QSize | None = None
         self._thread_pool = QThreadPool.globalInstance()
         self._last_resize_time: float = 0.0
         self._resize_timer = QTimer(self)
@@ -566,73 +566,50 @@ class CameraPanel(QFrame):
             QTimer.singleShot(3500, lambda: self.clear_status_indicators("gain"))
             self.gain_btn.setEnabled(True)
 
-    def clear_status_indicators(self, control: Optional[str] = None):
+    def clear_status_indicators(self, control: str | None = None):
         if control is None or control == "exposure":
             self.exposure_status.setText("")
         if control is None or control == "gain":
             self.gain_status.setText("")
 
-    # --- The rest of the CameraPanel methods (frame processing, etc.) remain unchanged ---
     @Slot(object)
-    def process_new_frame_data(self, frame: Optional[np.ndarray]):
+    def process_new_frame_data(self, frame: np.ndarray | None):
         self.watchdog_timer.start()
-        if frame is None:
+        if frame is None or not self.camera or self.camera.device is None:
             self.set_frame_pixmap(None)
             return
-        if not self.camera or self.camera.device is None:
-            self.set_frame_pixmap(None)
-            return
+
         try:
+            # is_mono is now guaranteed by VimbaCam to be a boolean (True or False)
             is_mono = self.camera.is_mono
             h, w = frame.shape[:2]
-            q_img: Optional[QImage] = None
-            if is_mono is None:
-                logger.log(
-                    logging.DEBUG if hasattr(self, "_warned_mono") else logging.WARNING,
-                    f"Mono status unknown for {self.camera.camera_name}, assuming color for conversion.",
-                )
-                self._warned_mono = True
-                if len(frame.shape) == 3 and frame.shape[2] == 3:
-                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    q_img = QImage(
-                        frame_rgb.data,
-                        w,
-                        h,
-                        frame_rgb.strides[0],
-                        QImage.Format.Format_RGB888,
-                    )
-                else:
-                    logger.error(
-                        f"Cannot process frame for {self.camera.camera_name}: Unknown format (shape: {frame.shape})"
-                    )
-                    self.set_frame_pixmap(None)
-                    return
-            elif is_mono:
-                processed_mono_frame = None
+            q_img: QImage | None = None
+
+            if is_mono:
+                # Frame should be 2D (or 3D with one channel). Ensure it's 2D Grayscale8.
+                if frame.ndim == 3 and frame.shape[2] == 1:
+                    frame = frame.reshape(h, w)  # Squeeze to 2D
+
                 if frame.ndim == 2:
-                    processed_mono_frame = frame
-                elif frame.ndim == 3 and frame.shape[2] == 1:
-                    processed_mono_frame = frame.reshape(h, w)
-                if processed_mono_frame is not None:
-                    if not processed_mono_frame.flags["C_CONTIGUOUS"]:
-                        processed_mono_frame = np.ascontiguousarray(
-                            processed_mono_frame
-                        )
+                    # Ensure the data is C-contiguous for QImage
+                    if not frame.flags["C_CONTIGUOUS"]:
+                        frame = np.ascontiguousarray(frame)
                     q_img = QImage(
-                        processed_mono_frame.data,
+                        frame.data,
                         w,
                         h,
-                        processed_mono_frame.strides[0],
+                        frame.strides[0],
                         QImage.Format.Format_Grayscale8,
                     )
                 else:
-                    logger.error(
-                        f"Could not process mono frame for {self.camera.camera_name}, shape {frame.shape} not handled."
+                    logger.warning(
+                        f"Mono camera {self.camera.camera_name} provided unexpected frame shape: {frame.shape}"
                     )
-                    self.set_frame_pixmap(None)
-                    return
-            else:
+
+            else:  # Color
+                # Frame should be 3D with 3 channels (BGR from OpenCV)
                 if frame.ndim == 3 and frame.shape[2] == 3:
+                    # Convert BGR (OpenCV default) to RGB for QImage
                     frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     q_img = QImage(
                         frame_rgb.data,
@@ -642,28 +619,25 @@ class CameraPanel(QFrame):
                         QImage.Format.Format_RGB888,
                     )
                 else:
-                    logger.error(
-                        f"Expected 3D array for Color camera {self.camera.camera_name}, got shape {frame.shape}"
+                    logger.warning(
+                        f"Color camera {self.camera.camera_name} provided unexpected frame shape: {frame.shape}"
                     )
-                    self.set_frame_pixmap(None)
-                    return
 
-            if q_img is not None:
+            if q_img:
                 self.video_label.setStyleSheet("background-color: transparent;")
-                pixmap = QPixmap.fromImage(q_img.copy())
-                is_first_valid_pixmap_for_ar_setting = False
-                if hasattr(self.video_label, "setAspectRatio"):
-                    current_label_ar = getattr(self.video_label, "_aspect_ratio", None)
-                    if current_label_ar is None and not pixmap.isNull():
-                        is_first_valid_pixmap_for_ar_setting = True
-                if is_first_valid_pixmap_for_ar_setting:
+                pixmap = QPixmap.fromImage(q_img.copy())  # Copy is important!
+
+                # Set aspect ratio on the first valid frame
+                if self.video_label._aspect_ratio is None and not pixmap.isNull():
                     logger.debug(
-                        f"Panel {self._panel_title}: Setting aspect ratio on AspectLockedLabel from pixmap W:{pixmap.width()} H:{pixmap.height()}"
+                        f"Panel {self._panel_title}: Setting aspect ratio from first pixmap W:{pixmap.width()} H:{pixmap.height()}"
                     )
                     self.video_label.setAspectRatio(pixmap.width(), pixmap.height())
+
                 self.set_frame_pixmap(pixmap)
             else:
                 self.set_frame_pixmap(None)
+
         except cv2.error as cv_err:
             logger.error(
                 f"Panel {self._panel_title}: OpenCV error processing frame: {cv_err}"
@@ -671,7 +645,7 @@ class CameraPanel(QFrame):
             self.set_frame_pixmap(None)
         except Exception as e:
             logger.exception(
-                f"Panel {self._panel_title}: Error processing frame data: {e}"
+                f"Panel {self._panel_title}: Unhandled error processing frame data: {e}"
             )
             self.set_frame_pixmap(None)
 
@@ -690,7 +664,7 @@ class CameraPanel(QFrame):
         self.watchdog_timer.stop()
 
     @Slot(QPixmap)
-    def set_frame_pixmap(self, pixmap: Optional[QPixmap]):
+    def set_frame_pixmap(self, pixmap: QPixmap | None):
         is_null_or_none = pixmap is None or pixmap.isNull()
         if not is_null_or_none:
             self._latest_pixmap = pixmap

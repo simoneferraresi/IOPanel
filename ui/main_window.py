@@ -2,7 +2,6 @@ import logging
 import os
 import sys
 from enum import Enum, auto
-from typing import Dict, List, Optional
 
 import numpy as np
 from PySide6 import QtGui, QtWidgets
@@ -25,7 +24,7 @@ from PySide6.QtWidgets import (
 )
 from vmbpy import VmbCameraError, VmbSystem, VmbSystemError
 
-from config_model import AppConfig
+from config_model import AppConfig, CameraConfig
 
 try:
     import resources.resources_rc as resources_rc  # noqa: F401
@@ -69,16 +68,16 @@ class MainWindow(QMainWindow):
         self.config = config
         logger.info("Initializing MainWindow...")
 
-        self.cameras: List[VimbaCam] = []
-        self.camera_panels: Dict[str, CameraPanel] = {}
-        self.ct400_device: Optional[CT400] = None
+        self.cameras: list[VimbaCam] = []
+        self.camera_panels: dict[str, CameraPanel] = {}
+        self.ct400_device: CT400 | None = None
         self.shared_scan_settings = ScanSettings()
-        self.vmb_instance: Optional[VmbSystem] = None
+        self.vmb_instance: VmbSystem | None = None
         self.is_ct400_connected_state = False  # Track explicit connection state
-        self.camera_control_actions: Dict[str, QAction] = (
-            {}
-        )  # For camera control menu items
-        self.cameras_menu: Optional[QMenu] = None  # To hold camera control actions
+        self.camera_control_actions: dict[
+            str, QAction
+        ] = {}  # For camera control menu items
+        self.cameras_menu: QMenu | None = None  # To hold camera control actions
 
         self._start_vimbasystem()
         self._init_instruments()  # Initialize CT400 first
@@ -354,7 +353,7 @@ class MainWindow(QMainWindow):
     def _update_ct400_visuals(
         self,
         state: CT400Status,
-        message: Optional[str] = None,
+        message: str | None = None,
         status_bar_timeout: int = 5000,
     ):
         """
@@ -511,16 +510,32 @@ class MainWindow(QMainWindow):
             max_wl = self.config.scan_defaults.max_wavelength_nm
             speed = self.config.scan_defaults.speed_nm_s
 
+            # --- DYNAMIC LASER TYPE FROM CONFIG ---
+            # Get the laser type string from the config model
+            laser_type_str = self.config.instruments.tunics_laser_type
+            # Use getattr to find the corresponding member in the LaserSource enum.
+            # Provide a sensible default (the old hardcoded value) in case of a typo.
+            laser_type_enum = getattr(
+                LaserSource, laser_type_str, LaserSource.LS_TunicsT100s_HP
+            )
+            if laser_type_str not in LaserSource.__members__:
+                logger.warning(
+                    f"Laser type '{laser_type_str}' from config not found in LaserSource enum. "
+                    f"Falling back to '{laser_type_enum.name}'."
+                )
+
             self.ct400_device.set_laser(
                 laser_input=laser_input,
                 enable=Enable.ENABLE,
                 gpib_address=gpib,
-                laser_type=LaserSource.LS_TunicsT100s_HP,
+                laser_type=laser_type_enum,
                 min_wavelength=min_wl,
                 max_wavelength=max_wl,
                 speed=speed,
             )
-            logger.info(f"CT400 Connected (GPIB: {gpib}, Input: {laser_input.value}).")
+            logger.info(
+                f"CT400 Connected (GPIB: {gpib}, Input: {laser_input.value}, Type: {laser_type_enum.name})."
+            )
             self._update_ct400_visuals(
                 state=CT400Status.CONNECTED,
                 message=f"CT400 Connected (Input {laser_input.value})",
@@ -573,156 +588,151 @@ class MainWindow(QMainWindow):
 
     def _init_cameras(self):
         logger.info("Initializing cameras dynamically from config...")
-        if not self.camera_container or not self.camera_container.layout():
-            logger.error(
-                "Camera container or layout not found. Cannot initialize cameras."
-            )
-            return
-        if not self.cameras_menu:
-            logger.error(
-                "Cameras menu not initialized. Cannot add camera control actions."
-            )
+        if (
+            not self.camera_container
+            or not self.camera_container.layout()
+            or not self.cameras_menu
+        ):
+            logger.error("Cannot initialize cameras: UI container or menu is missing.")
             return
 
-        self._cleanup_cameras()
+        self._cleanup_cameras()  # Clear any previous cameras and UI
         camera_layout = self.camera_container.layout()
-        if (
-            not isinstance(camera_layout, QtWidgets.QHBoxLayout)
-            and not isinstance(camera_layout, QtWidgets.QVBoxLayout)
-            and not isinstance(camera_layout, QtWidgets.QGridLayout)
-        ):
-            logger.error(
-                f"Camera container layout is not a recognized QLayout type: {type(camera_layout)}"
-            )
-            if self.camera_container.layout() is None:
-                new_layout = QHBoxLayout(self.camera_container)
-                new_layout.setContentsMargins(0, 0, 0, 0)
-                new_layout.setSpacing(5)
-                camera_layout = new_layout
-            else:
-                return
 
         cameras_initialized_count = 0
-        cameras_attempted_count = 0
+        camera_configs = list(self.config.cameras.values())
 
-        # --- REFACTOR: This loop now correctly uses the typed AppConfig object ---
-        for section_name, cam_config in self.config.cameras.items():
-            cameras_attempted_count += 1
-
-            if not cam_config.enabled:
-                logger.info(f"Skipping disabled camera: {cam_config.name}")
-                continue
-
-            if not cam_config.identifier or cam_config.identifier.startswith("PUT_"):
-                logger.warning(
-                    f"Skipping camera '{cam_config.name}': Invalid or placeholder identifier."
-                )
-                error_msg = f"{cam_config.name}\n(Config Error: Invalid ID)"
-                placeholder = self._create_camera_error_placeholder(error_msg)
-                camera_layout.addWidget(placeholder)
-                continue
-
-            logger.info(
-                f"Attempting to initialize camera: {cam_config.name} (ID: {cam_config.identifier})"
-            )
-            cam_instance = None
-            try:
-                cam_instance = VimbaCam(
-                    identifier=cam_config.identifier,
-                    camera_name=cam_config.name,
-                    flip_horizontal=cam_config.flip_horizontal,
-                    parent=self,
-                )
-
-                if not cam_instance.open():
-                    logger.error(
-                        f"Failed to open camera {cam_config.name} (ID: {cam_config.identifier}). Skipping panel."
-                    )
-                    error_msg = f"{cam_config.name}\n(Failed to Open)"
-                    placeholder = self._create_camera_error_placeholder(error_msg)
-                    camera_layout.addWidget(placeholder)
-                    if cam_instance:
-                        cam_instance.close()
-                    continue
-
-                panel = CameraPanel(
-                    cam_instance,
-                    cam_config.name,
-                    config=cam_config,
-                    parent=self.camera_container,
-                )
-                camera_layout.addWidget(panel)
-                self.cameras.append(cam_instance)
-                self.camera_panels[cam_config.identifier] = panel
-
-                cam_instance.new_frame.connect(panel.process_new_frame_data)
-                if hasattr(panel, "update_fps"):
-                    cam_instance.fps_updated.connect(panel.update_fps)
-
-                action = QAction(self)
-                action.setCheckable(True)
-                action.setChecked(panel.get_controls_visible())
-                action.setText(
-                    f"{'Hide' if panel.get_controls_visible() else 'Show'} {cam_config.name} Controls"
-                )
-                action.setData(cam_config.identifier)
-                action.triggered.connect(self._handle_camera_control_toggle)
-                self.cameras_menu.addAction(action)
-                self.camera_control_actions[cam_config.identifier] = action
-
-                logger.info(
-                    f"Successfully initialized and connected signals for camera: {cam_config.name}"
-                )
-                cameras_initialized_count += 1
-
-            except VmbCameraError as e:
-                logger.error(
-                    f"Vimba Error initializing camera {cam_config.name} (ID: {cam_config.identifier}): {e}"
-                )
-                QMessageBox.warning(
-                    self, "Camera Error", f"Vimba error for {cam_config.name}:\n{e}"
-                )
-                error_msg = f"{cam_config.name}\n(Vimba Error)"
-                placeholder = self._create_camera_error_placeholder(error_msg)
-                camera_layout.addWidget(placeholder)
-                if cam_instance:
-                    cam_instance.close()
-            except Exception as e:
-                logger.error(
-                    f"Unexpected error initializing camera {cam_config.name} (ID: {cam_config.identifier}): {e}",
-                    exc_info=True,
-                )
-                QMessageBox.critical(
-                    self, "Camera Error", f"Critical error for {cam_config.name}:\n{e}"
-                )
-                error_msg = f"{cam_config.name}\n(Initialization Error)"
-                placeholder = self._create_camera_error_placeholder(error_msg)
-                camera_layout.addWidget(placeholder)
-                if cam_instance:
-                    cam_instance.close()
-
-        if cameras_attempted_count > 0 and cameras_initialized_count == 0:
-            logger.warning(
-                "No cameras were successfully initialized out of those attempted."
-            )
-            if self.cameras_menu and not self.cameras_menu.actions():
-                no_cam_action = QAction("No cameras available/configured", self)
-                no_cam_action.setEnabled(False)
-                self.cameras_menu.addAction(no_cam_action)
-
-        elif cameras_attempted_count == 0:
+        if not camera_configs:
             logger.info("No camera sections found in configuration.")
             placeholder_label = QLabel("No cameras configured in settings.")
             placeholder_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             camera_layout.addWidget(placeholder_label)
-            if self.cameras_menu:
-                no_cam_action = QAction("No cameras configured", self)
+            no_cam_action = QAction("No cameras configured", self)
+            no_cam_action.setEnabled(False)
+            self.cameras_menu.addAction(no_cam_action)
+            return
+
+        for cam_config in camera_configs:
+            if not self._should_initialize_camera(cam_config):
+                continue
+
+            cam_instance = self._create_and_open_camera(cam_config)
+            if not cam_instance:
+                continue
+
+            try:
+                panel = self._create_camera_panel(cam_instance, cam_config)
+                self._connect_camera_signals(cam_instance, panel)
+                self._create_camera_menu_action(cam_instance, panel)
+
+                self.cameras.append(cam_instance)
+                self.camera_panels[cam_config.identifier] = panel
+                cameras_initialized_count += 1
+                logger.info(f"Successfully set up UI for camera: {cam_config.name}")
+            except Exception as e:
+                logger.error(
+                    f"Failed to set up UI for camera {cam_config.name}: {e}",
+                    exc_info=True,
+                )
+                cam_instance.close()  # Ensure camera is closed if UI setup fails
+
+        if cameras_initialized_count == 0 and camera_configs:
+            logger.warning(
+                "No cameras were successfully initialized out of those attempted."
+            )
+            if not self.cameras_menu.actions():
+                no_cam_action = QAction("No cameras available/configured", self)
                 no_cam_action.setEnabled(False)
                 self.cameras_menu.addAction(no_cam_action)
         else:
             logger.info(
-                f"Total cameras initialized: {cameras_initialized_count} out of {cameras_attempted_count} attempted."
+                f"Total cameras initialized: {cameras_initialized_count} out of {len(camera_configs)} configured."
             )
+
+    def _should_initialize_camera(self, cam_config: "CameraConfig") -> bool:
+        """Checks if a camera from the config should be initialized."""
+        if not cam_config.enabled:
+            logger.info(f"Skipping disabled camera: {cam_config.name}")
+            return False
+        if not cam_config.identifier or cam_config.identifier.startswith("PUT_"):
+            logger.warning(
+                f"Skipping camera '{cam_config.name}': Invalid or placeholder identifier."
+            )
+            error_msg = f"{cam_config.name}\n(Config Error: Invalid ID)"
+            placeholder = self._create_camera_error_placeholder(error_msg)
+            self.camera_container.layout().addWidget(placeholder)
+            return False
+        return True
+
+    def _create_and_open_camera(self, cam_config: "CameraConfig") -> VimbaCam | None:
+        """Creates a VimbaCam instance and attempts to open it. Returns instance or None."""
+        try:
+            cam_instance = VimbaCam(
+                identifier=cam_config.identifier,
+                camera_name=cam_config.name,
+                flip_horizontal=cam_config.flip_horizontal,
+                parent=self,
+            )
+            if not cam_instance.open():
+                logger.error(
+                    f"Failed to open camera {cam_config.name} (ID: {cam_config.identifier})."
+                )
+                error_msg = f"{cam_config.name}\n(Failed to Open)"
+                placeholder = self._create_camera_error_placeholder(error_msg)
+                self.camera_container.layout().addWidget(placeholder)
+                cam_instance.close()  # Clean up the failed instance
+                return None
+            return cam_instance
+        except VmbCameraError as e:
+            logger.error(
+                f"Vimba Error initializing camera {cam_config.name} (ID: {cam_config.identifier}): {e}"
+            )
+            error_msg = f"{cam_config.name}\n(Vimba Error)"
+            placeholder = self._create_camera_error_placeholder(error_msg)
+            self.camera_container.layout().addWidget(placeholder)
+            return None
+        except Exception as e:
+            logger.error(
+                f"Unexpected error creating camera instance {cam_config.name}: {e}",
+                exc_info=True,
+            )
+            error_msg = f"{cam_config.name}\n(Init Error)"
+            placeholder = self._create_camera_error_placeholder(error_msg)
+            self.camera_container.layout().addWidget(placeholder)
+            return None
+
+    def _create_camera_panel(
+        self, cam_instance: VimbaCam, cam_config: "CameraConfig"
+    ) -> CameraPanel:
+        """Creates and returns a CameraPanel for a given camera instance."""
+        panel = CameraPanel(
+            cam_instance,
+            cam_config.name,
+            config=cam_config,
+            parent=self.camera_container,
+        )
+        self.camera_container.layout().addWidget(panel)
+        return panel
+
+    def _connect_camera_signals(self, cam_instance: VimbaCam, panel: CameraPanel):
+        """Connects signals between a camera instance and its UI panel."""
+        cam_instance.new_frame.connect(panel.process_new_frame_data)
+        cam_instance.fps_updated.connect(panel.update_fps)
+        # Connect the camera's generic error signal to the panel for display
+        cam_instance.error.connect(panel._handle_camera_error_message)
+
+    def _create_camera_menu_action(self, cam_instance: VimbaCam, panel: CameraPanel):
+        """Creates and registers a menu action to control the camera panel's visibility."""
+        action = QAction(self)
+        action.setCheckable(True)
+        action.setChecked(panel.get_controls_visible())
+        action.setText(
+            f"{'Hide' if panel.get_controls_visible() else 'Show'} {cam_instance.camera_name} Controls"
+        )
+        action.setData(cam_instance.identifier)
+        action.triggered.connect(self._handle_camera_control_toggle)
+        self.cameras_menu.addAction(action)
+        self.camera_control_actions[cam_instance.identifier] = action
 
     def _create_camera_error_placeholder(self, message: str) -> QWidget:
         """Helper to create a consistent placeholder for camera errors."""
@@ -815,7 +825,7 @@ class MainWindow(QMainWindow):
                 logger.error(f"Error updating plot widget: {e}", exc_info=True)
 
     @Slot(dict)
-    def handle_power_data(self, power_data: Dict):
+    def handle_power_data(self, power_data: dict):
         logger.debug(f"Received power data: {power_data}")
         if self.histogram_widget and hasattr(self.histogram_widget, "schedule_update"):
             try:
