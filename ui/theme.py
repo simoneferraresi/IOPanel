@@ -1016,7 +1016,6 @@ QPushButton#scanButton {{
     background-color: {ct400_scan_start_bg}; /* Green */
     color: {white};
     font-weight: bold;
-    /* font-size: 15; -> Handled by global QPushButton or can be added here */
     border: {none};
     padding: 8px 12px;
     border-radius: 3px; /* var(--radius-md) */
@@ -1031,11 +1030,9 @@ QPushButton#scanButton:disabled {{
     background-color: {c_neutral_200}; /* #e0e0e0 */
     color: {c_neutral_400}; /* #bdbdbd */
 }}
-
 /* Scan Button - Scanning State (Ready to Stop Scan) */
 QPushButton#scanButton[scanning="true"] {{
     background-color: {ct400_scanning_bg}; /* Red */
-    color: {white}; /* Ensure text color is still white */
 }}
 QPushButton#scanButton[scanning="true"]:hover {{
     background-color: {ct400_scanning_hover_bg}; /* Darker red */
@@ -1043,12 +1040,6 @@ QPushButton#scanButton[scanning="true"]:hover {{
 QPushButton#scanButton[scanning="true"]:pressed {{
     background-color: {ct400_scanning_pressed_bg}; /* Even darker red */
 }}
-/* Disabled state for scanning=true is less common but can use the default disabled style */
-QPushButton#scanButton[scanning="true"]:disabled {{
-    background-color: {c_neutral_200};
-    color: {c_neutral_400};
-}}
-
 
 /* Monitor Button - Default State (Ready to Start Monitoring) */
 QPushButton#monitorButton {{
@@ -1069,24 +1060,16 @@ QPushButton#monitorButton:disabled {{
     background-color: {c_neutral_200}; /* #e0e0e0 */
     color: {c_neutral_400}; /* #bdbdbd */
 }}
-
 /* Monitor Button - Monitoring State (Ready to Stop Monitoring) */
 QPushButton#monitorButton[monitoring="true"] {{
-    background-color: {ct400_scanning_bg}; /* Red (Changed from Orange for consistency with scan button stop) */
-                                 /* Or use var(--warning) #f59e0b; if you prefer orange */
+    background-color: {ct400_scanning_bg}; /* Red */
     color: {white};
 }}
 QPushButton#monitorButton[monitoring="true"]:hover {{
     background-color: {ct400_scanning_hover_bg}; /* Darker Red */
-    /* Or #e08e0a; for orange */
 }}
 QPushButton#monitorButton[monitoring="true"]:pressed {{
     background-color: {ct400_scanning_pressed_bg}; /* Even Darker Red */
-    /* Or #c87f09; for orange */
-}}
-QPushButton#monitorButton[monitoring="true"]:disabled {{
-    background-color: {c_neutral_200};
-    color: {c_neutral_400};
 }}
 
 /* ----------------------------------------
@@ -1100,7 +1083,6 @@ QLabel#ct400StatusLabel {{
     margin-right: 5px;
     border: 1px solid {transparent};
 }}
-
 QLabel#ct400StatusLabel[status="unknown"] {{
     background-color: {c_neutral_300}; color: {c_neutral_700}; border-color: {c_neutral_400};
 }}

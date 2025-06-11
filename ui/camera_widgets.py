@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 
 from config_model import CameraConfig
 from hardware.camera import VimbaCam
+from ui.constants import OP_AUTO_EXPOSURE, OP_AUTO_GAIN
 from ui.theme import CAMERA_PANEL_STYLE
 
 logger = logging.getLogger("LabApp.camera_widgets")
@@ -79,17 +80,13 @@ class ParameterControl(QWidget):
         layout.setSpacing(8)
 
         self.label = QLabel(f"{self.param_name}:")
-        self.label.setAlignment(
-            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-        )
+        self.label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         self.slider = QSlider(Qt.Orientation.Horizontal)
         self.slider.setRange(0, 1000)  # Always use a fixed slider range
 
         self.edit = QLineEdit()
-        self.edit.setValidator(
-            QtGui.QDoubleValidator(self.min_val, self.max_val, self.decimals)
-        )
+        self.edit.setValidator(QtGui.QDoubleValidator(self.min_val, self.max_val, self.decimals))
         self.edit.setFixedWidth(70)
 
         layout.addWidget(self.label)
@@ -243,7 +240,7 @@ class AspectLockedLabel(QLabel):
 class AutoOpWorker(QRunnable):
     def __init__(self, camera: VimbaCam, op_type: str, panel_callback: "CameraPanel"):
         super().__init__()
-        if op_type not in ["auto_exposure", "auto_gain"]:
+        if op_type not in [OP_AUTO_EXPOSURE, OP_AUTO_GAIN]:
             raise ValueError(f"Unknown auto operation type: {op_type}")
         self.camera = camera
         self.op_type = op_type
@@ -255,46 +252,38 @@ class AutoOpWorker(QRunnable):
             success = False
             camera_method_success = False
 
-            if self.op_type == "auto_exposure":
-                logger.debug(
-                    f"Worker: Calling camera.set_auto_exposure_once() for {self.camera.camera_name}"
-                )
+            if self.op_type == OP_AUTO_EXPOSURE:
+                logger.debug(f"Worker: Calling camera.set_auto_exposure_once() for {self.camera.camera_name}")
                 camera_method_success = self.camera.set_auto_exposure_once()
                 if camera_method_success:
                     logger.info(
                         f"Worker: {self.camera.camera_name} - ExposureAuto 'Once' mode set. Waiting for adjustment..."
                     )
-                    time.sleep(1.5)
+                    time.sleep(1)
                     result_value = self.camera.get_exposure()
                     logger.info(
                         f"Worker: {self.camera.camera_name} - Auto Exposure adjustment finished. New value: {result_value}"
                     )
                     success = result_value is not None
                 else:
-                    logger.error(
-                        f"Worker: {self.camera.camera_name} - camera.set_auto_exposure_once() returned False."
-                    )
+                    logger.error(f"Worker: {self.camera.camera_name} - camera.set_auto_exposure_once() returned False.")
                     success = False
 
-            elif self.op_type == "auto_gain":
-                logger.debug(
-                    f"Worker: Calling camera.set_auto_gain_once() for {self.camera.camera_name}"
-                )
+            elif self.op_type == OP_AUTO_GAIN:
+                logger.debug(f"Worker: Calling camera.set_auto_gain_once() for {self.camera.camera_name}")
                 camera_method_success = self.camera.set_auto_gain_once()
                 if camera_method_success:
                     logger.info(
                         f"Worker: {self.camera.camera_name} - GainAuto 'Once' mode set. Waiting for adjustment..."
                     )
-                    time.sleep(1.5)
+                    time.sleep(1)
                     result_value = self.camera.get_gain()
                     logger.info(
                         f"Worker: {self.camera.camera_name} - Auto Gain adjustment finished. New value: {result_value}"
                     )
                     success = result_value is not None
                 else:
-                    logger.error(
-                        f"Worker: {self.camera.camera_name} - camera.set_auto_gain_once() returned False."
-                    )
+                    logger.error(f"Worker: {self.camera.camera_name} - camera.set_auto_gain_once() returned False.")
                     success = False
 
             if success and result_value is not None:
@@ -302,22 +291,18 @@ class AutoOpWorker(QRunnable):
                     self.panel_callback,
                     "handle_auto_result",
                     Qt.ConnectionType.QueuedConnection,
-                    Q_ARG(str, self.op_type),
+                    Q_ARG(str, self.op_type),  # op_type is still the string
                     Q_ARG(float, result_value),
                 )
             elif not camera_method_success:
-                raise RuntimeError(
-                    f"Camera method for {self.op_type} reported failure to set 'Once' mode."
-                )
+                raise RuntimeError(f"Camera method for {self.op_type} reported failure to set 'Once' mode.")
             elif result_value is None and camera_method_success:
                 raise RuntimeError(
                     f"Camera method for {self.op_type} set 'Once' mode, but failed to retrieve new value."
                 )
 
         except Exception as e:
-            error_msg = (
-                f"Error during {self.op_type} for {self.camera.camera_name}: {e}"
-            )
+            error_msg = f"Error during {self.op_type} for {self.camera.camera_name}: {e}"
             logger.error(error_msg, exc_info=True)
             QMetaObject.invokeMethod(
                 self.panel_callback,
@@ -340,7 +325,7 @@ class CameraPanel(QFrame):
 
     def __init__(
         self,
-        camera: VimbaCam,
+        camera: VimbaCam | None,
         title: str,
         config: CameraConfig,
         parent: QWidget | None = None,
@@ -348,7 +333,7 @@ class CameraPanel(QFrame):
         super().__init__(parent)
         self.camera = camera
         self.config = config
-        self._panel_title = title
+        self._panel_title = title  # Use this for logging before camera is set
         self._latest_pixmap: QPixmap | None = None
         self._display_size_cache: QtCore.QSize | None = None
         self._thread_pool = QThreadPool.globalInstance()
@@ -361,14 +346,14 @@ class CameraPanel(QFrame):
         self.watchdog_timer = QTimer(self)
         self.watchdog_timer.setInterval(3000)
         self.watchdog_timer.setSingleShot(True)
-        self.watchdog_timer.timeout.connect(self.camera.attempt_recovery)
+        if self.camera:
+            self.watchdog_timer.timeout.connect(self.camera.attempt_recovery)
 
         self._current_fps: float = 0.0
         self._show_fps: bool = True
         self._fps_font = QFont("Segoe UI", 10, QFont.Weight.Bold)
         self._fps_color = QColor("lime")
-
-        self.setObjectName(f"cameraPanel_{camera.identifier}")
+        self.setObjectName(f"cameraPanel_{camera.identifier if camera else title.replace(' ', '_')}")
         self.setFrameStyle(QFrame.Shape.StyledPanel | QFrame.Shadow.Raised)
         self.setMinimumSize(320, 240)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -381,13 +366,15 @@ class CameraPanel(QFrame):
         self.main_layout.setContentsMargins(4, 4, 4, 4)
         self.main_layout.setSpacing(4)
 
-        # --- REFACTOR: UI setup using ParameterControl ---
         self._init_ui()
-
         self.main_layout.addWidget(self.controls_container)
 
         self.video_label = AspectLockedLabel(self)
-        self.video_label.setText("Initializing Camera...")
+        if self.camera:
+            self.video_label.setText("Waiting for frames...")
+        else:
+            self.video_label.setText(f"Connecting to\n{self._panel_title}...")
+
         self.video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.video_label.setStyleSheet("background-color: transparent; color: grey;")
         self.main_layout.addWidget(self.video_label, stretch=1)
@@ -395,46 +382,69 @@ class CameraPanel(QFrame):
         self.controls_container.setVisible(self.controls_visible)
         self.clear_status_indicators()
 
+    def set_camera(self, camera: VimbaCam):
+        """Assigns the live camera object to the panel after initialization."""
+        if self.camera is not None:
+            logger.warning(f"CameraPanel for {self._panel_title} is already assigned a camera.")
+            return
+
+        self.camera = camera
+        self.setObjectName(f"cameraPanel_{camera.identifier}")
+
+        self.watchdog_timer.timeout.connect(self.camera.attempt_recovery)
+        self._update_controls_from_camera()
+
+    def _update_controls_from_camera(self):
+        """Refreshes control widgets with values from the live camera."""
+        if not self.camera:
+            return
+
+        exposure_min_us = self.camera.get_feature_min_max("ExposureTimeAbs", 12.0)
+        exposure_max_us = self.camera.get_feature_min_max("ExposureTimeAbs", 8.45e7, is_max=True)
+        initial_exposure = self.camera.get_setting("exposure_us") or 10000.0
+
+        self.exposure_control.min_val = exposure_min_us
+        self.exposure_control.max_val = exposure_max_us
+        self.exposure_control.setValue(initial_exposure)
+
+        initial_gamma = self.camera.get_setting("gamma") or 1.0
+        self.gamma_control.setValue(initial_gamma)
+
     def _init_ui(self):
-        """Initializes the UI, now using the ParameterControl widget."""
+        """Initializes the UI, using defaults if camera is not yet available."""
         self.controls_container = QWidget()
         controls_grid = QGridLayout(self.controls_container)
         controls_grid.setVerticalSpacing(5)
         controls_grid.setHorizontalSpacing(8)
 
-        # --- REFACTOR: Create Gamma control ---
+        initial_gamma = self.camera.get_setting("gamma") if self.camera else 1.0
         self.gamma_control = ParameterControl(
             name="Gamma",
             min_val=0.1,
             max_val=4.0,
-            initial_val=self.camera.get_setting("gamma") or 1.0,
+            initial_val=initial_gamma,
             scale="linear",
             decimals=2,
         )
-        self.gamma_control.valueChanged.connect(
-            lambda val: self._handle_parameter_changed("gamma", val)
-        )
+        self.gamma_control.valueChanged.connect(lambda val: self._handle_parameter_changed("gamma", val))
         controls_grid.addWidget(self.gamma_control, 0, 0, 1, 3)
 
-        # --- REFACTOR: Create Exposure control ---
-        exposure_min_us = self.camera.get_feature_min_max("ExposureTimeAbs", 12.0)
-        exposure_max_us = self.camera.get_feature_min_max(
-            "ExposureTimeAbs", 8.45e7, is_max=True
+        exposure_min_us = self.camera.get_feature_min_max("ExposureTimeAbs", 12.0) if self.camera else 12.0
+        exposure_max_us = (
+            self.camera.get_feature_min_max("ExposureTimeAbs", 8.45e7, is_max=True) if self.camera else 8.45e7
         )
+        initial_exposure = self.camera.get_setting("exposure_us") if self.camera else 10000.0
         self.exposure_control = ParameterControl(
             name="Exposure (µs)",
             min_val=exposure_min_us,
             max_val=exposure_max_us,
-            initial_val=self.camera.get_setting("exposure_us") or 10000.0,
+            initial_val=initial_exposure,
             scale="log",
             decimals=0,
         )
-        self.exposure_control.valueChanged.connect(
-            lambda val: self._handle_parameter_changed("exposure", val)
-        )
+        self.exposure_control.valueChanged.connect(lambda val: self._handle_parameter_changed("exposure", val))
         controls_grid.addWidget(self.exposure_control, 1, 0, 1, 3)
 
-        # Auto Buttons remain the same
         auto_btn_layout = QHBoxLayout()
         self.exposure_btn = QPushButton("Auto Exposure")
         self.exposure_btn.setToolTip("Run single-shot auto exposure")
@@ -450,25 +460,20 @@ class CameraPanel(QFrame):
         auto_btn_layout.addWidget(self.gain_btn)
         auto_btn_layout.addWidget(self.gain_status)
         controls_grid.addLayout(auto_btn_layout, 2, 0, 1, 3)
-
         controls_grid.setColumnStretch(1, 1)
 
-        # Connect button signals
-        self.exposure_btn.clicked.connect(lambda: self._start_auto_op("auto_exposure"))
-        self.gain_btn.clicked.connect(lambda: self._start_auto_op("auto_gain"))
+        self.exposure_btn.clicked.connect(lambda: self._start_auto_op(OP_AUTO_EXPOSURE))
+        self.gain_btn.clicked.connect(lambda: self._start_auto_op(OP_AUTO_GAIN))
 
-    # --- REFACTOR: New generic handler for parameter changes ---
     def _handle_parameter_changed(self, name: str, value: float):
-        """
-        Handles the valueChanged signal from any ParameterControl widget.
+        """Handles the valueChanged signal from any ParameterControl widget."""
+        # --- FIX: Guard against calls before camera is set ---
+        if not self.camera:
+            logger.warning(f"Parameter '{name}' changed, but camera is not yet available.")
+            return
 
-        Args:
-            name: The name of the parameter that changed (e.g., 'gamma', 'exposure').
-            value: The new float value of the parameter.
-        """
         success = False
         control_widget = None
-
         if name == "gamma":
             success = self.camera.set_gamma(value)
             control_widget = self.gamma_control
@@ -479,14 +484,9 @@ class CameraPanel(QFrame):
         if control_widget:
             control_widget.visual_feedback(success)
             if not success:
-                # Revert UI if setting camera failed
-                reverted_value = self.camera.get_setting(
-                    f"{name}_us" if name == "exposure" else name
-                )
+                reverted_value = self.camera.get_setting(f"{name}_us" if name == "exposure" else name)
                 if reverted_value is not None:
-                    QTimer.singleShot(
-                        100, lambda: control_widget.setValue(reverted_value)
-                    )
+                    QTimer.singleShot(100, lambda: control_widget.setValue(reverted_value))
 
     @Slot(str)
     def _handle_camera_error_message(self, message: str):
@@ -500,9 +500,7 @@ class CameraPanel(QFrame):
             return
         self.controls_visible = visible
         self.controls_container.setVisible(self.controls_visible)
-        logger.debug(
-            f"CameraPanel '{self._panel_title}' controls set to visible: {self.controls_visible}"
-        )
+        logger.debug(f"CameraPanel '{self._panel_title}' controls set to visible: {self.controls_visible}")
 
     def get_controls_visible(self) -> bool:
         return self.controls_visible
@@ -514,14 +512,19 @@ class CameraPanel(QFrame):
     # within the ParameterControl class.
 
     def _start_auto_op(self, op_type: str):
-        # This method remains largely the same, but now updates ParameterControl on success
-        if op_type == "auto_exposure":
+        """Starts an auto-operation in a worker thread."""
+        # --- FIX: Guard against calls before camera is set ---
+        if not self.camera:
+            logger.warning(f"Cannot start '{op_type}': camera is not yet available.")
+            return
+
+        if op_type == OP_AUTO_EXPOSURE:
             if not self.exposure_btn.isEnabled():
                 return
             self.exposure_btn.setEnabled(False)
             self.exposure_status.setText("⟳")
             self.exposure_status.setStyleSheet("color: orange; font-weight: bold;")
-        elif op_type == "auto_gain":
+        elif op_type == OP_AUTO_GAIN:
             if not self.gain_btn.isEnabled():
                 return
             self.gain_btn.setEnabled(False)
@@ -529,6 +532,7 @@ class CameraPanel(QFrame):
             self.gain_status.setStyleSheet("color: orange; font-weight: bold;")
         else:
             return
+
         worker = AutoOpWorker(self.camera, op_type, self)
         self._thread_pool.start(worker)
 
@@ -572,10 +576,16 @@ class CameraPanel(QFrame):
         if control is None or control == "gain":
             self.gain_status.setText("")
 
-    @Slot(object)
-    def process_new_frame_data(self, frame: np.ndarray | None):
+    @Slot(np.ndarray)
+    def process_new_frame_data(self, frame: np.ndarray):
+        # --- FIX: Add a guard clause here. Even if the signal is connected,
+        # ensure the camera object is set on the panel before processing. ---
+        if not self.camera:
+            return
+
         self.watchdog_timer.start()
-        if frame is None or not self.camera or self.camera.device is None:
+        # The rest of the method is already robust and checks `self.camera` again.
+        if frame is None or frame.size == 0 or not self.camera.device:
             self.set_frame_pixmap(None)
             return
 
@@ -639,29 +649,31 @@ class CameraPanel(QFrame):
                 self.set_frame_pixmap(None)
 
         except cv2.error as cv_err:
-            logger.error(
-                f"Panel {self._panel_title}: OpenCV error processing frame: {cv_err}"
-            )
+            logger.error(f"Panel {self._panel_title}: OpenCV error processing frame: {cv_err}")
             self.set_frame_pixmap(None)
         except Exception as e:
-            logger.exception(
-                f"Panel {self._panel_title}: Unhandled error processing frame data: {e}"
-            )
+            logger.exception(f"Panel {self._panel_title}: Unhandled error processing frame data: {e}")
             self.set_frame_pixmap(None)
 
     def showEvent(self, event: QtGui.QShowEvent):
+        """Override for QFrame.showEvent."""
         super().showEvent(event)
-        logger.debug(
-            f"CameraPanel for {self.camera.camera_name} shown, starting watchdog."
-        )
-        self.watchdog_timer.start()
+        # --- FIX: Check if camera exists before using it. Use panel title for logging. ---
+        if self.camera:
+            logger.debug(f"CameraPanel for {self.camera.camera_name} shown, starting watchdog.")
+            self.watchdog_timer.start()
+        else:
+            logger.debug(f"Placeholder CameraPanel '{self._panel_title}' shown.")
 
     def hideEvent(self, event: QtGui.QHideEvent):
+        """Override for QFrame.hideEvent."""
         super().hideEvent(event)
-        logger.debug(
-            f"CameraPanel for {self.camera.camera_name} hidden, stopping watchdog."
-        )
-        self.watchdog_timer.stop()
+        # --- FIX: Check if camera exists before using it. Use panel title for logging. ---
+        if self.camera:
+            logger.debug(f"CameraPanel for {self.camera.camera_name} hidden, stopping watchdog.")
+            self.watchdog_timer.stop()
+        else:
+            logger.debug(f"Placeholder CameraPanel '{self._panel_title}' hidden.")
 
     @Slot(QPixmap)
     def set_frame_pixmap(self, pixmap: QPixmap | None):
@@ -690,11 +702,7 @@ class CameraPanel(QFrame):
     def _delayed_display_update(self):
         if self._latest_pixmap and not self._latest_pixmap.isNull():
             target_size = self.video_label.size()
-            if (
-                target_size.isEmpty()
-                or target_size.width() <= 0
-                or target_size.height() <= 0
-            ):
+            if target_size.isEmpty() or target_size.width() <= 0 or target_size.height() <= 0:
                 if self._display_size_cache and not self._display_size_cache.isEmpty():
                     target_size = self._display_size_cache
                 else:
@@ -717,7 +725,10 @@ class CameraPanel(QFrame):
             self.video_label.setPixmap(QPixmap())
 
     def closeEvent(self, event: QtGui.QCloseEvent):
-        logger.debug(f"Closing CameraPanel for {self.camera.camera_name}")
-        self.watchdog_timer.stop()
+        """Override for QFrame.closeEvent."""
+        logger.debug(f"Closing CameraPanel for {self._panel_title}")
+        # --- FIX: Check if camera exists before stopping its timer. ---
+        if self.camera:
+            self.watchdog_timer.stop()
         self._resize_timer.stop()
         super().closeEvent(event)

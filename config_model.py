@@ -1,199 +1,110 @@
-from dataclasses import dataclass, field
-from typing import Any
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+# --- Pydantic Models for each configuration section ---
 
 
-# A helper function to safely get typed values from the config dict
-def get_typed_value(data: dict, key: str, default: Any, target_type: type) -> Any:
-    """Safely retrieves and casts a value from a dictionary."""
-    value = data.get(key, default)
-    try:
-        return target_type(value)
-    except (ValueError, TypeError):
-        return default
-
-
-@dataclass
-class LoggingConfig:
+class LoggingConfig(BaseModel):
     """Configuration for the application's logging behavior."""
 
-    level: str = "INFO"
+    level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     file: str = "lab_app.log"
-    mode: str = "a"
-    max_bytes: int = 5 * 1024 * 1024  # 5 MB
-    backup_count: int = 3
+    max_bytes: int = Field(5 * 1024 * 1024, gt=0, description="Max log file size in bytes must be positive")
+    backup_count: int = Field(3, ge=0, description="Log backup count must be non-negative")
 
 
-@dataclass
-class InstrumentsConfig:
+class InstrumentsConfig(BaseModel):
     """Configuration for physical hardware addresses and paths."""
 
     ct400_dll_path: str = ""
-    tunics_gpib_address: int = 10
+    tunics_gpib_address: int = Field(10, ge=0, le=30, description="GPIB address must be between 0 and 30")
     tunics_laser_type: str = "LS_TunicsT100s_HP"
 
 
-@dataclass
-class CameraConfig:
+class CameraConfig(BaseModel):
     """Configuration for a single camera instance."""
 
     enabled: bool = False
-    identifier: str = ""
-    name: str = "Camera"
+    identifier: str
+    name: str
     flip_horizontal: bool = False
-    # You can add more camera-specific config defaults here
-    # e.g., default_exposure: float = 10000.0
 
 
-@dataclass
-class ScanDefaults:
+class ScanDefaults(BaseModel):
     """Default parameters for the CT400 Wavelength Scan panel."""
 
     start_wavelength_nm: float = 1550.0
     end_wavelength_nm: float = 1560.0
-    resolution_pm: int = 1
-    speed_nm_s: int = 10
+    resolution_pm: int = Field(1, gt=0)
+    speed_nm_s: int = Field(10, gt=0)
     laser_power: float = 1.0
-    power_unit: str = "mW"
-    input_port: int = 1
+    power_unit: Literal["mW", "dBm"] = "mW"
+    input_port: Literal[1, 2, 3, 4] = 1
     min_wavelength_nm: float = 1440.0
     max_wavelength_nm: float = 1640.0
     safe_parking_wavelength: float = 1550.0
 
 
-@dataclass
-class HistogramDefaults:
+class HistogramDefaults(BaseModel):
     """Default parameters for the Power Monitor (Histogram) panel."""
 
     wavelength_nm: float = 1550.0
     laser_power: float = 1.0
-    power_unit: str = "mW"
-    input_port: int = 1
-    # For the detector checkboxes, we can define them like this
+    power_unit: Literal["mW", "dBm"] = "mW"
+    input_port: Literal[1, 2, 3, 4] = 1
     detector_1_enabled: bool = True
     detector_2_enabled: bool = True
     detector_3_enabled: bool = True
     detector_4_enabled: bool = True
 
 
-@dataclass
-class UIConfig:
+class UIConfig(BaseModel):
     """Configuration for general user interface behavior."""
 
-    initial_width_ratio: float = 0.8
-    initial_height_ratio: float = 0.8
+    initial_width_ratio: float = Field(0.8, gt=0.1, le=1.0)
+    initial_height_ratio: float = Field(0.8, gt=0.1, le=1.0)
 
 
-@dataclass
-class AppConfig:
+class AppConfig(BaseModel):
     """The main typed configuration class for the entire application."""
 
-    logging: LoggingConfig = field(default_factory=LoggingConfig)
-    instruments: InstrumentsConfig = field(default_factory=InstrumentsConfig)
-    scan_defaults: ScanDefaults = field(default_factory=ScanDefaults)
-    histogram_defaults: HistogramDefaults = field(default_factory=HistogramDefaults)
-    ui: UIConfig = field(default_factory=UIConfig)
+    logging: LoggingConfig = Field(default_factory=LoggingConfig)
+    instruments: InstrumentsConfig = Field(default_factory=InstrumentsConfig)
+    scan_defaults: ScanDefaults = Field(default_factory=ScanDefaults)
+    histogram_defaults: HistogramDefaults = Field(default_factory=HistogramDefaults)
+    ui: UIConfig = Field(default_factory=UIConfig)
     app_name: str = "IOPanel"
-    cameras: dict[str, CameraConfig] = field(default_factory=dict)
+    cameras: dict[str, CameraConfig] = Field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, config_dict: dict[str, Any]) -> "AppConfig":
-        """Creates an AppConfig instance from a raw dictionary loaded from config.ini."""
+    def from_ini_dict(cls, config_dict: dict) -> "AppConfig":
+        """
+        Creates an AppConfig instance from a raw dictionary loaded from config.ini.
+        This method intelligently handles dynamic [Camera:...] sections and correctly
+        maps other sections to their corresponding Pydantic models.
+        """
+        # This dictionary will hold the data to initialize the AppConfig model
+        init_data = {}
+        cameras_data = {}
 
-        # --- PARSE SECTIONS WITH EXPLICIT TYPE CONVERSION ---
-
-        log_data = config_dict.get("Logging", {})
-        logging_conf = LoggingConfig(
-            level=get_typed_value(log_data, "level", "INFO", str),
-            file=get_typed_value(log_data, "file", "lab_app.log", str),
-            mode=get_typed_value(log_data, "mode", "a", str),
-            max_bytes=get_typed_value(log_data, "max_bytes", 5242880, int),
-            backup_count=get_typed_value(log_data, "backup_count", 3, int),
-        )
-
-        instr_data = config_dict.get("Instruments", {})
-        instruments_conf = InstrumentsConfig(
-            ct400_dll_path=get_typed_value(instr_data, "ct400_dll_path", "", str),
-            tunics_gpib_address=get_typed_value(
-                instr_data, "tunics_gpib_address", 10, int
-            ),
-            tunics_laser_type=get_typed_value(
-                instr_data, "tunics_laser_type", "LS_TunicsT100s_HP", str
-            ),
-        )
-
-        scan_data = config_dict.get("ScanDefaults", {})
-        scan_conf = ScanDefaults(
-            start_wavelength_nm=get_typed_value(
-                scan_data, "start_wavelength_nm", 1550.0, float
-            ),
-            end_wavelength_nm=get_typed_value(
-                scan_data, "end_wavelength_nm", 1560.0, float
-            ),
-            resolution_pm=get_typed_value(scan_data, "resolution_pm", 1, int),
-            speed_nm_s=get_typed_value(scan_data, "speed_nm_s", 10, int),
-            laser_power=get_typed_value(scan_data, "laser_power", 1.0, float),
-            power_unit=get_typed_value(scan_data, "power_unit", "mW", str),
-            input_port=get_typed_value(scan_data, "input_port", 1, int),
-            min_wavelength_nm=get_typed_value(
-                scan_data, "min_wavelength_nm", 1440.0, float
-            ),
-            max_wavelength_nm=get_typed_value(
-                scan_data, "max_wavelength_nm", 1640.0, float
-            ),
-        )
-
-        hist_data = config_dict.get("HistogramDefaults", {})
-        hist_conf = HistogramDefaults(
-            wavelength_nm=get_typed_value(hist_data, "wavelength_nm", 1550.0, float),
-            laser_power=get_typed_value(hist_data, "laser_power", 1.0, float),
-            power_unit=get_typed_value(hist_data, "power_unit", "mW", str),
-            input_port=get_typed_value(hist_data, "input_port", 1, int),
-            detector_1_enabled=get_typed_value(
-                hist_data, "detector_1_enabled", True, bool
-            ),
-            detector_2_enabled=get_typed_value(
-                hist_data, "detector_2_enabled", True, bool
-            ),
-            detector_3_enabled=get_typed_value(
-                hist_data, "detector_3_enabled", True, bool
-            ),
-            detector_4_enabled=get_typed_value(
-                hist_data, "detector_4_enabled", True, bool
-            ),
-        )
-
-        ui_data = config_dict.get("UI", {})
-        ui_conf = UIConfig(
-            initial_width_ratio=get_typed_value(
-                ui_data, "initial_width_ratio", 0.8, float
-            ),
-            initial_height_ratio=get_typed_value(
-                ui_data, "initial_height_ratio", 0.8, float
-            ),
-        )
-
-        app_name = str(config_dict.get("App", {}).get("name", "IOPanel"))
-
-        # Parse dynamic camera sections (this part was already using the helper and is correct)
-        camera_configs = {}
         for section_name, section_data in config_dict.items():
-            if section_name.lower().startswith("camera:"):
-                cam_conf = CameraConfig(
-                    enabled=get_typed_value(section_data, "enabled", False, bool),
-                    identifier=get_typed_value(section_data, "identifier", "", str),
-                    name=get_typed_value(section_data, "name", section_name, str),
-                    flip_horizontal=get_typed_value(
-                        section_data, "flip_horizontal", False, bool
-                    ),
-                )
-                camera_configs[section_name] = cam_conf
+            section_lower = section_name.lower()
 
-        return cls(
-            logging=logging_conf,
-            instruments=instruments_conf,
-            scan_defaults=scan_conf,
-            histogram_defaults=hist_conf,
-            ui=ui_conf,
-            app_name=app_name,
-            cameras=camera_configs,
-        )
+            if section_lower.startswith("camera:"):
+                # Group all camera sections together
+                cameras_data[section_name] = CameraConfig(**section_data)
+            elif section_lower == "app":
+                # Handle the special 'app_name' field
+                init_data["app_name"] = section_data.get("name", "IOPanel")
+            else:
+                # For other sections, check if their lowercase name matches a field
+                # in the AppConfig model (e.g., 'logging', 'instruments').
+                if section_lower in cls.model_fields:
+                    init_data[section_lower] = section_data
+
+        # Add the parsed cameras to the initialization data
+        init_data["cameras"] = cameras_data
+
+        # Create the AppConfig instance, Pydantic will validate everything
+        return cls(**init_data)
