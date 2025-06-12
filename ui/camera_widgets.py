@@ -6,17 +6,7 @@ from typing import Literal
 import cv2
 import numpy as np
 from PySide6 import QtCore, QtGui
-from PySide6.QtCore import (
-    Q_ARG,
-    QMetaObject,
-    QRunnable,
-    QSize,
-    Qt,
-    QThreadPool,
-    QTimer,
-    Signal,
-    Slot,
-)
+from PySide6.QtCore import Q_ARG, QMetaObject, QObject, QRunnable, QSize, Qt, QThreadPool, QTimer, Signal, Slot
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
@@ -37,6 +27,66 @@ from ui.constants import OP_AUTO_EXPOSURE, OP_AUTO_GAIN
 from ui.theme import CAMERA_PANEL_STYLE
 
 logger = logging.getLogger("LabApp.camera_widgets")
+
+
+class ImageConversionSignals(QObject):
+    """
+    Defines signals for the ImageConversionWorker.
+    A QObject is required for signals, and QRunnable is not a QObject.
+    """
+
+    image_ready = Signal(QImage)
+    conversion_error = Signal(str)
+
+
+class ImageConversionWorker(QRunnable):
+    """
+    A QRunnable worker that converts a numpy array to a QImage in a background thread.
+    """
+
+    def __init__(self, frame: np.ndarray, is_mono: bool, camera_name: str):
+        super().__init__()
+        self.frame = frame
+        self.is_mono = is_mono
+        self.camera_name = camera_name
+        self.signals = ImageConversionSignals()
+
+    @Slot()
+    def run(self):
+        """The workhorse method that runs in the background."""
+        try:
+            h, w = self.frame.shape[:2]
+            q_img: QImage | None = None
+            if self.is_mono:
+                # Logic copied from the original process_new_frame_data
+                if self.frame.ndim == 3 and self.frame.shape[2] == 1:
+                    frame = self.frame.reshape(h, w)
+                else:
+                    frame = self.frame
+
+                if frame.ndim == 2:
+                    if not frame.flags["C_CONTIGUOUS"]:
+                        frame = np.ascontiguousarray(frame)
+                    q_img = QImage(frame.data, w, h, frame.strides[0], QImage.Format.Format_Grayscale8)
+                else:
+                    raise TypeError(f"Mono camera provided unexpected frame shape: {frame.shape}")
+            else:  # Color
+                if self.frame.ndim == 3 and self.frame.shape[2] == 3:
+                    frame_rgb = cv2.cvtColor(self.frame, cv2.COLOR_BGR2RGB)
+                    q_img = QImage(frame_rgb.data, w, h, frame_rgb.strides[0], QImage.Format.Format_RGB888)
+                else:
+                    raise TypeError(f"Color camera provided unexpected frame shape: {self.frame.shape}")
+
+            if q_img:
+                # The QImage must be copied because the underlying numpy buffer will go out of scope.
+                self.signals.image_ready.emit(q_img.copy())
+            else:
+                self.signals.conversion_error.emit("Converted QImage was null.")
+
+        except Exception as e:
+            error_msg = f"Panel {self.camera_name}: Unhandled error converting frame: {e}"
+            logger.exception(error_msg)
+            self.signals.conversion_error.emit(str(e))
 
 
 class ParameterControl(QWidget):
@@ -578,81 +628,61 @@ class CameraPanel(QFrame):
 
     @Slot(np.ndarray)
     def process_new_frame_data(self, frame: np.ndarray):
-        # --- FIX: Add a guard clause here. Even if the signal is connected,
-        # ensure the camera object is set on the panel before processing. ---
-        if not self.camera:
+        """
+        Receives a raw numpy frame from the camera, creates a worker to convert
+        it to a QImage in the background, and submits it to the thread pool.
+        """
+        if not self.camera or not self.isVisible():
             return
 
         self.watchdog_timer.start()
-        # The rest of the method is already robust and checks `self.camera` again.
+
         if frame is None or frame.size == 0 or not self.camera.device:
             self.set_frame_pixmap(None)
             return
 
-        try:
-            # is_mono is now guaranteed by VimbaCam to be a boolean (True or False)
-            is_mono = self.camera.is_mono
-            h, w = frame.shape[:2]
-            q_img: QImage | None = None
+        # is_mono is guaranteed by VimbaCam to be a boolean
+        is_mono = self.camera.is_mono
 
-            if is_mono:
-                # Frame should be 2D (or 3D with one channel). Ensure it's 2D Grayscale8.
-                if frame.ndim == 3 and frame.shape[2] == 1:
-                    frame = frame.reshape(h, w)  # Squeeze to 2D
+        # Create and configure the worker
+        worker = ImageConversionWorker(frame, is_mono, self._panel_title)
+        worker.signals.image_ready.connect(self._display_converted_image)
+        worker.signals.conversion_error.connect(self._handle_conversion_error)
 
-                if frame.ndim == 2:
-                    # Ensure the data is C-contiguous for QImage
-                    if not frame.flags["C_CONTIGUOUS"]:
-                        frame = np.ascontiguousarray(frame)
-                    q_img = QImage(
-                        frame.data,
-                        w,
-                        h,
-                        frame.strides[0],
-                        QImage.Format.Format_Grayscale8,
-                    )
-                else:
-                    logger.warning(
-                        f"Mono camera {self.camera.camera_name} provided unexpected frame shape: {frame.shape}"
-                    )
+        # Submit to the global thread pool for execution
+        self._thread_pool.start(worker)
 
-            else:  # Color
-                # Frame should be 3D with 3 channels (BGR from OpenCV)
-                if frame.ndim == 3 and frame.shape[2] == 3:
-                    # Convert BGR (OpenCV default) to RGB for QImage
-                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    q_img = QImage(
-                        frame_rgb.data,
-                        w,
-                        h,
-                        frame_rgb.strides[0],
-                        QImage.Format.Format_RGB888,
-                    )
-                else:
-                    logger.warning(
-                        f"Color camera {self.camera.camera_name} provided unexpected frame shape: {frame.shape}"
-                    )
+    @Slot(str)
+    def _handle_conversion_error(self, error_msg: str):
+        """Slot to handle errors from the image conversion worker."""
+        logger.warning(f"Failed to process frame for {self._panel_title}: {error_msg}")
+        # Optionally display an error state on the video label
+        # self.set_frame_pixmap(None)
 
-            if q_img:
-                self.video_label.setStyleSheet("background-color: transparent;")
-                pixmap = QPixmap.fromImage(q_img.copy())  # Copy is important!
-
-                # Set aspect ratio on the first valid frame
-                if self.video_label._aspect_ratio is None and not pixmap.isNull():
-                    logger.debug(
-                        f"Panel {self._panel_title}: Setting aspect ratio from first pixmap W:{pixmap.width()} H:{pixmap.height()}"
-                    )
-                    self.video_label.setAspectRatio(pixmap.width(), pixmap.height())
-
-                self.set_frame_pixmap(pixmap)
-            else:
-                self.set_frame_pixmap(None)
-
-        except cv2.error as cv_err:
-            logger.error(f"Panel {self._panel_title}: OpenCV error processing frame: {cv_err}")
+    @Slot(QImage)
+    def _display_converted_image(self, q_img: QImage):
+        """
+        Receives a converted QImage from the worker thread and displays it.
+        This method runs on the main GUI thread.
+        """
+        if q_img.isNull():
             self.set_frame_pixmap(None)
+            return
+
+        try:
+            self.video_label.setStyleSheet("background-color: transparent;")
+            pixmap = QPixmap.fromImage(q_img)  # This is a fast operation
+
+            # Set aspect ratio on the first valid frame
+            if self.video_label._aspect_ratio is None and not pixmap.isNull():
+                logger.debug(
+                    f"Panel {self._panel_title}: Setting aspect ratio from first pixmap W:{pixmap.width()} H:{pixmap.height()}"
+                )
+                self.video_label.setAspectRatio(pixmap.width(), pixmap.height())
+
+            self.set_frame_pixmap(pixmap)
         except Exception as e:
-            logger.exception(f"Panel {self._panel_title}: Unhandled error processing frame data: {e}")
+            logger.exception(f"Panel {self._panel_title}: Unhandled error displaying converted image: {e}")
             self.set_frame_pixmap(None)
 
     def showEvent(self, event: QtGui.QShowEvent):

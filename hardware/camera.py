@@ -258,9 +258,16 @@ class VimbaCam(QObject):
         """
         CRITICAL: Always attempts to queue the frame back to the Vimba acquisition engine.
         This must be called for every frame that is received, regardless of its status.
+        This method is protected by a mutex to prevent race conditions during shutdown.
         """
         try:
-            cam.queue_frame(frame)
+            # The lock here provides a final, definitive guard against using a closed device.
+            # It synchronizes with the `close()` method, which also uses this lock.
+            with QMutexLocker(self.lock):
+                # If the camera is closing or the device object has been cleared, do not requeue.
+                if self._is_closing or not self.device:
+                    return
+                cam.queue_frame(frame)
         except VmbCameraError as e:
             logger.error(f"Handler {self.camera_name}: CRITICAL - Failed to queue frame back: {e}")
             # This is serious, might indicate stream is broken.

@@ -35,6 +35,7 @@ from hardware.ct400_types import (
     Detector,
     Enable,
     LaserInput,
+    LaserSource,
     PowerData,
 )
 from hardware.interfaces import AbstractCT400
@@ -50,6 +51,89 @@ from ui.theme import CT400_CONTROL_PANEL_STYLE
 
 MONITOR_TIMER_INTERVAL_MS = 250
 logger = logging.getLogger("LabApp.control_panel")
+
+
+###############################################################################
+# CT400ConnectionWorker
+###############################################################################
+class CT400ConnectionWorker(QObject):
+    """
+    A worker to handle connecting and disconnecting the CT400 in a background thread,
+    preventing the GUI from freezing.
+    """
+
+    connection_succeeded = Signal(str)  # Emits success message
+    connection_failed = Signal(str)  # Emits error message
+    disconnection_succeeded = Signal(str)
+    disconnection_failed = Signal(str)
+    finished = Signal()  # Standard signal to terminate the thread
+
+    def __init__(self, ct400_device: AbstractCT400, config: AppConfig, parent=None):
+        super().__init__(parent)
+        self.ct400 = ct400_device
+        self.config = config
+        self._is_running = True
+
+    @Slot()
+    def connect_device(self):
+        """Performs the connection logic."""
+        if not self._is_running:
+            self.finished.emit()
+            return
+        try:
+            gpib = self.config.instruments.tunics_gpib_address
+            laser_input = LaserInput(self.config.scan_defaults.input_port)
+            min_wl = self.config.scan_defaults.min_wavelength_nm
+            max_wl = self.config.scan_defaults.max_wavelength_nm
+            speed = self.config.scan_defaults.speed_nm_s
+            laser_type_str = self.config.instruments.tunics_laser_type
+            laser_type_enum = getattr(LaserSource, laser_type_str, LaserSource.LS_TunicsT100s_HP)
+
+            self.ct400.set_laser(
+                laser_input=laser_input,
+                enable=Enable.ENABLE,
+                gpib_address=gpib,
+                laser_type=laser_type_enum,
+                min_wavelength=min_wl,
+                max_wavelength=max_wl,
+                speed=speed,
+            )
+            success_msg = f"CT400 Connected (Input {laser_input.value})"
+            logger.info(f"ConnectionWorker: {success_msg}")
+            self.connection_succeeded.emit(success_msg)
+        except (CT400Error, ValueError, KeyError, Exception) as e:
+            error_msg = f"Connection Failed: {e}"
+            logger.error(f"ConnectionWorker: {error_msg}", exc_info=True)
+            self.connection_failed.emit(error_msg)
+        finally:
+            self.finished.emit()
+
+    @Slot()
+    def disconnect_device(self):
+        """Performs the disconnection logic."""
+        if not self._is_running:
+            self.finished.emit()
+            return
+        try:
+            laser_input_disconnect = LaserInput(self.config.scan_defaults.input_port)
+            safe_wl = self.config.scan_defaults.safe_parking_wavelength
+            safe_power = self.config.scan_defaults.laser_power
+
+            self.ct400.cmd_laser(
+                laser_input=laser_input_disconnect,
+                enable=Enable.DISABLE,
+                wavelength=safe_wl,
+                power=safe_power,
+            )
+            success_msg = "CT400 Disconnected"
+            logger.info(f"ConnectionWorker: {success_msg}")
+            self.disconnection_succeeded.emit(success_msg)
+        except (CT400Error, ValueError, KeyError, Exception) as e:
+            error_msg = f"Disconnect Failed: {e}"
+            logger.error(f"ConnectionWorker: {error_msg}", exc_info=True)
+            self.disconnection_failed.emit(error_msg)
+        finally:
+            self.finished.emit()
 
 
 ###############################################################################
@@ -147,7 +231,10 @@ class ScanWorker(QtCore.QObject):
                     self.progress_signal.emit(100)
                     break
                 elif error_status < 0:
-                    error_msg = error_buf.value.decode(errors="ignore")
+                    # Safely decode the buffer, respecting its allocated size to avoid reading past the end.
+                    error_msg = (
+                        error_buf.value[: self._ERROR_BUFFER_SIZE].decode("utf-8", errors="ignore").strip("\x00")
+                    )
                     logger.error(f"ScanWorker: Scan error (ScanWaitEnd): {error_msg} (Code: {error_status})")
                     raise CT400Error(f"Scan failed: {error_msg}")
                 QThread.msleep(self._SCAN_POLL_INTERVAL_MS)

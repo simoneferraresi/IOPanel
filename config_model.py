@@ -26,7 +26,6 @@ class CameraConfig(BaseModel):
     """Configuration for a single camera instance."""
 
     enabled: bool = False
-    identifier: str
     name: str
     flip_horizontal: bool = False
 
@@ -83,28 +82,33 @@ class AppConfig(BaseModel):
         Creates an AppConfig instance from a raw dictionary loaded from config.ini.
         This method intelligently handles dynamic [Camera:...] sections and correctly
         maps other sections to their corresponding Pydantic models.
+        It uses the 'identifier' field within each camera section as the key
+        for the resulting 'cameras' dictionary.
         """
-        # This dictionary will hold the data to initialize the AppConfig model
         init_data = {}
         cameras_data = {}
-
         for section_name, section_data in config_dict.items():
             section_lower = section_name.lower()
-
             if section_lower.startswith("camera:"):
-                # Group all camera sections together
-                cameras_data[section_name] = CameraConfig(**section_data)
+                # Extract the identifier from the section data. This is crucial.
+                identifier = section_data.get("identifier")
+                if not identifier:
+                    # logger.warning(f"Skipping camera section '{section_name}': missing 'identifier' field.")
+                    continue
+
+                # We can now remove 'identifier' from the data passed to the model,
+                # as it's now the key. This prevents "unexpected keyword argument" errors.
+                config_for_model = section_data.copy()
+                config_for_model.pop("identifier", None)
+
+                # Create the CameraConfig object and store it under its proper identifier key.
+                cameras_data[identifier] = CameraConfig(**config_for_model)
+
             elif section_lower == "app":
-                # Handle the special 'app_name' field
                 init_data["app_name"] = section_data.get("name", "IOPanel")
             else:
-                # For other sections, check if their lowercase name matches a field
-                # in the AppConfig model (e.g., 'logging', 'instruments').
                 if section_lower in cls.model_fields:
                     init_data[section_lower] = section_data
 
-        # Add the parsed cameras to the initialization data
         init_data["cameras"] = cameras_data
-
-        # Create the AppConfig instance, Pydantic will validate everything
         return cls(**init_data)

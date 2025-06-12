@@ -361,6 +361,12 @@ class CT400(AbstractCT400):
     def scan_wait_end(self, error_buf: c_char_p) -> int:
         """
         Waits for the scan to end or polls its current status.
+
+        Warning:
+            This function passes a fixed-size buffer (`error_buf`) to the underlying C
+            library. If the library writes an error message larger than the buffer,
+            a buffer overflow will occur. The calling code must ensure the buffer is
+            sufficiently large.
         """
         result = self.dll.CT400_ScanWaitEnd(self.handle, error_buf)
         if result == -1:

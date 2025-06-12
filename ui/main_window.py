@@ -38,11 +38,11 @@ except ImportError:
 from hardware.camera import VimbaCam
 from hardware.camera_init_worker import CameraInitWorker
 from hardware.ct400 import CT400, CT400Error
-from hardware.ct400_types import Enable, LaserInput, LaserSource
+from hardware.ct400_types import Enable, LaserInput
 from hardware.interfaces import AbstractCT400
 from ui.camera_widgets import CameraPanel
 from ui.constants import ID_CT400_STATUS_LABEL, PROP_STATUS
-from ui.control_panel import CT400ControlPanel, HistogramControlPanel, ScanSettings
+from ui.control_panel import CT400ConnectionWorker, CT400ControlPanel, HistogramControlPanel, ScanSettings
 from ui.plot_widgets import HistogramWidget, PlotWidget
 
 logger = logging.getLogger("LabApp.main_window")
@@ -77,6 +77,9 @@ class MainWindow(QMainWindow):
         # --- FIX: Add a list to hold worker references ---
         self.camera_init_threads: list[QThread] = []
         self.camera_init_workers: list[CameraInitWorker] = []
+
+        self.ct400_connection_thread: QThread | None = None
+        self.ct400_connection_worker: CT400ConnectionWorker | None = None
 
         # --- DEFERRED INITIALIZATION ---
         # Only build the UI in the constructor. Hardware init is deferred.
@@ -358,84 +361,73 @@ class MainWindow(QMainWindow):
         help_menu.addAction(about_action)
         logger.debug("Menus created.")
 
+    @Slot(bool)
     def _handle_ct400_connect_action_triggered(self, checked: bool):
         """
-        Handles the triggered signal from the QAction.
-        'checked' indicates the NEW state of the action if it were a simple toggle.
-        We use this to decide whether to connect or disconnect.
+        Handles the triggered signal from the QAction by starting a worker thread
+        to perform the connect or disconnect operation.
         """
-        if not self.ct400_device:
-            self._update_ct400_visuals(state="unavailable", message="CT400 Not Initialized.")
-            if hasattr(self, "ct400_connect_action"):
-                self.ct400_connect_action.setChecked(False)
+        if self.ct400_connection_thread and self.ct400_connection_thread.isRunning():
+            logger.warning("CT400 connection/disconnection already in progress.")
+            # Revert the action's visual state because the action was premature
+            self.ct400_connect_action.setChecked(not checked)
             return
 
+        if not self.ct400_device or isinstance(self.ct400_device, DummyCT400):
+            self._update_ct400_visuals(state=CT400Status.UNAVAILABLE, message="CT400 Not Initialized or Dummy.")
+            self.ct400_connect_action.setChecked(False)
+            return
+
+        # Import the worker class here to avoid circular dependency at module level
+        from ui.control_panel import CT400ConnectionWorker
+
+        self.ct400_connection_thread = QThread(self)
+        self.ct400_connection_worker = CT400ConnectionWorker(self.ct400_device, self.config)
+        self.ct400_connection_worker.moveToThread(self.ct400_connection_thread)
+
+        # --- THE CRITICAL FIX IS HERE ---
+        # 1. When the worker finishes its job, it tells the thread to quit.
+        self.ct400_connection_worker.finished.connect(self.ct400_connection_thread.quit)
+
+        # Connect worker result signals to main window slots
+        self.ct400_connection_worker.connection_succeeded.connect(self._handle_ct400_connection_success)
+        self.ct400_connection_worker.connection_failed.connect(self._handle_ct400_connection_failure)
+        self.ct400_connection_worker.disconnection_succeeded.connect(self._handle_ct400_disconnection_success)
+        self.ct400_connection_worker.disconnection_failed.connect(self._handle_ct400_connection_failure)
+
+        # 2. When the thread has fully finished (after quitting), clean everything up.
+        self.ct400_connection_thread.finished.connect(self.ct400_connection_worker.deleteLater)
+        self.ct400_connection_thread.finished.connect(self.ct400_connection_thread.deleteLater)
+        self.ct400_connection_thread.finished.connect(self._connection_thread_finished)
+
         if checked:
-            self._initiate_ct400_connection()
+            # Start connection
+            self._update_ct400_visuals(state=CT400Status.CONNECTING, message="CT400: Attempting to connect...")
+            self.ct400_connection_thread.started.connect(self.ct400_connection_worker.connect_device)
         else:
-            self._initiate_ct400_disconnection()
+            # Start disconnection
+            self._update_ct400_visuals(state=CT400Status.DISCONNECTING, message="CT400: Disconnecting...")
+            self.ct400_connection_thread.started.connect(self.ct400_connection_worker.disconnect_device)
 
-    def _initiate_ct400_connection(self):
-        self._update_ct400_visuals(state=CT400Status.CONNECTING, message="CT400: Attempting to connect...")
-        QApplication.processEvents()
+        self.ct400_connection_thread.start()
 
-        try:
-            gpib = self.config.instruments.tunics_gpib_address
-            laser_input = LaserInput(self.config.scan_defaults.input_port)
-            min_wl = self.config.scan_defaults.min_wavelength_nm
-            max_wl = self.config.scan_defaults.max_wavelength_nm
-            speed = self.config.scan_defaults.speed_nm_s
+    @Slot(str)
+    def _handle_ct400_connection_success(self, message: str):
+        self._update_ct400_visuals(state=CT400Status.CONNECTED, message=message)
+        self.control_panel.on_instrument_connected(True)
+        self.histogram_control.on_instrument_connected(True)
 
-            # --- DYNAMIC LASER TYPE FROM CONFIG ---
-            # Get the laser type string from the config model
-            laser_type_str = self.config.instruments.tunics_laser_type
-            # Use getattr to find the corresponding member in the LaserSource enum.
-            # Provide a sensible default (the old hardcoded value) in case of a typo.
-            laser_type_enum = getattr(LaserSource, laser_type_str, LaserSource.LS_TunicsT100s_HP)
-            if laser_type_str not in LaserSource.__members__:
-                logger.warning(
-                    f"Laser type '{laser_type_str}' from config not found in LaserSource enum. "
-                    f"Falling back to '{laser_type_enum.name}'."
-                )
+    @Slot(str)
+    def _handle_ct400_connection_failure(self, error_message: str):
+        self._update_ct400_visuals(state=CT400Status.ERROR, message=error_message)
+        self.control_panel.on_instrument_connected(False)
+        self.histogram_control.on_instrument_connected(False)
 
-            self.ct400_device.set_laser(
-                laser_input=laser_input,
-                enable=Enable.ENABLE,
-                gpib_address=gpib,
-                laser_type=laser_type_enum,
-                min_wavelength=min_wl,
-                max_wavelength=max_wl,
-                speed=speed,
-            )
-            logger.info(f"CT400 Connected (GPIB: {gpib}, Input: {laser_input.value}, Type: {laser_type_enum.name}).")
-            self._update_ct400_visuals(
-                state=CT400Status.CONNECTED,
-                message=f"CT400 Connected (Input {laser_input.value})",
-            )
-        except (CT400Error, ValueError, KeyError, Exception) as e:
-            logger.error(f"CT400 connection failed: {e}", exc_info=True)
-            self._update_ct400_visuals(state=CT400Status.ERROR, message=f"Connection Failed: {e}")
-
-    def _initiate_ct400_disconnection(self):
-        self._update_ct400_visuals(state=CT400Status.DISCONNECTING, message="CT400: Disconnecting...")
-        QApplication.processEvents()
-
-        try:
-            laser_input_disconnect = LaserInput(self.config.scan_defaults.input_port)
-            safe_wl = self.config.scan_defaults.safe_parking_wavelength
-            safe_power = self.config.scan_defaults.laser_power
-
-            self.ct400_device.cmd_laser(
-                laser_input=laser_input_disconnect,
-                enable=Enable.DISABLE,
-                wavelength=safe_wl,
-                power=safe_power,
-            )
-            logger.info("CT400 Disconnected.")
-            self._update_ct400_visuals(state=CT400Status.DISCONNECTED, message="CT400 Disconnected")
-        except (CT400Error, ValueError, KeyError, Exception) as e:
-            logger.error(f"Error during CT400 disconnection: {e}", exc_info=True)
-            self._update_ct400_visuals(state=CT400Status.ERROR, message=f"Disconnect Failed: {e}")
+    @Slot(str)
+    def _handle_ct400_disconnection_success(self, message: str):
+        self._update_ct400_visuals(state=CT400Status.DISCONNECTED, message=message)
+        self.control_panel.on_instrument_connected(False)
+        self.histogram_control.on_instrument_connected(False)
 
     def _show_about_dialog(self):
         # --- REFACTOR: Direct attribute access ---
@@ -451,49 +443,66 @@ class MainWindow(QMainWindow):
         )
 
     def _init_cameras_lazy(self):
+        """
+        Initializes cameras asynchronously.
+        For each valid camera in the config, this method creates a placeholder UI panel,
+        then spawns a dedicated worker thread to open the camera.
+        """
         logger.info("Initializing cameras lazily...")
         if not all([self.camera_container, self.camera_container.layout(), self.cameras_menu]):
+            logger.error("UI components for camera initialization are not ready. Aborting.")
             return
 
-        camera_configs = [c for c in self.config.cameras.values() if self._should_initialize_camera(c)]
-        if not camera_configs:
-            self.cameras_menu.addAction(QAction("No cameras configured", self)).setEnabled(False)
+        # Get a dictionary of valid camera configs, keyed by their identifier.
+        camera_configs_to_init = {
+            identifier: config
+            for identifier, config in self.config.cameras.items()
+            if self._should_initialize_camera(identifier, config)
+        }
+
+        if not camera_configs_to_init:
+            self.cameras_menu.addAction(QAction("No enabled cameras found in config", self)).setEnabled(False)
+            logger.info("No valid, enabled cameras to initialize.")
             return
 
-        for cam_config in camera_configs:
-            placeholder_panel = self._create_camera_panel(None, cam_config)
-            self.camera_panels[cam_config.identifier] = placeholder_panel
+        # --- COMBINED LOOP: Create panel and start worker thread in one pass ---
+        for identifier, config in camera_configs_to_init.items():
+            logger.debug(f"Setting up initialization for camera '{config.name}' (ID: {identifier})")
+
+            # 1. Create and add the placeholder panel to the UI
+            placeholder_panel = self._create_camera_panel(None, config)
+            self.camera_panels[identifier] = placeholder_panel
             self.camera_container.layout().addWidget(placeholder_panel)
 
-        for cam_config in camera_configs:
+            # 2. Create the thread and worker for this specific camera
             thread = QThread(self)
-            worker = CameraInitWorker(cam_config)
+            worker = CameraInitWorker(identifier=identifier, cam_config=config)
             worker.moveToThread(thread)
 
-            # Connect signals
+            # 3. Connect signals for this worker/thread instance
             worker.camera_initialized.connect(self._on_camera_initialized)
-            # The thread should quit *after* the worker emits its result
-            worker.camera_initialized.connect(thread.quit)
-            # When the thread is finished, it's safe to clean up both objects
+            worker.camera_initialized.connect(thread.quit)  # Tell thread to quit when done
+
+            # 4. Connect cleanup signals
             thread.finished.connect(worker.deleteLater)
             thread.finished.connect(thread.deleteLater)
-
-            # --- FIX: Connect a slot to remove the thread from our list upon completion ---
+            # Remove the thread from our tracking list upon completion
             thread.finished.connect(
                 lambda t=thread: self.camera_init_threads.remove(t) if t in self.camera_init_threads else None
             )
 
+            # 5. Start the thread
             thread.started.connect(worker.run)
             thread.start()
 
-            # --- FIX: Keep a persistent reference to both the thread and the worker ---
+            # 6. Keep a persistent reference to prevent garbage collection
             self.camera_init_threads.append(thread)
             self.camera_init_workers.append(worker)
 
-    @Slot(object, CameraConfig)
-    def _on_camera_initialized(self, camera_instance: VimbaCam | None, cam_config: CameraConfig):
+    @Slot(str, object, CameraConfig)
+    def _on_camera_initialized(self, identifier: str, camera_instance: VimbaCam | None, cam_config: CameraConfig):
         """Slot to handle a camera that has finished initializing."""
-        panel = self.camera_panels.get(cam_config.identifier)
+        panel = self.camera_panels.get(identifier)  # Find panel by identifier
         if not panel:
             logger.error(f"Could not find panel for camera config: {cam_config.name}")
             if camera_instance:
@@ -525,12 +534,12 @@ class MainWindow(QMainWindow):
             panel.video_label.setText(error_msg)
             panel.video_label.setStyleSheet("background-color: #ffebee; color: #c62828;")
 
-    def _should_initialize_camera(self, cam_config: "CameraConfig") -> bool:
+    def _should_initialize_camera(self, identifier: str, cam_config: "CameraConfig") -> bool:
         """Checks if a camera from the config should be initialized."""
         if not cam_config.enabled:
             logger.info(f"Skipping disabled camera: {cam_config.name}")
             return False
-        if not cam_config.identifier or cam_config.identifier.startswith("PUT_"):
+        if not identifier or identifier.startswith("PUT_"):
             logger.warning(f"Skipping camera '{cam_config.name}': Invalid or placeholder identifier.")
             error_msg = f"{cam_config.name}\n(Config Error: Invalid ID)"
             placeholder = self._create_camera_error_placeholder(error_msg)
@@ -637,6 +646,13 @@ class MainWindow(QMainWindow):
 
         placeholder_widget.setToolTip(f"Camera Initialization Error: {message.replace('\n', ' ')}")
         return placeholder_widget
+
+    @Slot()
+    def _connection_thread_finished(self):
+        """Cleans up references to the connection thread and worker after it has finished."""
+        logger.debug("CT400 connection thread has finished. Cleaning up references.")
+        self.ct400_connection_thread = None
+        self.ct400_connection_worker = None
 
     @Slot(bool)
     def _handle_camera_control_toggle(self, checked: bool):
