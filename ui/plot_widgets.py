@@ -1,3 +1,11 @@
+"""Widgets for plotting and data visualization in the IOPanel application.
+
+This module contains:
+- MatlabSaveWorker: Worker for saving plots to MATLAB format
+- HistogramWidget: Real-time power monitoring display
+- PlotWidget: Main plotting widget for scan results
+"""
+
 import json
 import logging
 import os
@@ -54,10 +62,23 @@ logger = logging.getLogger("LabApp.plot_widgets")
 # MatlabSaveWorker
 ###############################################################################
 class MatlabSaveWorker(QObject):
+    """Worker for saving scan data to MATLAB .fig format.
+
+    This worker runs in a separate thread to save plot data to MATLAB .fig files
+    without blocking the main UI thread.
+
+    Attributes:
+        finished_saving: Signal emitted when save operation completes
+        _is_running: Flag indicating if worker is active
+        matlab_eng_local_for_quit: Local MATLAB engine instance if needed
     """
-    Worker QObject to save scan data to a .fig file using MATLAB Engine
-    in a separate thread.
-    """
+
+    finished_saving = Signal(str, bool, str)  # Emits: filetype, success, message_or_filename
+
+    def __init__(self, parent: QObject | None = None):  # parent is PlotWidget
+        super().__init__(parent)
+        self._is_running = True
+        self.matlab_eng_local_for_quit: matlab.engine.MatlabEngine | None = None
 
     finished_saving = Signal(str, bool, str)  # Emits: filetype, success, message_or_filename
 
@@ -80,6 +101,22 @@ class MatlabSaveWorker(QObject):
         pout_value: float,
         plot_widget_ptr: QWidget | None,  # Technically PlotWidget
     ):
+        """Saves scan data to MATLAB .fig format.
+
+        Args:
+            wavelengths_json_str: JSON string of wavelengths array
+            powers_json_str: JSON string of power values array
+            fig_filename: Output filename for .fig file
+            title_str: Plot title
+            xlabel_str: X-axis label
+            ylabel_str: Y-axis label
+            grid_on_str: Grid visibility ('on' or 'off')
+            pout_value: Output power value
+            plot_widget_ptr: Reference to PlotWidget instance
+
+        Emits:
+            finished_saving: Signal with save operation result
+        """
         if not self._is_running:
             logger.info("MatlabSaveWorker: Save FIG cancelled (worker not running).")
             self.finished_saving.emit("fig", False, "Save cancelled by user.")
@@ -95,9 +132,9 @@ class MatlabSaveWorker(QObject):
         try:
             wavelengths_list = json.loads(wavelengths_json_str)
             powers_list = json.loads(powers_json_str)
-            if not isinstance(wavelengths_list, list) or not all(isinstance(x, (int, float)) for x in wavelengths_list):
+            if not isinstance(wavelengths_list, list) or not all(isinstance(x, int | float) for x in wavelengths_list):
                 raise ValueError("Decoded wavelengths is not a list of numbers.")
-            if not isinstance(powers_list, list) or not all(isinstance(x, (int, float)) for x in powers_list):
+            if not isinstance(powers_list, list) or not all(isinstance(x, int | float) for x in powers_list):
                 raise ValueError("Decoded powers is not a list of numbers.")
         except (json.JSONDecodeError, ValueError) as e:
             error_msg = f"FIG: Error decoding or validating JSON data: {e}"
@@ -199,10 +236,25 @@ class MatlabSaveWorker(QObject):
 # Histogram Widget (using PyQtGraph)
 # =============================================================================
 class HistogramWidget(QtWidgets.QWidget):
+    """Real-time power monitoring display as histogram.
+
+    This widget displays detector power levels in real-time using a bar chart
+    with max value indicators and text annotations.
+
+    Attributes:
+        detector_keys: List of detector identifiers
+        current_values: Current power values for each detector
+        max_values: Maximum recorded power values
+        bars: Bar graph item
+        max_lines: Horizontal lines indicating max values
+        max_texts: Text annotations for max values
+        current_texts: Text annotations for current values
     """
-    Displays real-time power monitoring data as a histogram using PyQtGraph.
-    Updates are throttled for smooth performance. Expects power data as a dictionary.
-    """
+
+    _UPDATE_INTERVAL_MS = 50
+    _DEFAULT_Y_RANGE = (-70, 10)
+    _LOW_SIGNAL_FLOOR = -100.0
+    _HIGH_SIGNAL_CEILING = 10.0
 
     _UPDATE_INTERVAL_MS = 50
     _DEFAULT_Y_RANGE = (-70, 10)
@@ -344,6 +396,7 @@ class HistogramWidget(QtWidgets.QWidget):
 
     @Slot()
     def reset_maxima(self):
+        """Resets the maximum recorded values to current values."""
         t_start = time.perf_counter()
         logger.info("Resetting histogram: current values to 0, max_values to -infinity.")
 
@@ -387,6 +440,11 @@ class HistogramWidget(QtWidgets.QWidget):
 
     @Slot(dict)
     def schedule_update(self, power_data: dict):
+        """Schedules an update with new power data.
+
+        Args:
+            power_data: Dictionary containing detector power values
+        """
         if self._is_visible:
             self._pending_power_data = power_data
 
@@ -532,9 +590,23 @@ class HistogramWidget(QtWidgets.QWidget):
 # Plot Widget (using PyQtGraph - MATLAB fig saving restored)
 # =============================================================================
 class PlotWidget(QWidget):
+    """Main plotting widget for scan results.
+
+    Displays wavelength scan data and provides saving functionality in multiple
+    formats (CSV, MAT, PNG, SVG, FIG).
+
+    Attributes:
+        shared_settings: Application scan settings
+        current_wavelengths: Array of wavelength values
+        current_powers: Array of power values
+        current_output_power: Output power value
+        plot_data_item: Main plot line item
+        save_btn: Button for saving scan data
+        matlab_status_label: Status indicator for MATLAB operations
     """
-    Displays scan results using PyQtGraph. Saves data as CSV, MAT, PNG, SVG, and FIG (if MATLAB Engine is available).
-    """
+
+    _THREAD_WAIT_TIMEOUT_MS = 2000
+    _MATLAB_STATUS_TIMEOUT_MS = 2000
 
     _THREAD_WAIT_TIMEOUT_MS = 2000
     _MATLAB_STATUS_TIMEOUT_MS = 2000
@@ -674,6 +746,13 @@ class PlotWidget(QWidget):
 
     @Slot(np.ndarray, np.ndarray, float)
     def update_plot(self, x_data: np.ndarray, y_data: np.ndarray, output_power: float | None = None):
+        """Updates the plot with new scan data.
+
+        Args:
+            x_data: Array of wavelength values (x-axis)
+            y_data: Array of power values (y-axis)
+            output_power: Optional output power value
+        """
         try:
             x_data_np = x_data
             y_data_np = y_data
@@ -747,6 +826,7 @@ class PlotWidget(QWidget):
 
     @Slot()
     def save_scan_data(self):
+        """Saves scan data to multiple formats based on user selection."""
         if self.current_wavelengths is None or self.current_powers is None:
             QMessageBox.warning(self, "No Data", "No scan data available to save.")
             return
@@ -976,6 +1056,7 @@ class PlotWidget(QWidget):
             return self.matlab_engine_instance
 
     def cleanup(self):
+        """Cleans up resources and stops background threads."""
         logger.debug("PlotWidget cleanup: Cleaning up resources.")
         # Stop any ongoing save worker thread
         if self.matlab_save_thread and self.matlab_save_thread.isRunning():

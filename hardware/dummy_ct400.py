@@ -1,6 +1,5 @@
 import logging
 import time
-from ctypes import Array, c_char
 
 import numpy as np
 
@@ -59,17 +58,18 @@ class DummyCT400(AbstractCT400):
         logger.info("Dummy stop_scan called.")
         self._is_scanning = False
 
-    def scan_wait_end(self, error_buf: "Array[c_char]") -> int:
+    def scan_wait_end(self) -> tuple[int, str]:
+        """Dummy implementation, returns status code and an empty error string."""
         if not self._is_scanning:
-            return 0  # Not scanning or already finished
+            return 0, ""  # Not scanning or already finished
 
         elapsed = time.monotonic() - self._scan_start_time
         if elapsed >= self._scan_duration:
             logger.info("Dummy scan_wait_end: Scan finished.")
             self._is_scanning = False
-            return 0  # 0 means scan completed successfully
+            return 0, ""  # 0 means scan completed successfully
         else:
-            return 1  # 1 means scan is still running
+            return 1, ""  # 1 means scan is still running
 
     def get_data_points(self, dets_used: list[Detector]) -> tuple[np.ndarray, np.ndarray]:
         logger.info("Dummy get_data_points called. Generating fake data.")

@@ -1,5 +1,5 @@
 import logging
-from ctypes import create_string_buffer
+from abc import ABC, ABCMeta, abstractmethod
 
 import numpy as np
 from PySide6 import QtCore, QtGui
@@ -33,8 +33,10 @@ from PySide6.QtWidgets import (
 from config_model import AppConfig
 from hardware.ct400 import CT400Error
 from hardware.ct400_types import (
+    CT400StatusCode,  # <-- NEW
     Detector,
     Enable,
+    InstrumentError,  # <-- NEW
     LaserInput,
     LaserSource,
     PowerData,
@@ -149,13 +151,13 @@ class ScanSettings:
 ###############################################################################
 # --- REFACTOR: Inherit from QObject for the recommended worker-thread pattern ---
 class ScanWorker(QtCore.QObject):
-    _ERROR_BUFFER_SIZE = 1024
     _LASER_COMMAND_DELAY_MS = 150
     _SCAN_POLL_INTERVAL_MS = 100
 
     completed_signal = QtCore.Signal(np.ndarray, np.ndarray, float)
     progress_signal = QtCore.Signal(int)
-    error_signal = QtCore.Signal(str)
+    # The error signal now emits a structured error object
+    error_signal = QtCore.Signal(InstrumentError)
     finished = QtCore.Signal()
 
     def __init__(
@@ -185,7 +187,6 @@ class ScanWorker(QtCore.QObject):
 
     @Slot()
     def do_scan(self):
-        error_buf = create_string_buffer(self._ERROR_BUFFER_SIZE)
         scan_started = False
         try:
             if self._running:
@@ -222,18 +223,29 @@ class ScanWorker(QtCore.QObject):
             logger.info("ScanWorker: CT400 scan started.")
 
             while self._running:
-                error_status = self.ct400.scan_wait_end(error_buf)
-                if error_status == 0:
+                # --- REVISED ERROR HANDLING ---
+                status_code, error_msg = self.ct400.scan_wait_end()
+
+                if status_code == CT400StatusCode.SCAN_COMPLETED:
                     logger.info("ScanWorker: Scan completed successfully.")
                     self.progress_signal.emit(100)
                     break
-                elif error_status < 0:
-                    # Safely decode the buffer, respecting its allocated size to avoid reading past the end.
-                    error_msg = (
-                        error_buf.value[: self._ERROR_BUFFER_SIZE].decode("utf-8", errors="ignore").strip("\x00")
+                elif status_code < 0:
+                    logger.error(f"ScanWorker: Scan error (ScanWaitEnd): {error_msg} (Code: {status_code})")
+                    raise CT400Error(error_msg)  # The message is now clean
+
+                # Check for our own cancellation *after* checking hardware status
+                if not self._running:
+                    logger.info("ScanWorker: Scan cancelled by user during polling.")
+                    # Emit a specific, structured error for user cancellation
+                    err = InstrumentError(
+                        code=CT400StatusCode.SCAN_ERROR_USER_CANCELLED,
+                        message="Scan was cancelled by the user.",
+                        source=self.__class__.__name__,
                     )
-                    logger.error(f"ScanWorker: Scan error (ScanWaitEnd): {error_msg} (Code: {error_status})")
-                    raise CT400Error(f"Scan failed: {error_msg}")
+                    self.error_signal.emit(err)
+                    return  # Exit cleanly
+
                 QThread.msleep(self._SCAN_POLL_INTERVAL_MS)
 
             if not self._running:
@@ -272,10 +284,19 @@ class ScanWorker(QtCore.QObject):
             self.completed_signal.emit(wavelengths, powers_scan_data, final_pout)
         except CT400Error as e:
             logger.error(f"ScanWorker: CT400 Error: {e}")
-            self.error_signal.emit(str(e))
+            # Map the generic exception to our structured error type
+            err = InstrumentError(
+                code=CT400StatusCode.SCAN_ERROR_GENERIC, message=str(e), source=self.__class__.__name__
+            )
+            self.error_signal.emit(err)
         except Exception as e:
             logger.exception(f"ScanWorker: Unexpected error: {e}")
-            self.error_signal.emit(f"Unexpected scan error: {e}")
+            err = InstrumentError(
+                code=CT400StatusCode.UNKNOWN_ERROR,
+                message=f"An unexpected error occurred: {e}",
+                source=self.__class__.__name__,
+            )
+            self.error_signal.emit(err)
         finally:
             try:
                 if scan_started:
@@ -352,10 +373,154 @@ class PowerFetchWorker(QObject):
             self._is_actually_running = False
 
 
+class QABCMeta(type(QWidget), ABCMeta):
+    """
+    A custom metaclass to resolve the conflict between Qt's C++-backed
+    object model (via the QWidget metaclass) and Python's abstract base
+    class mechanism (ABCMeta).
+
+    This allows a class to inherit from both QWidget and ABC, enabling
+    the use of @abstractmethod within Qt widgets.
+    """
+
+    pass
+
+
+class BaseControlPanel(QWidget, ABC, metaclass=QABCMeta):
+    """
+    An abstract base class for CT400 control panels.
+
+    This class encapsulates the common functionality shared between the
+    scan and monitor panels...
+    """
+
+    def __init__(
+        self,
+        ct400_device: AbstractCT400 | None,
+        config: AppConfig,
+        parent: QWidget | None = None,
+    ):
+        super().__init__(parent)
+        self.ct400 = ct400_device
+        self.config = config
+        self.is_instrument_connected = self.ct400 is not None
+
+        # These will be created in _init_base_ui and used by subclasses
+        self.main_layout: QVBoxLayout
+        self.laser_power: QLineEdit
+        self.power_unit: QComboBox
+        self.input_port: QComboBox
+
+        self._init_base_ui()
+
+        try:
+            self.setStyleSheet(CT400_CONTROL_PANEL_STYLE)
+        except NameError:
+            logger.warning("CT400_CONTROL_PANEL_STYLE not found.")
+
+    def _init_base_ui(self):
+        """Initializes UI elements common to all control panels."""
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.setContentsMargins(10, 10, 10, 10)
+        self.main_layout.setSpacing(10)
+
+        # Create a group for settings that are common to both panels
+        common_settings_group = QGroupBox("Common Laser Settings")
+        common_settings_layout = QGridLayout()
+        common_settings_layout.setSpacing(8)
+
+        # Laser Power
+        common_settings_layout.addWidget(QLabel("Laser Power:"), 0, 0)
+        power_layout = QHBoxLayout()
+        self.laser_power = QLineEdit()
+        self.laser_power.setValidator(QtGui.QDoubleValidator(0.1, 50.0, 3))
+        power_layout.addWidget(self.laser_power)
+        self.power_unit = QComboBox()
+        self.power_unit.addItems(["mW", "dBm"])
+        power_layout.addWidget(self.power_unit)
+        common_settings_layout.addLayout(power_layout, 0, 1)
+
+        # Laser Input Port
+        common_settings_layout.addWidget(QLabel("Laser Input Port:"), 1, 0)
+        self.input_port = QComboBox()
+        for member in LaserInput:
+            display_text = member.name.split("_")[-1]
+            self.input_port.addItem(display_text, userData=member)
+        common_settings_layout.addWidget(self.input_port, 1, 1)
+
+        common_settings_layout.setColumnStretch(1, 1)
+        common_settings_group.setLayout(common_settings_layout)
+
+        # Add the common group to the main layout. Subclasses will add more.
+        self.main_layout.addWidget(common_settings_group)
+
+    def set_instrument(self, ct400_device: AbstractCT400 | None):
+        """Assigns the live CT400 device and updates UI state."""
+        logger.info(f"'{self.objectName()}' received instrument object: {ct400_device is not None}")
+        self.ct400 = ct400_device
+        self.on_instrument_connected(self.ct400 is not None)
+
+    def on_instrument_connected(self, is_connected: bool):
+        """
+        Handles UI state changes when the instrument connection status changes.
+        This base implementation disables all configurable widgets if the panel
+        is busy or the instrument is disconnected.
+        """
+        logger.info(f"'{self.objectName()}' notified: Instrument connected = {is_connected}")
+        self.is_instrument_connected = is_connected
+
+        # Enable configuration inputs only if connected AND not busy.
+        enable_config_inputs = is_connected and not self.is_busy()
+
+        for widget in self._get_configurable_widgets():
+            widget.setEnabled(enable_config_inputs)
+
+        self._get_main_action_button().setEnabled(is_connected)
+
+        # If the instrument disconnects while the panel is busy, force a stop.
+        if not is_connected and self.is_busy():
+            logger.warning(f"Instrument disconnected during operation on '{self.objectName()}'. Forcing stop.")
+            self._force_stop()
+
+    def _get_laser_power_mw(self) -> float:
+        """Converts the power input from mW or dBm to a float value in mW."""
+        value = float(self.laser_power.text())
+        if self.power_unit.currentText() == "dBm":
+            return 1.0 * (10 ** (value / 10.0))
+        return value
+
+    # --- Abstract methods for subclasses to implement ---
+
+    @abstractmethod
+    def _init_subclass_ui(self):
+        """Subclasses must implement this to create their specific UI elements."""
+        ...
+
+    @abstractmethod
+    def _get_configurable_widgets(self) -> list[QWidget]:
+        """Subclasses must return a list of their widgets that should be disabled during operation."""
+        ...
+
+    @abstractmethod
+    def _get_main_action_button(self) -> QPushButton:
+        """Subclasses must return their main action button (e.g., 'Start Scan')."""
+        ...
+
+    @abstractmethod
+    def is_busy(self) -> bool:
+        """Subclasses must return True if they are in an active state (scanning/monitoring)."""
+        ...
+
+    @abstractmethod
+    def _force_stop(self):
+        """Subclasses must implement logic to stop their operation when the instrument disconnects."""
+        ...
+
+
 ###############################################################################
 # CT400ControlPanel
 ###############################################################################
-class CT400ControlPanel(QWidget):
+class CT400ControlPanel(BaseControlPanel):
     scan_data_ready = QtCore.Signal(np.ndarray, np.ndarray, float)
     progress_updated = QtCore.Signal(int)
 
@@ -366,82 +531,54 @@ class CT400ControlPanel(QWidget):
         config: AppConfig,
         parent: QWidget | None = None,
     ):
-        super().__init__(parent)
+        # State specific to this panel
         self.shared_settings = shared_settings
-        self.ct400 = ct400_device
-        self.config = config
-        self.is_instrument_connected = self.ct400 is not None
         self.scanning = False
         self.scan_worker: ScanWorker | None = None
         self.scan_thread: QThread | None = None
-        self.setObjectName(ID_CT400_SCAN_PANEL)
-        try:
-            self.setStyleSheet(CT400_CONTROL_PANEL_STYLE)
-        except NameError:
-            logger.warning("CT400_CONTROL_PANEL_STYLE not found.")
 
-        self._init_ui()
-        # ... rest of __init__ is the same
-        self.laser_power.setValidator(QtGui.QDoubleValidator(0.1, 50.0, 3))
-        self.initial_wl.setValidator(QtGui.QDoubleValidator(1440.0, 1640.0, 3))
-        self.final_wl.setValidator(QtGui.QDoubleValidator(1440.0, 1640.0, 3))
-        self.resolution.setValidator(QtGui.QIntValidator(1, 1000))
-        self.motor_speed.setValidator(QtGui.QIntValidator(1, 100))
+        # Call base class __init__ which sets up common UI and properties
+        super().__init__(ct400_device, config, parent)
+
+        self.setObjectName(ID_CT400_SCAN_PANEL)
+
+        # Initialize subclass-specific UI
+        self._init_subclass_ui()
+
         self._connect_settings_signals()
         self.on_instrument_connected(self.is_instrument_connected)
         self.progress_updated.connect(self.update_progress_bar)
 
-    def _init_ui(self):
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(10, 10, 10, 10)
-        main_layout.setSpacing(10)
-
-        scan_config_group = QGroupBox("Scan Configuration")
+    def _init_subclass_ui(self):
+        """Creates the UI elements specific to the Scan panel."""
+        scan_config_group = QGroupBox("Scan-Specific Configuration")
         scan_config_layout = QGridLayout()
         scan_config_layout.setSpacing(8)
 
-        current_row = 0
-        scan_config_layout.addWidget(QLabel("Start λ (nm):"), current_row, 0)
+        # Note: Laser Power and Input Port are now in the base class's UI
+        scan_config_layout.addWidget(QLabel("Start λ (nm):"), 0, 0)
         self.initial_wl = QLineEdit()
-        scan_config_layout.addWidget(self.initial_wl, current_row, 1)
+        self.initial_wl.setValidator(QtGui.QDoubleValidator(1440.0, 1640.0, 3))
+        scan_config_layout.addWidget(self.initial_wl, 0, 1)
 
-        current_row += 1
-        scan_config_layout.addWidget(QLabel("End λ (nm):"), current_row, 0)
+        scan_config_layout.addWidget(QLabel("End λ (nm):"), 1, 0)
         self.final_wl = QLineEdit()
-        scan_config_layout.addWidget(self.final_wl, current_row, 1)
+        self.final_wl.setValidator(QtGui.QDoubleValidator(1440.0, 1640.0, 3))
+        scan_config_layout.addWidget(self.final_wl, 1, 1)
 
-        current_row += 1
-        scan_config_layout.addWidget(QLabel("Resolution (pm):"), current_row, 0)
+        scan_config_layout.addWidget(QLabel("Resolution (pm):"), 2, 0)
         self.resolution = QLineEdit()
-        scan_config_layout.addWidget(self.resolution, current_row, 1)
+        self.resolution.setValidator(QtGui.QIntValidator(1, 1000))
+        scan_config_layout.addWidget(self.resolution, 2, 1)
 
-        current_row += 1
-        scan_config_layout.addWidget(QLabel("Speed (nm/s):"), current_row, 0)
+        scan_config_layout.addWidget(QLabel("Speed (nm/s):"), 3, 0)
         self.motor_speed = QLineEdit()
-        scan_config_layout.addWidget(self.motor_speed, current_row, 1)
+        self.motor_speed.setValidator(QtGui.QIntValidator(1, 100))
+        scan_config_layout.addWidget(self.motor_speed, 3, 1)
 
-        current_row += 1
-        scan_config_layout.addWidget(QLabel("Laser Power:"), current_row, 0)
-        power_layout = QHBoxLayout()
-        self.laser_power = QLineEdit()
-        power_layout.addWidget(self.laser_power)
-        self.power_unit = QComboBox()
-        self.power_unit.addItems(["mW", "dBm"])
-        power_layout.addWidget(self.power_unit)
-        scan_config_layout.addLayout(power_layout, current_row, 1)
-
-        current_row += 1
-        scan_config_layout.addWidget(QLabel("Laser Input Port:"), current_row, 0)
-        self.input_port = QComboBox()
-        for member in LaserInput:
-            display_text = member.name.split("_")[-1]
-            self.input_port.addItem(display_text, userData=member)
-        scan_config_layout.addWidget(self.input_port, current_row, 1)
-
-        scan_config_layout.setColumnStretch(0, 0)
         scan_config_layout.setColumnStretch(1, 1)
         scan_config_group.setLayout(scan_config_layout)
-        main_layout.addWidget(scan_config_group)
+        self.main_layout.addWidget(scan_config_group)
 
         control_group = QGroupBox("Operation")
         control_layout = QVBoxLayout()
@@ -457,10 +594,11 @@ class CT400ControlPanel(QWidget):
         self.progress_bar.setTextVisible(True)
         self.progress_bar.setFormat("%p%")
         control_layout.addWidget(self.progress_bar)
-        control_group.setLayout(control_layout)
-        main_layout.addWidget(control_group)
 
-        main_layout.addStretch(1)
+        control_group.setLayout(control_layout)
+        self.main_layout.addWidget(control_group)
+        self.main_layout.addStretch(1)
+
         self.scan_btn.clicked.connect(self._toggle_scan)
 
     def _connect_settings_signals(self):
@@ -470,11 +608,9 @@ class CT400ControlPanel(QWidget):
         self.power_unit.currentIndexChanged.connect(self.update_shared_settings)
         QTimer.singleShot(0, self.update_shared_settings)
 
-    def on_instrument_connected(self, is_connected: bool):
-        logger.info(f"Scan Panel notified: Instrument connected = {is_connected}")
-        self.is_instrument_connected = is_connected
-        enable_config_inputs = is_connected and not self.scanning
-        config_widgets = [
+    # --- Implementation of Abstract Methods ---
+    def _get_configurable_widgets(self) -> list[QWidget]:
+        return [
             self.initial_wl,
             self.final_wl,
             self.resolution,
@@ -483,22 +619,17 @@ class CT400ControlPanel(QWidget):
             self.power_unit,
             self.input_port,
         ]
-        for widget in config_widgets:
-            widget.setEnabled(enable_config_inputs)
 
-        self.scan_btn.setEnabled(is_connected)
-        if not is_connected and self.scanning:
-            logger.warning("Instrument disconnected during scan. Forcing stop.")
-            self._stop_scan(cancelled=True)
+    def _get_main_action_button(self) -> QPushButton:
+        return self.scan_btn
 
-    def set_instrument(self, ct400_device: AbstractCT400):
-        """Assigns the live CT400 device to the panel after lazy initialization."""
-        logger.info(f"'{self.objectName()}' received live instrument object.")
-        self.ct400 = ct400_device
-        # Also update the worker inside HistogramControlPanel
-        if isinstance(self, HistogramControlPanel) and hasattr(self, "power_fetch_worker"):
-            self.power_fetch_worker.ct400 = ct400_device
-        self.on_instrument_connected(self.ct400 is not None)
+    def is_busy(self) -> bool:
+        return self.scanning
+
+    def _force_stop(self):
+        self._stop_scan(cancelled=True)
+
+    # --- End of Abstract Method Implementation ---
 
     @Slot()
     def _toggle_scan(self):
@@ -598,6 +729,19 @@ class CT400ControlPanel(QWidget):
         if cancelled:
             self._reset_scan_ui(status_msg=MSG_SCAN_CANCELLED)
 
+    @Slot(InstrumentError)  # <-- NEW SIGNATURE
+    def _handle_scan_error(self, error: InstrumentError):
+        logger.error(f"ScanPanel received error from {error.source}: {error.message} (Code: {error.code.name})")
+
+        # Now we can have logic based on the error code, not just the string!
+        if error.code == CT400StatusCode.SCAN_ERROR_USER_CANCELLED:
+            # This is not a critical error, so we don't show a pop-up.
+            # The UI is already reset by the stop/cancel logic.
+            logger.info("Scan was cancelled, no message box shown.")
+            return
+
+        QMessageBox.critical(self, "Scan Error", f"A scan error occurred:\n\n{error.message}")
+
     @Slot(int)
     def update_progress_bar(self, value: int):
         if self.progress_bar.isVisible():
@@ -647,6 +791,7 @@ class CT400ControlPanel(QWidget):
         self.scan_btn.style().polish(self.scan_btn)
         self.progress_bar.setVisible(False)
         self.progress_bar.setValue(0)
+        # Let the base class handle widget enabling/disabling
         self.on_instrument_connected(self.is_instrument_connected)
         logger.info(f"Scan panel UI reset. Status: {status_msg}")
 
@@ -654,7 +799,7 @@ class CT400ControlPanel(QWidget):
 ###############################################################################
 # HistogramControlPanel
 ###############################################################################
-class HistogramControlPanel(QWidget):
+class HistogramControlPanel(BaseControlPanel):
     _THREAD_WAIT_TIMEOUT_MS = 2000
     power_data_ready = QtCore.Signal(dict)
 
@@ -664,73 +809,42 @@ class HistogramControlPanel(QWidget):
         config: AppConfig,
         parent: QWidget | None = None,
     ):
-        super().__init__(parent)
-        self.ct400 = ct400_device
-        self.config = config
-        self.is_instrument_connected = self.ct400 is not None
+        # State specific to this panel
         self.monitoring = False
-
         self.power_fetch_thread = QThread(self)
-        self.power_fetch_worker = PowerFetchWorker(self.ct400)
-        self.power_fetch_worker.moveToThread(self.power_fetch_thread)
-
-        self.power_fetch_worker.data_ready.connect(self._handle_worker_data_ready)
-        self.power_fetch_worker.error_occurred.connect(self._handle_worker_error)
-        self.power_fetch_thread.started.connect(lambda: logger.info("Power fetch worker thread started."))
-        self.power_fetch_thread.finished.connect(self.power_fetch_worker.deleteLater)
-        self.power_fetch_thread.finished.connect(self.power_fetch_thread.deleteLater)
-        self.power_fetch_thread.finished.connect(
-            lambda: logger.info("Power fetch worker thread finished and cleaned up.")
-        )
-
+        self.power_fetch_worker = PowerFetchWorker(ct400_device)
         self.timer = QTimer(self)
-        self.timer.setInterval(MONITOR_TIMER_INTERVAL_MS)
-        self.timer.timeout.connect(self._request_power_fetch_from_worker)
+
+        # Call base class __init__ which sets up common UI and properties
+        super().__init__(ct400_device, config, parent)
+
         self.setObjectName(ID_CT400_MONITOR_PANEL)
 
-        try:
-            self.setStyleSheet(CT400_CONTROL_PANEL_STYLE)
-        except NameError:
-            logger.warning("CT400_CONTROL_PANEL_STYLE not found.")
-        self._init_ui()
-        self.laser_power.setValidator(QtGui.QDoubleValidator(0.1, 50.0, 3))
-        self.wavelength_input.setValidator(QtGui.QDoubleValidator(1440.0, 1640.0, 3))
+        # Initialize subclass-specific UI
+        self._init_subclass_ui()
+
+        # Setup worker and timer
+        self._setup_worker_and_timer()
 
         self.on_instrument_connected(self.is_instrument_connected)
         self.power_fetch_thread.start()
 
-    def _init_ui(self):
-        panel_layout = QGridLayout(self)
-        panel_layout.setContentsMargins(10, 10, 10, 10)
-        panel_layout.setSpacing(10)
+    def _init_subclass_ui(self):
+        """Creates the UI elements specific to the Monitor panel."""
+        # This group box replaces the need for the "Measurement Configuration" group
+        # as the common settings are already handled by the base class.
+        config_group = QGroupBox("Monitor-Specific Configuration")
+        config_layout = QGridLayout()
+        config_layout.setSpacing(8)
 
-        config_group = QGroupBox("Measurement Configuration")
-        config_internal_layout = QGridLayout()
-        config_internal_layout.setSpacing(8)
-
-        config_internal_layout.addWidget(QLabel("Wavelength (nm):"), 0, 0)
+        config_layout.addWidget(QLabel("Wavelength (nm):"), 0, 0)
         self.wavelength_input = QLineEdit()
-        config_internal_layout.addWidget(self.wavelength_input, 0, 1)
+        self.wavelength_input.setValidator(QtGui.QDoubleValidator(1440.0, 1640.0, 3))
+        config_layout.addWidget(self.wavelength_input, 0, 1)
 
-        config_internal_layout.addWidget(QLabel("Laser Power:"), 1, 0)
-        power_layout = QHBoxLayout()
-        self.laser_power = QLineEdit()
-        power_layout.addWidget(self.laser_power)
-        self.power_unit = QComboBox()
-        self.power_unit.addItems(["mW", "dBm"])
-        power_layout.addWidget(self.power_unit)
-        config_internal_layout.addLayout(power_layout, 1, 1)
-
-        config_internal_layout.addWidget(QLabel("Laser Input Port:"), 2, 0)
-        self.input_port = QComboBox()
-        for member in LaserInput:
-            display_text = member.name.split("_")[-1]
-            self.input_port.addItem(display_text, userData=member)
-        config_internal_layout.addWidget(self.input_port, 2, 1)
-
-        config_internal_layout.setColumnStretch(1, 1)
-        config_group.setLayout(config_internal_layout)
-        panel_layout.addWidget(config_group, 0, 0, 1, 2)
+        config_layout.setColumnStretch(1, 1)
+        config_group.setLayout(config_layout)
+        self.main_layout.addWidget(config_group)
 
         detector_group = QGroupBox("Active Detectors")
         detector_checkbox_layout = QGridLayout()
@@ -743,56 +857,79 @@ class HistogramControlPanel(QWidget):
             row, col = i // 2, i % 2
             detector_checkbox_layout.addWidget(cb, row, col)
         detector_group.setLayout(detector_checkbox_layout)
-        panel_layout.addWidget(detector_group, 1, 0)
 
         operation_group = QGroupBox("Operation")
-        operation_button_wrapper_layout = QVBoxLayout()
+        operation_layout = QVBoxLayout()
         self.monitor_btn = QPushButton("Start Monitoring")
         self.monitor_btn.setObjectName(ID_MONITOR_BUTTON)
         self.monitor_btn.setIcon(QtGui.QIcon(":/icons/play.svg"))
         self.monitor_btn.setMinimumHeight(100)
         self.monitor_btn.setMinimumWidth(150)
-        operation_button_wrapper_layout.addWidget(self.monitor_btn)
-        operation_group.setLayout(operation_button_wrapper_layout)
-        panel_layout.addWidget(operation_group, 1, 1, Qt.AlignmentFlag.AlignTop)
+        operation_layout.addWidget(self.monitor_btn)
+        operation_group.setLayout(operation_layout)
 
-        panel_layout.setRowStretch(2, 1)
+        # Use a horizontal layout to place detectors and operation side-by-side
+        side_by_side_layout = QHBoxLayout()
+        side_by_side_layout.addWidget(detector_group)
+        side_by_side_layout.addWidget(operation_group, 0, Qt.AlignmentFlag.AlignTop)
+        self.main_layout.addLayout(side_by_side_layout)
+
+        self.main_layout.addStretch(1)
 
         self.monitor_btn.clicked.connect(self._toggle_monitoring)
         for cb in self.detector_cbs:
             cb.stateChanged.connect(self._detector_selection_changed)
 
-    def set_instrument(self, ct400_device: AbstractCT400):
-        """Assigns the live CT400 device to the panel after lazy initialization."""
-        logger.info(f"'{self.objectName()}' received live instrument object.")
-        self.ct400 = ct400_device
-        # Also update the worker inside HistogramControlPanel
-        if isinstance(self, HistogramControlPanel) and hasattr(self, "power_fetch_worker"):
-            self.power_fetch_worker.ct400 = ct400_device
-        self.on_instrument_connected(self.ct400 is not None)
+    def _setup_worker_and_timer(self):
+        """Configures the worker, thread, and timer for power fetching."""
+        self.power_fetch_worker.moveToThread(self.power_fetch_thread)
+        self.power_fetch_worker.data_ready.connect(self._handle_worker_data_ready)
+        self.power_fetch_worker.error_occurred.connect(self._handle_worker_error)
+        self.power_fetch_thread.started.connect(lambda: logger.info("Power fetch worker thread started."))
+        self.power_fetch_thread.finished.connect(self.power_fetch_worker.deleteLater)
+        self.power_fetch_thread.finished.connect(self.power_fetch_thread.deleteLater)
+        self.power_fetch_thread.finished.connect(
+            lambda: logger.info("Power fetch worker thread finished and cleaned up.")
+        )
+        self.timer.setInterval(MONITOR_TIMER_INTERVAL_MS)
+        self.timer.timeout.connect(self._request_power_fetch_from_worker)
 
-    def on_instrument_connected(self, is_connected: bool):
-        logger.info(f"Monitor Panel: Instrument connected = {is_connected}")
-        self.is_instrument_connected = is_connected
+    # --- Overridden and Implemented Abstract Methods ---
+    def set_instrument(self, ct400_device: AbstractCT400 | None):
+        """Overrides base method to also update the worker's device instance."""
+        super().set_instrument(ct400_device)
         if hasattr(self, "power_fetch_worker"):
-            self.power_fetch_worker.ct400 = self.ct400 if is_connected else None
-        enable_config_and_detectors = is_connected and not self.monitoring
-        config_widgets = [
+            self.power_fetch_worker.ct400 = self.ct400
+
+    def _get_configurable_widgets(self) -> list[QWidget]:
+        # Note: self.detector_cbs are handled separately in on_instrument_connected
+        return [
             self.wavelength_input,
             self.laser_power,
             self.power_unit,
             self.input_port,
         ]
-        for widget in config_widgets:
-            widget.setEnabled(enable_config_and_detectors)
 
+    def _get_main_action_button(self) -> QPushButton:
+        return self.monitor_btn
+
+    def is_busy(self) -> bool:
+        return self.monitoring
+
+    def _force_stop(self):
+        self._stop_monitoring(instrument_error_or_disconnect=True)
+
+    # --- End of Abstract Method Implementation ---
+
+    # We must override on_instrument_connected to handle the detector checkboxes,
+    # which have slightly different logic (they are not disabled when busy).
+    def on_instrument_connected(self, is_connected: bool):
+        # Call the base implementation first to handle common widgets and logic
+        super().on_instrument_connected(is_connected)
+
+        # Now, handle the specific logic for detector checkboxes
         for cb in self.detector_cbs:
             cb.setEnabled(is_connected)
-
-        self.monitor_btn.setEnabled(is_connected)
-        if not is_connected and self.monitoring:
-            logger.warning("Monitor Panel: Instrument disconnected during monitoring. Stopping.")
-            self._stop_monitoring(instrument_error_or_disconnect=True)
 
     def _get_laser_power_mw(self) -> float:
         value = float(self.laser_power.text())

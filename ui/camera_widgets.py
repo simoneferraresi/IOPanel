@@ -1,3 +1,21 @@
+"""Defines all UI widgets related to camera display and control.
+
+This module contains the components for a single camera's user interface,
+including the main video display panel, parameter control sliders, and the
+background workers needed for performance.
+
+-   `ImageConversionWorker`: A QRunnable for offloading the conversion of a
+    numpy frame to a QImage from the main GUI thread.
+-   `ParameterControl`: A reusable compound widget (Label, Slider, LineEdit)
+    for controlling a single hardware parameter with linear or log scaling.
+-   `AspectLockedLabel`: A QLabel subclass that maintains the aspect ratio of
+    its pixmap, essential for distortion-free video display.
+-   `AutoOpWorker`: A QRunnable for handling one-shot auto-exposure/gain
+    operations in the background.
+-   `CameraPanel`: The main widget that aggregates all other components to
+    display a camera feed and its associated controls.
+"""
+
 import logging
 import math
 import time
@@ -6,7 +24,18 @@ from typing import Literal
 import cv2
 import numpy as np
 from PySide6 import QtCore, QtGui
-from PySide6.QtCore import Q_ARG, QMetaObject, QObject, QRunnable, QSize, Qt, QThreadPool, QTimer, Signal, Slot
+from PySide6.QtCore import (
+    Q_ARG,
+    QMetaObject,
+    QObject,
+    QRunnable,
+    QSize,
+    Qt,
+    QThreadPool,
+    QTimer,
+    Signal,
+    Slot,
+)
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
@@ -38,9 +67,10 @@ logger = logging.getLogger("LabApp.camera_widgets")
 
 
 class ImageConversionSignals(QObject):
-    """
-    Defines signals for the ImageConversionWorker.
-    A QObject is required for signals, and QRunnable is not a QObject.
+    """Defines signals for the ImageConversionWorker.
+
+    A separate QObject is required for signals because QRunnable does not
+    inherit from QObject.
     """
 
     image_ready = Signal(QImage)
@@ -48,11 +78,22 @@ class ImageConversionSignals(QObject):
 
 
 class ImageConversionWorker(QRunnable):
-    """
-    A QRunnable worker that converts a numpy array to a QImage in a background thread.
+    """A QRunnable worker that converts a numpy array to a QImage.
+
+    This worker runs on a background thread from the global QThreadPool to
+    prevent the expensive numpy-to-QImage conversion from blocking the GUI thread,
+    which is critical for maintaining a high and smooth frame rate display.
     """
 
     def __init__(self, frame: np.ndarray, is_mono: bool, camera_name: str):
+        """Initializes the image conversion worker.
+
+        Args:
+            frame: The raw numpy array frame received from the camera.
+            is_mono: A boolean indicating if the frame is monochrome (True) or
+                color (False). This determines the conversion logic.
+            camera_name: The name of the camera panel, used for logging.
+        """
         super().__init__()
         self.frame = frame
         self.is_mono = is_mono
@@ -61,18 +102,23 @@ class ImageConversionWorker(QRunnable):
 
     @Slot()
     def run(self):
-        """The workhorse method that runs in the background."""
+        """The workhorse method that runs in the background thread.
+
+        Converts the numpy frame to the appropriate QImage format. Emits
+        `image_ready` on success or `conversion_error` on failure.
+        """
         try:
             h, w = self.frame.shape[:2]
             q_img: QImage | None = None
+
             if self.is_mono:
-                # Logic copied from the original process_new_frame_data
-                if self.frame.ndim == 3 and self.frame.shape[2] == 1:
+                # Standardize mono frame to 2 dimensions (H, W)
+                frame = self.frame
+                if frame.ndim == 3 and frame.shape[2] == 1:
                     frame = self.frame.reshape(h, w)
-                else:
-                    frame = self.frame
 
                 if frame.ndim == 2:
+                    # Ensure the memory layout is C-contiguous for QImage
                     if not frame.flags["C_CONTIGUOUS"]:
                         frame = np.ascontiguousarray(frame)
                     q_img = QImage(frame.data, w, h, frame.strides[0], QImage.Format.Format_Grayscale8)
@@ -80,17 +126,18 @@ class ImageConversionWorker(QRunnable):
                     raise TypeError(f"Mono camera provided unexpected frame shape: {frame.shape}")
             else:  # Color
                 if self.frame.ndim == 3 and self.frame.shape[2] == 3:
+                    # Convert BGR (from OpenCV) to RGB for QImage
                     frame_rgb = cv2.cvtColor(self.frame, cv2.COLOR_BGR2RGB)
                     q_img = QImage(frame_rgb.data, w, h, frame_rgb.strides[0], QImage.Format.Format_RGB888)
                 else:
                     raise TypeError(f"Color camera provided unexpected frame shape: {self.frame.shape}")
 
             if q_img:
-                # The QImage must be copied because the underlying numpy buffer will go out of scope.
+                # The QImage must be copied because the underlying numpy buffer
+                # will go out of scope and be garbage-collected.
                 self.signals.image_ready.emit(q_img.copy())
             else:
                 self.signals.conversion_error.emit("Converted QImage was null.")
-
         except Exception as e:
             error_msg = f"Panel {self.camera_name}: Unhandled error converting frame: {e}"
             logger.exception(error_msg)
@@ -98,12 +145,14 @@ class ImageConversionWorker(QRunnable):
 
 
 class ParameterControl(QWidget):
-    """
-    A compound widget for controlling a single camera parameter.
+    """A compound widget for controlling a single camera parameter.
 
-    Encapsulates a label, a logarithmic or linear slider, and a line edit,
-    keeping them synchronized. Emits a `valueChanged` signal when the
-    parameter is changed by the user.
+    This widget encapsulates a label, a slider, and a line edit, keeping them
+    synchronized. It supports both linear and logarithmic scales for the slider.
+
+    Attributes:
+        valueChanged (Signal): Emits the new floating-point value whenever the
+            user changes the slider or finishes editing the line edit.
     """
 
     valueChanged = Signal(float)
@@ -118,6 +167,17 @@ class ParameterControl(QWidget):
         decimals: int = 0,
         parent: QWidget | None = None,
     ):
+        """Initializes the ParameterControl widget.
+
+        Args:
+            name: The display name of the parameter (e.g., "Exposure (µs)").
+            min_val: The minimum allowed value for the parameter.
+            max_val: The maximum allowed value for the parameter.
+            initial_val: The starting value for the control.
+            scale: The mapping scale for the slider ('linear' or 'log').
+            decimals: The number of decimal places to display in the line edit.
+            parent: The parent widget.
+        """
         super().__init__(parent)
         self.param_name = name
         self.min_val = max(1e-9, min_val)  # Ensure min_val is positive for log scale
@@ -127,26 +187,20 @@ class ParameterControl(QWidget):
 
         self._init_ui()
         self._connect_signals()
-
-        # Set initial value without emitting signal
         self.setValue(initial_val, emit_signal=False)
 
     def _init_ui(self):
-        """Creates the label, slider, and line edit widgets."""
+        """Creates and arranges the label, slider, and line edit widgets."""
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
-
         self.label = QLabel(f"{self.param_name}:")
         self.label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-
         self.slider = QSlider(Qt.Orientation.Horizontal)
-        self.slider.setRange(0, 1000)  # Always use a fixed slider range
-
+        self.slider.setRange(0, 1000)  # Always use a fixed high-resolution slider range
         self.edit = QLineEdit()
         self.edit.setValidator(QtGui.QDoubleValidator(self.min_val, self.max_val, self.decimals))
         self.edit.setFixedWidth(70)
-
         layout.addWidget(self.label)
         layout.addWidget(self.slider)
         layout.addWidget(self.edit)
@@ -232,17 +286,16 @@ class ParameterControl(QWidget):
             self.edit.setText(f"{current_value:.{self.decimals}f}")
 
     def setValue(self, value: float, emit_signal: bool = False):
-        """Programmatically sets the value of the control."""
+        """Programmatically sets the value of the control.
+
+        Args:
+            value: The new value to set. It will be clamped to the min/max range.
+            emit_signal: If True, the `valueChanged` signal will be emitted.
+        """
         value = max(self.min_val, min(self.max_val, value))
-        self.slider.blockSignals(True)
-        self.edit.blockSignals(True)
-
-        self.slider.setValue(self._value_to_slider(value))
-        self.edit.setText(f"{value:.{self.decimals}f}")
-
-        self.slider.blockSignals(False)
-        self.edit.blockSignals(False)
-
+        with QtCore.QSignalBlocker(self.slider), QtCore.QSignalBlocker(self.edit):
+            self.slider.setValue(self._value_to_slider(value))
+            self.edit.setText(f"{value:.{self.decimals}f}")
         if emit_signal:
             self.valueChanged.emit(value)
 
@@ -259,13 +312,26 @@ class ParameterControl(QWidget):
 
 
 class AspectLockedLabel(QLabel):
+    """A QLabel that maintains the aspect ratio of its displayed pixmap.
+
+    This is crucial for displaying video frames without distortion when the
+    widget is resized. It overrides Qt's layout methods to enforce the aspect
+    ratio of the source image.
+    """
+
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self._aspect_ratio: float | None = None
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.setScaledContents(False)
+        self.setScaledContents(False)  # We will do our own scaling
 
     def setAspectRatio(self, width: int, height: int):
+        """Sets the aspect ratio to maintain.
+
+        Args:
+            width: The width of the source content.
+            height: The height of the source content.
+        """
         if height > 0:
             new_ar = width / height
             if self._aspect_ratio is None or abs(new_ar - self._aspect_ratio) > 1e-6:
@@ -275,9 +341,11 @@ class AspectLockedLabel(QLabel):
             self._aspect_ratio = None
 
     def hasHeightForWidth(self) -> bool:
+        """Required override for aspect ratio-dependent widgets."""
         return self._aspect_ratio is not None
 
     def heightForWidth(self, width: int) -> int:
+        """Calculates the required height to maintain the aspect ratio for a given width."""
         if self._aspect_ratio is not None and self._aspect_ratio > 1e-6:
             calculated_height = int(width / self._aspect_ratio)
             return calculated_height
@@ -375,10 +443,17 @@ class AutoOpWorker(QRunnable):
 # Camera Panel (Refactored to use ParameterControl)
 # =============================================================================
 class CameraPanel(QFrame):
-    """
-    Displays a live camera feed with collapsible controls for adjusting exposure,
-    gain, and gamma. Provides visual feedback for auto operations.
-    Includes FPS display overlay.
+    """A widget that displays a live camera feed and its associated controls.
+
+    This panel is the main UI component for a single camera. It includes:
+    -   A video display area (`AspectLockedLabel`).
+    -   Collapsible controls for exposure, gain, and gamma.
+    -   Buttons for one-shot auto-operations.
+    -   An FPS (frames per second) overlay.
+    -   A watchdog timer to attempt recovery if the camera stream stops.
+
+    The panel is designed to be created in a placeholder state and later have a
+    live `VimbaCam` object assigned to it via `set_camera()`.
     """
 
     def __init__(
@@ -388,6 +463,16 @@ class CameraPanel(QFrame):
         config: CameraConfig,
         parent: QWidget | None = None,
     ):
+        """Initializes the CameraPanel.
+
+        Args:
+            camera: A live `VimbaCam` instance, or `None` if this is a
+                placeholder panel awaiting asynchronous initialization.
+            title: The display title for the panel, used for logging and
+                display before the camera is fully initialized.
+            config: The `CameraConfig` object for this camera.
+            parent: The parent widget.
+        """
         super().__init__(parent)
         self.camera = camera
         self.config = config
@@ -441,7 +526,15 @@ class CameraPanel(QFrame):
         self.clear_status_indicators()
 
     def set_camera(self, camera: VimbaCam):
-        """Assigns the live camera object to the panel after initialization."""
+        """Assigns the live camera object to the panel after initialization.
+
+        This method connects the panel to the live camera's signals and
+        populates the control widgets with the actual parameter ranges and
+        values read from the camera hardware.
+
+        Args:
+            camera: The successfully initialized `VimbaCam` instance.
+        """
         if self.camera is not None:
             logger.warning(f"CameraPanel for {self._panel_title} is already assigned a camera.")
             return
@@ -660,9 +753,14 @@ class CameraPanel(QFrame):
 
     @Slot(np.ndarray)
     def process_new_frame_data(self, frame: np.ndarray):
-        """
-        Receives a raw numpy frame from the camera, creates a worker to convert
-        it to a QImage in the background, and submits it to the thread pool.
+        """Receives a raw numpy frame and initiates its display process.
+
+        This slot is connected to the `VimbaCam.new_frame` signal. It creates
+        an `ImageConversionWorker` to convert the frame to a `QImage` on a
+        background thread, ensuring the GUI remains responsive.
+
+        Args:
+            frame: The raw numpy array frame from the camera.
         """
         if not self.camera or not self.isVisible():
             return
@@ -693,9 +791,14 @@ class CameraPanel(QFrame):
 
     @Slot(QImage)
     def _display_converted_image(self, q_img: QImage):
-        """
-        Receives a converted QImage from the worker thread and displays it.
-        This method runs on the main GUI thread.
+        """Displays the converted QImage in the video label.
+
+        This slot is connected to the `ImageConversionWorker.image_ready`
+        signal and runs on the main GUI thread. It handles scaling the pixmap
+        to fit the label while preserving aspect ratio and painting the FPS overlay.
+
+        Args:
+            q_img: The `QImage` converted by the background worker.
         """
         if q_img.isNull():
             self.set_frame_pixmap(None)
@@ -787,7 +890,14 @@ class CameraPanel(QFrame):
             self.video_label.setPixmap(QPixmap())
 
     def closeEvent(self, event: QtGui.QCloseEvent):
-        """Override for QFrame.closeEvent."""
+        """Handles the widget close event.
+
+        Ensures that all timers associated with this panel are stopped to
+        prevent them from firing after the widget is gone.
+
+        Args:
+            event: The close event.
+        """
         logger.debug(f"Closing CameraPanel for {self._panel_title}")
         # --- FIX: Check if camera exists before stopping its timer. ---
         if self.camera:

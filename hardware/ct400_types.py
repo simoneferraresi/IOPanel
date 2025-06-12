@@ -51,3 +51,39 @@ class PowerData:
 
     pout: float
     detectors: "dict[Detector, float]"
+
+
+class CT400StatusCode(IntEnum):
+    """
+    Defines specific, known status or error codes from the CT400 device.
+    This provides a structured alternative to parsing error strings.
+    """
+
+    # Success Codes
+    SCAN_COMPLETED = 0
+
+    # In-Progress Codes
+    SCAN_RUNNING = 1
+
+    # Error Codes (Maps to negative values from the DLL)
+    SCAN_ERROR_GENERIC = -1
+    SCAN_ERROR_NO_LASER = -2
+    SCAN_ERROR_NO_DETECTOR = -3
+    SCAN_ERROR_MIN_WAVELENGTH = -4
+    SCAN_ERROR_MAX_WAVELENGTH = -5
+    SCAN_ERROR_SWEEP_SPEED = -6
+    SCAN_ERROR_COMMUNICATION = -10
+    SCAN_ERROR_USER_CANCELLED = -99  # Our own internal code
+    UNKNOWN_ERROR = -100  # For any other error
+
+
+@dataclass(frozen=True)
+class InstrumentError:
+    """
+    A structured object to represent an error from an instrument.
+    This is emitted by signals instead of a raw string.
+    """
+
+    code: CT400StatusCode
+    message: str
+    source: str  # e.g., "ScanWorker", "PowerFetchWorker"

@@ -1,10 +1,15 @@
 from abc import ABC, abstractmethod
-from ctypes import Array, c_char
 
 import numpy as np
 
-# Import from the new, clean types file. This breaks the circular dependency.
-from .ct400_types import Detector, Enable, LaserInput, LaserSource, PowerData
+# Import the new, clean types file, including structured errors.
+from .ct400_types import (
+    Detector,
+    Enable,
+    LaserInput,
+    LaserSource,
+    PowerData,
+)
 
 
 class AbstractCT400(ABC):
@@ -53,7 +58,18 @@ class AbstractCT400(ABC):
     def stop_scan(self) -> None: ...
 
     @abstractmethod
-    def scan_wait_end(self, error_buf: "Array[c_char]") -> int: ...
+    def scan_wait_end(self) -> tuple[int, str]:
+        """
+        Waits for the scan to end or polls its current status.
+
+        This method now fully encapsulates the underlying C-style error buffer,
+        making the interface safer and cleaner.
+
+        Returns:
+            A tuple containing:
+            - The integer status code from the device (0 for complete, 1 for running, <0 for error).
+            - The decoded error message string, if any.
+        """
 
     @abstractmethod
     def get_data_points(self, dets_used: list[Detector]) -> tuple[np.ndarray, np.ndarray]: ...

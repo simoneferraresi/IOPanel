@@ -3,7 +3,7 @@ import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeAlias
 
 import cv2
 import numpy as np
@@ -24,6 +24,10 @@ from vmbpy import (
 )
 
 logger = logging.getLogger("LabApp.camera")
+
+# --- NEW: Type Alias for Clarity ---
+CameraInfoDict: TypeAlias = dict[str, Any]
+FeatureRange: TypeAlias = tuple[Any, Any] | None
 
 
 @dataclass
@@ -92,15 +96,23 @@ class FrameBuffer:
 
 class VimbaCam(QObject):
     """
-    Manages a Vimba-compatible camera.
+    Manages a Vimba-compatible camera, abstracting Vimba API details.
 
-    This class abstracts the Vimba API details for a single camera, handling
-    connection, streaming, and settings adjustment. It operates on its own by
-    registering a callback (`_frame_handler`) with the Vimba transport layer,
-    which runs in a separate, high-priority Vimba thread.
+    This class handles the connection, streaming, and settings for a single camera.
+    It operates on its own by registering a callback (`_frame_handler`) with the
+    Vimba transport layer, which runs in a separate, high-priority Vimba thread.
+    All public methods of this class are designed to be thread-safe and are
+    intended to be called from the main Qt GUI thread.
 
     It emits signals for new frames, FPS updates, connection status, and errors,
     making it suitable for integration into a Qt application.
+
+    Attributes:
+        new_frame (Signal): Emits a new frame as a numpy.ndarray.
+        fps_updated (Signal): Emits the current calculated FPS as a float.
+        connected (Signal): Emitted when the camera successfully starts streaming.
+        disconnected (Signal): Emitted when the camera connection is closed.
+        error (Signal): Emits an error message string for display in the UI.
     """
 
     _DEFAULT_STREAM_BUFFER_COUNT = 5
@@ -110,7 +122,8 @@ class VimbaCam(QObject):
     fps_updated = Signal(float)
     connected = Signal()
     disconnected = Signal()
-    error = Signal(str)
+    error = Signal(str)  # For simple UI messages, string is acceptable here.
+    # Could be upgraded to a structured error if needed.
 
     def __init__(
         self,
@@ -119,6 +132,19 @@ class VimbaCam(QObject):
         flip_horizontal: bool = False,
         parent: QObject | None = None,
     ):
+        """
+        Initializes the VimbaCam instance.
+
+        Args:
+            identifier: The unique ID of the camera (e.g., 'DEV_...').
+            camera_name: An optional user-friendly name for the camera.
+                         If None, the identifier is used.
+            flip_horizontal: If True, incoming frames will be flipped horizontally.
+            parent: The parent QObject for Qt's memory management.
+
+        Raises:
+            ValueError: If the camera identifier is empty.
+        """
         super().__init__(parent)
         if not identifier:
             raise ValueError("Camera identifier cannot be empty.")
@@ -139,11 +165,17 @@ class VimbaCam(QObject):
         logger.info(f"VimbaCam instance created for identifier: {self.identifier} (Name: {self.camera_name})")
 
     @staticmethod
-    def list_cameras() -> list[dict[str, Any]]:
+    def list_cameras() -> list[CameraInfoDict]:
         """
-        Discovers all connected Vimba-compatible cameras and returns their
-        essential information. This method follows the official vmbpy examples
-        for accessing camera properties.
+        Discovers all connected Vimba-compatible cameras.
+
+        This static method scans the system using the Vimba API and returns
+        a list of dictionaries, each containing essential information about
+        a detected camera.
+
+        Returns:
+            A list of dictionaries, where each dictionary represents a camera
+            and contains keys like 'id', 'serial', 'model', and 'name'.
         """
         cameras_info = []
         logger.info("Listing available Vimba cameras...")
@@ -418,8 +450,17 @@ class VimbaCam(QObject):
     def is_auto_gain_on(self) -> bool:
         return self.settings.is_auto_gain_on
 
-    def get_feature_range(self, feature_name: str) -> tuple[Any, Any] | None:
-        """Gets the (min, max) range of a feature. Returns None on failure."""
+    def get_feature_range(self, feature_name: str) -> FeatureRange:
+        """
+        Gets the (min, max) range of a feature.
+
+        Args:
+            feature_name: The name of the feature to query (e.g., "ExposureTimeAbs").
+
+        Returns:
+            A tuple of (min_value, max_value) if the feature is readable and
+            has a range. Returns None on failure or if the feature doesn't exist.
+        """
         if not self.device:
             return None
         try:

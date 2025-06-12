@@ -18,6 +18,7 @@ from ctypes import (
     c_int32,
     c_uint32,
     c_uint64,
+    create_string_buffer,
 )
 from pathlib import Path
 
@@ -76,6 +77,8 @@ class CT400(AbstractCT400):
         CT400InitializationError: If the DLL fails to load or the device fails
                                   to initialize.
     """
+
+    _ERROR_BUFFER_SIZE = 4096  # Increased for safety, as discussed.
 
     def __init__(self, dll_path: Path):
         """
@@ -354,22 +357,40 @@ class CT400(AbstractCT400):
         if result == -1:
             logger.warning("CT400_ScanStop returned an error. The scan might have already finished or failed.")
 
-    def scan_wait_end(self, error_buf: "Array[c_char]") -> int:
+    def scan_wait_end(self) -> tuple[int, str]:
         """
         Waits for the scan to end or polls its current status.
 
-        Warning:
-            This function passes a fixed-size buffer (`error_buf`) to the underlying C
-            library. If the library writes an error message larger than the buffer,
-            a buffer overflow will occur. The calling code must ensure the buffer is
-            sufficiently large.
+        This implementation creates and manages the ctypes error buffer internally,
+        preventing it from leaking into other application layers and mitigating
+        the risk of buffer overflows by decoding safely.
+
+        Returns:
+            A tuple containing the raw status code and the decoded error message.
         """
+        # Buffer is now an implementation detail, not part of the interface.
+        error_buf = create_string_buffer(self._ERROR_BUFFER_SIZE)  # A reasonable size
         result = self.dll.CT400_ScanWaitEnd(self.handle, error_buf)
-        if result == -1:
+
+        # Safely decode the buffer.
+        error_msg = ""
+        try:
+            # The value attribute is a bytes object, decode it.
+            error_msg = error_buf.value.decode("utf-8", errors="ignore").strip("\x00")
+        except Exception as e:
+            logger.error(f"Failed to decode error buffer from CT400_ScanWaitEnd: {e}")
+            error_msg = "Could not decode error message from device."
+
+        if result < 0 and result != -1:  # Specific documented error codes
+            logger.error(f"CT400 Scan Error (Code: {result}): {error_msg}")
+        elif result == -1:  # A general failure of the function call itself
             # This is a special case. -1 means the function call itself failed,
             # whereas other negative numbers are specific scan error codes.
-            raise CT400CommunicationError("The call to CT400_ScanWaitEnd failed. Check device connection.")
-        return result
+            raise CT400CommunicationError(
+                f"The call to CT400_ScanWaitEnd failed. Check device connection. Message: {error_msg}"
+            )
+
+        return result, error_msg
 
     def get_data_points(self, dets_used: list[Detector]) -> tuple[np.ndarray, np.ndarray]:
         """
