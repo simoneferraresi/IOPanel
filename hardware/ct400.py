@@ -8,17 +8,18 @@ that the connection to the device is properly closed, even if errors occur.
 """
 
 import logging
-import os
 from ctypes import (
     POINTER,
+    Array,
     WinDLL,
     byref,
-    c_char_p,
+    c_char,
     c_double,
     c_int32,
     c_uint32,
     c_uint64,
 )
+from pathlib import Path
 
 import numpy as np
 
@@ -76,7 +77,7 @@ class CT400(AbstractCT400):
                                   to initialize.
     """
 
-    def __init__(self, dll_path: str):
+    def __init__(self, dll_path: Path):
         """
         Initializes the CT400 wrapper, loads the DLL, and connects to the device.
         Args:
@@ -87,18 +88,13 @@ class CT400(AbstractCT400):
             CT400InitializationError: If the DLL fails to load or the device fails
                                       to initialize.
         """
-        # Resolve DLL path if it's relative
-        if not os.path.isabs(dll_path):
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            dll_path = os.path.join(script_dir, dll_path)
-            logger.info(f"Relative DLL path provided. Resolved to: {dll_path}")
-
-        if not os.path.exists(dll_path):
-            logger.error(f"CT400 DLL not found at resolved path: {dll_path}")
+        if not dll_path.exists():
+            logger.error(f"CT400 DLL not found at path: {dll_path}")
             raise FileNotFoundError(f"CT400 DLL not found at: {dll_path}")
 
         try:
-            self.dll = WinDLL(dll_path)
+            # WinDLL needs a string path, so we convert back at the last moment.
+            self.dll = WinDLL(str(dll_path))
         except OSError as e:
             raise CT400InitializationError(
                 f"Failed to load DLL from {dll_path}. Ensure it is a valid 64-bit or 32-bit DLL matching your Python interpreter. Error: {e}"
@@ -170,7 +166,7 @@ class CT400(AbstractCT400):
             ("CT400_SetScan", c_int32, [c_uint64, c_double, c_double, c_double]),
             ("CT400_ScanStart", c_int32, [c_uint64]),
             ("CT400_ScanStop", c_int32, [c_uint64]),
-            ("CT400_ScanWaitEnd", c_int32, [c_uint64, c_char_p]),
+            ("CT400_ScanWaitEnd", c_int32, [c_uint64, Array[c_char]]),
             (
                 "CT400_GetNbDataPoints",
                 c_int32,
@@ -358,7 +354,7 @@ class CT400(AbstractCT400):
         if result == -1:
             logger.warning("CT400_ScanStop returned an error. The scan might have already finished or failed.")
 
-    def scan_wait_end(self, error_buf: c_char_p) -> int:
+    def scan_wait_end(self, error_buf: "Array[c_char]") -> int:
         """
         Waits for the scan to end or polls its current status.
 

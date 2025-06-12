@@ -1,6 +1,6 @@
 import logging
 import time
-from ctypes import c_char_p
+from ctypes import Array, c_char
 
 import numpy as np
 
@@ -59,7 +59,7 @@ class DummyCT400(AbstractCT400):
         logger.info("Dummy stop_scan called.")
         self._is_scanning = False
 
-    def scan_wait_end(self, error_buf: c_char_p) -> int:
+    def scan_wait_end(self, error_buf: "Array[c_char]") -> int:
         if not self._is_scanning:
             return 0  # Not scanning or already finished
 

@@ -8,6 +8,7 @@ from PySide6.QtCore import (
     QMutex,
     QMutexLocker,
     QObject,
+    QRunnable,
     Qt,
     QThread,
     QTimer,
@@ -44,96 +45,92 @@ from ui.constants import (
     ID_CT400_SCAN_PANEL,
     ID_MONITOR_BUTTON,
     ID_SCAN_BUTTON,
+    MONITOR_TIMER_INTERVAL_MS,
+    MSG_SCAN_CANCELLED,
+    MSG_SCAN_FINISHED,
+    MSG_SCAN_READY,
     PROP_MONITORING,
     PROP_SCANNING,
 )
 from ui.theme import CT400_CONTROL_PANEL_STYLE
 
-MONITOR_TIMER_INTERVAL_MS = 250
 logger = logging.getLogger("LabApp.control_panel")
 
 
 ###############################################################################
-# CT400ConnectionWorker
+# CT400ConnectionWorker (Refactored for QThreadPool)
 ###############################################################################
-class CT400ConnectionWorker(QObject):
-    """
-    A worker to handle connecting and disconnecting the CT400 in a background thread,
-    preventing the GUI from freezing.
-    """
+class CT400ConnectionSignals(QObject):
+    """Holds signals for the CT400ConnectionWorker."""
 
-    connection_succeeded = Signal(str)  # Emits success message
-    connection_failed = Signal(str)  # Emits error message
+    connection_succeeded = Signal(str)
+    connection_failed = Signal(str)
     disconnection_succeeded = Signal(str)
     disconnection_failed = Signal(str)
-    finished = Signal()  # Standard signal to terminate the thread
+    finished = Signal()
 
-    def __init__(self, ct400_device: AbstractCT400, config: AppConfig, parent=None):
-        super().__init__(parent)
+
+class CT400ConnectionWorker(QRunnable):
+    """
+    A QRunnable to handle connecting/disconnecting the CT400 in the thread pool.
+    """
+
+    def __init__(self, ct400_device: AbstractCT400, config: AppConfig, connect: bool):
+        super().__init__()
         self.ct400 = ct400_device
         self.config = config
-        self._is_running = True
+        self.is_connect_operation = connect
+        self.signals = CT400ConnectionSignals()
 
     @Slot()
-    def connect_device(self):
-        """Performs the connection logic."""
-        if not self._is_running:
-            self.finished.emit()
-            return
+    def run(self):
+        """Performs the connection or disconnection logic."""
         try:
-            gpib = self.config.instruments.tunics_gpib_address
-            laser_input = LaserInput(self.config.scan_defaults.input_port)
-            min_wl = self.config.scan_defaults.min_wavelength_nm
-            max_wl = self.config.scan_defaults.max_wavelength_nm
-            speed = self.config.scan_defaults.speed_nm_s
-            laser_type_str = self.config.instruments.tunics_laser_type
-            laser_type_enum = getattr(LaserSource, laser_type_str, LaserSource.LS_TunicsT100s_HP)
+            if self.is_connect_operation:
+                logger.info("ConnectionWorker (Runnable): Starting connection.")
+                gpib = self.config.instruments.tunics_gpib_address
+                laser_input = LaserInput(self.config.scan_defaults.input_port)
+                min_wl = self.config.scan_defaults.min_wavelength_nm
+                max_wl = self.config.scan_defaults.max_wavelength_nm
+                speed = self.config.scan_defaults.speed_nm_s
+                laser_type_str = self.config.instruments.tunics_laser_type
+                laser_type_enum = getattr(LaserSource, laser_type_str, LaserSource.LS_TunicsT100s_HP)
+                self.ct400.set_laser(
+                    laser_input=laser_input,
+                    enable=Enable.ENABLE,
+                    gpib_address=gpib,
+                    laser_type=laser_type_enum,
+                    min_wavelength=min_wl,
+                    max_wavelength=max_wl,
+                    speed=speed,
+                )
+                success_msg = f"CT400 Connected (Input {laser_input.value})"
+                logger.info(f"ConnectionWorker: {success_msg}")
+                self.signals.connection_succeeded.emit(success_msg)
+            else:
+                logger.info("ConnectionWorker (Runnable): Starting disconnection.")
+                laser_input_disconnect = LaserInput(self.config.scan_defaults.input_port)
+                safe_wl = self.config.scan_defaults.safe_parking_wavelength
+                safe_power = self.config.scan_defaults.laser_power
+                self.ct400.cmd_laser(
+                    laser_input=laser_input_disconnect,
+                    enable=Enable.DISABLE,
+                    wavelength=safe_wl,
+                    power=safe_power,
+                )
+                success_msg = "CT400 Disconnected"
+                logger.info(f"ConnectionWorker: {success_msg}")
+                self.signals.disconnection_succeeded.emit(success_msg)
 
-            self.ct400.set_laser(
-                laser_input=laser_input,
-                enable=Enable.ENABLE,
-                gpib_address=gpib,
-                laser_type=laser_type_enum,
-                min_wavelength=min_wl,
-                max_wavelength=max_wl,
-                speed=speed,
-            )
-            success_msg = f"CT400 Connected (Input {laser_input.value})"
-            logger.info(f"ConnectionWorker: {success_msg}")
-            self.connection_succeeded.emit(success_msg)
         except (CT400Error, ValueError, KeyError, Exception) as e:
-            error_msg = f"Connection Failed: {e}"
+            error_msg = f"Operation Failed: {e}"
             logger.error(f"ConnectionWorker: {error_msg}", exc_info=True)
-            self.connection_failed.emit(error_msg)
+            if self.is_connect_operation:
+                self.signals.connection_failed.emit(error_msg)
+            else:
+                self.signals.disconnection_failed.emit(error_msg)
         finally:
-            self.finished.emit()
-
-    @Slot()
-    def disconnect_device(self):
-        """Performs the disconnection logic."""
-        if not self._is_running:
-            self.finished.emit()
-            return
-        try:
-            laser_input_disconnect = LaserInput(self.config.scan_defaults.input_port)
-            safe_wl = self.config.scan_defaults.safe_parking_wavelength
-            safe_power = self.config.scan_defaults.laser_power
-
-            self.ct400.cmd_laser(
-                laser_input=laser_input_disconnect,
-                enable=Enable.DISABLE,
-                wavelength=safe_wl,
-                power=safe_power,
-            )
-            success_msg = "CT400 Disconnected"
-            logger.info(f"ConnectionWorker: {success_msg}")
-            self.disconnection_succeeded.emit(success_msg)
-        except (CT400Error, ValueError, KeyError, Exception) as e:
-            error_msg = f"Disconnect Failed: {e}"
-            logger.error(f"ConnectionWorker: {error_msg}", exc_info=True)
-            self.disconnection_failed.emit(error_msg)
-        finally:
-            self.finished.emit()
+            self.signals.finished.emit()
 
 
 ###############################################################################
@@ -599,7 +596,7 @@ class CT400ControlPanel(QWidget):
             # The worker will finish its current loop, run the finally block,
             # and emit finished(), which will quit the thread.
         if cancelled:
-            self._reset_scan_ui(status_msg="Scan cancelled by user.")
+            self._reset_scan_ui(status_msg=MSG_SCAN_CANCELLED)
 
     @Slot(int)
     def update_progress_bar(self, value: int):
@@ -626,10 +623,10 @@ class CT400ControlPanel(QWidget):
     @Slot()
     def _scan_thread_finished(self):
         logger.info("ScanPanel: Scan thread finished.")
-        status_msg = "Scan finished."
+        status_msg = MSG_SCAN_FINISHED
         # Check if the worker still exists and was stopped manually
         if self.scan_worker and not self.scan_worker._running and self.scanning:
-            status_msg = "Scan cancelled."
+            status_msg = MSG_SCAN_CANCELLED
 
         # Now that the thread is finished, we can safely delete the worker and thread objects.
         if self.scan_worker:
@@ -641,7 +638,7 @@ class CT400ControlPanel(QWidget):
 
         self._reset_scan_ui(status_msg=status_msg)
 
-    def _reset_scan_ui(self, status_msg: str = "Ready"):
+    def _reset_scan_ui(self, status_msg: str = MSG_SCAN_READY):
         self.scanning = False
         self.scan_btn.setText("Start Scan")
         self.scan_btn.setIcon(QtGui.QIcon(":/icons/play.svg"))

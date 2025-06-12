@@ -23,7 +23,15 @@ from PySide6.QtWidgets import (
 
 from config_model import CameraConfig
 from hardware.camera import VimbaCam
-from ui.constants import OP_AUTO_EXPOSURE, OP_AUTO_GAIN
+from ui.constants import (
+    CAMERA_RESIZE_EVENT_THROTTLE_MS,
+    CAMERA_RESIZE_UPDATE_DELAY_MS,
+    CAMERA_WATCHDOG_INTERVAL_MS,
+    MSG_CAMERA_CONNECTING,
+    MSG_CAMERA_WAITING,
+    OP_AUTO_EXPOSURE,
+    OP_AUTO_GAIN,
+)
 from ui.theme import CAMERA_PANEL_STYLE
 
 logger = logging.getLogger("LabApp.camera_widgets")
@@ -394,7 +402,7 @@ class CameraPanel(QFrame):
         self.controls_visible: bool = False
 
         self.watchdog_timer = QTimer(self)
-        self.watchdog_timer.setInterval(3000)
+        self.watchdog_timer.setInterval(CAMERA_WATCHDOG_INTERVAL_MS)
         self.watchdog_timer.setSingleShot(True)
         if self.camera:
             self.watchdog_timer.timeout.connect(self.camera.attempt_recovery)
@@ -421,9 +429,9 @@ class CameraPanel(QFrame):
 
         self.video_label = AspectLockedLabel(self)
         if self.camera:
-            self.video_label.setText("Waiting for frames...")
+            self.video_label.setText(MSG_CAMERA_WAITING)
         else:
-            self.video_label.setText(f"Connecting to\n{self._panel_title}...")
+            self.video_label.setText(MSG_CAMERA_CONNECTING.format(self._panel_title))
 
         self.video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.video_label.setStyleSheet("background-color: transparent; color: grey;")
@@ -449,16 +457,26 @@ class CameraPanel(QFrame):
         if not self.camera:
             return
 
-        exposure_min_us = self.camera.get_feature_min_max("ExposureTimeAbs", 12.0)
-        exposure_max_us = self.camera.get_feature_min_max("ExposureTimeAbs", 8.45e7, is_max=True)
-        initial_exposure = self.camera.get_setting("exposure_us") or 10000.0
+        # --- REVISED LOGIC FOR GETTING RANGES ---
+        exposure_range = self.camera.get_feature_range("ExposureTimeAbs")
+        if exposure_range:
+            exposure_min_us, exposure_max_us = exposure_range
+        else:
+            # Fallback values if the range can't be fetched
+            exposure_min_us, exposure_max_us = 12.0, 8.45e7
+
+        initial_exposure = self.camera.exposure_us or 10000.0
 
         self.exposure_control.min_val = exposure_min_us
         self.exposure_control.max_val = exposure_max_us
         self.exposure_control.setValue(initial_exposure)
 
-        initial_gamma = self.camera.get_setting("gamma") or 1.0
+        initial_gamma = self.camera.gamma or 1.0
         self.gamma_control.setValue(initial_gamma)
+        # We can also update the gamma range if it's dynamic
+        gamma_range = self.camera.get_feature_range("Gamma")
+        if gamma_range:
+            self.gamma_control.min_val, self.gamma_control.max_val = gamma_range
 
     def _init_ui(self):
         """Initializes the UI, using defaults if camera is not yet available."""
@@ -467,11 +485,17 @@ class CameraPanel(QFrame):
         controls_grid.setVerticalSpacing(5)
         controls_grid.setHorizontalSpacing(8)
 
-        initial_gamma = self.camera.get_setting("gamma") if self.camera else 1.0
+        initial_gamma = self.camera.gamma if self.camera else 1.0
+        gamma_min, gamma_max = 0.1, 4.0
+        if self.camera:
+            gamma_range = self.camera.get_feature_range("Gamma")
+            if gamma_range:
+                gamma_min, gamma_max = gamma_range
+
         self.gamma_control = ParameterControl(
             name="Gamma",
-            min_val=0.1,
-            max_val=4.0,
+            min_val=gamma_min,
+            max_val=gamma_max,
             initial_val=initial_gamma,
             scale="linear",
             decimals=2,
@@ -479,11 +503,15 @@ class CameraPanel(QFrame):
         self.gamma_control.valueChanged.connect(lambda val: self._handle_parameter_changed("gamma", val))
         controls_grid.addWidget(self.gamma_control, 0, 0, 1, 3)
 
-        exposure_min_us = self.camera.get_feature_min_max("ExposureTimeAbs", 12.0) if self.camera else 12.0
-        exposure_max_us = (
-            self.camera.get_feature_min_max("ExposureTimeAbs", 8.45e7, is_max=True) if self.camera else 8.45e7
-        )
-        initial_exposure = self.camera.get_setting("exposure_us") if self.camera else 10000.0
+        # --- REVISED LOGIC FOR EXPOSURE ---
+        exposure_min_us, exposure_max_us = 12.0, 8.45e7
+        if self.camera:
+            exposure_range = self.camera.get_feature_range("ExposureTimeAbs")
+            if exposure_range:
+                exposure_min_us, exposure_max_us = exposure_range
+
+        initial_exposure = self.camera.exposure_us if self.camera else 10000.0
+
         self.exposure_control = ParameterControl(
             name="Exposure (µs)",
             min_val=exposure_min_us,
@@ -534,7 +562,11 @@ class CameraPanel(QFrame):
         if control_widget:
             control_widget.visual_feedback(success)
             if not success:
-                reverted_value = self.camera.get_setting(f"{name}_us" if name == "exposure" else name)
+                if name == "exposure":
+                    reverted_value = self.camera.exposure_us
+                else:  # Assumes 'gamma'
+                    reverted_value = self.camera.gamma
+
                 if reverted_value is not None:
                     QTimer.singleShot(100, lambda: control_widget.setValue(reverted_value))
 
@@ -611,7 +643,7 @@ class CameraPanel(QFrame):
             QTimer.singleShot(3500, lambda: self.clear_status_indicators("exposure"))
             self.exposure_btn.setEnabled(True)
             # --- REFACTOR: Revert UI using ParameterControl ---
-            reverted_value = self.camera.get_setting("exposure_us")
+            reverted_value = self.camera.exposure_us
             if reverted_value is not None:
                 self.exposure_control.setValue(reverted_value)
         elif op_type == "auto_gain":
@@ -722,12 +754,12 @@ class CameraPanel(QFrame):
     def resizeEvent(self, event: QtGui.QResizeEvent):
         super().resizeEvent(event)
         now = time.monotonic()
-        if now - self._last_resize_time > 0.1:
+        if now - self._last_resize_time > (CAMERA_RESIZE_EVENT_THROTTLE_MS / 1000.0):
             self._display_size_cache = self.video_label.size()
-            self._resize_timer.start(50)
+            self._resize_timer.start(CAMERA_RESIZE_UPDATE_DELAY_MS)
             self._last_resize_time = now
         else:
-            self._resize_timer.start(50)
+            self._resize_timer.start(CAMERA_RESIZE_UPDATE_DELAY_MS)
 
     def _delayed_display_update(self):
         if self._latest_pixmap and not self._latest_pixmap.isNull():
@@ -750,7 +782,7 @@ class CameraPanel(QFrame):
                 painter.end()
             self.video_label.setPixmap(scaled_pixmap)
         else:
-            self.video_label.setText("Waiting for Camera...")
+            self.video_label.setText(MSG_CAMERA_WAITING)
             self.video_label.setStyleSheet("background-color: black; color: grey;")
             self.video_label.setPixmap(QPixmap())
 

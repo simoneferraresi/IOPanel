@@ -83,8 +83,8 @@ def load_raw_config_from_ini(config_file: Path) -> dict:
         logging.warning(f"Configuration file not found: {config_file}. Using default values.")
         return {}
     try:
+        # configparser's read method accepts Path objects directly.
         config.read(config_file, encoding="utf-8")
-        # Pydantic will handle boolean conversion, so read raw strings
         return {s: dict(config.items(s)) for s in config.sections()}
     except configparser.Error as e:
         logging.error(f"Error parsing config file {config_file}: {e}")

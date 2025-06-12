@@ -25,6 +25,8 @@ class InstrumentsConfig(BaseModel):
 class CameraConfig(BaseModel):
     """Configuration for a single camera instance."""
 
+    # The identifier is now a required part of the model itself.
+    identifier: str = Field(description="Unique Vimba ID for the camera (e.g., DEV_...).")
     enabled: bool = False
     name: str
     flip_horizontal: bool = False
@@ -68,47 +70,64 @@ class UIConfig(BaseModel):
 class AppConfig(BaseModel):
     """The main typed configuration class for the entire application."""
 
+    app_name: str = "IOPanel"
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     instruments: InstrumentsConfig = Field(default_factory=InstrumentsConfig)
-    scan_defaults: ScanDefaults = Field(default_factory=ScanDefaults)
-    histogram_defaults: HistogramDefaults = Field(default_factory=HistogramDefaults)
+    # Use simple string alias for INI sections that don't match field names
+    scan_defaults: ScanDefaults = Field(default_factory=ScanDefaults, alias="scandefaults")
+    histogram_defaults: HistogramDefaults = Field(default_factory=HistogramDefaults, alias="histogramdefaults")
     ui: UIConfig = Field(default_factory=UIConfig)
-    app_name: str = "IOPanel"
     cameras: dict[str, CameraConfig] = Field(default_factory=dict)
 
     @classmethod
     def from_ini_dict(cls, config_dict: dict) -> "AppConfig":
         """
         Creates an AppConfig instance from a raw dictionary loaded from config.ini.
-        This method intelligently handles dynamic [Camera:...] sections and correctly
-        maps other sections to their corresponding Pydantic models.
-        It uses the 'identifier' field within each camera section as the key
-        for the resulting 'cameras' dictionary.
+        This method acts as an adapter, transforming the INI structure into the
+        dictionary structure that Pydantic expects for validation.
         """
         init_data = {}
         cameras_data = {}
+
+        # First, populate the data for top-level models
         for section_name, section_data in config_dict.items():
             section_lower = section_name.lower()
             if section_lower.startswith("camera:"):
-                # Extract the identifier from the section data. This is crucial.
+                continue  # Handle cameras in the next loop
+
+            # Special handling for the [App] section
+            if section_lower == "app":
+                init_data["app_name"] = section_data.get("name", "IOPanel")
+            # For other sections, Pydantic will map them based on field name or alias
+            elif section_lower in cls.model_fields:
+                init_data[section_lower] = section_data
+            else:
+                # This handles cases like 'scandefaults' from the INI.
+                # We find the field that has this alias.
+                found_field = False
+                for field_name, field_info in cls.model_fields.items():
+                    if field_info.alias == section_lower:
+                        init_data[field_name] = section_data
+                        found_field = True
+                        break
+                if not found_field:
+                    # You can log a warning here for unrecognized sections if you wish
+                    pass
+
+        # Second, specifically parse the camera sections
+        for section_name, section_data in config_dict.items():
+            if section_name.lower().startswith("camera:"):
                 identifier = section_data.get("identifier")
                 if not identifier:
-                    # logger.warning(f"Skipping camera section '{section_name}': missing 'identifier' field.")
+                    # In a real app, you would log this warning
+                    print(f"Warning: Skipping camera section '{section_name}': missing 'identifier' field.")
                     continue
 
-                # We can now remove 'identifier' from the data passed to the model,
-                # as it's now the key. This prevents "unexpected keyword argument" errors.
-                config_for_model = section_data.copy()
-                config_for_model.pop("identifier", None)
-
-                # Create the CameraConfig object and store it under its proper identifier key.
-                cameras_data[identifier] = CameraConfig(**config_for_model)
-
-            elif section_lower == "app":
-                init_data["app_name"] = section_data.get("name", "IOPanel")
-            else:
-                if section_lower in cls.model_fields:
-                    init_data[section_lower] = section_data
+                # The CameraConfig model expects 'identifier' in its data.
+                # The dictionary key for `AppConfig.cameras` will also be the identifier.
+                cameras_data[identifier] = CameraConfig(**section_data)
 
         init_data["cameras"] = cameras_data
+
+        # Finally, validate the prepared dictionary
         return cls(**init_data)

@@ -157,7 +157,7 @@ class MatlabSaveWorker(QObject):
             try:
                 logger.debug(f"MatlabSaveWorker: Attempting to close current MATLAB figure (handle: {h_fig})...")
                 # Option 1: Close the specific figure using its handle
-                eng_to_use.close(h_fig, nargout=0)
+                eng_to_use.close("all", nargout=0)
                 # Option 2: Close the "current" figure (gcf might change if other ops happen)
                 # current_fig_handle = eng_to_use.gcf(nargout=1)
                 # eng_to_use.close(current_fig_handle, nargout=0)

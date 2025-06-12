@@ -2,10 +2,11 @@ import logging
 import os
 import sys
 from enum import Enum, auto
+from pathlib import Path
 
 import numpy as np
 from PySide6 import QtGui, QtWidgets
-from PySide6.QtCore import QSize, Qt, QThread, QTimer, Slot
+from PySide6.QtCore import QSize, Qt, QThread, QThreadPool, QTimer, Slot
 from PySide6.QtGui import QAction, QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication,
@@ -26,6 +27,7 @@ from vmbpy import VmbCameraError, VmbSystem, VmbSystemError
 
 from config_model import AppConfig, CameraConfig
 from hardware.dummy_ct400 import DummyCT400
+from ui.discovery_dialog import CameraDiscoveryDialog
 
 try:
     import resources.resources_rc as resources_rc  # noqa: F401
@@ -37,11 +39,17 @@ except ImportError:
 
 from hardware.camera import VimbaCam
 from hardware.camera_init_worker import CameraInitWorker
-from hardware.ct400 import CT400, CT400Error
+from hardware.ct400 import CT400, CT400Error, CT400InitializationError
 from hardware.ct400_types import Enable, LaserInput
 from hardware.interfaces import AbstractCT400
 from ui.camera_widgets import CameraPanel
-from ui.constants import ID_CT400_STATUS_LABEL, PROP_STATUS
+from ui.constants import (
+    ID_CT400_STATUS_LABEL,
+    MSG_CAMERA_CONNECTING,
+    MSG_CAMERA_FAILED,
+    MSG_CAMERA_WAITING,
+    PROP_STATUS,
+)
 from ui.control_panel import CT400ConnectionWorker, CT400ControlPanel, HistogramControlPanel, ScanSettings
 from ui.plot_widgets import HistogramWidget, PlotWidget
 
@@ -74,22 +82,17 @@ class MainWindow(QMainWindow):
         self.camera_control_actions: dict[str, QAction] = {}
         self.cameras_menu: QMenu | None = None
 
-        # --- FIX: Add a list to hold worker references ---
+        # --- REVISED THREADING MEMBERS ---
         self.camera_init_threads: list[QThread] = []
         self.camera_init_workers: list[CameraInitWorker] = []
-
-        self.ct400_connection_thread: QThread | None = None
-        self.ct400_connection_worker: CT400ConnectionWorker | None = None
+        # We no longer need to manage the CT400 connection thread/worker manually
 
         # --- DEFERRED INITIALIZATION ---
-        # Only build the UI in the constructor. Hardware init is deferred.
         self._init_ui()
         self._load_defaults_from_config()
         self._connect_signals()
 
-        # Trigger slow hardware initializations AFTER the UI is constructed and shown.
         QTimer.singleShot(100, self._begin_lazy_init)
-
         logger.info("MainWindow __init__ complete. Hardware initialization deferred.")
 
     def _begin_lazy_init(self):
@@ -204,20 +207,52 @@ class MainWindow(QMainWindow):
         from hardware.ct400 import CT400
         from hardware.dummy_ct400 import DummyCT400
 
-        dll_path = self.config.instruments.ct400_dll_path
+        def find_dll() -> Path | None:
+            # 1. Check environment variable
+            env_path_str = os.getenv("CT400_DLL_PATH")
+            if env_path_str:
+                env_path = Path(env_path_str)
+                if env_path.exists():
+                    logger.info(f"Found CT400 DLL via environment variable: {env_path}")
+                    return env_path
+
+            # 2. Check application's root/local directory
+            # For a frozen app (PyInstaller), sys.executable is the way.
+            # For a script, os.getcwd() is fine. Let's make it robust.
+            if getattr(sys, "frozen", False):
+                app_dir = Path(sys.executable).parent
+            else:
+                app_dir = Path.cwd()
+
+            local_path = app_dir / "CT400_lib.dll"
+            if local_path.exists():
+                logger.info(f"Found CT400 DLL in local directory: {local_path}")
+                return local_path
+
+            # 3. Check path from config.ini
+            config_path_str = self.config.instruments.ct400_dll_path
+            if config_path_str:
+                config_path = Path(config_path_str)
+                if config_path.exists():
+                    logger.info(f"Found CT400 DLL via config.ini: {config_path}")
+                    return config_path
+
+            return None
+
+        dll_path_obj = find_dll()
         self.ct400_device = None
 
-        if not dll_path or not os.path.exists(dll_path):
-            msg = f"CT400 DLL not found or path invalid: '{dll_path}'. Using dummy device."
+        if not dll_path_obj:
+            msg = f"CT400 DLL not found or path invalid: '{dll_path_obj}'. Using dummy device."
             logger.warning(msg)
             self.ct400_device = DummyCT400()
             self._update_ct400_visuals(state=CT400Status.UNAVAILABLE, message=msg)
             return
 
         try:
-            self.ct400_device = CT400(dll_path)
-            logger.info(f"CT400 device object created using DLL: {dll_path}")
-        except (CT400Error, FileNotFoundError, OSError) as e:
+            self.ct400_device = CT400(dll_path_obj)
+            logger.info(f"CT400 device object created using DLL: {dll_path_obj}")
+        except (CT400Error, FileNotFoundError, OSError, CT400InitializationError) as e:
             logger.error(f"Failed to initialize CT400 device: {e}", exc_info=True)
             self.ct400_device = DummyCT400()
             self._update_ct400_visuals(state=CT400Status.UNAVAILABLE, message=f"CT400 Init Failed: {e}")
@@ -353,6 +388,12 @@ class MainWindow(QMainWindow):
         self.instrument_menu.addAction(self.ct400_connect_action)
 
         self.cameras_menu = menu_bar.addMenu("&Cameras")
+        discover_action = QAction("Discover Cameras...", self)
+        discover_action.setStatusTip("List all available Vimba cameras and their IDs")
+        discover_action.triggered.connect(self._show_camera_discovery_dialog)
+        self.cameras_menu.addSeparator()
+        self.cameras_menu.addAction(discover_action)
+        self.cameras_menu.addSeparator()  # Add another separator for neatness
 
         help_menu = menu_bar.addMenu("&Help")
         about_action = QAction("&About", self)
@@ -361,55 +402,71 @@ class MainWindow(QMainWindow):
         help_menu.addAction(about_action)
         logger.debug("Menus created.")
 
+    @Slot()
+    def _show_camera_discovery_dialog(self):
+        """
+        Shows the camera discovery dialog. Ensures Vimba system is running first.
+        """
+        # The only reliable way to check if the Vimba system is ready is to see
+        # if our managed instance variable `self.vmb_instance` exists. We set this
+        # during lazy initialization and clear it during cleanup.
+        if self.vmb_instance is None:
+            QMessageBox.warning(
+                self,
+                "Vimba System Not Ready",
+                "The Vimba API has not been initialized or has been shut down. Cannot discover cameras.\n"
+                "Please ensure the Vimba SDK is installed correctly and restart the application.",
+            )
+            return
+
+        # Create and show the dialog
+        try:
+            dialog = CameraDiscoveryDialog(self)
+            dialog.exec()  # exec() shows the dialog modally
+        except Exception as e:
+            # This is a fallback for unexpected errors during dialog creation
+            logger.error(f"Failed to create or show camera discovery dialog: {e}", exc_info=True)
+            QMessageBox.critical(self, "Dialog Error", f"Could not open the discovery dialog: {e}")
+
     @Slot(bool)
     def _handle_ct400_connect_action_triggered(self, checked: bool):
         """
-        Handles the triggered signal from the QAction by starting a worker thread
-        to perform the connect or disconnect operation.
+        Handles the triggered signal from the QAction by starting a QRunnable
+        in the global thread pool to perform the connect or disconnect operation.
         """
-        if self.ct400_connection_thread and self.ct400_connection_thread.isRunning():
-            logger.warning("CT400 connection/disconnection already in progress.")
-            # Revert the action's visual state because the action was premature
-            self.ct400_connect_action.setChecked(not checked)
-            return
+        # The connection_in_progress check is now trickier. We can disable the button.
+        # The UI update to "Connecting..." already provides feedback.
+        action = self.sender()
+        if action:
+            action.setEnabled(False)  # Disable button to prevent rapid re-clicks
 
         if not self.ct400_device or isinstance(self.ct400_device, DummyCT400):
             self._update_ct400_visuals(state=CT400Status.UNAVAILABLE, message="CT400 Not Initialized or Dummy.")
-            self.ct400_connect_action.setChecked(False)
+            if action:
+                action.setChecked(False)
+                action.setEnabled(True)
             return
 
-        # Import the worker class here to avoid circular dependency at module level
-        from ui.control_panel import CT400ConnectionWorker
+        # Create the runnable worker
+        worker = CT400ConnectionWorker(self.ct400_device, self.config, connect=checked)
 
-        self.ct400_connection_thread = QThread(self)
-        self.ct400_connection_worker = CT400ConnectionWorker(self.ct400_device, self.config)
-        self.ct400_connection_worker.moveToThread(self.ct400_connection_thread)
+        # Connect its signals
+        worker.signals.connection_succeeded.connect(self._handle_ct400_connection_success)
+        worker.signals.connection_failed.connect(self._handle_ct400_connection_failure)
+        worker.signals.disconnection_succeeded.connect(self._handle_ct400_disconnection_success)
+        worker.signals.disconnection_failed.connect(self._handle_ct400_connection_failure)
 
-        # --- THE CRITICAL FIX IS HERE ---
-        # 1. When the worker finishes its job, it tells the thread to quit.
-        self.ct400_connection_worker.finished.connect(self.ct400_connection_thread.quit)
+        # Re-enable the action button once the worker is finished
+        worker.signals.finished.connect(lambda: self.ct400_connect_action.setEnabled(True))
 
-        # Connect worker result signals to main window slots
-        self.ct400_connection_worker.connection_succeeded.connect(self._handle_ct400_connection_success)
-        self.ct400_connection_worker.connection_failed.connect(self._handle_ct400_connection_failure)
-        self.ct400_connection_worker.disconnection_succeeded.connect(self._handle_ct400_disconnection_success)
-        self.ct400_connection_worker.disconnection_failed.connect(self._handle_ct400_connection_failure)
-
-        # 2. When the thread has fully finished (after quitting), clean everything up.
-        self.ct400_connection_thread.finished.connect(self.ct400_connection_worker.deleteLater)
-        self.ct400_connection_thread.finished.connect(self.ct400_connection_thread.deleteLater)
-        self.ct400_connection_thread.finished.connect(self._connection_thread_finished)
-
+        # Update UI to show activity
         if checked:
-            # Start connection
             self._update_ct400_visuals(state=CT400Status.CONNECTING, message="CT400: Attempting to connect...")
-            self.ct400_connection_thread.started.connect(self.ct400_connection_worker.connect_device)
         else:
-            # Start disconnection
             self._update_ct400_visuals(state=CT400Status.DISCONNECTING, message="CT400: Disconnecting...")
-            self.ct400_connection_thread.started.connect(self.ct400_connection_worker.disconnect_device)
 
-        self.ct400_connection_thread.start()
+        # Submit the worker to the global thread pool
+        QThreadPool.globalInstance().start(worker)
 
     @Slot(str)
     def _handle_ct400_connection_success(self, message: str):
@@ -527,7 +584,7 @@ class MainWindow(QMainWindow):
                 panel.process_new_frame_data(latest_frame)
             else:
                 # If no frame is available yet, update the text.
-                panel.video_label.setText("Waiting for frames...")
+                panel.video_label.setText(MSG_CAMERA_WAITING)
         else:
             logger.error(f"Failed to initialize camera '{cam_config.name}'.")
             error_msg = f"{cam_config.name}\n(Failed to Open)"
@@ -558,7 +615,7 @@ class MainWindow(QMainWindow):
             )
             if not cam_instance.open():
                 logger.error(f"Failed to open camera {cam_config.name} (ID: {cam_config.identifier}).")
-                error_msg = f"{cam_config.name}\n(Failed to Open)"
+                error_msg = MSG_CAMERA_FAILED.format(cam_config.name)
                 placeholder = self._create_camera_error_placeholder(error_msg)
                 self.camera_container.layout().addWidget(placeholder)
                 cam_instance.close()  # Clean up the failed instance
@@ -584,7 +641,7 @@ class MainWindow(QMainWindow):
         """Creates and returns a CameraPanel. Can be a placeholder if cam_instance is None."""
         panel = CameraPanel(cam_instance, cam_config.name, config=cam_config, parent=self.camera_container)
         if not cam_instance:
-            panel.video_label.setText(f"Connecting to\n{cam_config.name}...")
+            panel.video_label.setText(MSG_CAMERA_CONNECTING.format(cam_config.name))
         return panel
 
     def _connect_camera_signals(self, cam_instance: VimbaCam, panel: CameraPanel):
@@ -646,13 +703,6 @@ class MainWindow(QMainWindow):
 
         placeholder_widget.setToolTip(f"Camera Initialization Error: {message.replace('\n', ' ')}")
         return placeholder_widget
-
-    @Slot()
-    def _connection_thread_finished(self):
-        """Cleans up references to the connection thread and worker after it has finished."""
-        logger.debug("CT400 connection thread has finished. Cleaning up references.")
-        self.ct400_connection_thread = None
-        self.ct400_connection_worker = None
 
     @Slot(bool)
     def _handle_camera_control_toggle(self, checked: bool):
