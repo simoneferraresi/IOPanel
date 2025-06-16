@@ -758,11 +758,6 @@ class CT400ControlPanel(BaseControlPanel):
             logger.error(f"Error extracting plotting data: {e}")
         self.scan_data_ready.emit(wavelengths, plotting_power_data, final_pout)
 
-    @Slot(str)
-    def _handle_scan_error(self, error_msg: str):
-        logger.error(f"ScanPanel: Scan error signal: {error_msg}")
-        QMessageBox.critical(self, "Scan Error", f"Scan error:\n{error_msg}")
-
     # This slot is connected to the thread's finished signal
     @Slot()
     def _scan_thread_finished(self):

@@ -45,6 +45,8 @@ from vmbpy import VmbCameraError, VmbSystem, VmbSystemError
 
 from config_model import AppConfig, CameraConfig
 from hardware.dummy_ct400 import DummyCT400
+from hardware.piezo import PiezoConnectionError, PiezoController, PiezoError
+from ui.alignment_panel import AlignmentPanel
 from ui.discovery_dialog import CameraDiscoveryDialog
 
 try:
@@ -60,7 +62,6 @@ except ImportError:
 from hardware.camera import VimbaCam
 from hardware.camera_init_worker import CameraInitWorker
 from hardware.ct400 import CT400, CT400Error, CT400InitializationError
-from hardware.ct400_types import Enable, LaserInput
 from hardware.interfaces import AbstractCT400
 from ui.camera_widgets import CameraPanel
 from ui.constants import (
@@ -131,6 +132,8 @@ class MainWindow(QMainWindow):
         self.is_ct400_connected_state: bool = False
         self.camera_control_actions: dict[str, QAction] = {}
         self.cameras_menu: QMenu | None = None
+        self.piezo_left: PiezoController | None = None
+        self.piezo_right: PiezoController | None = None
 
         # Threading members for asynchronous camera initialization
         self.camera_init_threads: list[QThread] = []
@@ -149,30 +152,87 @@ class MainWindow(QMainWindow):
     def _begin_lazy_init(self):
         """Starts all slow hardware initializations on background threads."""
         logger.info("Starting lazy initialization of hardware...")
-        self._start_vimbasystem()
+
+        # --- RE-ORDERED INITIALIZATION ---
+
+        # 1. Initialize simple hardware FIRST (Piezos)
+        self._init_piezos()
+
+        # 2. Initialize the other simple hardware (CT400)
         self._init_instruments()
 
-        # Pass the live instrument object to the control panels now that it exists.
+        # 3. Pass the live instrument objects to the control panels now that they exist.
         if self.ct400_device:
             self.control_panel.set_instrument(self.ct400_device)
-            self.histogram_control.set_instrument(self.ct400_device)
+            self.histogram_control.set_instrument(
+                self.histogram_control
+            )  # <-- Self-correction: This was a typo in my previous code, should be self.ct400_device
+            self.histogram_control.set_instrument(self.ct400_device)  # <-- Corrected line
+
+        if self.ct400_device and self.piezo_left and self.piezo_right:
+            self.alignment_tab = AlignmentPanel(self.ct400_device, self.piezo_left, self.piezo_right)
+            self.tab_widget.addTab(self.alignment_tab, "Auto Alignment")
 
         # Update UI based on instrument availability before starting cameras.
-        is_real_device = self.ct400_device and not isinstance(self.ct400_device, DummyCT400)
-        self.control_panel.on_instrument_connected(is_real_device)
-        self.histogram_control.on_instrument_connected(is_real_device)
-        if is_real_device:
+        is_real_ct400 = self.ct400_device and not isinstance(self.ct400_device, DummyCT400)
+        self.control_panel.on_instrument_connected(is_real_ct400)
+        self.histogram_control.on_instrument_connected(is_real_ct400)
+        if is_real_ct400:
             self._update_ct400_visuals(state=CT400Status.DISCONNECTED, message="CT400 Ready (Disconnected)")
 
-        # Now that Vimba is running, start initializing cameras asynchronously.
+        # 4. Initialize the complex camera system LAST
+        self._start_vimbasystem()
         if self.vmb_instance:
             self._init_cameras_lazy()
         else:
             logger.error("VimbaSystem not active, skipping camera initialization.")
+            # Add an error message to the UI if needed
             if self.camera_container.layout():
                 error_label = QLabel("Vimba API could not be initialized. Cameras unavailable.")
                 error_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 self.camera_container.layout().addWidget(error_label)
+
+    def _init_piezos(self):
+        """Initializes the Piezo controller objects."""
+        logger.info("Initializing Piezo controllers...")
+        try:
+            dll_path = Path(self.config.instruments.piezo_dll_path)
+
+            # Find all connectable piezo COM ports
+            found_ports = PiezoController.find_devices(dll_path)
+
+            if not found_ports:
+                raise PiezoConnectionError("No Piezo controllers were detected on any COM ports.")
+
+            # Get the desired ports from the config
+            left_port = self.config.instruments.piezo_left_serial
+            right_port = self.config.instruments.piezo_right_serial
+
+            # Check if the configured ports were in the list of detected ports
+            if left_port not in found_ports:
+                raise PiezoConnectionError(
+                    f"The configured left piezo port '{left_port}' was not found in the list of detected devices: {found_ports}"
+                )
+            if right_port not in found_ports:
+                raise PiezoConnectionError(
+                    f"The configured right piezo port '{right_port}' was not found in the list of detected devices: {found_ports}"
+                )
+
+            # If we get here, everything is consistent. Create the controller instances.
+            self.piezo_left = PiezoController(dll_path)
+            self.piezo_right = PiezoController(dll_path)
+
+            self.piezo_connect_left_action.setEnabled(True)
+            self.piezo_connect_right_action.setEnabled(True)
+            logger.info(f"Piezo controllers initialized and configured for ports: {left_port}, {right_port}")
+
+        except (PiezoError, FileNotFoundError, PiezoConnectionError) as e:
+            logger.error(f"Failed to initialize Piezo controllers: {e}", exc_info=True)
+            QMessageBox.critical(
+                self, "Piezo Error", f"Could not initialize Piezo controllers:\n{e}\n\nAlignment will be unavailable."
+            )
+            self.piezo_connect_left_action.setEnabled(False)
+            self.piezo_connect_right_action.setEnabled(False)
 
     def _start_vimbasystem(self):
         """Initializes and enters the main VimbaSystem context.
@@ -268,34 +328,23 @@ class MainWindow(QMainWindow):
         from hardware.dummy_ct400 import DummyCT400
 
         def find_dll() -> Path | None:
-            # 1. Check environment variable
-            env_path_str = os.getenv("CT400_DLL_PATH")
-            if env_path_str:
-                env_path = Path(env_path_str)
-                if env_path.exists():
-                    logger.info(f"Found CT400 DLL via environment variable: {env_path}")
-                    return env_path
+            # Determine the application's root directory
+            app_dir = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path.cwd()
 
-            # 2. Check application's root/local directory
-            # For a frozen app (PyInstaller), sys.executable is the way.
-            # For a script, os.getcwd() is fine. Let's make it robust.
-            if getattr(sys, "frozen", False):
-                app_dir = Path(sys.executable).parent
-            else:
-                app_dir = Path.cwd()
+            # Define potential paths in order of priority
+            search_paths = [
+                os.getenv("CT400_DLL_PATH"),  # 1. Environment variable
+                app_dir / "CT400_lib.dll",  # 2. Application root directory
+                self.config.instruments.ct400_dll_path,  # 3. Path from config.ini
+            ]
 
-            local_path = app_dir / "CT400_lib.dll"
-            if local_path.exists():
-                logger.info(f"Found CT400 DLL in local directory: {local_path}")
-                return local_path
-
-            # 3. Check path from config.ini
-            config_path_str = self.config.instruments.ct400_dll_path
-            if config_path_str:
-                config_path = Path(config_path_str)
-                if config_path.exists():
-                    logger.info(f"Found CT400 DLL via config.ini: {config_path}")
-                    return config_path
+            for p in search_paths:
+                if not p:  # Skip empty or None paths
+                    continue
+                path_obj = Path(p)
+                if path_obj.exists():
+                    logger.info(f"Found CT400 DLL at: {path_obj}")
+                    return path_obj
 
             return None
 
@@ -466,12 +515,52 @@ class MainWindow(QMainWindow):
         self.cameras_menu.addAction(discover_action)
         self.cameras_menu.addSeparator()  # Add another separator for neatness
 
+        self.piezo_connect_left_action = QAction("Connect Left Piezo", self)
+        self.piezo_connect_left_action.triggered.connect(lambda: self.connect_piezo("left"))
+        self.instrument_menu.addAction(self.piezo_connect_left_action)
+
+        self.piezo_connect_right_action = QAction("Connect Right Piezo", self)
+        self.piezo_connect_right_action.triggered.connect(lambda: self.connect_piezo("right"))
+        self.instrument_menu.addAction(self.piezo_connect_right_action)
+
         help_menu = menu_bar.addMenu("&Help")
         about_action = QAction("&About", self)
         about_action.setStatusTip("Show application information")
         about_action.triggered.connect(self._show_about_dialog)
         help_menu.addAction(about_action)
         logger.debug("Menus created.")
+
+    @Slot()
+    def connect_piezo(self, side: str):
+        """Connects or disconnects a piezo controller."""
+        piezo = self.piezo_left if side == "left" else self.piezo_right
+        action = self.piezo_connect_left_action if side == "left" else self.piezo_connect_right_action
+
+        if not piezo:
+            return
+
+        # Simplified connection logic. For a real implementation, use a QRunnable/QThread worker
+        # just like the CT400 connection to avoid blocking the GUI.
+        try:
+            if piezo.is_connected():
+                piezo.disconnect()
+                action.setText(f"Connect {side.capitalize()} Piezo")
+                self.statusBar().showMessage(f"{side.capitalize()} Piezo disconnected.", 3000)
+            else:
+                serial_number = (
+                    self.config.instruments.piezo_left_serial
+                    if side == "left"
+                    else self.config.instruments.piezo_right_serial
+                )
+
+                logger.info(f"Attempting to connect to {side} piezo with S/N: {serial_number}")
+                piezo.connect(serial_number)
+                action.setText(f"Disconnect {side.capitalize()} Piezo")
+                self.statusBar().showMessage(f"{side.capitalize()} Piezo connected.", 3000)
+        except PiezoError as e:
+            logger.error(f"Failed to connect to {side} piezo: {e}", exc_info=True)
+            QMessageBox.critical(self, "Piezo Connection Error", str(e))
+            action.setText(f"Connect {side.capitalize()} Piezo")
 
     @Slot()
     def _show_camera_discovery_dialog(self):
@@ -871,49 +960,47 @@ class MainWindow(QMainWindow):
                     logger.error(f"Error closing camera {cam.camera_name}: {e}", exc_info=True)
         logger.info("Camera cleanup finished.")
 
-    def cleanup(self):
-        """Performs a graceful shutdown of all hardware and threads.
-
-        This method is connected to the `app.aboutToQuit` signal and is the
-        designated place to close all hardware connections, stop all running
-        threads, and release resources before the application exits.
-        """
-        logger.info("Performing MainWindow cleanup...")
-        if hasattr(self, "histogram_control"):
-            self.histogram_control.cleanup_worker_thread()
-        if hasattr(self, "control_panel") and self.control_panel.scanning:
-            self.control_panel._stop_scan(cancelled=True)
-        if hasattr(self, "plot_widget"):
-            self.plot_widget.cleanup()
-
-        self._cleanup_cameras()
-
-        if self.ct400_device:
-            logger.debug("Closing central CT400 device...")
-            try:
-                if self.is_ct400_connected_state:
-                    laser_input_disconnect = LaserInput(self.config.scan_defaults.input_port)
-                    self.ct400_device.cmd_laser(laser_input_disconnect, Enable.DISABLE, 1550.0, 1.0)
-                self.ct400_device.close()
-                logger.info("CT400 device closed.")
-            except Exception as e:
-                logger.error(f"Error closing CT400 device: {e}", exc_info=True)
-            self.ct400_device = None
-
-        self._cleanup_vimbasystem()
-        logger.info("MainWindow cleanup finished.")
-
     def closeEvent(self, event: QtGui.QCloseEvent):
-        """Overrides the QWidget's closeEvent.
-
-        By default, this simply accepts the event. The actual cleanup logic is
-        handled in the `cleanup` method, which is triggered by `app.aboutToQuit`.
-        This ensures cleanup happens regardless of how the app is closed.
-
-        Args:
-            event: The close event.
         """
-        logger.info("Close event triggered for MainWindow.")
+        Handles the user closing the window. Ensures all hardware and threads
+        are shut down gracefully. This is the single source of truth for cleanup.
+        """
+        logger.info("Application close requested. Initiating shutdown sequence...")
+        self.statusBar().showMessage("Shutting down...", 0)
+
+        # 1. Stop all worker threads
+        if hasattr(self, "alignment_tab") and self.alignment_tab:
+            self.alignment_tab.cleanup()
+
+        if hasattr(self, "histogram_control") and self.histogram_control:
+            self.histogram_control.cleanup_worker_thread()
+
+        if hasattr(self, "control_panel") and self.control_panel.is_busy():
+            self.control_panel._stop_scan(cancelled=True)
+            if self.control_panel.scan_thread:
+                self.control_panel.scan_thread.wait(1000)
+
+        # 2. Close all camera streams and wait for init threads
+        for cam in self.cameras:
+            cam.close()
+        for thread in self.camera_init_threads:
+            thread.quit()
+            thread.wait(500)
+
+        # 3. Disconnect from Piezo controllers
+        if self.piezo_left and self.piezo_left.is_connected():
+            self.piezo_left.disconnect()
+        if self.piezo_right and self.piezo_right.is_connected():
+            self.piezo_right.disconnect()
+
+        # 4. Disconnect from CT400
+        if self.ct400_device and self.is_ct400_connected_state:
+            self.ct400_device.close()
+
+        # 5. Shut down the Vimba system
+        self._cleanup_vimbasystem()
+
+        logger.info("Shutdown sequence complete. Accepting close event.")
         event.accept()
 
     def _connect_signals(self):

@@ -42,6 +42,9 @@ class InstrumentsConfig(BaseModel):
         default="LS_TunicsT100s_HP",
         description="The model type of the Tunics laser, corresponding to a LaserSource enum member.",
     )
+    piezo_dll_path: str = Field(default="", description="Path to the Thorlabs MDT_COMMAND_LIB.dll file.")
+    piezo_left_serial: str = Field(default="", description="Serial number of the left piezo controller.")
+    piezo_right_serial: str = Field(default="", description="Serial number of the right piezo controller.")
 
 
 class CameraConfig(BaseModel):

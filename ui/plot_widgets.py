@@ -1,18 +1,12 @@
-"""Widgets for plotting and data visualization in the IOPanel application.
-
-This module contains:
-- MatlabSaveWorker: Worker for saving plots to MATLAB format
-- HistogramWidget: Real-time power monitoring display
-- PlotWidget: Main plotting widget for scan results
-"""
-
 import json
 import logging
 import os
 import time
+from pathlib import Path
 
 import numpy as np
 import pyqtgraph as pg
+import pyqtgraph.opengl as gl
 import scipy.io as sio
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import (
@@ -58,27 +52,73 @@ except Exception as e:
 logger = logging.getLogger("LabApp.plot_widgets")
 
 
+class Plot3DWidget(gl.GLViewWidget):
+    """A widget for displaying a 3D surface plot."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.opts["distance"] = 40
+        self.opts["elevation"] = 30
+        self.opts["azimuth"] = -30
+
+        grid = gl.GLGridItem()
+        # A bit of scaling to make the grid look nice
+        grid.scale(10, 10, 1)
+        self.addItem(grid)
+
+        self.surface_plot = None
+
+    @Slot(np.ndarray, np.ndarray, np.ndarray)
+    def update_plot(self, x: np.ndarray, y: np.ndarray, z: np.ndarray):
+        """
+        Updates the plot with new data.
+        x, y: 1D arrays of coordinates in micrometers.
+        z: 2D array of power values in milliwatts.
+        """
+        if self.surface_plot:
+            self.removeItem(self.surface_plot)
+
+        # --- THE NEW, ROBUST SOLUTION ---
+
+        # 1. Check if the Z data is completely flat. If so, create a dummy gradient.
+        z_min = z.min()
+        z_max = z.max()
+        if z_min == z_max:
+            # If all values are the same, we can't create a color map.
+            # We'll just show a flat surface with a default color.
+            self.surface_plot = gl.GLSurfacePlotItem(x=x, y=y, z=z.T, color=(0.8, 0.8, 0.8, 1.0))
+            self.addItem(self.surface_plot)
+            return
+
+        # 2. Create the colormap object. 'viridis' is a great choice.
+        cmap = pg.colormap.get("viridis")
+
+        # 3. Normalize the Z data to the range [0.0, 1.0] for the colormap.
+        # This is the most important step.
+        normalized_z = (z - z_min) / (z_max - z_min)
+
+        # 4. Generate the colors for each vertex based on the normalized Z value.
+        # The shape should be (N, M, 4) for RGBA.
+        colors = cmap.map(normalized_z, "float")
+
+        # 5. Create the GLSurfacePlotItem, providing the per-vertex colors.
+        # We do not use the 'shader' argument when providing explicit colors.
+        self.surface_plot = gl.GLSurfacePlotItem(x=x, y=y, z=z.T, colors=colors)
+
+        # Optional: Add smooth shading if desired
+        self.surface_plot.setGLOptions("smooth")
+
+        self.addItem(self.surface_plot)
+
+
 ###############################################################################
 # MatlabSaveWorker
 ###############################################################################
 class MatlabSaveWorker(QObject):
-    """Worker for saving scan data to MATLAB .fig format.
-
-    This worker runs in a separate thread to save plot data to MATLAB .fig files
-    without blocking the main UI thread.
-
-    Attributes:
-        finished_saving: Signal emitted when save operation completes
-        _is_running: Flag indicating if worker is active
-        matlab_eng_local_for_quit: Local MATLAB engine instance if needed
     """
-
-    finished_saving = Signal(str, bool, str)  # Emits: filetype, success, message_or_filename
-
-    def __init__(self, parent: QObject | None = None):  # parent is PlotWidget
-        super().__init__(parent)
-        self._is_running = True
-        self.matlab_eng_local_for_quit: matlab.engine.MatlabEngine | None = None
+    Worker QObject to save scan data to a .fig file using MATLAB Engine
+    in a separate thread.
+    """
 
     finished_saving = Signal(str, bool, str)  # Emits: filetype, success, message_or_filename
 
@@ -101,22 +141,6 @@ class MatlabSaveWorker(QObject):
         pout_value: float,
         plot_widget_ptr: QWidget | None,  # Technically PlotWidget
     ):
-        """Saves scan data to MATLAB .fig format.
-
-        Args:
-            wavelengths_json_str: JSON string of wavelengths array
-            powers_json_str: JSON string of power values array
-            fig_filename: Output filename for .fig file
-            title_str: Plot title
-            xlabel_str: X-axis label
-            ylabel_str: Y-axis label
-            grid_on_str: Grid visibility ('on' or 'off')
-            pout_value: Output power value
-            plot_widget_ptr: Reference to PlotWidget instance
-
-        Emits:
-            finished_saving: Signal with save operation result
-        """
         if not self._is_running:
             logger.info("MatlabSaveWorker: Save FIG cancelled (worker not running).")
             self.finished_saving.emit("fig", False, "Save cancelled by user.")
@@ -236,25 +260,10 @@ class MatlabSaveWorker(QObject):
 # Histogram Widget (using PyQtGraph)
 # =============================================================================
 class HistogramWidget(QtWidgets.QWidget):
-    """Real-time power monitoring display as histogram.
-
-    This widget displays detector power levels in real-time using a bar chart
-    with max value indicators and text annotations.
-
-    Attributes:
-        detector_keys: List of detector identifiers
-        current_values: Current power values for each detector
-        max_values: Maximum recorded power values
-        bars: Bar graph item
-        max_lines: Horizontal lines indicating max values
-        max_texts: Text annotations for max values
-        current_texts: Text annotations for current values
     """
-
-    _UPDATE_INTERVAL_MS = 50
-    _DEFAULT_Y_RANGE = (-70, 10)
-    _LOW_SIGNAL_FLOOR = -100.0
-    _HIGH_SIGNAL_CEILING = 10.0
+    Displays real-time power monitoring data as a histogram using PyQtGraph.
+    Updates are throttled for smooth performance. Expects power data as a dictionary.
+    """
 
     _UPDATE_INTERVAL_MS = 50
     _DEFAULT_Y_RANGE = (-70, 10)
@@ -396,7 +405,6 @@ class HistogramWidget(QtWidgets.QWidget):
 
     @Slot()
     def reset_maxima(self):
-        """Resets the maximum recorded values to current values."""
         t_start = time.perf_counter()
         logger.info("Resetting histogram: current values to 0, max_values to -infinity.")
 
@@ -440,11 +448,6 @@ class HistogramWidget(QtWidgets.QWidget):
 
     @Slot(dict)
     def schedule_update(self, power_data: dict):
-        """Schedules an update with new power data.
-
-        Args:
-            power_data: Dictionary containing detector power values
-        """
         if self._is_visible:
             self._pending_power_data = power_data
 
@@ -590,23 +593,9 @@ class HistogramWidget(QtWidgets.QWidget):
 # Plot Widget (using PyQtGraph - MATLAB fig saving restored)
 # =============================================================================
 class PlotWidget(QWidget):
-    """Main plotting widget for scan results.
-
-    Displays wavelength scan data and provides saving functionality in multiple
-    formats (CSV, MAT, PNG, SVG, FIG).
-
-    Attributes:
-        shared_settings: Application scan settings
-        current_wavelengths: Array of wavelength values
-        current_powers: Array of power values
-        current_output_power: Output power value
-        plot_data_item: Main plot line item
-        save_btn: Button for saving scan data
-        matlab_status_label: Status indicator for MATLAB operations
     """
-
-    _THREAD_WAIT_TIMEOUT_MS = 2000
-    _MATLAB_STATUS_TIMEOUT_MS = 2000
+    Displays scan results using PyQtGraph. Saves data as CSV, MAT, PNG, SVG, and FIG (if MATLAB Engine is available).
+    """
 
     _THREAD_WAIT_TIMEOUT_MS = 2000
     _MATLAB_STATUS_TIMEOUT_MS = 2000
@@ -746,13 +735,6 @@ class PlotWidget(QWidget):
 
     @Slot(np.ndarray, np.ndarray, float)
     def update_plot(self, x_data: np.ndarray, y_data: np.ndarray, output_power: float | None = None):
-        """Updates the plot with new scan data.
-
-        Args:
-            x_data: Array of wavelength values (x-axis)
-            y_data: Array of power values (y-axis)
-            output_power: Optional output power value
-        """
         try:
             x_data_np = x_data
             y_data_np = y_data
@@ -826,7 +808,6 @@ class PlotWidget(QWidget):
 
     @Slot()
     def save_scan_data(self):
-        """Saves scan data to multiple formats based on user selection."""
         if self.current_wavelengths is None or self.current_powers is None:
             QMessageBox.warning(self, "No Data", "No scan data available to save.")
             return
@@ -889,32 +870,31 @@ class PlotWidget(QWidget):
             return
 
         # Get the base filename without any extension
-        base_filename = os.path.splitext(selected_path_with_ext)[0]
-
-        self.saved_files_list: list[str] = []
+        base_path = Path(selected_path_with_ext).with_suffix("")  # Get path without extension
+        self.saved_files_list: list[Path] = []
         self.error_list: list[str] = []
         self.pending_saves = 0  # Counter for async operations
 
         # --- Save CSV (Synchronous) ---
         try:
-            csv_filename = f"{base_filename}.csv"
+            csv_path = base_path.with_suffix(".csv")
             np.savetxt(
-                csv_filename,
+                csv_path,
                 data_to_save,
                 delimiter=",",
                 header=header_text,
                 comments="",
                 fmt="%.6f",
             )
-            self.saved_files_list.append(csv_filename)
-            logger.info(f"Saved CSV: {csv_filename}")
+            self.saved_files_list.append(csv_path)
+            logger.info(f"Saved CSV: {csv_path}")
         except Exception as e:
             self.error_list.append(f"CSV: {e}")
             logger.error(f"CSV save failed: {e}", exc_info=True)
 
         # --- Save MAT (Synchronous) ---
         try:
-            mat_filename = f"{base_filename}.mat"
+            mat_path = base_path.with_suffix(".mat")
             mat_data = {
                 "wl_nm": wavelengths,
                 "pow_dBm": powers,
@@ -925,9 +905,9 @@ class PlotWidget(QWidget):
             }
             if pout is not None:
                 mat_data["pout_dBm"] = pout
-            sio.savemat(mat_filename, mat_data, do_compression=True)
-            self.saved_files_list.append(mat_filename)
-            logger.info(f"Saved MAT: {mat_filename}")
+            sio.savemat(mat_path, mat_data, do_compression=True)
+            self.saved_files_list.append(mat_path)
+            logger.info(f"Saved MAT: {mat_path}")
         except Exception as e:
             self.error_list.append(f"MAT: {e}")
             logger.error(f"MAT save failed: {e}", exc_info=True)
@@ -940,8 +920,8 @@ class PlotWidget(QWidget):
                     self.error_list.append("FIG: Save skipped (MATLAB Engine failed to start/unavailable).")
             else:
                 self.pending_saves += 1
-                fig_filename = f"{base_filename}.fig"
-                self.matlab_status_label.setText(f"Queueing {os.path.basename(fig_filename)} save...")
+                fig_path = base_path.with_suffix(".fig")
+                self.matlab_status_label.setText(f"Queueing {fig_path.name} save...")
 
                 # --- Manage previous thread/worker instance ---
                 # If a thread object exists, we assume it's from a previous operation.
@@ -986,7 +966,7 @@ class PlotWidget(QWidget):
                     Qt.ConnectionType.QueuedConnection,
                     Q_ARG(str, wavelengths_json),
                     Q_ARG(str, powers_json),
-                    Q_ARG(str, fig_filename),
+                    Q_ARG(str, fig_path.name),
                     Q_ARG(str, title_str_matlab),
                     Q_ARG(str, "Wavelength (nm)"),
                     Q_ARG(str, "Power (dBm)"),
@@ -1032,22 +1012,24 @@ class PlotWidget(QWidget):
             if not self.matlab_status_label.text() or "Saving" not in self.matlab_status_label.text():
                 QTimer.singleShot(3000, lambda: self.matlab_status_label.setText(""))
 
-            if not self.error_list and self.saved_files_list:  # Only show success if something was saved
+            # Convert Path objects to strings for display
+            saved_files_str_list = [str(p) for p in self.saved_files_list]
+
+            if not self.error_list and saved_files_str_list:  # Only show success if something was saved
                 QMessageBox.information(
                     self,
                     "Save Successful",
-                    "Scan data saved successfully to:\n" + "\n".join(self.saved_files_list),
+                    "Scan data saved successfully to:\n" + "\n".join(saved_files_str_list),
                 )
             elif self.error_list:
                 QMessageBox.warning(
                     self,
                     "Save Issues",
                     "Some files may have saved:\n"
-                    + "\n".join(self.saved_files_list)
+                    + "\n".join(saved_files_str_list)
                     + "\n\nErrors occurred:\n"
                     + "\n".join(self.error_list),
                 )
-
             self.saved_files_list = []
             self.error_list = []
 
@@ -1056,7 +1038,6 @@ class PlotWidget(QWidget):
             return self.matlab_engine_instance
 
     def cleanup(self):
-        """Cleans up resources and stops background threads."""
         logger.debug("PlotWidget cleanup: Cleaning up resources.")
         # Stop any ongoing save worker thread
         if self.matlab_save_thread and self.matlab_save_thread.isRunning():

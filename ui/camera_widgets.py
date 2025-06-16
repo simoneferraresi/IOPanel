@@ -378,46 +378,43 @@ class AutoOpWorker(QRunnable):
             success = False
             camera_method_success = False
 
-            if self.op_type == OP_AUTO_EXPOSURE:
-                logger.debug(f"Worker: Calling camera.set_auto_exposure_once() for {self.camera.camera_name}")
-                camera_method_success = self.camera.set_auto_exposure_once()
-                if camera_method_success:
-                    logger.info(
-                        f"Worker: {self.camera.camera_name} - ExposureAuto 'Once' mode set. Waiting for adjustment..."
-                    )
-                    time.sleep(1)
-                    result_value = self.camera.get_exposure()
-                    logger.info(
-                        f"Worker: {self.camera.camera_name} - Auto Exposure adjustment finished. New value: {result_value}"
-                    )
-                    success = result_value is not None
-                else:
-                    logger.error(f"Worker: {self.camera.camera_name} - camera.set_auto_exposure_once() returned False.")
-                    success = False
-
-            elif self.op_type == OP_AUTO_GAIN:
-                logger.debug(f"Worker: Calling camera.set_auto_gain_once() for {self.camera.camera_name}")
-                camera_method_success = self.camera.set_auto_gain_once()
-                if camera_method_success:
-                    logger.info(
-                        f"Worker: {self.camera.camera_name} - GainAuto 'Once' mode set. Waiting for adjustment..."
-                    )
-                    time.sleep(1)
-                    result_value = self.camera.get_gain()
-                    logger.info(
-                        f"Worker: {self.camera.camera_name} - Auto Gain adjustment finished. New value: {result_value}"
-                    )
-                    success = result_value is not None
-                else:
-                    logger.error(f"Worker: {self.camera.camera_name} - camera.set_auto_gain_once() returned False.")
-                    success = False
+            match self.op_type:
+                case "auto_exposure":
+                    logger.debug(f"Worker: Calling camera.set_auto_exposure_once() for {self.camera.camera_name}")
+                    camera_method_success = self.camera.set_auto_exposure_once()
+                    if camera_method_success:
+                        logger.info(
+                            f"Worker: {self.camera.camera_name} - ExposureAuto 'Once' mode set. Waiting for adjustment..."
+                        )
+                        time.sleep(1)
+                        result_value = self.camera.get_exposure()
+                        logger.info(
+                            f"Worker: {self.camera.camera_name} - Auto Exposure adjustment finished. New value: {result_value}"
+                        )
+                        success = result_value is not None
+                case "auto_gain":
+                    logger.debug(f"Worker: Calling camera.set_auto_gain_once() for {self.camera.camera_name}")
+                    camera_method_success = self.camera.set_auto_gain_once()
+                    if camera_method_success:
+                        logger.info(
+                            f"Worker: {self.camera.camera_name} - GainAuto 'Once' mode set. Waiting for adjustment..."
+                        )
+                        time.sleep(1)
+                        result_value = self.camera.get_gain()
+                        logger.info(
+                            f"Worker: {self.camera.camera_name} - Auto Gain adjustment finished. New value: {result_value}"
+                        )
+                        success = result_value is not None
+                case _:
+                    # This case handles unknown operation types gracefully.
+                    raise ValueError(f"Unknown auto operation type: {self.op_type}")
 
             if success and result_value is not None:
                 QMetaObject.invokeMethod(
                     self.panel_callback,
                     "handle_auto_result",
                     Qt.ConnectionType.QueuedConnection,
-                    Q_ARG(str, self.op_type),  # op_type is still the string
+                    Q_ARG(str, self.op_type),
                     Q_ARG(float, result_value),
                 )
             elif not camera_method_success:
@@ -426,7 +423,6 @@ class AutoOpWorker(QRunnable):
                 raise RuntimeError(
                     f"Camera method for {self.op_type} set 'Once' mode, but failed to retrieve new value."
                 )
-
         except Exception as e:
             error_msg = f"Error during {self.op_type} for {self.camera.camera_name}: {e}"
             logger.error(error_msg, exc_info=True)
@@ -645,21 +641,29 @@ class CameraPanel(QFrame):
 
         success = False
         control_widget = None
-        if name == "gamma":
-            success = self.camera.set_gamma(value)
-            control_widget = self.gamma_control
-        elif name == "exposure":
-            success = self.camera.set_exposure(value)
-            control_widget = self.exposure_control
+        reverted_value_getter = None
+
+        match name:
+            case "gamma":
+                success = self.camera.set_gamma(value)
+                control_widget = self.gamma_control
+
+                def reverted_value_getter():
+                    return self.camera.gamma
+            case "exposure":
+                success = self.camera.set_exposure(value)
+                control_widget = self.exposure_control
+
+                def reverted_value_getter():
+                    return self.camera.exposure_us
+            case _:
+                logger.warning(f"Unhandled parameter change: {name}")
+                return
 
         if control_widget:
             control_widget.visual_feedback(success)
-            if not success:
-                if name == "exposure":
-                    reverted_value = self.camera.exposure_us
-                else:  # Assumes 'gamma'
-                    reverted_value = self.camera.gamma
-
+            if not success and reverted_value_getter:
+                reverted_value = reverted_value_getter()
                 if reverted_value is not None:
                     QTimer.singleShot(100, lambda: control_widget.setValue(reverted_value))
 

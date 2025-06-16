@@ -62,16 +62,13 @@ class CT400CommunicationError(CT400Error):
 
 class CT400(AbstractCT400):
     """A Python wrapper for the CT400_lib.dll.
-
     Provides an object-oriented interface to the CT400 hardware. This class
     manages DLL loading, function signature configuration, communication, and
     resource cleanup. It is recommended to use this class as a context
     manager (using a `with` statement) to ensure the connection is always
     closed properly.
-
     Args:
         dll_path (str): The absolute or relative path to the `CT400_lib.dll` file.
-
     Raises:
         FileNotFoundError: If the DLL file cannot be found at the specified path.
         CT400InitializationError: If the DLL fails to load or the device fails
@@ -94,7 +91,6 @@ class CT400(AbstractCT400):
         if not dll_path.exists():
             logger.error(f"CT400 DLL not found at path: {dll_path}")
             raise FileNotFoundError(f"CT400 DLL not found at: {dll_path}")
-
         try:
             # WinDLL needs a string path, so we convert back at the last moment.
             self.dll = WinDLL(str(dll_path))
@@ -102,16 +98,23 @@ class CT400(AbstractCT400):
             raise CT400InitializationError(
                 f"Failed to load DLL from {dll_path}. Ensure it is a valid 64-bit or 32-bit DLL matching your Python interpreter. Error: {e}"
             ) from e
-
         self._configure_function_signatures()
-
         # The CT400_Init function uses a pointer to an integer to return an error code.
         init_error = c_int32()
         self.handle: int | None = self.dll.CT400_Init(byref(init_error))
-
         if not self.handle:
-            raise CT400InitializationError(f"Failed to initialize CT400 hardware. DLL Error code: {init_error.value}")
-
+            # --- REVISED EXCEPTION ---
+            error_code = init_error.value
+            user_guidance = (
+                "This indicates a failure to communicate with the CT400 hardware.\n\n"
+                "Please check the following:\n"
+                "1. Is the CT400 device powered on and connected to the computer?\n"
+                "2. Are the necessary hardware drivers (e.g., USB) installed correctly?\n"
+                "3. Is another application (e.g., official Yenista software) currently using the device?"
+            )
+            raise CT400InitializationError(
+                f"Failed to get a valid handle from CT400_Init (Error Code: {error_code}).\n\n{user_guidance}"
+            )
         logger.info(f"CT400 Initialized successfully. Handle: {self.handle}")
 
     def _configure_function_signatures(self):
@@ -188,7 +191,6 @@ class CT400(AbstractCT400):
             ),
             ("CT400_Close", c_int32, [c_uint64]),
         ]
-
         for name, restype, argtypes in func_defs:
             func = getattr(self.dll, name)
             func.restype = restype
@@ -209,7 +211,6 @@ class CT400(AbstractCT400):
             raise CT400CommunicationError(error_message)
 
     # --- Public API Methods ---
-
     def is_connected(self) -> bool:
         """
         Checks if the CT400 device is connected and responsive.
@@ -266,7 +267,6 @@ class CT400(AbstractCT400):
         speed: int,
     ) -> None:
         """Configures a laser connected to a specific input port of the CT400.
-
         Args:
             laser_input: The input port to configure (e.g., `LaserInput.LI_1`).
             enable: `Enable.ENABLE` or `Enable.DISABLE` this laser configuration.
@@ -275,7 +275,6 @@ class CT400(AbstractCT400):
             min_wavelength: Minimum operating wavelength of the laser in nm.
             max_wavelength: Maximum operating wavelength of the laser in nm.
             speed: Operating speed parameter for the laser (units are laser-dependent).
-
         Raises:
             CT400CommunicationError: If setting the configuration fails.
         """
@@ -360,18 +359,15 @@ class CT400(AbstractCT400):
     def scan_wait_end(self) -> tuple[int, str]:
         """
         Waits for the scan to end or polls its current status.
-
         This implementation creates and manages the ctypes error buffer internally,
         preventing it from leaking into other application layers and mitigating
         the risk of buffer overflows by decoding safely.
-
         Returns:
             A tuple containing the raw status code and the decoded error message.
         """
         # Buffer is now an implementation detail, not part of the interface.
         error_buf = create_string_buffer(self._ERROR_BUFFER_SIZE)  # A reasonable size
         result = self.dll.CT400_ScanWaitEnd(self.handle, error_buf)
-
         # Safely decode the buffer.
         error_msg = ""
         try:
@@ -380,7 +376,6 @@ class CT400(AbstractCT400):
         except Exception as e:
             logger.error(f"Failed to decode error buffer from CT400_ScanWaitEnd: {e}")
             error_msg = "Could not decode error message from device."
-
         if result < 0 and result != -1:  # Specific documented error codes
             logger.error(f"CT400 Scan Error (Code: {result}): {error_msg}")
         elif result == -1:  # A general failure of the function call itself
@@ -389,7 +384,6 @@ class CT400(AbstractCT400):
             raise CT400CommunicationError(
                 f"The call to CT400_ScanWaitEnd failed. Check device connection. Message: {error_msg}"
             )
-
         return result, error_msg
 
     def get_data_points(self, dets_used: list[Detector]) -> tuple[np.ndarray, np.ndarray]:
@@ -399,19 +393,15 @@ class CT400(AbstractCT400):
         # Get the number of resampled data points available.
         num_points = self.dll.CT400_GetNbDataPointsResampled(self.handle)
         self._check_rc(num_points, "Failed to get the number of resampled data points")
-
         if num_points <= 0:
             logger.warning(f"Scan reported {num_points} resampled data points. Returning empty arrays.")
             return np.array([]), np.empty((len(dets_used), 0))
-
         logger.info(f"Retrieving {num_points} resampled data points.")
-
         # --- Retrieve Wavelength Data ---
         wl_buffer = (c_double * num_points)()
         result = self.dll.CT400_ScanGetWavelengthResampledArray(self.handle, wl_buffer, num_points)
         self._check_rc(result, "Failed to retrieve resampled wavelength data")
         wavelengths = np.ctypeslib.as_array(wl_buffer)
-
         # --- Retrieve Power Data for Each Requested Detector ---
         det_pows = np.empty((len(dets_used), num_points), dtype=float)
         pow_buffer = (c_double * num_points)()  # Re-use this buffer for each detector call
@@ -454,25 +444,30 @@ class CT400(AbstractCT400):
         """
         Closes the connection to the CT400 device and releases resources.
         This method is idempotent; it is safe to call multiple times.
+        It will also attempt to safely turn off the laser.
         """
         if self.handle is not None:
             logger.info(f"Closing connection to CT400 (Handle: {self.handle})...")
             try:
-                result = self.dll.CT400_Close(self.handle)
-                if result == -1:
-                    logger.warning(
-                        f"Error code {result} received during CT400_Close. Resources may not be cleanly released."
-                    )
-                else:
-                    logger.info("CT400 connection closed successfully.")
+                # --- NEW: Safely turn off laser before closing ---
+                logger.debug("Attempting to disable laser as part of close sequence.")
+                # Use some reasonable default values for port and power
+                self.cmd_laser(LaserInput.LI_1, Enable.DISABLE, 1550.0, 1.0)
             except Exception as e:
-                logger.error(f"An unexpected exception occurred during CT400_Close: {e}")
-            finally:
-                # Mark as closed regardless of outcome to prevent reuse
-                self.handle = None
-                del self.dll
-        else:
-            logger.debug("Attempted to close an already closed or uninitialized CT400 instance.")
+                logger.warning(f"Could not disable laser during close sequence: {e}")
+
+            result = self.dll.CT400_Close(self.handle)
+            if result == -1:
+                logger.warning(
+                    f"Error code {result} received during CT400_Close. Resources may not be cleanly released."
+                )
+            else:
+                logger.info("CT400 connection closed successfully.")
+
+        # Mark as closed regardless of outcome to prevent reuse
+        self.handle = None
+        # Do not delete self.dll, just in case something calls after close.
+        # Python's garbage collector will handle it when the object is destroyed.
 
     def __enter__(self):
         """Allows the CT400 class to be used as a context manager."""

@@ -54,9 +54,6 @@ def setup_logger(
 
     Returns:
         The fully configured logging.Logger instance.
-
-    Raises:
-        OSError: If file logging setup fails, falls back to console logging.
     """
     logger_instance = logging.getLogger("LabApp")
     logger_instance.setLevel(log_level)
@@ -97,19 +94,17 @@ def setup_logger(
 
 
 def global_exception_hook(exctype, value, tb):
-    """Global exception hook to catch and log unhandled exceptions.
+    """A global exception hook to catch and log any unhandled exceptions.
 
-    This function is assigned to `sys.excepthook` as a last line of defense.
-    It logs the full traceback of any uncaught exception to the main application
-    logger and displays a user-friendly error message before termination.
+    This function is assigned to `sys.excepthook` to act as a last line of
+    defense. It logs the full traceback of any uncaught exception to the main
+    application logger and displays a user-friendly error message before
+    allowing the application to terminate.
 
     Args:
-        exctype: The type of the exception (e.g., ValueError, RuntimeError).
-        value: The exception instance containing error details.
-        tb: The traceback object providing stack trace information.
-
-    Note:
-        Shows an error dialog if the Qt application instance exists.
+        exctype: The type of the exception.
+        value: The exception instance.
+        tb: The traceback object.
     """
     logger = logging.getLogger("LabApp")
     logger.critical("Unhandled exception occurred:", exc_info=(exctype, value, tb))
@@ -133,18 +128,16 @@ def global_exception_hook(exctype, value, tb):
 def load_raw_config_from_ini(config_file: Path) -> dict:
     """Loads an INI file into a raw dictionary without validation.
 
-    Uses Python's `configparser` to read an INI file and convert it into
-    a dictionary of dictionaries for processing by the Pydantic model.
+    This function uses Python's standard `configparser` to read an INI file
+    and convert it into a dictionary of dictionaries, suitable for processing
+    by the Pydantic model adapter.
 
     Args:
         config_file: The path to the .ini configuration file.
 
     Returns:
-        dict: Dictionary representing INI contents, empty dict if file is
-        missing or unparseable.
-
-    Raises:
-        configparser.Error: If there are issues parsing the INI file.
+        A dictionary representing the INI file's contents. Returns an empty
+        dictionary if the file is not found or cannot be parsed.
     """
     import configparser
 
@@ -153,26 +146,21 @@ def load_raw_config_from_ini(config_file: Path) -> dict:
         logging.warning(f"Configuration file not found: {config_file}. Using default values.")
         return {}
     try:
-        config.read(config_file, encoding="utf-8")
+        config.read_string(config_file.read_text(encoding="utf-8"))
         return {s: dict(config.items(s)) for s in config.sections()}
-    except configparser.Error as e:
-        logging.error(f"Error parsing config file {config_file}: {e}")
+    except (OSError, configparser.Error) as e:
+        logging.error(f"Error reading or parsing config file {config_file}: {e}")
         return {}
 
 
 def parse_args() -> argparse.Namespace:
     """Parses command-line arguments for the application.
 
-    Defines arguments for:
-    - Custom config file location
-    - Log level override
-    - Log file path override
+    Defines arguments for specifying a custom config file, log level, and log
+    file path, which can override the settings in the INI file.
 
     Returns:
-        argparse.Namespace: Parsed command-line arguments.
-
-    Raises:
-        SystemExit: If invalid arguments are provided or --help/--version used.
+        An `argparse.Namespace` object containing the parsed arguments.
     """
     parser = argparse.ArgumentParser(description=f"{APP_NAME} GUI Application")
     parser.add_argument(
@@ -197,23 +185,16 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
-    """Main application entry point and orchestration.
+    """The main application entry point.
 
-    Handles the full application lifecycle:
-    1. Command-line argument parsing
-    2. Configuration loading and validation
-    3. Logger setup (file and console handlers)
-    4. Global exception hook installation
-    5. Qt application initialization and theming
-    6. Main window creation and display
-    7. Cleanup on application exit
+    Orchestrates the application startup sequence:
+    1. Parses arguments.
+    2. Loads and validates configuration.
+    3. Sets up logging.
+    4. Initializes and runs the Qt application.
 
     Returns:
-        int: Application exit code (0 for success, 1 for failure).
-
-    Raises:
-        ValidationError: If configuration validation fails.
-        QApplicationException: If Qt application initialization fails.
+        The exit code of the application. 0 for success, 1 for failure.
     """
     args = parse_args()
 
@@ -270,7 +251,6 @@ def main() -> int:
         def on_shutdown():
             """A closure to be called when the application is about to quit."""
             logger.info("Application shutting down...")
-            window.cleanup()
             logger.info("Shutdown complete.")
             logging.shutdown()
 
