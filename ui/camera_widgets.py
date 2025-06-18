@@ -24,18 +24,7 @@ from typing import Literal
 import cv2
 import numpy as np
 from PySide6 import QtCore, QtGui
-from PySide6.QtCore import (
-    Q_ARG,
-    QMetaObject,
-    QObject,
-    QRunnable,
-    QSize,
-    Qt,
-    QThreadPool,
-    QTimer,
-    Signal,
-    Slot,
-)
+from PySide6.QtCore import Q_ARG, QMetaObject, QObject, QRunnable, QSize, Qt, QThread, QThreadPool, QTimer, Signal, Slot
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
@@ -77,71 +66,68 @@ class ImageConversionSignals(QObject):
     conversion_error = Signal(str)
 
 
-class ImageConversionWorker(QRunnable):
-    """A QRunnable worker that converts a numpy array to a QImage.
-
-    This worker runs on a background thread from the global QThreadPool to
-    prevent the expensive numpy-to-QImage conversion from blocking the GUI thread,
-    which is critical for maintaining a high and smooth frame rate display.
+class ImageConversionWorker(QObject):
+    """
+    A persistent QObject worker that converts numpy arrays to QImages
+    in a dedicated background thread.
     """
 
-    def __init__(self, frame: np.ndarray, is_mono: bool, camera_name: str):
-        """Initializes the image conversion worker.
+    # Define signals directly in the class
+    image_ready = Signal(QImage)
+    conversion_error = Signal(str)
 
-        Args:
-            frame: The raw numpy array frame received from the camera.
-            is_mono: A boolean indicating if the frame is monochrome (True) or
-                color (False). This determines the conversion logic.
-            camera_name: The name of the camera panel, used for logging.
-        """
-        super().__init__()
-        self.frame = frame
+    def __init__(self, is_mono: bool, camera_name: str, parent=None):
+        super().__init__(parent)
         self.is_mono = is_mono
         self.camera_name = camera_name
-        self.signals = ImageConversionSignals()
+        self._is_running = True
 
     @Slot()
-    def run(self):
-        """The workhorse method that runs in the background thread.
+    def stop(self):
+        """Allows the worker to be stopped cleanly."""
+        self._is_running = False
 
-        Converts the numpy frame to the appropriate QImage format. Emits
-        `image_ready` on success or `conversion_error` on failure.
+    # This is the new slot that will receive frames
+    @Slot(np.ndarray)
+    def process_frame(self, frame: np.ndarray):
         """
+        The workhorse method that runs in the background thread.
+        Converts the numpy frame to the appropriate QImage format.
+        """
+        if not self._is_running or frame is None or frame.size == 0:
+            return
+
         try:
-            h, w = self.frame.shape[:2]
+            h, w = frame.shape[:2]
             q_img: QImage | None = None
 
+            # --- The conversion logic remains exactly the same ---
             if self.is_mono:
-                # Standardize mono frame to 2 dimensions (H, W)
-                frame = self.frame
                 if frame.ndim == 3 and frame.shape[2] == 1:
-                    frame = self.frame.reshape(h, w)
-
+                    frame = frame.reshape(h, w)
                 if frame.ndim == 2:
-                    # Ensure the memory layout is C-contiguous for QImage
                     if not frame.flags["C_CONTIGUOUS"]:
                         frame = np.ascontiguousarray(frame)
                     q_img = QImage(frame.data, w, h, frame.strides[0], QImage.Format.Format_Grayscale8)
                 else:
                     raise TypeError(f"Mono camera provided unexpected frame shape: {frame.shape}")
             else:  # Color
-                if self.frame.ndim == 3 and self.frame.shape[2] == 3:
-                    # Convert BGR (from OpenCV) to RGB for QImage
-                    frame_rgb = cv2.cvtColor(self.frame, cv2.COLOR_BGR2RGB)
+                if frame.ndim == 3 and frame.shape[2] == 3:
+                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     q_img = QImage(frame_rgb.data, w, h, frame_rgb.strides[0], QImage.Format.Format_RGB888)
                 else:
-                    raise TypeError(f"Color camera provided unexpected frame shape: {self.frame.shape}")
+                    raise TypeError(f"Color camera provided unexpected frame shape: {frame.shape}")
 
-            if q_img:
+            if q_img and self._is_running:
                 # The QImage must be copied because the underlying numpy buffer
                 # will go out of scope and be garbage-collected.
-                self.signals.image_ready.emit(q_img.copy())
-            else:
-                self.signals.conversion_error.emit("Converted QImage was null.")
+                self.image_ready.emit(q_img.copy())
+            elif not q_img:
+                self.conversion_error.emit("Converted QImage was null.")
         except Exception as e:
             error_msg = f"Panel {self.camera_name}: Unhandled error converting frame: {e}"
             logger.exception(error_msg)
-            self.signals.conversion_error.emit(str(e))
+            self.conversion_error.emit(str(e))
 
 
 class ParameterControl(QWidget):
@@ -475,7 +461,12 @@ class CameraPanel(QFrame):
         self._panel_title = title  # Use this for logging before camera is set
         self._latest_pixmap: QPixmap | None = None
         self._display_size_cache: QtCore.QSize | None = None
+
         self._thread_pool = QThreadPool.globalInstance()
+
+        self.conversion_thread: QThread | None = None
+        self.conversion_worker: ImageConversionWorker | None = None
+
         self._last_resize_time: float = 0.0
         self._resize_timer = QTimer(self)
         self._resize_timer.setSingleShot(True)
@@ -538,8 +529,41 @@ class CameraPanel(QFrame):
         self.camera = camera
         self.setObjectName(f"cameraPanel_{camera.identifier}")
 
-        self.watchdog_timer.timeout.connect(self.camera.attempt_recovery)
+        # --- START THE PERSISTENT WORKER ---
+        self._start_conversion_worker()
+
+        # Update controls AFTER starting worker, just in case
         self._update_controls_from_camera()
+
+    def _start_conversion_worker(self):
+        """Creates and starts the dedicated thread and worker for image conversion."""
+        if not self.camera or not self.camera.is_mono is not None:
+            logger.error(f"Cannot start conversion worker for {self._panel_title}, camera not ready.")
+            return
+
+        self.conversion_thread = QThread(self)
+        # Pass necessary info to the worker's constructor
+        self.conversion_worker = ImageConversionWorker(is_mono=self.camera.is_mono, camera_name=self._panel_title)
+        self.conversion_worker.moveToThread(self.conversion_thread)
+
+        # Connect signals:
+        # 1. Worker's output signals to the panel's slots
+        self.conversion_worker.image_ready.connect(self._display_converted_image)
+        self.conversion_worker.conversion_error.connect(self._handle_conversion_error)
+
+        # 2. Thread management signals
+        self.conversion_thread.started.connect(
+            lambda: logger.info(f"Conversion thread started for {self._panel_title}.")
+        )
+        self.conversion_thread.finished.connect(self.conversion_worker.deleteLater)
+
+        # Start the thread
+        self.conversion_thread.start()
+        logger.info(f"Persistent conversion worker created for {self._panel_title}")
+
+        # --- CRITICAL: Connect the camera's frame signal to the worker's slot ---
+        # This is the new, efficient pipeline
+        self.camera.new_frame.connect(self.conversion_worker.process_frame)
 
     def _update_controls_from_camera(self):
         """Refreshes control widgets with values from the live camera."""
@@ -766,25 +790,8 @@ class CameraPanel(QFrame):
         Args:
             frame: The raw numpy array frame from the camera.
         """
-        if not self.camera or not self.isVisible():
-            return
-
-        self.watchdog_timer.start()
-
-        if frame is None or frame.size == 0 or not self.camera.device:
-            self.set_frame_pixmap(None)
-            return
-
-        # is_mono is guaranteed by VimbaCam to be a boolean
-        is_mono = self.camera.is_mono
-
-        # Create and configure the worker
-        worker = ImageConversionWorker(frame, is_mono, self._panel_title)
-        worker.signals.image_ready.connect(self._display_converted_image)
-        worker.signals.conversion_error.connect(self._handle_conversion_error)
-
-        # Submit to the global thread pool for execution
-        self._thread_pool.start(worker)
+        if self.camera and self.isVisible():
+            self.watchdog_timer.start()
 
     @Slot(str)
     def _handle_conversion_error(self, error_msg: str):
@@ -894,17 +901,22 @@ class CameraPanel(QFrame):
             self.video_label.setPixmap(QPixmap())
 
     def closeEvent(self, event: QtGui.QCloseEvent):
-        """Handles the widget close event.
-
-        Ensures that all timers associated with this panel are stopped to
-        prevent them from firing after the widget is gone.
-
-        Args:
-            event: The close event.
-        """
+        """Handles the widget close event."""
         logger.debug(f"Closing CameraPanel for {self._panel_title}")
-        # --- FIX: Check if camera exists before stopping its timer. ---
-        if self.camera:
-            self.watchdog_timer.stop()
+        if self.camera and self.conversion_worker:
+            # Disconnect the signal to prevent sending frames to a closing worker
+            try:
+                self.camera.new_frame.disconnect(self.conversion_worker.process_frame)
+            except (TypeError, RuntimeError):
+                # This can happen if the connection was already broken. Safe to ignore.
+                pass
+
+        if self.conversion_thread and self.conversion_thread.isRunning():
+            self.conversion_worker.stop()
+            self.conversion_thread.quit()
+            if not self.conversion_thread.wait(500):
+                logger.warning(f"Conversion thread for {self._panel_title} did not close gracefully.")
+
+        self.watchdog_timer.stop()
         self._resize_timer.stop()
         super().closeEvent(event)

@@ -1073,6 +1073,41 @@ QPushButton#monitorButton[monitoring="true"]:pressed {{
 }}
 
 /* ----------------------------------------
+   Alignment and Mapping Buttons
+----------------------------------------- */
+/* Default State (Green) */
+QPushButton#alignButton, QPushButton#mapButton {{
+    background-color: {ct400_scan_start_bg}; /* Re-use the same green color */
+    color: {white};
+    font-weight: bold;
+    border: none;
+}}
+QPushButton#alignButton:hover, QPushButton#mapButton:hover {{
+    background-color: {ct400_scan_start_hover_bg};
+}}
+QPushButton#alignButton:pressed, QPushButton#mapButton:pressed {{
+    background-color: {ct400_scan_start_pressed_bg};
+}}
+QPushButton#alignButton:disabled, QPushButton#mapButton:disabled {{
+    background-color: {c_neutral_200};
+    color: {c_neutral_400};
+}}
+
+/* Running State (Red) */
+QPushButton#alignButton[running="true"],
+QPushButton#mapButton[running="true"] {{
+    background-color: {ct400_scanning_bg}; /* Re-use the same red color */
+}}
+QPushButton#alignButton[running="true"]:hover,
+QPushButton#mapButton[running="true"]:hover {{
+    background-color: {ct400_scanning_hover_bg};
+}}
+QPushButton#alignButton[running="true"]:pressed,
+QPushButton#mapButton[running="true"]:pressed {{
+    background-color: {ct400_scanning_pressed_bg};
+}}
+
+/* ----------------------------------------
    Status Bar Label for CT400
 ----------------------------------------- */
 QLabel#ct400StatusLabel {{

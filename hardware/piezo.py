@@ -192,8 +192,20 @@ class PiezoController:
     def set_voltage(self, axis: str, voltage: float) -> None:
         if not self.is_connected():
             raise PiezoConnectionError("Not connected")
+
+        # --- NEW: Add robust voltage clamping ---
+        min_v = self.get_min_voltage(axis)
+        max_v = self.get_max_voltage(axis)
+        clamped_voltage = max(min_v, min(max_v, voltage))
+
+        if abs(clamped_voltage - voltage) > 1e-9:  # Use a small tolerance for float comparison
+            logger.warning(
+                f"Voltage for axis {axis} out of range. Commanded: {voltage:.3f}V, Clamped to: {clamped_voltage:.3f}V"
+            )
+        # ----------------------------------------
+
         func = getattr(self._dll, f"Set{axis.capitalize()}AxisVoltage")
-        rc = func(self.hdl, c_double(voltage))
+        rc = func(self.hdl, c_double(clamped_voltage))  # Use the clamped value
         if rc < 0:
             raise PiezoError(f"SetVoltage failed for axis {axis} with code {rc}")
 
