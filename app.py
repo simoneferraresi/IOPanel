@@ -79,11 +79,15 @@ def setup_logger(
         logger_instance.addHandler(file_handler)
     except OSError as e:
         # Fallback to console if file logging fails
-        print(f"Error: Could not set up file logger at '{log_file}': {e}", file=sys.stderr)
+        print(
+            f"Error: Could not set up file logger at '{log_file}': {e}", file=sys.stderr
+        )
 
     # Configure console handler
     console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(max(log_level, logging.INFO))  # Console shows INFO or higher
+    console_handler.setLevel(
+        max(log_level, logging.INFO)
+    )  # Console shows INFO or higher
     console_formatter = logging.Formatter("%(levelname)s: %(message)s")
     console_handler.setFormatter(console_formatter)
     logger_instance.addHandler(console_handler)
@@ -143,7 +147,9 @@ def load_raw_config_from_ini(config_file: Path) -> dict:
 
     config = configparser.ConfigParser()
     if not config_file.is_file():
-        logging.warning(f"Configuration file not found: {config_file}. Using default values.")
+        logging.warning(
+            f"Configuration file not found: {config_file}. Using default values."
+        )
         return {}
     try:
         config.read_string(config_file.read_text(encoding="utf-8"))
@@ -180,7 +186,9 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="Path to the log file (overrides config file setting)",
     )
-    parser.add_argument("--version", action="version", version=f"%(prog)s {APP_VERSION}")
+    parser.add_argument(
+        "--version", action="version", version=f"%(prog)s {APP_VERSION}"
+    )
     return parser.parse_args()
 
 

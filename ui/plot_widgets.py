@@ -181,14 +181,22 @@ class Plot3DWidget(QWidget):
         if z_span < 1e-9:  # Flat surface
             color = (0.8, 0.8, 0.8, 1.0)
             self.surface_plot = gl.GLSurfacePlotItem(
-                x=x_shifted, y=y_shifted, z=z_scaled_shifted.T, color=color, shader="shaded"
+                x=x_shifted,
+                y=y_shifted,
+                z=z_scaled_shifted.T,
+                color=color,
+                shader="shaded",
             )
         else:
             cmap = pg.colormap.get("viridis")
             normalized_z = (z - z_min) / z_span
             colors = cmap.map(normalized_z, "float")
             self.surface_plot = gl.GLSurfacePlotItem(
-                x=x_shifted, y=y_shifted, z=z_scaled_shifted.T, colors=colors, shader="shaded"
+                x=x_shifted,
+                y=y_shifted,
+                z=z_scaled_shifted.T,
+                colors=colors,
+                shader="shaded",
             )
 
         self.surface_plot.setGLOptions("opaque")
@@ -206,21 +214,41 @@ class Plot3DWidget(QWidget):
         axis_len_z = z_scaled.max() - z_scaled.min()
 
         # X-Axis Line and Label
-        x_axis_points = np.array([[x_shifted.min(), y_shifted.min(), 0], [x_shifted.max(), y_shifted.min(), 0]])
+        x_axis_points = np.array(
+            [
+                [x_shifted.min(), y_shifted.min(), 0],
+                [x_shifted.max(), y_shifted.min(), 0],
+            ]
+        )
         self.x_axis.setData(pos=x_axis_points, color=(1, 1, 1, 1), width=2)
-        self.x_label.setData(pos=(0, y_shifted.min() - axis_len_y * 0.1, 0), text="X (µm)")
+        self.x_label.setData(
+            pos=(0, y_shifted.min() - axis_len_y * 0.1, 0), text="X (µm)"
+        )
 
         # Y-Axis Line and Label
-        y_axis_points = np.array([[x_shifted.min(), y_shifted.min(), 0], [x_shifted.min(), y_shifted.max(), 0]])
+        y_axis_points = np.array(
+            [
+                [x_shifted.min(), y_shifted.min(), 0],
+                [x_shifted.min(), y_shifted.max(), 0],
+            ]
+        )
         self.y_axis.setData(pos=y_axis_points, color=(1, 1, 1, 1), width=2)
-        self.y_label.setData(pos=(x_shifted.min() - axis_len_x * 0.1, 0, 0), text="Y (µm)")
+        self.y_label.setData(
+            pos=(x_shifted.min() - axis_len_x * 0.1, 0, 0), text="Y (µm)"
+        )
 
         # Z-Axis Line and Label
         z_axis_points = np.array(
-            [[x_shifted.min(), y_shifted.min(), 0], [x_shifted.min(), y_shifted.min(), axis_len_z]]
+            [
+                [x_shifted.min(), y_shifted.min(), 0],
+                [x_shifted.min(), y_shifted.min(), axis_len_z],
+            ]
         )
         self.z_axis.setData(pos=z_axis_points, color=(1, 1, 1, 1), width=2)
-        self.z_label.setData(pos=(x_shifted.min(), y_shifted.min(), axis_len_z * 1.05), text="Power (a.u.)")
+        self.z_label.setData(
+            pos=(x_shifted.min(), y_shifted.min(), axis_len_z * 1.05),
+            text="Power (a.u.)",
+        )
 
         # --- 4. UPDATE THE COLOR BAR ---
         self.colormap_updated.emit(cmap if z_span > 1e-9 else None, z_min, z_max)
@@ -235,7 +263,9 @@ class MatlabSaveWorker(QObject):
     in a separate thread.
     """
 
-    finished_saving = Signal(str, bool, str)  # Emits: filetype, success, message_or_filename
+    finished_saving = Signal(
+        str, bool, str
+    )  # Emits: filetype, success, message_or_filename
 
     def __init__(self, parent: QObject | None = None):  # parent is PlotWidget
         super().__init__(parent)
@@ -243,7 +273,9 @@ class MatlabSaveWorker(QObject):
         self.matlab_eng_local_for_quit: matlab.engine.MatlabEngine | None = None
 
     # Slot signature changes: last arg is QWidget (or a more specific QObject if PlotWidget is registered)
-    @Slot(str, str, str, str, str, str, str, float, "QWidget*")  # Pass PlotWidget as QWidget*
+    @Slot(
+        str, str, str, str, str, str, str, float, "QWidget*"
+    )  # Pass PlotWidget as QWidget*
     def save_matlab_fig(
         self,
         wavelengths_json_str: str,
@@ -262,7 +294,9 @@ class MatlabSaveWorker(QObject):
             return
 
         if not MATLAB_ENGINE_AVAILABLE:
-            logger.warning("MatlabSaveWorker: MATLAB Engine not available. Cannot save .fig.")
+            logger.warning(
+                "MatlabSaveWorker: MATLAB Engine not available. Cannot save .fig."
+            )
             self.finished_saving.emit("fig", False, "MATLAB Engine not available.")
             return
 
@@ -271,9 +305,13 @@ class MatlabSaveWorker(QObject):
         try:
             wavelengths_list = json.loads(wavelengths_json_str)
             powers_list = json.loads(powers_json_str)
-            if not isinstance(wavelengths_list, list) or not all(isinstance(x, int | float) for x in wavelengths_list):
+            if not isinstance(wavelengths_list, list) or not all(
+                isinstance(x, int | float) for x in wavelengths_list
+            ):
                 raise ValueError("Decoded wavelengths is not a list of numbers.")
-            if not isinstance(powers_list, list) or not all(isinstance(x, int | float) for x in powers_list):
+            if not isinstance(powers_list, list) or not all(
+                isinstance(x, int | float) for x in powers_list
+            ):
                 raise ValueError("Decoded powers is not a list of numbers.")
         except (json.JSONDecodeError, ValueError) as e:
             error_msg = f"FIG: Error decoding or validating JSON data: {e}"
@@ -282,14 +320,20 @@ class MatlabSaveWorker(QObject):
             return
 
         shared_matlab_engine: matlab.engine.MatlabEngine | None = None
-        if plot_widget_ptr is not None and isinstance(plot_widget_ptr, PlotWidget):  # Type check
+        if plot_widget_ptr is not None and isinstance(
+            plot_widget_ptr, PlotWidget
+        ):  # Type check
             # Call the getter method on the PlotWidget instance
             # This call happens in the worker's thread.
             # The get_matlab_engine method in PlotWidget needs to be thread-safe.
             shared_matlab_engine = plot_widget_ptr.get_matlab_engine()
         else:
-            logger.error("MatlabSaveWorker: PlotWidget instance not provided correctly.")
-            self.finished_saving.emit("fig", False, "Internal error: PlotWidget reference missing.")
+            logger.error(
+                "MatlabSaveWorker: PlotWidget instance not provided correctly."
+            )
+            self.finished_saving.emit(
+                "fig", False, "Internal error: PlotWidget reference missing."
+            )
             return
 
         eng_to_use: matlab.engine.MatlabEngine | None = shared_matlab_engine
@@ -298,18 +342,26 @@ class MatlabSaveWorker(QObject):
         try:
             if eng_to_use is None:
                 if not self._is_running:  # Check before slow operation
-                    logger.info("MatlabSaveWorker: Save FIG cancelled before local engine start.")
+                    logger.info(
+                        "MatlabSaveWorker: Save FIG cancelled before local engine start."
+                    )
                     self.finished_saving.emit("fig", False, "Save cancelled by user.")
                     return
-                logger.info("MatlabSaveWorker: No shared engine from PlotWidget. Starting MATLAB engine locally...")
+                logger.info(
+                    "MatlabSaveWorker: No shared engine from PlotWidget. Starting MATLAB engine locally..."
+                )
                 eng_to_use = matlab.engine.start_matlab()
                 self.matlab_eng_local_for_quit = eng_to_use
                 logger.info("MatlabSaveWorker: MATLAB engine started locally.")
             else:
-                logger.info("MatlabSaveWorker: Using shared MATLAB engine instance from PlotWidget.")
+                logger.info(
+                    "MatlabSaveWorker: Using shared MATLAB engine instance from PlotWidget."
+                )
 
             if not self._is_running:
-                logger.info("MatlabSaveWorker: Save FIG cancelled after engine consideration.")
+                logger.info(
+                    "MatlabSaveWorker: Save FIG cancelled after engine consideration."
+                )
                 self.finished_saving.emit("fig", False, "Save cancelled by user.")
                 if self.matlab_eng_local_for_quit:  # Quit if we started it
                     self.matlab_eng_local_for_quit.quit()
@@ -331,7 +383,9 @@ class MatlabSaveWorker(QObject):
             eng_to_use.savefig(fig_filename, nargout=0)
 
             try:
-                logger.debug(f"MatlabSaveWorker: Attempting to close current MATLAB figure (handle: {h_fig})...")
+                logger.debug(
+                    f"MatlabSaveWorker: Attempting to close current MATLAB figure (handle: {h_fig})..."
+                )
                 # Option 1: Close the specific figure using its handle
                 eng_to_use.close("all", nargout=0)
                 # Option 2: Close the "current" figure (gcf might change if other ops happen)
@@ -341,13 +395,17 @@ class MatlabSaveWorker(QObject):
                 # eng_to_use.close('all', nargout=0)
                 logger.info("MatlabSaveWorker: MATLAB figure closed.")
             except Exception as e_close:
-                logger.warning(f"MatlabSaveWorker: Could not close MATLAB figure: {e_close}")
+                logger.warning(
+                    f"MatlabSaveWorker: Could not close MATLAB figure: {e_close}"
+                )
 
             logger.info(f"MatlabSaveWorker: Saved plot to FIG: {fig_filename}")
             self.finished_saving.emit("fig", True, fig_filename)
 
         except ImportError:
-            error_msg = "FIG: MATLAB Engine for Python not installed or found (runtime check)."
+            error_msg = (
+                "FIG: MATLAB Engine for Python not installed or found (runtime check)."
+            )
             logger.error(error_msg)
             self.finished_saving.emit("fig", False, error_msg)
         except Exception as e:
@@ -357,11 +415,15 @@ class MatlabSaveWorker(QObject):
         finally:
             if self.matlab_eng_local_for_quit:
                 try:
-                    logger.info("MatlabSaveWorker: Quitting locally started MATLAB engine...")
+                    logger.info(
+                        "MatlabSaveWorker: Quitting locally started MATLAB engine..."
+                    )
                     self.matlab_eng_local_for_quit.quit()
                     logger.info("MatlabSaveWorker: Locally started MATLAB engine quit.")
                 except Exception as e_quit:
-                    logger.error(f"MatlabSaveWorker: Error quitting locally started MATLAB engine: {e_quit}")
+                    logger.error(
+                        f"MatlabSaveWorker: Error quitting locally started MATLAB engine: {e_quit}"
+                    )
                 finally:
                     self.matlab_eng_local_for_quit = None
 
@@ -385,7 +447,9 @@ class HistogramWidget(QtWidgets.QWidget):
     _LOW_SIGNAL_FLOOR = -100.0
     _HIGH_SIGNAL_CEILING = 10.0
 
-    def __init__(self, control_panel, detector_keys: list[str], parent: QWidget | None = None):
+    def __init__(
+        self, control_panel, detector_keys: list[str], parent: QWidget | None = None
+    ):
         super().__init__(parent)
         if not detector_keys:
             logger.warning("HistogramWidget initialized with no detector keys.")
@@ -413,7 +477,9 @@ class HistogramWidget(QtWidgets.QWidget):
         self.bar_pen = pg.mkPen("#1f78b4")
         self.max_text_color = pg.mkColor("#e41a1c")
         self.current_text_color = pg.mkColor("#555555")  # Dark grey for current values
-        self.text_font = QFont("Segoe UI", self.value_text_font_size)  # Font for value annotations
+        self.text_font = QFont(
+            "Segoe UI", self.value_text_font_size
+        )  # Font for value annotations
 
         # UI Elements
         self.layout = QtWidgets.QVBoxLayout(self)
@@ -442,7 +508,10 @@ class HistogramWidget(QtWidgets.QWidget):
         self._is_visible = False  # To control timer activity
 
         # Pre-calculate bar x-positions for max lines
-        self._bar_positions = [(i - self.bar_width / 2, i + self.bar_width / 2) for i in range(self.num_bars)]
+        self._bar_positions = [
+            (i - self.bar_width / 2, i + self.bar_width / 2)
+            for i in range(self.num_bars)
+        ]
 
         self.plot_widget.setYRange(*self._DEFAULT_Y_RANGE)
 
@@ -454,7 +523,9 @@ class HistogramWidget(QtWidgets.QWidget):
 
         x_axis = self.plot_widget.getAxis("bottom")
         x_axis.setLabel(text="Detector", **label_style)
-        x_axis.setTickFont(QFont("Segoe UI", self.font_size - 1))  # Slightly smaller ticks
+        x_axis.setTickFont(
+            QFont("Segoe UI", self.font_size - 1)
+        )  # Slightly smaller ticks
         ticks = [[(i, key) for i, key in enumerate(self.detector_keys)]]
         x_axis.setTicks(ticks)
 
@@ -521,7 +592,9 @@ class HistogramWidget(QtWidgets.QWidget):
     @Slot()
     def reset_maxima(self):
         t_start = time.perf_counter()
-        logger.info("Resetting histogram: current values to 0, max_values to -infinity.")
+        logger.info(
+            "Resetting histogram: current values to 0, max_values to -infinity."
+        )
 
         self.current_values.fill(0.0)
         self.max_values.fill(-np.inf)
@@ -537,7 +610,9 @@ class HistogramWidget(QtWidgets.QWidget):
 
             if i < len(self.current_texts) and self.current_texts[i] is not None:
                 text_item_current = self.current_texts[i]
-                show_text_at_zero = np.isfinite(current_val_at_reset) and current_val_at_reset > -90
+                show_text_at_zero = (
+                    np.isfinite(current_val_at_reset) and current_val_at_reset > -90
+                )
 
                 if show_text_at_zero:
                     text_item_current.setText(f"{current_val_at_reset:.2f}")
@@ -575,14 +650,19 @@ class HistogramWidget(QtWidgets.QWidget):
         self._pending_power_data = None
 
         if not isinstance(data_to_process, dict):
-            logger.warning(f"HistogramWidget: Invalid power data type: {type(data_to_process)}")
+            logger.warning(
+                f"HistogramWidget: Invalid power data type: {type(data_to_process)}"
+            )
             return
 
         try:
             detector_values_from_signal = data_to_process.get("detectors", {})
 
             new_values_from_signal = np.array(
-                [detector_values_from_signal.get(key, -np.inf) for key in self.detector_keys],
+                [
+                    detector_values_from_signal.get(key, -np.inf)
+                    for key in self.detector_keys
+                ],
                 dtype=float,
             )
 
@@ -611,7 +691,9 @@ class HistogramWidget(QtWidgets.QWidget):
 
     def _update_visual_elements(self):
         if not self.bars:
-            logger.warning("HistogramWidget: Bars not initialized in _update_visual_elements.")
+            logger.warning(
+                "HistogramWidget: Bars not initialized in _update_visual_elements."
+            )
             return
         self.bars.setOpts(height=self.current_values)
         for i in range(self.num_bars):
@@ -621,7 +703,9 @@ class HistogramWidget(QtWidgets.QWidget):
             x_start_line, x_end_line = self._bar_positions[i]
             self._update_max_line(i, x_start_line, x_end_line, max_val)
             self._update_max_text(i, x_center, max_val)  # Max text should be OVER
-            self._update_current_text(i, x_center, current_val)  # Current text should be UNDER
+            self._update_current_text(
+                i, x_center, current_val
+            )  # Current text should be UNDER
 
     def _update_max_line(self, i: int, x_start: float, x_end: float, max_val: float):
         if i < len(self.max_lines) and self.max_lines[i] is not None:
@@ -656,7 +740,9 @@ class HistogramWidget(QtWidgets.QWidget):
         if show_text:
             text_item.setText(f"{current_val:.2f}")
             text_item.setAnchor((0.5, 0.0))  # Anchor top-center
-            text_y_position = current_val + self.text_offset  # Position it slightly below
+            text_y_position = (
+                current_val + self.text_offset
+            )  # Position it slightly below
             text_item.setPos(x_center, text_y_position)
             text_item.setVisible(True)
         else:
@@ -673,9 +759,13 @@ class HistogramWidget(QtWidgets.QWidget):
 
             combined_finite_vals = np.array([])
             if viewable_current.size > 0:
-                combined_finite_vals = np.concatenate((combined_finite_vals, viewable_current))
+                combined_finite_vals = np.concatenate(
+                    (combined_finite_vals, viewable_current)
+                )
             if viewable_max.size > 0:
-                combined_finite_vals = np.concatenate((combined_finite_vals, viewable_max))
+                combined_finite_vals = np.concatenate(
+                    (combined_finite_vals, viewable_max)
+                )
 
             if combined_finite_vals.size == 0:
                 self.plot_widget.setYRange(-70, 10, padding=0)
@@ -747,7 +837,9 @@ class PlotWidget(QWidget):
         layout.setSpacing(5)
 
         self.plot_widget = pg.PlotWidget(background="w")  # PyQtGraph PlotWidget
-        self.plot_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.plot_widget.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
         layout.addWidget(self.plot_widget)
 
         # PlotDataItem for the main scan data
@@ -800,12 +892,16 @@ class PlotWidget(QWidget):
                     logger.info("Shared MATLAB engine is alive.")
                     return True
                 except Exception as e:
-                    logger.warning(f"Shared MATLAB engine seems unresponsive ({e}). Attempting to restart.")
+                    logger.warning(
+                        f"Shared MATLAB engine seems unresponsive ({e}). Attempting to restart."
+                    )
                     try:
                         self.matlab_engine_instance.quit()
                     except Exception as quit_e:
                         # It's good practice to log that the quit itself failed.
-                        logger.error(f"Failed to cleanly quit the unresponsive MATLAB engine: {quit_e}")
+                        logger.error(
+                            f"Failed to cleanly quit the unresponsive MATLAB engine: {quit_e}"
+                        )
                         # The 'pass' is still appropriate here because the goal is to continue cleanup.
                         pass
                     self.matlab_engine_instance = None
@@ -843,53 +939,77 @@ class PlotWidget(QWidget):
                 )
                 self.matlab_engine_instance = None
                 self.matlab_status_label.setText("MATLAB Start Failed!")
-                QMessageBox.critical(self, "MATLAB Error", f"Could not start MATLAB Engine: {e}")
+                QMessageBox.critical(
+                    self, "MATLAB Error", f"Could not start MATLAB Engine: {e}"
+                )
                 return False
             finally:
                 self.is_matlab_engine_starting = False
 
     @Slot(np.ndarray, np.ndarray, float)
-    def update_plot(self, x_data: np.ndarray, y_data: np.ndarray, output_power: float | None = None):
+    def update_plot(
+        self, x_data: np.ndarray, y_data: np.ndarray, output_power: float | None = None
+    ):
         try:
             x_data_np = x_data
             y_data_np = y_data
 
             # --- DETAILED LOGGING AND CHECKING ---
-            logger.info(f"PlotWidget.update_plot: Received {len(y_data_np)} y_data points.")
+            logger.info(
+                f"PlotWidget.update_plot: Received {len(y_data_np)} y_data points."
+            )
             # LOG MORE POINTS
             log_tail_count = min(100, len(y_data_np))
             if log_tail_count > 0:
                 logger.info(
                     f"  PlotWidget y_data (first {min(10, log_tail_count)} of {log_tail_count}):\n{y_data_np[: min(10, log_tail_count)]}"
                 )  # Keep first 10 concise
-                logger.info(f"  PlotWidget y_data (last {log_tail_count}):\n{y_data_np[-log_tail_count:]}")
+                logger.info(
+                    f"  PlotWidget y_data (last {log_tail_count}):\n{y_data_np[-log_tail_count:]}"
+                )
 
             nan_count = np.count_nonzero(np.isnan(y_data_np))
             inf_count = np.count_nonzero(np.isinf(y_data_np))
 
             if nan_count > 0:
-                logger.warning(f"PlotWidget: Full y_data array contains {nan_count} NaN values!")
+                logger.warning(
+                    f"PlotWidget: Full y_data array contains {nan_count} NaN values!"
+                )
                 nan_indices = np.where(np.isnan(y_data_np))[0]
-                logger.warning(f"  NaN indices (first 5): {nan_indices[: min(5, len(nan_indices))]}")
+                logger.warning(
+                    f"  NaN indices (first 5): {nan_indices[: min(5, len(nan_indices))]}"
+                )
                 # Option: Replace NaNs for plotting if desired, e.g.:
                 # y_data_np = np.nan_to_num(y_data_np, nan=-100.0) # Replace with a very low dBm value
 
             if inf_count > 0:
-                logger.warning(f"PlotWidget: Full y_data array contains {inf_count} Inf values!")
+                logger.warning(
+                    f"PlotWidget: Full y_data array contains {inf_count} Inf values!"
+                )
                 inf_indices = np.where(np.isinf(y_data_np))[0]
-                logger.warning(f"  Inf indices (first 5): {inf_indices[: min(5, len(inf_indices))]}")
+                logger.warning(
+                    f"  Inf indices (first 5): {inf_indices[: min(5, len(inf_indices))]}"
+                )
                 # Option: Replace Infs for plotting, e.g.:
                 # y_data_np = np.nan_to_num(y_data_np, posinf=10.0, neginf=-100.0) # Cap at plausible values
             # --- END DETAILED LOGGING AND CHECKING ---
 
-            if x_data_np.ndim != 1 or y_data_np.ndim != 1 or len(x_data_np) != len(y_data_np):
-                logger.error(f"Invalid data shape for plotting. X: {x_data_np.shape}, Y: {y_data_np.shape}")
+            if (
+                x_data_np.ndim != 1
+                or y_data_np.ndim != 1
+                or len(x_data_np) != len(y_data_np)
+            ):
+                logger.error(
+                    f"Invalid data shape for plotting. X: {x_data_np.shape}, Y: {y_data_np.shape}"
+                )
                 self.plot_data_item.setData([], [])
                 self.plot_widget.setTitle("Invalid Scan Data", color="red", size="11pt")
                 self.save_btn.setEnabled(False)
                 return
 
-            logger.debug(f"Updating plot. Points: {len(x_data_np)}. Pout: {output_power}")
+            logger.debug(
+                f"Updating plot. Points: {len(x_data_np)}. Pout: {output_power}"
+            )
             self.current_wavelengths = x_data_np
             self.current_powers = y_data_np
             self.current_output_power = output_power
@@ -908,7 +1028,9 @@ class PlotWidget(QWidget):
             self.plot_data_item.setData(x_plot_data, y_plot_data)
 
             if len(x_data_np) > 0:
-                title_text = f"Wavelength Scan ({x_data_np[0]:.1f} - {x_data_np[-1]:.1f} nm)"
+                title_text = (
+                    f"Wavelength Scan ({x_data_np[0]:.1f} - {x_data_np[-1]:.1f} nm)"
+                )
                 if not np.all(finite_mask):  # If any points were filtered
                     title_text += " (Non-finite data filtered for display)"
                 self.plot_widget.setTitle(title_text, color="black", size="11pt")
@@ -940,7 +1062,9 @@ class PlotWidget(QWidget):
         logger.info(f"Saving scan data. Points: {len(wavelengths)}. Pout: {pout}")
 
         if pout is not None:
-            data_to_save = np.column_stack((wavelengths, np.full_like(wavelengths, pout), powers))
+            data_to_save = np.column_stack(
+                (wavelengths, np.full_like(wavelengths, pout), powers)
+            )
             column_headers = "WL_[nm], Pout_[dBm], Power_Det1_[dBm]"
         else:
             data_to_save = np.column_stack((wavelengths, powers))
@@ -985,7 +1109,9 @@ class PlotWidget(QWidget):
             return
 
         # Get the base filename without any extension
-        base_path = Path(selected_path_with_ext).with_suffix("")  # Get path without extension
+        base_path = Path(selected_path_with_ext).with_suffix(
+            ""
+        )  # Get path without extension
         self.saved_files_list: list[Path] = []
         self.error_list: list[str] = []
         self.pending_saves = 0  # Counter for async operations
@@ -1032,7 +1158,9 @@ class PlotWidget(QWidget):
             if not self._ensure_matlab_engine_started():
                 # ... (handle engine start failure) ...
                 if not any("FIG:" in err for err in self.error_list):
-                    self.error_list.append("FIG: Save skipped (MATLAB Engine failed to start/unavailable).")
+                    self.error_list.append(
+                        "FIG: Save skipped (MATLAB Engine failed to start/unavailable)."
+                    )
             else:
                 self.pending_saves += 1
                 fig_path = base_path.with_suffix(".fig")
@@ -1048,27 +1176,39 @@ class PlotWidget(QWidget):
                     # We don't need to explicitly quit/wait here if finished->deleteLater is robust.
                     # The main issue is accessing a potentially deleted C++ object.
                     # By creating new ones, we avoid this.
-                    logger.debug("Previous matlab_save_thread detected. Assuming it will self-clean via deleteLater.")
+                    logger.debug(
+                        "Previous matlab_save_thread detected. Assuming it will self-clean via deleteLater."
+                    )
                 # ---
 
                 self.matlab_save_thread = QThread(self)  # QThread can have a parent
-                self.matlab_save_worker = MatlabSaveWorker()  # NO PARENT before moveToThread
+                self.matlab_save_worker = (
+                    MatlabSaveWorker()
+                )  # NO PARENT before moveToThread
                 self.matlab_save_worker.moveToThread(self.matlab_save_thread)
 
                 # Connect signals for the NEW worker and thread
-                self.matlab_save_worker.finished_saving.connect(self._handle_matlab_save_finished)
+                self.matlab_save_worker.finished_saving.connect(
+                    self._handle_matlab_save_finished
+                )
                 self.matlab_save_thread.started.connect(
                     lambda: logger.info("MATLAB save worker thread started for FIG.")
                 )
                 # Ensure proper cleanup when the thread finishes
-                self.matlab_save_thread.finished.connect(self.matlab_save_thread.deleteLater)
-                self.matlab_save_thread.finished.connect(self.matlab_save_worker.deleteLater)
+                self.matlab_save_thread.finished.connect(
+                    self.matlab_save_thread.deleteLater
+                )
+                self.matlab_save_thread.finished.connect(
+                    self.matlab_save_worker.deleteLater
+                )
                 # Optional: Disconnect old signals if you were reusing worker/thread objects,
                 # but since we are creating new ones, this is not strictly necessary.
 
                 self.matlab_save_thread.start()
 
-                title_str_matlab = f"Scan {wavelengths[0]:.1f} - {wavelengths[-1]:.1f} nm"
+                title_str_matlab = (
+                    f"Scan {wavelengths[0]:.1f} - {wavelengths[-1]:.1f} nm"
+                )
                 if pout is not None:
                     title_str_matlab += f" (Pout: {pout:.2f} dBm)"
                 wavelengths_json = json.dumps(wavelengths.tolist())
@@ -1091,7 +1231,9 @@ class PlotWidget(QWidget):
                 )
 
         else:  # MATLAB_ENGINE_AVAILABLE is False (compile-time check)
-            logger.info("Skipping .fig save: MATLAB Engine support not compiled in or available.")
+            logger.info(
+                "Skipping .fig save: MATLAB Engine support not compiled in or available."
+            )
             # No error_list addition here, it's a known unavailability
 
         # If no asynchronous saves were started, finalize now.
@@ -1099,13 +1241,17 @@ class PlotWidget(QWidget):
             self._check_all_saves_done()
 
     @Slot(str, bool, str)
-    def _handle_matlab_save_finished(self, filetype: str, success: bool, message_or_filename: str):
+    def _handle_matlab_save_finished(
+        self, filetype: str, success: bool, message_or_filename: str
+    ):
         self.pending_saves -= 1
         if success:
             # ... (append to saved_files_list, update status_label) ...
             logger.info(f"Successfully saved {filetype}: {message_or_filename}")
             self.saved_files_list.append(message_or_filename)
-            self.matlab_status_label.setText(f"{os.path.basename(message_or_filename)} saved.")
+            self.matlab_status_label.setText(
+                f"{os.path.basename(message_or_filename)} saved."
+            )
         else:
             # ... (append to error_list, update status_label) ...
             logger.error(f"Failed to save {filetype}: {message_or_filename}")
@@ -1124,17 +1270,23 @@ class PlotWidget(QWidget):
         if self.pending_saves == 0:
             self.save_btn.setEnabled(True)
             # Keep status label from MATLAB save if it was the last one, or clear if only sync saves.
-            if not self.matlab_status_label.text() or "Saving" not in self.matlab_status_label.text():
+            if (
+                not self.matlab_status_label.text()
+                or "Saving" not in self.matlab_status_label.text()
+            ):
                 QTimer.singleShot(3000, lambda: self.matlab_status_label.setText(""))
 
             # Convert Path objects to strings for display
             saved_files_str_list = [str(p) for p in self.saved_files_list]
 
-            if not self.error_list and saved_files_str_list:  # Only show success if something was saved
+            if (
+                not self.error_list and saved_files_str_list
+            ):  # Only show success if something was saved
                 QMessageBox.information(
                     self,
                     "Save Successful",
-                    "Scan data saved successfully to:\n" + "\n".join(saved_files_str_list),
+                    "Scan data saved successfully to:\n"
+                    + "\n".join(saved_files_str_list),
                 )
             elif self.error_list:
                 QMessageBox.warning(
@@ -1164,8 +1316,12 @@ class PlotWidget(QWidget):
                     Qt.ConnectionType.QueuedConnection,
                 )
             self.matlab_save_thread.quit()
-            if not self.matlab_save_thread.wait(self._THREAD_WAIT_TIMEOUT_MS):  # Wait for graceful exit
-                logger.warning("MATLAB save thread did not quit gracefully on PlotWidget close. Terminating.")
+            if not self.matlab_save_thread.wait(
+                self._THREAD_WAIT_TIMEOUT_MS
+            ):  # Wait for graceful exit
+                logger.warning(
+                    "MATLAB save thread did not quit gracefully on PlotWidget close. Terminating."
+                )
                 self.matlab_save_thread.terminate()
                 self.matlab_save_thread.wait()  # Wait for termination
 
@@ -1177,7 +1333,9 @@ class PlotWidget(QWidget):
                     if self.matlab_engine_instance:
                         self.matlab_engine_instance.quit()
                         self.matlab_engine_instance = None
-                        logger.info("PlotWidget: Shared MATLAB engine quit successfully.")
+                        logger.info(
+                            "PlotWidget: Shared MATLAB engine quit successfully."
+                        )
             except Exception as e:
                 logger.error(
                     f"PlotWidget: Error quitting shared MATLAB engine: {e}",
@@ -1192,7 +1350,9 @@ class PlotWidget(QWidget):
 try:
     from ui.control_panel import ScanSettings
 except ImportError:
-    logger.error("ScanSettings class not found. Ensure it's defined or imported correctly.")
+    logger.error(
+        "ScanSettings class not found. Ensure it's defined or imported correctly."
+    )
 
     class ScanSettings:
         pass
