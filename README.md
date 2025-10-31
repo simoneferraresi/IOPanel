@@ -1,95 +1,110 @@
-# Photonics Lab Control GUI
+# IOPanel: Photonics Lab Control GUI
 
+<p align="center">
   <!-- TODO: Replace with an actual screenshot of your application -->
+  <img src="https://via.placeholder.com/800x450.png?text=IOPanel+Application+Screenshot" alt="Application Screenshot" width="75%">
+</p>
 
-**Photonics Lab Control** is a robust and performant desktop application designed to interface with and control key laboratory equipment for photonics research. Built with Python and PySide6, it provides a centralized and user-friendly GUI for running wavelength scans, monitoring optical power in real-time, and viewing camera feeds for sample alignment.
+**IOPanel** is a robust and performant desktop application engineered to interface with and control key laboratory equipment for photonics research. Built with Python and PySide6, it provides a centralized, stable, and user-friendly GUI for running wavelength scans, monitoring optical power in real-time, and viewing high-framerate camera feeds for sample alignment.
 
-This application is engineered for stability during long-running experiments, with a focus on a responsive user interface, resilient hardware communication, and clear data visualization.
+This application is architected for stability during long-running experiments, with a focus on a responsive user interface, resilient hardware communication, and clear, immediate data visualization.
 
 ---
 
-## Features
+## Key Features
 
 -   **Modular Instrument Control:**
     -   **CT400 Wavelength Scan:** Full control over the Yenista CT400 for configurable wavelength scans. Set start/end wavelengths, resolution, laser power, and speed.
-    -   **Real-time Power Monitor:** A multi-channel power monitor displayed as a live-updating histogram, perfect for alignment and stability checks.
--   **Multi-Camera Support:**
-    -   Simultaneously stream from multiple Vimba-compatible cameras.
-    -   Individual controls for gamma and exposure (including one-shot auto-exposure).
-    -   High-performance, low-latency video display.
-    -   Automatic connection recovery if a camera is disconnected.
--   **High-Performance Data Visualization:**
-    -   Scan results plotted instantly using the fast `pyqtgraph` library.
-    -   Live histogram for power monitoring.
+    -   **Real-time Power Monitor:** A multi-channel power monitor displayed as a live-updating histogram, perfect for alignment tasks and stability checks.
+-   **High-Performance Multi-Camera Support:**
+    -   Simultaneously stream from multiple Vimba-compatible cameras in parallel.
+    -   Individual, thread-safe controls for gamma and exposure (including one-shot auto-exposure and auto-gain).
+    -   Asynchronous, non-blocking camera initialization.
+    -   Automatic connection recovery watchdog for enhanced stability.
+-   **Advanced Data Visualization:**
+    -   Scan results are plotted instantly using the fast and interactive `pyqtgraph` library.
+    -   Live, throttled histogram for smooth power monitoring without overwhelming the CPU.
 -   **Robust Data Export:**
     -   Save scan data in multiple formats simultaneously with a single click.
-    -   Supported formats: **CSV**, **MATLAB (.mat)**, **PNG**, **SVG**.
-    -   **MATLAB Figure (.fig)** export available if MATLAB Engine for Python is installed.
--   **Resilient and Stable:**
-    -   Asynchronous task handling ensures the GUI never freezes during scans or hardware communication.
-    -   Built-in watchdogs and error handling for robust, long-term operation.
--   **Highly Configurable:**
-    -   All instrument addresses, camera identifiers, and default scan parameters are managed in a simple `config.ini` file. No hard-coded values.
-    -   Flexible logging configuration for easy debugging.
+    -   Supported formats: **CSV**, **MATLAB (.mat)**.
+    -   **(Optional)** **MATLAB Figure (.fig)** export is available if the MATLAB Engine for Python is installed.
+-   **Engineered for Stability:**
+    -   **Asynchronous Architecture:** All hardware communication and long-running tasks are executed on background threads, ensuring the GUI remains responsive at all times.
+    -   **Type-Safe Configuration:** Powered by **Pydantic**, the application validates the `config.ini` file on startup, preventing errors from invalid settings.
+    -   **Resilient Error Handling:** Graceful error handling and built-in hardware watchdogs ensure robust, long-term operation.
 
 ---
 
 ## Installation
 
-This application is designed to be run from a Python environment. The following steps will guide you through the setup process.
+This project is designed to be run from a local Python environment and uses [`uv`](https://github.com/astral-sh/uv) as its recommended package and project manager. `uv` is an extremely fast, all-in-one tool that replaces `pip` and `venv`.
 
 ### 1. Prerequisites
 
 -   **Python 3.10+**
+-   **`uv`**: Install `uv` on your system.
+    -   On macOS / Linux: `curl -LsSf https://astral.sh/uv/install.sh | sh`
+    -   On Windows: `powershell -c "irm https://astral.sh/uv/install.ps1 | iex"`
+    -   See the [official `uv` installation guide](https://github.com/astral-sh/uv#installation) for more options.
+-   **Git**
 -   **Required Hardware Drivers:**
-    -   **Allied Vision Vimba SDK:** For camera support. Please install the specific version you have tested with (e.g., Vimba SDK v6.0). Download from the official Allied Vision website.
-    -   **Yenista CT400 Drivers:** The `CT400_lib.dll` file is required. This is typically provided with the instrument. Ensure you have the correct 32-bit or 64-bit version that matches your Python interpreter.
--   **(Optional) MATLAB:** Required only for saving scan plots as `.fig` files. You must also install the MATLAB Engine for Python.
+    -   **Allied Vision Vimba SDK:** For camera support. Please install the version you have tested with (e.g., Vimba SDK v6.0). Download from the official Allied Vision website.
+    -   **Yenista CT400 Drivers:** The `CT400_lib.dll` file is required. This is provided with the instrument. Ensure you have the correct 32-bit or 64-bit version that matches your Python interpreter.
+-   **(Optional) MATLAB:** Required *only* for saving scan plots as `.fig` files. If you need this feature, you must also install the MATLAB Engine for Python.
 
-### 2. Setting up the Environment
+### 2. Environment Setup
 
-This project uses modern Python packaging and recommends [`uv`](https://github.com/astral-sh/uv), a fast Python package manager.
+The `uv` workflow simplifies environment creation and dependency installation into two main steps.
 
 ```bash
 # 1. Clone the repository
-git clone https://your-repo-url.git
-cd photonics-lab-control
+git clone https://github.com/simoneferraresi/IOPanel.git
+cd IOPanel
 
-# 2. Create and activate a virtual environment
-# This command creates a virtual environment named .venv in the current directory
-uv venv
-source .venv/bin/activate  # On macOS/Linux
-# .venv\Scripts\Activate.ps1  # On Windows (PowerShell)
+# 2. Create a virtual environment and install all dependencies
+# This single command creates a virtual environment in .venv and installs
+# all dependencies from pyproject.toml, including optional test/dev groups.
+uv sync --all-extras
 
-# 3. Install the application and its dependencies
-# uv will read pyproject.toml and install everything in editable mode.
-uv pip install -e .
+# 3. Activate the virtual environment
+# On Windows (PowerShell):
+.venv\Scripts\Activate.ps1
+# On macOS/Linux:
+source .venv/bin/activate
 ```
 
 ### 3. (Optional) MATLAB Engine Setup
 
-If you have MATLAB and want `.fig` export functionality, install the MATLAB Engine API for Python. Navigate to the appropriate MATLAB directory in your terminal and run the installation command.
+If you have MATLAB and want `.fig` export functionality, install the MATLAB Engine API for Python into the `uv`-managed environment.
 
-**On Windows (example path):**
+**Make sure your virtual environment is activated first.**
+
+**Example on Windows:**
 ```powershell
+# First, ensure your prompt shows (.venv)
+# Then, navigate to the MATLAB installation directory
 cd "C:\Program Files\MATLAB\R2023b\extern\engines\python"
+# Install the engine into the active environment
 python setup.py install
 ```
-[Official MATLAB Documentation for installation](https://www.mathworks.com/help/matlab/matlab_external/install-the-matlab-engine-for-python.html)
+[See official MATLAB documentation for details.](https://www.mathworks.com/help/matlab/matlab_external/install-the-matlab-engine-for-python.html)
 
 ---
 
 ## Configuration
 
-Before running the application for the first time, you must create and configure the `config.ini` file.
+Before running the application for the first time, you must configure your hardware connections in the `config.ini` file.
 
-1.  **Create `config.ini`:** A file named `config.template.ini` should be present in the repository. Make a copy of this file and rename it to `config.ini`. The `config.ini` file is ignored by Git, so your local settings will not be committed.
+1.  **Copy the Template:** In the project root, find `config.ini`. If it does not exist, copy `config.template.ini` (if available) or create it from scratch.
 2.  **Edit `config.ini`:**
-    -   **`[Instruments]`**: Set `ct400_dll_path` to the **absolute path** of your `CT400_lib.dll` file. Update the `tunics_gpib_address`.
-    -   **`[Camera:*]`**: For each camera you want to use:
+    -   **`[Instruments]` Section:**
+        -   Set `ct400_dll_path` to the **absolute path** of your `CT400_lib.dll` file. Use forward slashes (`/`) for compatibility.
+        -   Update `tunics_gpib_address` to match your hardware setup.
+    -   **`[Camera:*]` Sections:**
+        -   For each camera you want to use, create a section like `[Camera:Top]`.
         -   Set `enabled = true`.
-        -   Find the camera's unique `identifier` using a Vimba utility (the application will also log available camera IDs on startup if it can't find a configured one).
-        -   Give it a descriptive `name`.
+        -   Set the `name` to a user-friendly description.
+        -   Find the camera's unique `identifier` (e.g., `DEV_...` or a serial number). You can find this using the **`Instruments > Discover Cameras...`** menu item within the application. Copy the ID from the discovery dialog and paste it here.
 
 ---
 
@@ -101,58 +116,68 @@ Once the environment is set up and `config.ini` is configured, run the applicati
 python app.py
 ```
 
-### Command-line Arguments
+### Command-Line Arguments
 
-You can override logging and configuration settings from the command line:
+You can override certain settings from the `config.ini` file using command-line arguments:
 
 -   `--log-level`: Set the logging level (e.g., `DEBUG`, `INFO`).
 -   `--log-file`: Specify a different path for the log file.
 -   `--config`: Specify a different configuration file path.
 
-Example:
+**Example:**
 ```bash
 python app.py --log-level DEBUG --config config.production.ini
 ```
 
 ---
 
-## Project Structure
-
-```
-simoneferraresi-iopanel/
-├── app.py                  # Main application entry point, argument parsing
-├── build.py                # Build script for compiling Qt resources
-├── config.ini              # User configuration file (ignored by git)
-├── config.template.ini     # A template for users to copy
-├── config_model.py         # Type-safe dataclass model for configuration
-├── pyproject.toml          # Project metadata and dependencies (PEP 621)
-├── README.md               # This file
-├── LICENSE                 # Project license
-├── hardware/               # Hardware abstraction layer
-│   ├── __init__.py
-│   ├── camera.py           # Vimba camera abstraction class
-│   └── ct400.py            # Ctypes wrapper for the CT400 DLL
-├── resources/              # Icons and other static assets
-│   ├── resources.qrc       # Qt Resource Collection file
-│   ├── resources_rc.py     # Compiled Python version of resources
-│   └── icons/              # SVG icons
-└── ui/                     # All GUI-related code
-    ├── __init__.py
-    ├── camera_widgets.py   # Widgets for camera display and controls
-    ├── control_panel.py    # Widgets for instrument control (scan, monitor)
-    ├── main_window.py      # Main QMainWindow, orchestrates all UI components
-    ├── plot_widgets.py     # Widgets for plotting (scan graph, histogram)
-    └── theme.py            # Global and component-specific QSS stylesheets
-```
+## Development
 
 ### Compiling Qt Resources
 
-The application uses icons stored in a Qt Resource File (`resources/resources.qrc`). If you add or change icons, you must recompile the `resources_rc.py` file using the build script:
+The application uses icons stored in a Qt Resource File (`resources/resources.qrc`). If you add or change icons, you must recompile the `resources_rc.py` file.
+
+Run the following command from the project root:
 
 ```bash
-python build.py
+pyside6-rcc resources/resources.qrc -o resources/resources_rc.py
 ```
-This script is smart and will only rebuild if it detects changes, saving time.
+
+### Project Structure
+
+The codebase is organized into hardware abstractions, UI components, and a main application entry point.
+
+```
+IOPanel/
+├── .gitignore
+├── .pre-commit-config.yaml
+├── app.py                      # Main application entry point, arg parsing, logger setup
+├── config.ini                  # User configuration file (local, not in git)
+├── config_model.py             # Pydantic models for type-safe configuration
+├── LICENSE
+├── pyproject.toml              # Project metadata and dependencies (PEP 621)
+├── README.md                   # This file
+├── hardware/                   # Hardware abstraction layer
+│   ├── camera.py               # Vimba camera abstraction class
+│   ├── camera_init_worker.py   # Worker for asynchronous camera initialization
+│   ├── ct400.py                # Ctypes wrapper for the CT400 DLL
+│   ├── ct400_types.py          # Enums and data classes for CT400
+│   ├── dummy_ct400.py          # Dummy implementation for testing without hardware
+│   └── interfaces.py           # Abstract base classes for hardware
+├── resources/                  # Icons and other static assets
+│   ├── resources.qrc           # Qt Resource Collection file
+│   └── icons/                  # SVG icons for the UI
+├── tests/
+│   └── test_camera_widgets.py  # Automated tests for UI components
+└── ui/                         # All GUI-related code
+    ├── camera_widgets.py       # Widgets for camera display and controls
+    ├── constants.py            # Centralized UI constants (IDs, messages)
+    ├── control_panel.py        # Widgets for instrument control (scan, monitor)
+    ├── discovery_dialog.py     # Dialog for finding connected cameras
+    ├── main_window.py          # Main QMainWindow, orchestrates all UI components
+    ├── plot_widgets.py         # Widgets for plotting (scan graph, histogram)
+    └── theme.py                # Global and component-specific QSS stylesheets
+```
 
 ---
 
