@@ -600,7 +600,6 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Ready.")
 
         self._create_menus()
-
         self._update_ct400_visuals(state=CT400Status.UNKNOWN, message="Initializing...")
         logger.debug("UI Initialization finished.")
 
