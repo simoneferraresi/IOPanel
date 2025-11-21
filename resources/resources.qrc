@@ -8,7 +8,9 @@
     <file alias="laser.svg">icons/laser.svg</file>
     <file alias="play.svg">icons/play.svg</file>
     <file alias="radio-checked.svg">icons/radio-checked.svg</file>
+    <file alias="spinner.svg">icons/spinner.svg</file>
     <file alias="save.svg">icons/save.svg</file>
+    <file alias="snowflake.svg">icons/snowflake.svg</file>
     <file alias="stop-circle.svg">icons/stop-circle.svg</file>
     <file alias="stop.svg">icons/stop.svg</file>
 </qresource>
