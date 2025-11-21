@@ -213,9 +213,7 @@ class CT400(AbstractCT400):
             CT400CommunicationError: If the return_code is -1.
         """
         if return_code == -1:
-            logger.error(
-                f"CT400 API Error: {error_message} (Return Code: {return_code})"
-            )
+            logger.error(f"CT400 API Error: {error_message} (Return Code: {return_code})")
             raise CT400CommunicationError(error_message)
 
     # --- Public API Methods ---
@@ -296,9 +294,7 @@ class CT400(AbstractCT400):
             max_wavelength,
             speed,
         )
-        self._check_rc(
-            result, f"Failed to set laser configuration for input {laser_input.name}"
-        )
+        self._check_rc(result, f"Failed to set laser configuration for input {laser_input.name}")
 
     def cmd_laser(
         self,
@@ -310,9 +306,7 @@ class CT400(AbstractCT400):
         """
         Sends a command to a configured laser, such as setting its wavelength and power.
         """
-        logger.debug(
-            f"Executing CmdLaser: Input={laser_input.name}, En={enable.name}, WL={wavelength}, P={power}"
-        )
+        logger.debug(f"Executing CmdLaser: Input={laser_input.name}, En={enable.name}, WL={wavelength}, P={power}")
         result = self.dll.CT400_CmdLaser(
             self.handle,
             laser_input.value,
@@ -320,9 +314,7 @@ class CT400(AbstractCT400):
             wavelength,
             power,
         )
-        self._check_rc(
-            result, f"Failed to send command to laser on input {laser_input.name}"
-        )
+        self._check_rc(result, f"Failed to send command to laser on input {laser_input.name}")
 
     def set_sampling_res(self, resolution_pm: int) -> None:
         """
@@ -331,38 +323,26 @@ class CT400(AbstractCT400):
         result = self.dll.CT400_SetSamplingResolution(self.handle, resolution_pm)
         self._check_rc(result, f"Failed to set sample resolution to {resolution_pm} pm")
 
-    def set_detector_array(
-        self, det2: Enable, det3: Enable, det4: Enable, ext: Enable
-    ) -> None:
+    def set_detector_array(self, det2: Enable, det3: Enable, det4: Enable, ext: Enable) -> None:
         """
         Configures which detectors are active during a scan.
         """
-        result = self.dll.CT400_SetDetectorArray(
-            self.handle, det2.value, det3.value, det4.value, ext.value
-        )
+        result = self.dll.CT400_SetDetectorArray(self.handle, det2.value, det3.value, det4.value, ext.value)
         self._check_rc(result, "Failed to set detector array configuration")
 
     def set_bnc(self, enable: Enable, alpha: float, beta: float, unit: Unit) -> None:
         """
         Configures the external BNC detector input, including scaling and units.
         """
-        result = self.dll.CT400_SetBNC(
-            self.handle, enable.value, alpha, beta, unit.value
-        )
+        result = self.dll.CT400_SetBNC(self.handle, enable.value, alpha, beta, unit.value)
         self._check_rc(result, "Failed to set external BNC detector configuration")
 
-    def set_scan(
-        self, laser_power: float, min_wavelength: float, max_wavelength: float
-    ) -> None:
+    def set_scan(self, laser_power: float, min_wavelength: float, max_wavelength: float) -> None:
         """
         Configures the primary parameters for a wavelength scan.
         """
-        logger.debug(
-            f"Setting scan: P={laser_power}, MinWL={min_wavelength}, MaxWL={max_wavelength}"
-        )
-        result = self.dll.CT400_SetScan(
-            self.handle, laser_power, min_wavelength, max_wavelength
-        )
+        logger.debug(f"Setting scan: P={laser_power}, MinWL={min_wavelength}, MaxWL={max_wavelength}")
+        result = self.dll.CT400_SetScan(self.handle, laser_power, min_wavelength, max_wavelength)
         self._check_rc(result, "Failed to set scan configuration")
 
     def start_scan(self) -> None:
@@ -380,9 +360,7 @@ class CT400(AbstractCT400):
         """
         result = self.dll.CT400_ScanStop(self.handle)
         if result == -1:
-            logger.warning(
-                "CT400_ScanStop returned an error. The scan might have already finished or failed."
-            )
+            logger.warning("CT400_ScanStop returned an error. The scan might have already finished or failed.")
 
     def scan_wait_end(self) -> tuple[int, str]:
         """
@@ -414,9 +392,7 @@ class CT400(AbstractCT400):
             )
         return result, error_msg
 
-    def get_data_points(
-        self, dets_used: list[Detector]
-    ) -> tuple[np.ndarray, np.ndarray]:
+    def get_data_points(self, dets_used: list[Detector]) -> tuple[np.ndarray, np.ndarray]:
         """
         Retrieves the resampled wavelength and power data after a scan has completed.
         """
@@ -424,23 +400,17 @@ class CT400(AbstractCT400):
         num_points = self.dll.CT400_GetNbDataPointsResampled(self.handle)
         self._check_rc(num_points, "Failed to get the number of resampled data points")
         if num_points <= 0:
-            logger.warning(
-                f"Scan reported {num_points} resampled data points. Returning empty arrays."
-            )
+            logger.warning(f"Scan reported {num_points} resampled data points. Returning empty arrays.")
             return np.array([]), np.empty((len(dets_used), 0))
         logger.info(f"Retrieving {num_points} resampled data points.")
         # --- Retrieve Wavelength Data ---
         wl_buffer = (c_double * num_points)()
-        result = self.dll.CT400_ScanGetWavelengthResampledArray(
-            self.handle, wl_buffer, num_points
-        )
+        result = self.dll.CT400_ScanGetWavelengthResampledArray(self.handle, wl_buffer, num_points)
         self._check_rc(result, "Failed to retrieve resampled wavelength data")
         wavelengths = np.ctypeslib.as_array(wl_buffer)
         # --- Retrieve Power Data for Each Requested Detector ---
         det_pows = np.empty((len(dets_used), num_points), dtype=float)
-        pow_buffer = (
-            c_double * num_points
-        )()  # Re-use this buffer for each detector call
+        pow_buffer = (c_double * num_points)()  # Re-use this buffer for each detector call
         for i, det in enumerate(dets_used):
             result_det = self.dll.CT400_ScanGetDetectorResampledArray(
                 self.handle,
@@ -448,9 +418,7 @@ class CT400(AbstractCT400):
                 pow_buffer,
                 num_points,
             )
-            self._check_rc(
-                result_det, f"Failed to get resampled data for detector {det.name}"
-            )
+            self._check_rc(result_det, f"Failed to get resampled data for detector {det.name}")
             # Important: Copy the data from the buffer immediately.
             det_pows[i, :] = np.ctypeslib.as_array(pow_buffer).copy()
         return wavelengths, det_pows
@@ -498,9 +466,7 @@ class CT400(AbstractCT400):
         # Convert to mutable C buffer (in/out string)
         path_buffer = ctypes.create_string_buffer(str(path).encode("utf-8"), 512)
 
-        result = self.dll.CT400_ScanSaveWavelengthSyncFile(
-            ctypes.c_uint64(self.handle), path_buffer
-        )
+        result = self.dll.CT400_ScanSaveWavelengthSyncFile(ctypes.c_uint64(self.handle), path_buffer)
 
         self._check_rc(result, "Failed to save scan wavelength sync file")
 
