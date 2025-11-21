@@ -7,6 +7,10 @@ from pathlib import Path
 import numpy as np
 import pyqtgraph as pg
 import pyqtgraph.opengl as gl
+<<<<<<< HEAD
+=======
+import scipy.io as sio
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import (
     Q_ARG,
@@ -180,14 +184,30 @@ class Plot3DWidget(QWidget):
         if z_span < 1e-9:  # Flat surface
             color = (0.8, 0.8, 0.8, 1.0)
             self.surface_plot = gl.GLSurfacePlotItem(
+<<<<<<< HEAD
                 x=x_shifted, y=y_shifted, z=z_scaled_shifted.T, color=color, shader="shaded"
+=======
+                x=x_shifted,
+                y=y_shifted,
+                z=z_scaled_shifted.T,
+                color=color,
+                shader="shaded",
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
             )
         else:
             cmap = pg.colormap.get("viridis")
             normalized_z = (z - z_min) / z_span
             colors = cmap.map(normalized_z, "float")
             self.surface_plot = gl.GLSurfacePlotItem(
+<<<<<<< HEAD
                 x=x_shifted, y=y_shifted, z=z_scaled_shifted.T, colors=colors, shader="shaded"
+=======
+                x=x_shifted,
+                y=y_shifted,
+                z=z_scaled_shifted.T,
+                colors=colors,
+                shader="shaded",
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
             )
 
         self.surface_plot.setGLOptions("opaque")
@@ -205,6 +225,7 @@ class Plot3DWidget(QWidget):
         axis_len_z = z_scaled.max() - z_scaled.min()
 
         # X-Axis Line and Label
+<<<<<<< HEAD
         x_axis_points = np.array([[x_shifted.min(), y_shifted.min(), 0], [x_shifted.max(), y_shifted.min(), 0]])
         self.x_axis.setData(pos=x_axis_points, color=(1, 1, 1, 1), width=2)
         self.x_label.setData(pos=(0, y_shifted.min() - axis_len_y * 0.1, 0), text="X (µm)")
@@ -220,6 +241,43 @@ class Plot3DWidget(QWidget):
         )
         self.z_axis.setData(pos=z_axis_points, color=(1, 1, 1, 1), width=2)
         self.z_label.setData(pos=(x_shifted.min(), y_shifted.min(), axis_len_z * 1.05), text="Power (a.u.)")
+=======
+        x_axis_points = np.array(
+            [
+                [x_shifted.min(), y_shifted.min(), 0],
+                [x_shifted.max(), y_shifted.min(), 0],
+            ]
+        )
+        self.x_axis.setData(pos=x_axis_points, color=(1, 1, 1, 1), width=2)
+        self.x_label.setData(
+            pos=(0, y_shifted.min() - axis_len_y * 0.1, 0), text="X (µm)"
+        )
+
+        # Y-Axis Line and Label
+        y_axis_points = np.array(
+            [
+                [x_shifted.min(), y_shifted.min(), 0],
+                [x_shifted.min(), y_shifted.max(), 0],
+            ]
+        )
+        self.y_axis.setData(pos=y_axis_points, color=(1, 1, 1, 1), width=2)
+        self.y_label.setData(
+            pos=(x_shifted.min() - axis_len_x * 0.1, 0, 0), text="Y (µm)"
+        )
+
+        # Z-Axis Line and Label
+        z_axis_points = np.array(
+            [
+                [x_shifted.min(), y_shifted.min(), 0],
+                [x_shifted.min(), y_shifted.min(), axis_len_z],
+            ]
+        )
+        self.z_axis.setData(pos=z_axis_points, color=(1, 1, 1, 1), width=2)
+        self.z_label.setData(
+            pos=(x_shifted.min(), y_shifted.min(), axis_len_z * 1.05),
+            text="Power (a.u.)",
+        )
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
 
         # --- 4. UPDATE THE COLOR BAR ---
         self.colormap_updated.emit(cmap if z_span > 1e-9 else None, z_min, z_max)
@@ -270,9 +328,19 @@ class MatlabSaveWorker(QObject):
         try:
             wavelengths_list = json.loads(wavelengths_json_str)
             powers_list = json.loads(powers_json_str)
+<<<<<<< HEAD
             if not isinstance(wavelengths_list, list) or not all(isinstance(x, int | float) for x in wavelengths_list):
                 raise ValueError("Decoded wavelengths is not a list of numbers.")
             if not isinstance(powers_list, list) or not all(isinstance(x, int | float) for x in powers_list):
+=======
+            if not isinstance(wavelengths_list, list) or not all(
+                isinstance(x, int | float) for x in wavelengths_list
+            ):
+                raise ValueError("Decoded wavelengths is not a list of numbers.")
+            if not isinstance(powers_list, list) or not all(
+                isinstance(x, int | float) for x in powers_list
+            ):
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
                 raise ValueError("Decoded powers is not a list of numbers.")
         except (json.JSONDecodeError, ValueError) as e:
             error_msg = f"FIG: Error decoding or validating JSON data: {e}"
@@ -281,7 +349,13 @@ class MatlabSaveWorker(QObject):
             return
 
         shared_matlab_engine: matlab.engine.MatlabEngine | None = None
+<<<<<<< HEAD
         if plot_widget_ptr is not None and isinstance(plot_widget_ptr, PlotWidget):  # Type check
+=======
+        if plot_widget_ptr is not None and isinstance(
+            plot_widget_ptr, PlotWidget
+        ):  # Type check
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
             # Call the getter method on the PlotWidget instance
             # This call happens in the worker's thread.
             # The get_matlab_engine method in PlotWidget needs to be thread-safe.
@@ -384,7 +458,13 @@ class HistogramWidget(QtWidgets.QWidget):
     _LOW_SIGNAL_FLOOR = -100.0
     _HIGH_SIGNAL_CEILING = 10.0
 
+<<<<<<< HEAD
     def __init__(self, control_panel, detector_keys: list[str], parent: QWidget | None = None):
+=======
+    def __init__(
+        self, control_panel, detector_keys: list[str], parent: QWidget | None = None
+    ):
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
         super().__init__(parent)
         if not detector_keys:
             logger.warning("HistogramWidget initialized with no detector keys.")
@@ -873,7 +953,13 @@ class PlotWidget(QWidget):
                 self.is_matlab_engine_starting = False
 
     @Slot(np.ndarray, np.ndarray, float)
+<<<<<<< HEAD
     def update_plot(self, x_data: np.ndarray, y_data: np.ndarray, output_power: float | None = None):
+=======
+    def update_plot(
+        self, x_data: np.ndarray, y_data: np.ndarray, output_power: float | None = None
+    ):
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
         try:
             x_data_np = x_data
             y_data_np = y_data
@@ -1026,6 +1112,7 @@ class PlotWidget(QWidget):
             self.save_btn.setEnabled(True)
             return
 
+<<<<<<< HEAD
         # --- NEW: Update the memory ---
         # Extract the directory from the file selected by the user
         self.last_save_dir = Path(selected_path_with_ext).parent
@@ -1033,6 +1120,12 @@ class PlotWidget(QWidget):
 
         # Get the base filename without any extension
         base_path = Path(selected_path_with_ext).with_suffix("")  # Get path without extension
+=======
+        # Get the base filename without any extension
+        base_path = Path(selected_path_with_ext).with_suffix(
+            ""
+        )  # Get path without extension
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
         self.saved_files_list: list[Path] = []
         self.error_list: list[str] = []
         self.pending_saves = 0  # Counter for async operations
@@ -1041,7 +1134,11 @@ class PlotWidget(QWidget):
         try:
             csv_path = base_path.with_suffix(".csv")
             np.savetxt(
+<<<<<<< HEAD
                 str(csv_path.resolve()),
+=======
+                csv_path,
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
                 data_to_save,
                 delimiter=",",
                 header=header_text,
@@ -1069,7 +1166,11 @@ class PlotWidget(QWidget):
             }
             if pout is not None:
                 mat_data["pout_dBm"] = pout
+<<<<<<< HEAD
             sio.savemat(str(mat_path.resolve()), mat_data, do_compression=True)
+=======
+            sio.savemat(mat_path, mat_data, do_compression=True)
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
             self.saved_files_list.append(mat_path)
             logger.info(f"Saved MAT: {mat_path}")
         except Exception as e:
@@ -1130,7 +1231,11 @@ class PlotWidget(QWidget):
                     Qt.ConnectionType.QueuedConnection,
                     Q_ARG(str, wavelengths_json),
                     Q_ARG(str, powers_json),
+<<<<<<< HEAD
                     Q_ARG(str, str(fig_path.resolve())),
+=======
+                    Q_ARG(str, fig_path.name),
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
                     Q_ARG(str, title_str_matlab),
                     Q_ARG(str, "Wavelength (nm)"),
                     Q_ARG(str, "Power (dB)"),
@@ -1179,11 +1284,22 @@ class PlotWidget(QWidget):
             # Convert Path objects to strings for display
             saved_files_str_list = [str(p) for p in self.saved_files_list]
 
+<<<<<<< HEAD
             if not self.error_list and saved_files_str_list:  # Only show success if something was saved
                 QMessageBox.information(
                     self,
                     "Save Successful",
                     "Scan data saved successfully to:\n" + "\n".join(saved_files_str_list),
+=======
+            if (
+                not self.error_list and saved_files_str_list
+            ):  # Only show success if something was saved
+                QMessageBox.information(
+                    self,
+                    "Save Successful",
+                    "Scan data saved successfully to:\n"
+                    + "\n".join(saved_files_str_list),
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
                 )
             elif self.error_list:
                 QMessageBox.warning(

@@ -48,6 +48,7 @@ class PiezoInitWorker(QObject):
                 piezo_left = PiezoController(dll_path)
                 logger.info(f"Left Piezo ({left_port}) object created (disconnected).")
             else:
+<<<<<<< HEAD
                 logger.warning(f"Left Piezo ({left_port}) not found. Device may be off.")
 
             if right_port in found_ports:
@@ -55,6 +56,21 @@ class PiezoInitWorker(QObject):
                 logger.info(f"Right Piezo ({right_port}) object created (disconnected).")
             else:
                 logger.warning(f"Right Piezo ({right_port}) not found. Device may be off.")
+=======
+                logger.warning(
+                    f"Left Piezo ({left_port}) not found. Device may be off."
+                )
+
+            if right_port in found_ports:
+                piezo_right = PiezoController(dll_path)
+                logger.info(
+                    f"Right Piezo ({right_port}) object created (disconnected)."
+                )
+            else:
+                logger.warning(
+                    f"Right Piezo ({right_port}) not found. Device may be off."
+                )
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
 
             # Always emit success, even if objects are None
             self.piezos_initialized.emit(piezo_left, piezo_right)

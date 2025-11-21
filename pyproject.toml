@@ -44,10 +44,13 @@ test = [
     "pytest-qt>=4.0.0",
     "pytest-cov>=4.0.0", # For checking test coverage
 ]
+<<<<<<< HEAD
 dev = [
     "pre-commit>=3.0.0",
     "PyInstaller>=6.0.0",
 ]
+=======
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
 
 [project.urls]
 Homepage = "https://github.com/simoneferraresi/IOPanel"
@@ -55,6 +58,7 @@ Homepage = "https://github.com/simoneferraresi/IOPanel"
 
 # --- Tool Configuration ---
 
+<<<<<<< HEAD
 [tool.black]
 line-length = 120
 target-version = ['py310']
@@ -64,6 +68,8 @@ target-version = ['py310']
 target-version = "py310"
 line-length = 120
 
+=======
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
 # A selection of good default rules.
 # E/W -> pycodestyle, F -> Pyflakes, I -> isort (import sorting), UP -> pyupgrade
 select = ["E", "F", "W", "I", "UP"]

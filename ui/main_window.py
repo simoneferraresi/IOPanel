@@ -22,7 +22,21 @@ from enum import Enum, auto
 
 import numpy as np
 from PySide6 import QtGui, QtWidgets
+<<<<<<< HEAD
 from PySide6.QtCore import QObject, QRunnable, QSize, Qt, QThread, QThreadPool, QTimer, Signal, Slot
+=======
+from PySide6.QtCore import (
+    QObject,
+    QRunnable,
+    QSize,
+    Qt,
+    QThread,
+    QThreadPool,
+    QTimer,
+    Signal,
+    Slot,
+)
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
 from PySide6.QtGui import QAction, QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication,
@@ -221,19 +235,39 @@ class MainWindow(QMainWindow):
 
         # Connect signals to the main thread's *slots*
         worker.signals.connection_succeeded.connect(self.piezo_connection_succeeded)
+<<<<<<< HEAD
         worker.signals.disconnection_succeeded.connect(self._on_piezo_disconnection_success)
+=======
+        worker.signals.disconnection_succeeded.connect(
+            self._on_piezo_disconnection_success
+        )
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
         worker.signals.connection_failed.connect(self.piezo_connection_failed)
 
         # Update UI to show "in-progress" state
         action.setEnabled(False)
+<<<<<<< HEAD
         action.setText(f"{'Connecting' if do_connect else 'Disconnecting'} {side.capitalize()}...")
+=======
+        action.setText(
+            f"{'Connecting' if do_connect else 'Disconnecting'} {side.capitalize()}..."
+        )
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
 
         QThreadPool.globalInstance().start(worker)
 
     @Slot(str)
     def _on_piezo_connection_success(self, side: str):
         logger.info(f"{side.capitalize()} Piezo connected successfully.")
+<<<<<<< HEAD
         action = self.piezo_connect_left_action if side == "left" else self.piezo_connect_right_action
+=======
+        action = (
+            self.piezo_connect_left_action
+            if side == "left"
+            else self.piezo_connect_right_action
+        )
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
         action.setText(f"Disconnect {side.capitalize()} Piezo")
         action.setEnabled(True)
         self.statusBar().showMessage(f"{side.capitalize()} Piezo connected.", 3000)
@@ -247,12 +281,26 @@ class MainWindow(QMainWindow):
             and self.ct400_device
         ):
             logger.info("All alignment hardware is now connected. Activating panel.")
+<<<<<<< HEAD
             self.alignment_tab.set_hardware(self.ct400_device, self.piezo_left, self.piezo_right)
+=======
+            self.alignment_tab.set_hardware(
+                self.ct400_device, self.piezo_left, self.piezo_right
+            )
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
 
     @Slot(str)
     def _on_piezo_disconnection_success(self, side: str):
         logger.info(f"{side.capitalize()} Piezo disconnected.")
+<<<<<<< HEAD
         action = self.piezo_connect_left_action if side == "left" else self.piezo_connect_right_action
+=======
+        action = (
+            self.piezo_connect_left_action
+            if side == "left"
+            else self.piezo_connect_right_action
+        )
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
         action.setText(f"Connect {side.capitalize()} Piezo")
         action.setEnabled(True)
         self.statusBar().showMessage(f"{side.capitalize()} Piezo disconnected.", 3000)
@@ -262,10 +310,25 @@ class MainWindow(QMainWindow):
     @Slot(str, str)
     def _on_piezo_connection_failed(self, side: str, error_message: str):
         logger.error(f"Failed to connect {side} piezo: {error_message}")
+<<<<<<< HEAD
         action = self.piezo_connect_left_action if side == "left" else self.piezo_connect_right_action
         action.setText(f"Connect {side.capitalize()} Piezo")  # Revert text
         action.setEnabled(True)
         QMessageBox.critical(self, f"{side.capitalize()} Piezo Error", f"Operation failed: {error_message}")
+=======
+        action = (
+            self.piezo_connect_left_action
+            if side == "left"
+            else self.piezo_connect_right_action
+        )
+        action.setText(f"Connect {side.capitalize()} Piezo")  # Revert text
+        action.setEnabled(True)
+        QMessageBox.critical(
+            self,
+            f"{side.capitalize()} Piezo Error",
+            f"Operation failed: {error_message}",
+        )
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
         # De-activate alignment panel
         self.alignment_tab.set_hardware_ready(False)
 
@@ -299,15 +362,30 @@ class MainWindow(QMainWindow):
         self.histogram_control.on_instrument_connected(is_real_ct400)
 
         if is_real_ct400:
+<<<<<<< HEAD
             self._update_ct400_visuals(state=CT400Status.DISCONNECTED, message="CT400 Ready (Disconnected)")
+=======
+            self._update_ct400_visuals(
+                state=CT400Status.DISCONNECTED, message="CT400 Ready (Disconnected)"
+            )
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
         else:
             # The status was already set to UNAVAILABLE by the worker's error
             pass
 
         # Now, check if the piezos finished first. If so, update the alignment tab.
         if self.piezo_left and self.piezo_right:
+<<<<<<< HEAD
             logger.info("CT400 is ready, and piezos are already initialized. Setting alignment hardware.")
             self.alignment_tab.set_hardware(self.ct400_device, self.piezo_left, self.piezo_right)
+=======
+            logger.info(
+                "CT400 is ready, and piezos are already initialized. Setting alignment hardware."
+            )
+            self.alignment_tab.set_hardware(
+                self.ct400_device, self.piezo_left, self.piezo_right
+            )
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
 
     def _begin_lazy_init(self):
         """Starts all slow hardware initializations on background threads."""
@@ -326,7 +404,13 @@ class MainWindow(QMainWindow):
         else:
             logger.error("VimbaSystem not active, skipping camera initialization.")
             if self.camera_container.layout():
+<<<<<<< HEAD
                 error_label = QLabel("Vimba API could not be initialized. Cameras unavailable.")
+=======
+                error_label = QLabel(
+                    "Vimba API could not be initialized. Cameras unavailable."
+                )
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
                 error_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 self.camera_container.layout().addWidget(error_label)
 
@@ -364,7 +448,13 @@ class MainWindow(QMainWindow):
         # --- FIX: REVISED CLEANUP LOGIC ---
         # 1. The worker's completion signal should quit the thread's event loop.
         self.piezo_init_worker.piezos_initialized.connect(self.piezo_init_thread.quit)
+<<<<<<< HEAD
         self.piezo_init_worker.initialization_failed.connect(self.piezo_init_thread.quit)
+=======
+        self.piezo_init_worker.initialization_failed.connect(
+            self.piezo_init_thread.quit
+        )
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
 
         # 2. The thread's finished signal should ONLY clean up the WORKER.
         #    DO NOT connect it to self.piezo_init_thread.deleteLater() here.
@@ -429,16 +519,30 @@ class MainWindow(QMainWindow):
                 self.control_panel.resolution.setText(str(scan_defaults.resolution_pm))
                 self.control_panel.motor_speed.setText(str(scan_defaults.speed_nm_s))
                 self.control_panel.laser_power.setText(str(scan_defaults.laser_power))
+<<<<<<< HEAD
                 power_unit_idx = self.control_panel.power_unit.findText(scan_defaults.power_unit)
                 if power_unit_idx != -1:
                     self.control_panel.power_unit.setCurrentIndex(power_unit_idx)
                 for i in range(self.control_panel.input_port.count()):
                     if self.control_panel.input_port.itemData(i).value == scan_defaults.input_port:
+=======
+                power_unit_idx = self.control_panel.power_unit.findText(
+                    scan_defaults.power_unit
+                )
+                if power_unit_idx != -1:
+                    self.control_panel.power_unit.setCurrentIndex(power_unit_idx)
+                for i in range(self.control_panel.input_port.count()):
+                    if (
+                        self.control_panel.input_port.itemData(i).value
+                        == scan_defaults.input_port
+                    ):
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
                         self.control_panel.input_port.setCurrentIndex(i)
                         break
 
             if hasattr(self, "histogram_control") and self.histogram_control:
                 hist_defaults = self.config.histogram_defaults
+<<<<<<< HEAD
                 self.histogram_control.wavelength_input.setText(str(hist_defaults.wavelength_nm))
                 self.histogram_control.laser_power.setText(str(hist_defaults.laser_power))
                 power_unit_idx_hist = self.histogram_control.power_unit.findText(hist_defaults.power_unit)
@@ -446,11 +550,37 @@ class MainWindow(QMainWindow):
                     self.histogram_control.power_unit.setCurrentIndex(power_unit_idx_hist)
                 for i in range(self.histogram_control.input_port.count()):
                     if self.histogram_control.input_port.itemData(i).value == hist_defaults.input_port:
+=======
+                self.histogram_control.wavelength_input.setText(
+                    str(hist_defaults.wavelength_nm)
+                )
+                self.histogram_control.laser_power.setText(
+                    str(hist_defaults.laser_power)
+                )
+                power_unit_idx_hist = self.histogram_control.power_unit.findText(
+                    hist_defaults.power_unit
+                )
+                if power_unit_idx_hist != -1:
+                    self.histogram_control.power_unit.setCurrentIndex(
+                        power_unit_idx_hist
+                    )
+                for i in range(self.histogram_control.input_port.count()):
+                    if (
+                        self.histogram_control.input_port.itemData(i).value
+                        == hist_defaults.input_port
+                    ):
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
                         self.histogram_control.input_port.setCurrentIndex(i)
                         break
                 if hasattr(self.histogram_control, "detector_cbs"):
                     for i, checkbox in enumerate(self.histogram_control.detector_cbs):
+<<<<<<< HEAD
                         is_enabled = getattr(hist_defaults, f"detector_{i + 1}_enabled", False)
+=======
+                        is_enabled = getattr(
+                            hist_defaults, f"detector_{i + 1}_enabled", False
+                        )
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
                         checkbox.setChecked(is_enabled)
         except Exception as e:
             logger.error(f"Error loading defaults from config: {e}", exc_info=True)
@@ -484,8 +614,13 @@ class MainWindow(QMainWindow):
         cam_layout = QHBoxLayout(self.camera_container)
         cam_layout.setContentsMargins(0, 0, 0, 0)
         cam_layout.setSpacing(5)
+<<<<<<< HEAD
         self.control_container = QWidget()
         control_layout = QVBoxLayout(self.control_container)  # Update variable name usage here too
+=======
+        control_container = QWidget()
+        control_layout = QVBoxLayout(control_container)
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
         control_layout.setContentsMargins(0, 0, 0, 0)
         control_layout.setSpacing(5)
         self.tab_widget = QTabWidget()
@@ -500,7 +635,13 @@ class MainWindow(QMainWindow):
         # --- IMPORTANT: Pass None for ct400_device initially ---
         self.first_tab = QWidget()
         first_tab_layout = QHBoxLayout(self.first_tab)
+<<<<<<< HEAD
         self.control_panel = CT400ControlPanel(self.shared_scan_settings, None, self.config)
+=======
+        self.control_panel = CT400ControlPanel(
+            self.shared_scan_settings, None, self.config
+        )
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
         self.plot_widget = PlotWidget(self.shared_scan_settings)
         first_tab_layout.addWidget(self.control_panel, stretch=0)
         first_tab_layout.addWidget(self.plot_widget, stretch=1)
@@ -526,12 +667,21 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Ready.")
 
         self._create_menus()
+<<<<<<< HEAD
 
+=======
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
         self._update_ct400_visuals(state=CT400Status.UNKNOWN, message="Initializing...")
         logger.debug("UI Initialization finished.")
 
     @Slot(object, object)
+<<<<<<< HEAD
     def _on_piezos_initialized(self, piezo_left: PiezoController | None, piezo_right: PiezoController | None):
+=======
+    def _on_piezos_initialized(
+        self, piezo_left: PiezoController | None, piezo_right: PiezoController | None
+    ):
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
         logger.info("MainWindow: Piezo discovery finished.")
         self.piezo_left = piezo_left
         self.piezo_right = piezo_right
@@ -540,30 +690,64 @@ class MainWindow(QMainWindow):
         if self.piezo_left:
             self.piezo_connect_left_action.setEnabled(True)
             self.piezo_connect_left_action.setText("Connect Left Piezo")
+<<<<<<< HEAD
             self.piezo_connect_left_action.setToolTip(f"Found on {self.config.instruments.piezo_left_serial}")
         else:
             self.piezo_connect_left_action.setEnabled(False)
             self.piezo_connect_left_action.setText("Left Piezo (Not Found)")
             self.piezo_connect_left_action.setToolTip("Device not found. Check connection and config.ini.")
+=======
+            self.piezo_connect_left_action.setToolTip(
+                f"Found on {self.config.instruments.piezo_left_serial}"
+            )
+        else:
+            self.piezo_connect_left_action.setEnabled(False)
+            self.piezo_connect_left_action.setText("Left Piezo (Not Found)")
+            self.piezo_connect_left_action.setToolTip(
+                "Device not found. Check connection and config.ini."
+            )
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
 
         if self.piezo_right:
             self.piezo_connect_right_action.setEnabled(True)
             self.piezo_connect_right_action.setText("Connect Right Piezo")
+<<<<<<< HEAD
             self.piezo_connect_right_action.setToolTip(f"Found on {self.config.instruments.piezo_right_serial}")
         else:
             self.piezo_connect_right_action.setEnabled(False)
             self.piezo_connect_right_action.setText("Right Piezo (Not Found)")
             self.piezo_connect_right_action.setToolTip("Device not found. Check connection and config.ini.")
+=======
+            self.piezo_connect_right_action.setToolTip(
+                f"Found on {self.config.instruments.piezo_right_serial}"
+            )
+        else:
+            self.piezo_connect_right_action.setEnabled(False)
+            self.piezo_connect_right_action.setText("Right Piezo (Not Found)")
+            self.piezo_connect_right_action.setToolTip(
+                "Device not found. Check connection and config.ini."
+            )
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
         # --- End new logic ---
 
         # Only set hardware if the CT400 worker has ALREADY finished.
         if self.ct400_device:
+<<<<<<< HEAD
             logger.info("Piezos are ready, and CT400 is already initialized. Setting alignment hardware.")
             self.alignment_tab.set_hardware(self.ct400_device, self.piezo_left, self.piezo_right)
+=======
+            logger.info(
+                "Piezos are ready, and CT400 is already initialized. Setting alignment hardware."
+            )
+            self.alignment_tab.set_hardware(
+                self.ct400_device, self.piezo_left, self.piezo_right
+            )
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
         else:
             # This is normal, the CT400 worker is just slower.
             logger.info("Piezos are ready. Waiting for CT400 to initialize...")
 
+<<<<<<< HEAD
     @Slot()
     def toggle_cinema_mode(self):
         """Toggles the visibility of the bottom control section."""
@@ -575,6 +759,8 @@ class MainWindow(QMainWindow):
 
         logger.debug(f"Cinema Mode {'Enabled' if is_visible else 'Disabled'}")
 
+=======
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
     @Slot(str)
     def _on_piezo_init_failed(self, error_message: str):
         logger.error(f"Piezo initialization failed: {error_message}")
@@ -606,6 +792,7 @@ class MainWindow(QMainWindow):
         status_property = state.name.lower()
 
         state_map = {
+<<<<<<< HEAD
             CT400Status.CONNECTED: ("Disconnect CT400", ":/icons/disconnect.svg", True, True),
             CT400Status.DISCONNECTED: ("Connect CT400", ":/icons/connect.svg", True, False),
             CT400Status.CONNECTING: ("Connecting...", ":/icons/spinner.svg", False, True),
@@ -613,6 +800,50 @@ class MainWindow(QMainWindow):
             CT400Status.ERROR: ("Connect CT400 (Error)", ":/icons/connect.svg", True, False),
             CT400Status.UNAVAILABLE: ("CT400 Unavailable", ":/icons/laser.svg", False, False),
             CT400Status.UNKNOWN: ("CT400 Initializing", ":/icons/spinner.svg", False, False),
+=======
+            CT400Status.CONNECTED: (
+                "Disconnect CT400",
+                ":/icons/disconnect.svg",
+                True,
+                True,
+            ),
+            CT400Status.DISCONNECTED: (
+                "Connect CT400",
+                ":/icons/connect.svg",
+                True,
+                False,
+            ),
+            CT400Status.CONNECTING: (
+                "Connecting...",
+                ":/icons/spinner.svg",
+                False,
+                True,
+            ),
+            CT400Status.DISCONNECTING: (
+                "Disconnecting...",
+                ":/icons/spinner.svg",
+                False,
+                False,
+            ),
+            CT400Status.ERROR: (
+                "Connect CT400 (Error)",
+                ":/icons/connect.svg",
+                True,
+                False,
+            ),
+            CT400Status.UNAVAILABLE: (
+                "CT400 Unavailable",
+                ":/icons/laser.svg",
+                False,
+                False,
+            ),
+            CT400Status.UNKNOWN: (
+                "CT400 Initializing",
+                ":/icons/spinner.svg",
+                False,
+                False,
+            ),
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
         }
 
         text, icon, action_enabled, action_checked = state_map[state]
@@ -627,12 +858,28 @@ class MainWindow(QMainWindow):
         label.style().polish(label)
 
         if message:
+<<<<<<< HEAD
             timeout = 5000 if state in [CT400Status.CONNECTED, CT400Status.DISCONNECTED, CT400Status.ERROR] else 0
+=======
+            timeout = (
+                5000
+                if state
+                in [CT400Status.CONNECTED, CT400Status.DISCONNECTED, CT400Status.ERROR]
+                else 0
+            )
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
             self.statusBar().showMessage(message, timeout)
 
         if state == CT400Status.ERROR:
             QTimer.singleShot(
+<<<<<<< HEAD
                 3000, lambda: self._update_ct400_visuals(CT400Status.DISCONNECTED, "Error occurred. Ready to connect.")
+=======
+                3000,
+                lambda: self._update_ct400_visuals(
+                    CT400Status.DISCONNECTED, "Error occurred. Ready to connect."
+                ),
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
             )
 
         self.is_ct400_connected_state = state == CT400Status.CONNECTED
@@ -664,11 +911,23 @@ class MainWindow(QMainWindow):
         self.cameras_menu.addSeparator()  # Add another separator for neatness
 
         self.piezo_connect_left_action = QAction("Connect Left Piezo", self)
+<<<<<<< HEAD
         self.piezo_connect_left_action.triggered.connect(lambda: self.connect_piezo("left"))
         self.instrument_menu.addAction(self.piezo_connect_left_action)
 
         self.piezo_connect_right_action = QAction("Connect Right Piezo", self)
         self.piezo_connect_right_action.triggered.connect(lambda: self.connect_piezo("right"))
+=======
+        self.piezo_connect_left_action.triggered.connect(
+            lambda: self.connect_piezo("left")
+        )
+        self.instrument_menu.addAction(self.piezo_connect_left_action)
+
+        self.piezo_connect_right_action = QAction("Connect Right Piezo", self)
+        self.piezo_connect_right_action.triggered.connect(
+            lambda: self.connect_piezo("right")
+        )
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
         self.instrument_menu.addAction(self.piezo_connect_right_action)
 
         help_menu = menu_bar.addMenu("&Help")
@@ -682,7 +941,15 @@ class MainWindow(QMainWindow):
     def connect_piezo(self, side: str):
         """Connects or disconnects a piezo controller."""
         piezo = self.piezo_left if side == "left" else self.piezo_right
+<<<<<<< HEAD
         action = self.piezo_connect_left_action if side == "left" else self.piezo_connect_right_action
+=======
+        action = (
+            self.piezo_connect_left_action
+            if side == "left"
+            else self.piezo_connect_right_action
+        )
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
 
         if not piezo:
             return
@@ -693,7 +960,13 @@ class MainWindow(QMainWindow):
             if piezo.is_connected():
                 piezo.disconnect()
                 action.setText(f"Connect {side.capitalize()} Piezo")
+<<<<<<< HEAD
                 self.statusBar().showMessage(f"{side.capitalize()} Piezo disconnected.", 3000)
+=======
+                self.statusBar().showMessage(
+                    f"{side.capitalize()} Piezo disconnected.", 3000
+                )
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
             else:
                 serial_number = (
                     self.config.instruments.piezo_left_serial
@@ -701,10 +974,21 @@ class MainWindow(QMainWindow):
                     else self.config.instruments.piezo_right_serial
                 )
 
+<<<<<<< HEAD
                 logger.info(f"Attempting to connect to {side} piezo with S/N: {serial_number}")
                 piezo.connect(serial_number)
                 action.setText(f"Disconnect {side.capitalize()} Piezo")
                 self.statusBar().showMessage(f"{side.capitalize()} Piezo connected.", 3000)
+=======
+                logger.info(
+                    f"Attempting to connect to {side} piezo with S/N: {serial_number}"
+                )
+                piezo.connect(serial_number)
+                action.setText(f"Disconnect {side.capitalize()} Piezo")
+                self.statusBar().showMessage(
+                    f"{side.capitalize()} Piezo connected.", 3000
+                )
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
         except PiezoError as e:
             logger.error(f"Failed to connect to {side} piezo: {e}", exc_info=True)
             QMessageBox.critical(self, "Piezo Connection Error", str(e))
@@ -730,8 +1014,17 @@ class MainWindow(QMainWindow):
             dialog = CameraDiscoveryDialog(self)
             dialog.exec()
         except Exception as e:
+<<<<<<< HEAD
             logger.error(f"Failed to create or show camera discovery dialog: {e}", exc_info=True)
             QMessageBox.critical(self, "Dialog Error", f"Could not open the discovery dialog: {e}")
+=======
+            logger.error(
+                f"Failed to create or show camera discovery dialog: {e}", exc_info=True
+            )
+            QMessageBox.critical(
+                self, "Dialog Error", f"Could not open the discovery dialog: {e}"
+            )
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
 
     @Slot(bool)
     def _handle_ct400_connect_action_triggered(self, checked: bool):
@@ -750,13 +1043,20 @@ class MainWindow(QMainWindow):
             action.setEnabled(False)  # Prevent rapid re-clicks
 
         if not self.ct400_device or isinstance(self.ct400_device, DummyCT400):
+<<<<<<< HEAD
             self._update_ct400_visuals(state=CT400Status.UNAVAILABLE, message="CT400 Not Initialized or Dummy.")
+=======
+            self._update_ct400_visuals(
+                state=CT400Status.UNAVAILABLE, message="CT400 Not Initialized or Dummy."
+            )
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
             if action:
                 action.setChecked(False)
                 action.setEnabled(True)
             return
 
         worker = CT400ConnectionWorker(self.ct400_device, self.config, connect=checked)
+<<<<<<< HEAD
         worker.signals.connection_succeeded.connect(self._handle_ct400_connection_success)
         worker.signals.connection_failed.connect(self._handle_ct400_connection_failure)
         worker.signals.disconnection_succeeded.connect(self._handle_ct400_disconnection_success)
@@ -767,6 +1067,30 @@ class MainWindow(QMainWindow):
             self._update_ct400_visuals(state=CT400Status.CONNECTING, message="CT400: Attempting to connect...")
         else:
             self._update_ct400_visuals(state=CT400Status.DISCONNECTING, message="CT400: Disconnecting...")
+=======
+        worker.signals.connection_succeeded.connect(
+            self._handle_ct400_connection_success
+        )
+        worker.signals.connection_failed.connect(self._handle_ct400_connection_failure)
+        worker.signals.disconnection_succeeded.connect(
+            self._handle_ct400_disconnection_success
+        )
+        worker.signals.disconnection_failed.connect(
+            self._handle_ct400_connection_failure
+        )
+        worker.signals.finished.connect(
+            lambda: self.ct400_connect_action.setEnabled(True)
+        )
+
+        if checked:
+            self._update_ct400_visuals(
+                state=CT400Status.CONNECTING, message="CT400: Attempting to connect..."
+            )
+        else:
+            self._update_ct400_visuals(
+                state=CT400Status.DISCONNECTING, message="CT400: Disconnecting..."
+            )
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
 
         QThreadPool.globalInstance().start(worker)
 
@@ -813,6 +1137,7 @@ class MainWindow(QMainWindow):
         multiple cameras to connect.
         """
         logger.info("Initializing cameras lazily...")
+<<<<<<< HEAD
         if not all([self.camera_container, self.camera_container.layout(), self.cameras_menu]):
             logger.error("UI components for camera initialization are not ready. Aborting.")
             return
@@ -854,6 +1179,61 @@ class MainWindow(QMainWindow):
             thread.finished.connect(
                 lambda t=thread: self.camera_init_threads.remove(t) if t in self.camera_init_threads else None
             )
+=======
+        if not all(
+            [self.camera_container, self.camera_container.layout(), self.cameras_menu]
+        ):
+            logger.error(
+                "UI components for camera initialization are not ready. Aborting."
+            )
+            return
+
+        # Get a dictionary of valid camera configs, keyed by their identifier.
+        camera_configs_to_init = {
+            identifier: config
+            for identifier, config in self.config.cameras.items()
+            if self._should_initialize_camera(identifier, config)
+        }
+
+        if not camera_configs_to_init:
+            self.cameras_menu.addAction(
+                QAction("No enabled cameras found in config", self)
+            ).setEnabled(False)
+            logger.info("No valid, enabled cameras to initialize.")
+            return
+
+        # --- COMBINED LOOP: Create panel and start worker thread in one pass ---
+        for identifier, config in camera_configs_to_init.items():
+            logger.debug(
+                f"Setting up initialization for camera '{config.name}' (ID: {identifier})"
+            )
+
+            # 1. Create and add the placeholder panel to the UI
+            placeholder_panel = self._create_camera_panel(None, config)
+            self.camera_panels[identifier] = placeholder_panel
+            self.camera_container.layout().addWidget(placeholder_panel)
+
+            # 2. Create the thread and worker for this specific camera
+            thread = QThread(self)
+            worker = CameraInitWorker(identifier=identifier, cam_config=config)
+            worker.moveToThread(thread)
+
+            # 3. Connect signals for this worker/thread instance
+            worker.camera_initialized.connect(self._on_camera_initialized)
+            worker.camera_initialized.connect(
+                thread.quit
+            )  # Tell thread to quit when done
+
+            # 4. Connect cleanup signals
+            thread.finished.connect(worker.deleteLater)
+            thread.finished.connect(thread.deleteLater)
+            # Remove the thread from our tracking list upon completion
+            thread.finished.connect(
+                lambda t=thread: self.camera_init_threads.remove(t)
+                if t in self.camera_init_threads
+                else None
+            )
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
 
             # 5. Start the thread
             thread.started.connect(worker.run)
@@ -864,7 +1244,16 @@ class MainWindow(QMainWindow):
             self.camera_init_workers.append(worker)
 
     @Slot(str, object, CameraConfig)
+<<<<<<< HEAD
     def _on_camera_initialized(self, identifier: str, camera_instance: VimbaCam | None, cam_config: CameraConfig):
+=======
+    def _on_camera_initialized(
+        self,
+        identifier: str,
+        camera_instance: VimbaCam | None,
+        cam_config: CameraConfig,
+    ):
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
         """Slot to handle a camera that has finished initializing.
 
         This method is called when a `CameraInitWorker` finishes. If the camera
@@ -898,15 +1287,31 @@ class MainWindow(QMainWindow):
             logger.error(f"Failed to initialize camera '{cam_config.name}'.")
             error_msg = f"{cam_config.name}\n(Failed to Open)"
             panel.video_label.setText(error_msg)
+<<<<<<< HEAD
             panel.video_label.setStyleSheet("background-color: #ffebee; color: #c62828;")
 
     def _should_initialize_camera(self, identifier: str, cam_config: "CameraConfig") -> bool:
+=======
+            panel.video_label.setStyleSheet(
+                "background-color: #ffebee; color: #c62828;"
+            )
+
+    def _should_initialize_camera(
+        self, identifier: str, cam_config: "CameraConfig"
+    ) -> bool:
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
         """Checks if a camera from the config should be initialized."""
         if not cam_config.enabled:
             logger.info(f"Skipping disabled camera: {cam_config.name}")
             return False
         if not identifier or identifier.startswith("PUT_"):
+<<<<<<< HEAD
             logger.warning(f"Skipping camera '{cam_config.name}': Invalid or placeholder identifier.")
+=======
+            logger.warning(
+                f"Skipping camera '{cam_config.name}': Invalid or placeholder identifier."
+            )
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
             error_msg = f"{cam_config.name}\n(Config Error: Invalid ID)"
             placeholder = self._create_camera_error_placeholder(error_msg)
             self.camera_container.layout().addWidget(placeholder)
@@ -923,7 +1328,13 @@ class MainWindow(QMainWindow):
                 parent=self,
             )
             if not cam_instance.open():
+<<<<<<< HEAD
                 logger.error(f"Failed to open camera {cam_config.name} (ID: {cam_config.identifier}).")
+=======
+                logger.error(
+                    f"Failed to open camera {cam_config.name} (ID: {cam_config.identifier})."
+                )
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
                 error_msg = MSG_CAMERA_FAILED.format(cam_config.name)
                 placeholder = self._create_camera_error_placeholder(error_msg)
                 self.camera_container.layout().addWidget(placeholder)
@@ -946,7 +1357,14 @@ class MainWindow(QMainWindow):
             self.camera_container.layout().addWidget(placeholder)
             return None
 
+<<<<<<< HEAD
     def _create_camera_panel(self, cam_instance: VimbaCam | None, cam_config: "CameraConfig") -> CameraPanel:
+=======
+    def _create_camera_panel(
+        self, cam_instance: VimbaCam | None, cam_config: "CameraConfig"
+    ) -> CameraPanel:
+        """Creates and returns a CameraPanel. Can be a placeholder if cam_instance is None."""
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
         panel = CameraPanel(
             cam_instance,
             cam_config.name,
@@ -955,11 +1373,14 @@ class MainWindow(QMainWindow):
         )
         if not cam_instance:
             panel.video_label.setText(MSG_CAMERA_CONNECTING.format(cam_config.name))
+<<<<<<< HEAD
 
         # --- NEW: Connect double-click signal ---
         panel.maximize_requested.connect(self.toggle_cinema_mode)
         # ----------------------------------------
 
+=======
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
         return panel
 
     def _connect_camera_signals(self, cam_instance: VimbaCam, panel: CameraPanel):
@@ -1049,11 +1470,23 @@ class MainWindow(QMainWindow):
         plotting_power_data: np.ndarray,
         final_pout: float,
     ):
+<<<<<<< HEAD
         logger.debug(f"Received scan data signal. Wavelength points: {len(wavelengths)}")
 
         if self.plot_widget and hasattr(self.plot_widget, "update_plot"):
             try:
                 self.plot_widget.update_plot(wavelengths, plotting_power_data, final_pout)
+=======
+        logger.debug(
+            f"Received scan data signal. Wavelength points: {len(wavelengths)}"
+        )
+
+        if self.plot_widget and hasattr(self.plot_widget, "update_plot"):
+            try:
+                self.plot_widget.update_plot(
+                    wavelengths, plotting_power_data, final_pout
+                )
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
             except Exception as e:
                 logger.error(f"Error updating plot widget: {e}", exc_info=True)
 
@@ -1076,7 +1509,13 @@ class MainWindow(QMainWindow):
         threads_to_stop = list(self.camera_init_threads)
         for thread in threads_to_stop:
             if thread.isRunning():
+<<<<<<< HEAD
                 logger.warning("Force-quitting an incomplete camera init thread during shutdown.")
+=======
+                logger.warning(
+                    "Force-quitting an incomplete camera init thread during shutdown."
+                )
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
                 thread.quit()
                 thread.wait(500)  # Give it a moment to quit
         self.camera_init_threads.clear()
@@ -1092,7 +1531,14 @@ class MainWindow(QMainWindow):
         self.camera_control_actions.clear()
 
         # Remove panels from the UI
+<<<<<<< HEAD
         if hasattr(self, "camera_container") and self.camera_container.layout() is not None:
+=======
+        if (
+            hasattr(self, "camera_container")
+            and self.camera_container.layout() is not None
+        ):
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
             layout = self.camera_container.layout()
             while layout.count():
                 item = layout.takeAt(0)
@@ -1114,7 +1560,13 @@ class MainWindow(QMainWindow):
                     # The camera's close() method handles stopping streaming etc.
                     cam.close()
                 except Exception as e:
+<<<<<<< HEAD
                     logger.error(f"Error closing camera {cam.camera_name}: {e}", exc_info=True)
+=======
+                    logger.error(
+                        f"Error closing camera {cam.camera_name}: {e}", exc_info=True
+                    )
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
 
         logger.info("Camera cleanup finished.")
 
@@ -1183,7 +1635,13 @@ class MainWindow(QMainWindow):
             logger.debug("Connecting control_panel signals")
             self.control_panel.scan_data_ready.connect(self._handle_scan_data)
             self.control_panel.progress_updated.connect(
+<<<<<<< HEAD
                 lambda value: self.statusBar().showMessage(f"Scan Progress: {value}%", 1000 if value < 100 else 0)
+=======
+                lambda value: self.statusBar().showMessage(
+                    f"Scan Progress: {value}%", 1000 if value < 100 else 0
+                )
+>>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
             )
         else:
             logger.warning("CT400 Control Panel not initialized, skipping signal connection.")
