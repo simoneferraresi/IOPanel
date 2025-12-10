@@ -14,42 +14,14 @@ This script is responsible for:
     and threads.
 """
 
-<<<<<<< HEAD
-=======
-"""The main entry point for the IOPanel App.
-
-This script is responsible for:
-1.  Parsing command-line arguments to override configuration settings.
-2.  Loading and validating the application configuration from `config.ini`
-    using Pydantic models for type safety.
-3.  Setting up a robust, rotating file logger and a console logger.
-4.  Installing a global exception hook to catch and log any unhandled
-    exceptions, preventing the application from crashing silently.
-5.  Initializing the QApplication, setting the application theme, and
-    creating and showing the MainWindow.
-6.  Connecting the application's `aboutToQuit` signal to a cleanup
-    handler in the MainWindow to ensure graceful shutdown of all hardware
-    and threads.
-"""
-
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
 import argparse
 import logging
 import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-<<<<<<< HEAD
 
 from pydantic import ValidationError
 from PySide6.QtWidgets import QApplication, QMessageBox
-=======
-from pathlib import Path
-
-from pydantic import ValidationError
-from PySide6.QtWidgets import QApplication, QMessageBox
-from pydantic import ValidationError
-from PySide6.QtWidgets import QApplication, QMessageBox
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
 
 from config_model import AppConfig
 from ui.main_window import MainWindow
@@ -58,11 +30,6 @@ from ui.theme import APP_STYLESHEET
 # Application Metadata
 APP_NAME = "IOPanel"
 APP_VERSION = "0.3.0"
-<<<<<<< HEAD
-=======
-APP_NAME = "IOPanel"
-APP_VERSION = "0.3.0"
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
 DEFAULT_LOG_FILE = Path("lab_app.log")
 DEFAULT_CONFIG_FILE = Path("config.ini")
 
@@ -78,51 +45,24 @@ def setup_logger(
     Configures a logger named "LabApp" with both a rotating file handler and a
     console handler. This ensures that logs are saved to a file for debugging
     and that important messages are visible on the console during execution.
-<<<<<<< HEAD
-=======
-    """Sets up a dedicated, application-wide logger.
-
-    Configures a logger named "LabApp" with both a rotating file handler and a
-    console handler. This ensures that logs are saved to a file for debugging
-    and that important messages are visible on the console during execution.
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
 
     Args:
         log_level: The logging level (e.g., logging.INFO, logging.DEBUG).
         log_file: The path to the log file.
         max_bytes: The maximum size of the log file in bytes before rotation.
         backup_count: The number of old log files to keep.
-<<<<<<< HEAD
 
     Returns:
         The fully configured logging.Logger instance.
-=======
-        log_level: The logging level (e.g., logging.INFO, logging.DEBUG).
-        log_file: The path to the log file.
-        max_bytes: The maximum size of the log file in bytes before rotation.
-        backup_count: The number of old log files to keep.
-
-    Returns:
-        The fully configured logging.Logger instance.
-        The fully configured logging.Logger instance.
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
     """
     logger_instance = logging.getLogger("LabApp")
     logger_instance.setLevel(log_level)
 
     # Avoid adding duplicate handlers if this function is ever called more than once.
-<<<<<<< HEAD
-=======
-    # Avoid adding duplicate handlers if this function is ever called more than once.
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
     if logger_instance.handlers:
         return logger_instance
 
     # Configure file handler with rotation
-<<<<<<< HEAD
-=======
-    # Configure file handler with rotation
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
     try:
         log_file.parent.mkdir(parents=True, exist_ok=True)
         file_handler = RotatingFileHandler(
@@ -139,35 +79,17 @@ def setup_logger(
         logger_instance.addHandler(file_handler)
     except OSError as e:
         # Fallback to console if file logging fails
-<<<<<<< HEAD
         print(f"Error: Could not set up file logger at '{log_file}': {e}", file=sys.stderr)
 
     # Configure console handler
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(max(log_level, logging.INFO))  # Console shows INFO or higher
-=======
-        print(
-            f"Error: Could not set up file logger at '{log_file}': {e}", file=sys.stderr
-        )
-
-    # Configure console handler
-    # Configure console handler
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(
-        max(log_level, logging.INFO)
-    )  # Console shows INFO or higher
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
     console_formatter = logging.Formatter("%(levelname)s: %(message)s")
     console_handler.setFormatter(console_formatter)
     logger_instance.addHandler(console_handler)
 
     # Prevent messages from being passed to the root logger, avoiding duplicate output.
     logger_instance.propagate = False
-<<<<<<< HEAD
-=======
-    # Prevent messages from being passed to the root logger, avoiding duplicate output.
-    logger_instance.propagate = False
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
     return logger_instance
 
 
@@ -183,53 +105,23 @@ def global_exception_hook(exctype, value, tb):
         exctype: The type of the exception.
         value: The exception instance.
         tb: The traceback object.
-<<<<<<< HEAD
-=======
-    """A global exception hook to catch and log any unhandled exceptions.
-
-    This function is assigned to `sys.excepthook` to act as a last line of
-    defense. It logs the full traceback of any uncaught exception to the main
-    application logger and displays a user-friendly error message before
-    allowing the application to terminate.
-
-    Args:
-        exctype: The type of the exception.
-        value: The exception instance.
-        tb: The traceback object.
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
     """
     logger = logging.getLogger("LabApp")
     logger.critical("Unhandled exception occurred:", exc_info=(exctype, value, tb))
 
     # Show a message box to the user if the Qt Application exists
-<<<<<<< HEAD
-=======
-    # Show a message box to the user if the Qt Application exists
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
     if QApplication.instance():
         error_message = (
             "A critical error occurred and the application must close.\n\n"
             f"Error: {value}\n\n"
             "Please check the log file for detailed information."
         )
-<<<<<<< HEAD
-=======
-        error_message = (
-            "A critical error occurred and the application must close.\n\n"
-            f"Error: {value}\n\n"
-            "Please check the log file for detailed information."
-        )
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
         QMessageBox.critical(
             None,
             f"{APP_NAME} - Fatal Error",
             error_message,
         )
     # Also call the default excepthook to print to stderr
-<<<<<<< HEAD
-=======
-    # Also call the default excepthook to print to stderr
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
     sys.__excepthook__(exctype, value, tb)
 
 
@@ -247,23 +139,6 @@ def load_raw_config_from_ini(config_file: Path) -> dict:
         A dictionary representing the INI file's contents. Returns an empty
         dictionary if the file is not found or cannot be parsed.
     """
-<<<<<<< HEAD
-=======
-def load_raw_config_from_ini(config_file: Path) -> dict:
-    """Loads an INI file into a raw dictionary without validation.
-
-    This function uses Python's standard `configparser` to read an INI file
-    and convert it into a dictionary of dictionaries, suitable for processing
-    by the Pydantic model adapter.
-
-    Args:
-        config_file: The path to the .ini configuration file.
-
-    Returns:
-        A dictionary representing the INI file's contents. Returns an empty
-        dictionary if the file is not found or cannot be parsed.
-    """
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
     import configparser
 
     config = configparser.ConfigParser()
@@ -272,18 +147,9 @@ def load_raw_config_from_ini(config_file: Path) -> dict:
         return {}
     try:
         config.read_string(config_file.read_text(encoding="utf-8"))
-<<<<<<< HEAD
         return {s: dict(config.items(s)) for s in config.sections()}
     except (OSError, configparser.Error) as e:
         logging.error(f"Error reading or parsing config file {config_file}: {e}")
-=======
-        config.read_string(config_file.read_text(encoding="utf-8"))
-        return {s: dict(config.items(s)) for s in config.sections()}
-    except (OSError, configparser.Error) as e:
-        logging.error(f"Error reading or parsing config file {config_file}: {e}")
-    except (OSError, configparser.Error) as e:
-        logging.error(f"Error reading or parsing config file {config_file}: {e}")
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
         return {}
 
 
@@ -296,17 +162,6 @@ def parse_args() -> argparse.Namespace:
     Returns:
         An `argparse.Namespace` object containing the parsed arguments.
     """
-<<<<<<< HEAD
-=======
-    """Parses command-line arguments for the application.
-
-    Defines arguments for specifying a custom config file, log level, and log
-    file path, which can override the settings in the INI file.
-
-    Returns:
-        An `argparse.Namespace` object containing the parsed arguments.
-    """
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
     parser = argparse.ArgumentParser(description=f"{APP_NAME} GUI Application")
     parser.add_argument(
         "--config",
@@ -317,10 +172,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--log-level",
         type=str.upper,
-<<<<<<< HEAD
-=======
-        type=str.upper,
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Logging level (overrides config file setting)",
     )
@@ -345,20 +196,6 @@ def main() -> int:
     Returns:
         The exit code of the application. 0 for success, 1 for failure.
     """
-<<<<<<< HEAD
-=======
-    """The main application entry point.
-
-    Orchestrates the application startup sequence:
-    1. Parses arguments.
-    2. Loads and validates configuration.
-    3. Sets up logging.
-    4. Initializes and runs the Qt application.
-
-    Returns:
-        The exit code of the application. 0 for success, 1 for failure.
-    """
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
     args = parse_args()
 
     # Temporarily configure basic logging to catch errors during config loading.
@@ -381,38 +218,11 @@ def main() -> int:
         return 1
 
     # Determine final logging settings (CLI args > config file > model defaults)
-<<<<<<< HEAD
-=======
-    # Temporarily configure basic logging to catch errors during config loading.
-    # This will be replaced by the full-featured logger shortly.
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-
-    # Load the raw dictionary from the .ini file
-    raw_config_dict = load_raw_config_from_ini(args.config)
-
-    # Validate and parse the raw dictionary using the Pydantic model
-    try:
-        app_config = AppConfig.from_ini_dict(raw_config_dict)
-    except ValidationError as e:
-        # Pydantic gives beautiful, human-readable errors.
-        error_msg = f"Configuration file '{args.config}' is invalid.\n\nErrors:\n{e}"
-        logging.critical(error_msg)
-        # Show a message box, creating a temporary QApplication if needed.
-        _ = QApplication.instance() or QApplication(sys.argv)
-        QMessageBox.critical(None, "Configuration Error", error_msg)
-        return 1
-
-    # Determine final logging settings (CLI args > config file > model defaults)
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
     log_level_str = args.log_level or app_config.logging.level
     log_file_path = args.log_file or Path(app_config.logging.file)
     log_level_int = getattr(logging, log_level_str, logging.INFO)
 
     # Set up the main application logger with the final settings
-<<<<<<< HEAD
-=======
-    # Set up the main application logger with the final settings
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
     logger = setup_logger(
         log_level=log_level_int,
         log_file=log_file_path,
@@ -421,17 +231,9 @@ def main() -> int:
     )
 
     # Set the global exception hook AFTER the logger is fully configured
-<<<<<<< HEAD
     sys.excepthook = global_exception_hook
 
     logger.info(f"--- Starting {app_config.app_name} v{APP_VERSION} ---")
-=======
-    # Set the global exception hook AFTER the logger is fully configured
-    sys.excepthook = global_exception_hook
-
-    logger.info(f"--- Starting {app_config.app_name} v{APP_VERSION} ---")
-    logger.info(f"--- Starting {app_config.app_name} v{APP_VERSION} ---")
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
     logger.info(f"Using configuration from: {args.config.resolve()}")
     logger.info(f"Log level set to: {log_level_str}")
     logger.info(f"Logging to file: {log_file_path.resolve()}")
@@ -439,10 +241,6 @@ def main() -> int:
     try:
         app = QApplication(sys.argv)
         app.setApplicationName(app_config.app_name)
-<<<<<<< HEAD
-=======
-        app.setApplicationName(app_config.app_name)
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
         app.setApplicationVersion(APP_VERSION)
         app.setStyle("Fusion")
         app.setStyleSheet(APP_STYLESHEET)
@@ -452,19 +250,11 @@ def main() -> int:
 
         def on_shutdown():
             """A closure to be called when the application is about to quit."""
-<<<<<<< HEAD
-=======
-            """A closure to be called when the application is about to quit."""
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
             logger.info("Application shutting down...")
             logger.info("Shutdown complete.")
             logging.shutdown()
 
         # Connect the cleanup function to the application's exit signal
-<<<<<<< HEAD
-=======
-        # Connect the cleanup function to the application's exit signal
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
         app.aboutToQuit.connect(on_shutdown)
 
         logger.info("Application started successfully. Entering event loop.")
@@ -472,11 +262,6 @@ def main() -> int:
     except Exception:
         # The global exception hook will log this exception.
         # We return 1 to indicate an error to the operating system.
-<<<<<<< HEAD
-=======
-        # The global exception hook will log this exception.
-        # We return 1 to indicate an error to the operating system.
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
         return 1
 
 

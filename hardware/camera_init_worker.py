@@ -1,14 +1,15 @@
 import logging
 
-from PySide6.QtCore import QObject, Signal, Slot
+from PySide6.QtCore import Signal, Slot
 
 from config_model import CameraConfig
 from hardware.camera import VimbaCam
+from logic.task_runner import BaseWorker
 
 logger = logging.getLogger("LabApp.CameraInit")
 
 
-class CameraInitWorker(QObject):
+class CameraInitWorker(BaseWorker):
     """
     A worker that initializes a single VimbaCam in a separate thread.
     """
@@ -47,3 +48,5 @@ class CameraInitWorker(QObject):
             if cam_instance:
                 cam_instance.close()
             self.camera_initialized.emit(self.identifier, None, self.cam_config)
+
+        self.finished.emit()

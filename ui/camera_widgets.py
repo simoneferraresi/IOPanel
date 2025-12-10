@@ -25,11 +25,7 @@ import cv2
 import numpy as np
 from PySide6 import QtCore, QtGui
 from PySide6.QtCore import Q_ARG, QMetaObject, QObject, QRunnable, QSize, Qt, QThread, QThreadPool, QTimer, Signal, Slot
-<<<<<<< HEAD
 from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPainter, QPixmap
-=======
-from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPixmap
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
 from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
@@ -442,11 +438,8 @@ class CameraPanel(QFrame):
     The panel is designed to be created in a placeholder state and later have a
     live `VimbaCam` object assigned to it via `set_camera()`.
     """
-<<<<<<< HEAD
 
     maximize_requested = Signal()
-=======
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
 
     def __init__(
         self,
@@ -506,15 +499,12 @@ class CameraPanel(QFrame):
         self.main_layout.setContentsMargins(4, 4, 4, 4)
         self.main_layout.setSpacing(4)
 
-<<<<<<< HEAD
         # --- NEW: Remember last screenshot directory ---
         from pathlib import Path  # Ensure Path is imported at top of file
 
         self.last_save_dir = Path.cwd()
         # -----------------------------------------------
 
-=======
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
         self._init_ui()
         self.main_layout.addWidget(self.controls_container)
 
@@ -674,7 +664,6 @@ class CameraPanel(QFrame):
         self.gain_status.setFixedWidth(20)
         auto_btn_layout.addWidget(self.gain_btn)
         auto_btn_layout.addWidget(self.gain_status)
-<<<<<<< HEAD
 
         # --- Screenshot Button ---
         # Push it to the right side or keep it next to controls.
@@ -688,8 +677,6 @@ class CameraPanel(QFrame):
 
         auto_btn_layout.addWidget(self.screenshot_btn)
 
-=======
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
         controls_grid.addLayout(auto_btn_layout, 2, 0, 1, 3)
         controls_grid.setColumnStretch(1, 1)
 

@@ -150,10 +150,7 @@ The codebase is organized into hardware abstractions, UI components, and a main 
 ```
 IOPanel/
 ├── .gitignore
-<<<<<<< HEAD
 ├── .pre-commit-config.yaml
-=======
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
 ├── app.py                      # Main application entry point, arg parsing, logger setup
 ├── config.ini                  # User configuration file (local, not in git)
 ├── config_model.py             # Pydantic models for type-safe configuration

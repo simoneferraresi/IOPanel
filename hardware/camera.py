@@ -211,53 +211,19 @@ class VimbaCam(QObject):
 
     # --- Vimba Frame Callback Handler ---
     def _frame_handler(self, cam: Camera, stream: Stream, frame: Frame):
-        """
-        Callback executed by Vimba for each incoming frame.
-        Processes the frame and emits signals.
-        IMPORTANT: This runs in a Vimba internal thread, not the Qt GUI thread.
-        """
-        try:
-            if self._is_frame_valid(frame):
-                self._process_and_emit_frame(frame)
-        except Exception as e:
-            # This top-level catch handles unexpected errors during processing
-            logger.exception(
-                f"Handler {self.camera_name}: Unhandled error in frame processing: {e}"
-            )
-        finally:
-            # Re-queue the frame regardless of whether it was valid or if processing failed.
-            # This is the most robust pattern.
-            self._requeue_frame(cam, frame)
+        """Callback executed by Vimba for each incoming frame."""
+        import cv2
 
-    def _is_frame_valid(self, frame: Frame) -> bool:
-        """Checks frame status. Returns True if frame is complete, False otherwise."""
-        try:
-            frame_status = frame.get_status()
-            if frame_status == FrameStatus.Complete:
-                return True
-            else:
-                logger.warning(
-                    f"Received invalid frame for {self.camera_name}: {frame_status.name}"
-                )
-                return False
-        except VmbCameraError as e:
-            logger.error(f"Error getting frame status for {self.camera_name}: {e}")
-            return False
-
-    def _process_and_emit_frame(self, frame: Frame):
-        """
-        Converts a valid frame to a numpy array, processes it (e.g., flip),
-        and emits the necessary signals for the GUI.
-        This method assumes the frame is valid.
-        """
-        # Convert frame to OpenCV image
-        current_image = frame.as_opencv_image()
-
-        if current_image is None or current_image.size == 0:
-            logger.warning(
-                f"Handler {self.camera_name}: Frame from as_opencv_image() is None or empty."
-            )
+        if self._is_closing:
             return
+
+        try:
+            if frame.get_status() == FrameStatus.Complete:
+                # Convert frame to OpenCV image
+                current_image = frame.as_opencv_image()
+                if current_image is None or current_image.size == 0:
+                    logger.warning(f"Handler {self.camera_name}: Frame from as_opencv_image() is None or empty.")
+                    return
 
                 # Apply horizontal flip if configured
                 if self.flip_horizontal:

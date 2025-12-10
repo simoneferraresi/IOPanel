@@ -27,58 +27,24 @@ class LoggingConfig(BaseModel):
         default="INFO", description="The minimum level of log messages to record."
     )
     file: str = Field(default="lab_app.log", description="The path to the log file.")
-<<<<<<< HEAD
     max_bytes: int = Field(default=5 * 1024 * 1024, gt=0, description="Maximum log file size in bytes before rotation.")
     backup_count: int = Field(default=3, ge=0, description="Number of old log files to keep after rotation.")
-=======
-    max_bytes: int = Field(
-        default=5 * 1024 * 1024,
-        gt=0,
-        description="Maximum log file size in bytes before rotation.",
-    )
-    backup_count: int = Field(
-        default=3, ge=0, description="Number of old log files to keep after rotation."
-    )
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
 
 
 class InstrumentsConfig(BaseModel):
     """Configuration for physical hardware addresses and driver paths."""
 
-<<<<<<< HEAD
     ct400_dll_path: str = Field(default="", description="The absolute path to the CT400_lib.dll file.")
     tunics_gpib_address: int = Field(
         default=10, ge=0, le=30, description="The GPIB address of the Tunics laser source (0-30)."
-=======
-    ct400_dll_path: str = Field(
-        default="", description="The absolute path to the CT400_lib.dll file."
-    )
-    tunics_gpib_address: int = Field(
-        default=10,
-        ge=0,
-        le=30,
-        description="The GPIB address of the Tunics laser source (0-30).",
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
     )
     tunics_laser_type: str = Field(
         default="LS_TunicsT100s_HP",
         description="The model type of the Tunics laser, corresponding to a LaserSource enum member.",
     )
-<<<<<<< HEAD
     piezo_dll_path: str = Field(default="", description="Path to the Thorlabs MDT_COMMAND_LIB.dll file.")
     piezo_left_serial: str = Field(default="", description="Serial number of the left piezo controller.")
     piezo_right_serial: str = Field(default="", description="Serial number of the right piezo controller.")
-=======
-    piezo_dll_path: str = Field(
-        default="", description="Path to the Thorlabs MDT_COMMAND_LIB.dll file."
-    )
-    piezo_left_serial: str = Field(
-        default="", description="Serial number of the left piezo controller."
-    )
-    piezo_right_serial: str = Field(
-        default="", description="Serial number of the right piezo controller."
-    )
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
 
 
 class CameraConfig(BaseModel):
@@ -92,21 +58,11 @@ class CameraConfig(BaseModel):
         description="Unique Vimba ID for the camera (e.g., 'DEV_...'). This is the primary key used to open the device."
     )
     enabled: bool = Field(
-<<<<<<< HEAD
         default=False, description="If True, the application will attempt to initialize this camera on startup."
     )
     name: str = Field(description="A user-friendly name for display in the GUI.")
     flip_horizontal: bool = Field(
         default=False, description="If True, the camera's video feed will be flipped horizontally."
-=======
-        default=False,
-        description="If True, the application will attempt to initialize this camera on startup.",
-    )
-    name: str = Field(description="A user-friendly name for display in the GUI.")
-    flip_horizontal: bool = Field(
-        default=False,
-        description="If True, the camera's video feed will be flipped horizontally.",
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
     )
 
 
@@ -114,7 +70,6 @@ class ScanDefaults(BaseModel):
     """Default parameters for the CT400 Wavelength Scan panel."""
 
     start_wavelength_nm: float = Field(
-<<<<<<< HEAD
         default=1550.0, description="Default starting wavelength for a scan, in nanometers."
     )
     end_wavelength_nm: float = Field(default=1560.0, description="Default ending wavelength for a scan, in nanometers.")
@@ -131,48 +86,12 @@ class ScanDefaults(BaseModel):
     )
     safe_parking_wavelength: float = Field(
         default=1550.0, description="Wavelength to set the laser to when disabling or stopping operations."
-=======
-        default=1550.0,
-        description="Default starting wavelength for a scan, in nanometers.",
-    )
-    end_wavelength_nm: float = Field(
-        default=1560.0,
-        description="Default ending wavelength for a scan, in nanometers.",
-    )
-    resolution_pm: int = Field(
-        default=1, gt=0, description="Default scan resolution step, in picometers."
-    )
-    speed_nm_s: int = Field(
-        default=10,
-        gt=0,
-        description="Default laser sweep speed, in nanometers per second.",
-    )
-    laser_power: float = Field(default=1.0, description="Default laser power value.")
-    power_unit: Literal["mW", "dBm"] = Field(
-        default="mW", description="Default unit for laser power ('mW' or 'dBm')."
-    )
-    input_port: Literal[1, 2, 3, 4] = Field(
-        default=1, description="Default laser input port on the CT400 (1-4)."
-    )
-    min_wavelength_nm: float = Field(
-        default=1440.0,
-        description="The minimum wavelength boundary for the connected laser.",
-    )
-    max_wavelength_nm: float = Field(
-        default=1640.0,
-        description="The maximum wavelength boundary for the connected laser.",
-    )
-    safe_parking_wavelength: float = Field(
-        default=1550.0,
-        description="Wavelength to set the laser to when disabling or stopping operations.",
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
     )
 
 
 class HistogramDefaults(BaseModel):
     """Default parameters for the Power Monitor (Histogram) panel."""
 
-<<<<<<< HEAD
     wavelength_nm: float = Field(default=1550.0, description="Default wavelength for monitoring, in nanometers.")
     laser_power: float = Field(default=1.0, description="Default laser power value for monitoring.")
     power_unit: Literal["mW", "dBm"] = Field(default="mW", description="Default unit for laser power ('mW' or 'dBm').")
@@ -183,33 +102,6 @@ class HistogramDefaults(BaseModel):
     detector_2_enabled: bool = Field(default=True, description="Default state for detector 2 checkbox.")
     detector_3_enabled: bool = Field(default=True, description="Default state for detector 3 checkbox.")
     detector_4_enabled: bool = Field(default=True, description="Default state for detector 4 checkbox.")
-=======
-    wavelength_nm: float = Field(
-        default=1550.0, description="Default wavelength for monitoring, in nanometers."
-    )
-    laser_power: float = Field(
-        default=1.0, description="Default laser power value for monitoring."
-    )
-    power_unit: Literal["mW", "dBm"] = Field(
-        default="mW", description="Default unit for laser power ('mW' or 'dBm')."
-    )
-    input_port: Literal[1, 2, 3, 4] = Field(
-        default=1,
-        description="Default laser input port on the CT400 for monitoring (1-4).",
-    )
-    detector_1_enabled: bool = Field(
-        default=True, description="Default state for detector 1 checkbox."
-    )
-    detector_2_enabled: bool = Field(
-        default=True, description="Default state for detector 2 checkbox."
-    )
-    detector_3_enabled: bool = Field(
-        default=True, description="Default state for detector 3 checkbox."
-    )
-    detector_4_enabled: bool = Field(
-        default=True, description="Default state for detector 4 checkbox."
-    )
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
 
 
 class UIConfig(BaseModel):
@@ -237,27 +129,11 @@ class AppConfig(BaseModel):
     the application.
     """
 
-<<<<<<< HEAD
     app_name: str = Field(default="IOPanel", alias="name", description="The application name, read from [App] section.")
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     instruments: InstrumentsConfig = Field(default_factory=InstrumentsConfig)
     scan_defaults: ScanDefaults = Field(default_factory=ScanDefaults, alias="scandefaults")
     histogram_defaults: HistogramDefaults = Field(default_factory=HistogramDefaults, alias="histogramdefaults")
-=======
-    app_name: str = Field(
-        default="IOPanel",
-        alias="name",
-        description="The application name, read from [App] section.",
-    )
-    logging: LoggingConfig = Field(default_factory=LoggingConfig)
-    instruments: InstrumentsConfig = Field(default_factory=InstrumentsConfig)
-    scan_defaults: ScanDefaults = Field(
-        default_factory=ScanDefaults, alias="scandefaults"
-    )
-    histogram_defaults: HistogramDefaults = Field(
-        default_factory=HistogramDefaults, alias="histogramdefaults"
-    )
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
     ui: UIConfig = Field(default_factory=UIConfig)
     cameras: dict[str, CameraConfig] = Field(default_factory=dict)
 
@@ -319,13 +195,7 @@ class AppConfig(BaseModel):
                 identifier = section_data.get("identifier")
                 if not identifier:
                     # In a real app, you would log this warning
-<<<<<<< HEAD
                     print(f"Warning: Skipping camera section '{section_name}': missing 'identifier' field.")
-=======
-                    print(
-                        f"Warning: Skipping camera section '{section_name}': missing 'identifier' field."
-                    )
->>>>>>> 07c2c79937c639d56570626966118aae9dfd0772
                     continue
                 # The dictionary key for `AppConfig.cameras` is the identifier.
                 cameras_data[identifier] = CameraConfig(**section_data)

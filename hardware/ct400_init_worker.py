@@ -2,7 +2,7 @@ import logging
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Signal, Slot
+from PySide6.QtCore import Signal, Slot
 
 # We need to import from the main project, so adjust path if necessary
 # This assumes 'app.py' is in the parent directory
@@ -10,11 +10,12 @@ from config_model import AppConfig
 from hardware.ct400 import CT400, CT400Error, CT400InitializationError
 from hardware.dummy_ct400 import DummyCT400
 from hardware.interfaces import AbstractCT400
+from logic.task_runner import BaseWorker
 
 logger = logging.getLogger("LabApp.CT400Init")
 
 
-class CT400InitWorker(QObject):
+class CT400InitWorker(BaseWorker):
     """
     A worker that initializes the CT400 in a separate thread.
     It attempts to find the DLL and connect to the hardware.
@@ -22,7 +23,7 @@ class CT400InitWorker(QObject):
     """
 
     # Signal: Emits the successfully initialized hardware object (real or dummy)
-    ct400_initialized = Signal(AbstractCT400)
+    ct400_initialized = Signal(object)
 
     # Signal: Emits a status message for the UI
     status_updated = Signal(str, str)  # Emits (state_name, message) e.g., ("UNAVAILABLE", "DLL not found")
@@ -94,6 +95,8 @@ class CT400InitWorker(QObject):
             self.status_updated.emit("UNAVAILABLE", "CT400: Critical Error. Using Dummy.")
             ct400_device = DummyCT400()
             self.ct400_initialized.emit(ct400_device)
+
+        self.finished.emit()
 
     def stop(self):
         self._is_running = False
