@@ -774,6 +774,14 @@ class PlotWidget(QWidget):
         )
         self.plot_data_item.setZValue(10)  # Ensure live data is always on top
 
+        # --- NEW: Clear Button ---
+        self.clear_btn = QPushButton("Clear Plot")
+        # Use standard Qt Trash icon
+        self.clear_btn.setIcon(QIcon(":/icons/eraser.svg"))
+        self.clear_btn.setToolTip("Clear all live and frozen traces")
+        self.clear_btn.clicked.connect(self.clear_plot)
+        # -------------------------
+
         # --- NEW: Freeze Button ---
         self.freeze_btn = QPushButton("Freeze Trace")
         self.freeze_btn.setIcon(QIcon(":/icons/snowflake.svg"))
@@ -805,6 +813,7 @@ class PlotWidget(QWidget):
         button_layout = QHBoxLayout()
         button_layout.addWidget(self.matlab_status_label)  # Add it to the layout
         button_layout.addStretch(1)
+        button_layout.addWidget(self.clear_btn)
         button_layout.addWidget(self.freeze_btn)
         button_layout.addWidget(self.save_btn)
         layout.addLayout(button_layout)
@@ -946,6 +955,25 @@ class PlotWidget(QWidget):
             self.plot_widget.setTitle("Error Updating Plot", color="red", size="11pt")
             self.save_btn.setEnabled(False)
             self.freeze_btn.setEnabled(False)
+
+    @Slot()
+    def clear_plot(self):
+        """Clears all traces and resets internal data."""
+        # 1. Clear the visual plot items
+        self.plot_data_item.setData([], [])
+        self.reference_plot_item.setData([], [])
+
+        # 2. Clear internal data storage
+        self.current_wavelengths = None
+        self.current_powers = None
+        self.current_output_power = None
+
+        # 3. Reset UI state
+        self.plot_widget.setTitle("Wavelength Scan (Cleared)", color="black", size="11pt")
+        self.save_btn.setEnabled(False)
+        self.freeze_btn.setEnabled(False)
+
+        logger.info("Plot cleared.")
 
     @Slot()
     def freeze_current_trace(self):

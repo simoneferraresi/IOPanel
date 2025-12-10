@@ -3,6 +3,8 @@
     <file alias="check.svg">icons/check.svg</file>
     <file alias="chevron-down.svg">icons/chevron-down.svg</file>
     <file alias="connect.svg">icons/connect.svg</file>
+    <file alias="refresh.svg">icons/refresh.svg</file>
+    <file alias="eraser.svg">icons/eraser.svg</file>
     <file alias="disconnect.svg">icons/disconnect.svg</file>
     <file alias="exit.svg">icons/exit.svg</file>
     <file alias="laser.svg">icons/laser.svg</file>

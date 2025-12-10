@@ -316,7 +316,7 @@ class MainWindow(QMainWindow):
         logger.info("Starting lazy initialization of hardware...")
 
         # 1. Start Piezo discovery (already asynchronous, good)
-        self._init_piezos_lazy()
+        # self._init_piezos_lazy()
 
         # 2. Start CT400 initialization (NOW asynchronous)
         self._init_ct400_lazy()
@@ -346,6 +346,8 @@ class MainWindow(QMainWindow):
         # We keep a reference to 'self.ct400_task' so it doesn't get garbage collected immediately
         self.ct400_task = TaskRunner(worker)
         self.ct400_task.start()
+        # --- NEW: Expose the thread for isRunning() checks ---
+        self.ct400_init_thread = self.ct400_task.thread
 
     def _init_piezos_lazy(self):
         """Initializes the Piezo controllers on a background thread."""
@@ -360,6 +362,8 @@ class MainWindow(QMainWindow):
         # TaskRunner handles thread creation, starting, and cleanup
         self.piezo_task = TaskRunner(worker)
         self.piezo_task.start()
+        # --- NEW: Expose the thread for isRunning() checks ---
+        self.piezo_init_thread = self.piezo_task.thread
 
     def _start_vimbasystem(self):
         """Initializes and enters the main VimbaSystem context.
@@ -636,6 +640,13 @@ class MainWindow(QMainWindow):
         file_menu.addAction(exit_action)
 
         self.instrument_menu = menu_bar.addMenu("&Instruments")
+        # --- NEW: Refresh Action ---
+        refresh_action = QAction(QIcon(":/icons/refresh.svg"), "Refresh Instruments", self)
+        refresh_action.setStatusTip("Scan for newly connected CT400 or Piezo devices")
+        refresh_action.triggered.connect(self._on_refresh_instruments_triggered)
+        self.instrument_menu.addAction(refresh_action)
+        self.instrument_menu.addSeparator()
+        # ---------------------------
         self.ct400_connect_action = QAction(self)
         self.ct400_connect_action.setCheckable(True)
         self.ct400_connect_action.setStatusTip("Connect/Disconnect CT400 device")
@@ -664,6 +675,46 @@ class MainWindow(QMainWindow):
         about_action.triggered.connect(self._show_about_dialog)
         help_menu.addAction(about_action)
         logger.debug("Menus created.")
+
+    @Slot()
+    def _on_refresh_instruments_triggered(self):
+        """
+        Manually triggers discovery for Piezos and CT400.
+        Useful if instruments were turned on after the GUI started.
+        """
+        logger.info("Manual Instrument Refresh requested.")
+        self.statusBar().showMessage("Scanning for instruments...", 3000)
+
+        # 1. Refresh Piezos
+        # We always try to find piezos if requested, unless a scan is already running.
+        if self.piezo_init_thread and self.piezo_init_thread.isRunning():
+            logger.info("Piezo discovery already running. Skipping.")
+        else:
+            # Clean up old task reference if it exists
+            if hasattr(self, "piezo_task"):
+                self.piezo_task = None
+            self._init_piezos_lazy()
+
+        # 2. Refresh CT400
+        # Only try to re-initialize CT400 if we are currently using a Dummy device
+        # or if no device is set. We don't want to kill a live connection.
+        is_dummy = isinstance(self.ct400_device, DummyCT400)
+        is_none = self.ct400_device is None
+
+        if is_dummy or is_none:
+            if self.ct400_init_thread and self.ct400_init_thread.isRunning():
+                logger.info("CT400 init already running. Skipping.")
+            else:
+                logger.info("Current CT400 is Dummy/None. Re-scanning for real hardware...")
+                self._update_ct400_visuals(state=CT400Status.UNKNOWN, message="Searching for CT400...")
+
+                # Clean up old task reference
+                if hasattr(self, "ct400_task"):
+                    self.ct400_task = None
+                self._init_ct400_lazy()
+        else:
+            logger.info("CT400 is already connected to real hardware. Skipping refresh.")
+            self.statusBar().showMessage("CT400 connected. Scanning Piezos only...", 3000)
 
     @Slot()
     def _show_camera_discovery_dialog(self):
