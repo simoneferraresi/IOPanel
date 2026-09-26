@@ -167,7 +167,9 @@ class ParameterControl(QWidget):
         """
         super().__init__(parent)
         self.param_name = name
-        self.min_val = max(1e-9, min_val)  # Ensure min_val is positive for log scale
+        # Logarithmic mapping requires a positive minimum. Linear ranges may
+        # legitimately start at zero or below and must retain their endpoints.
+        self.min_val = max(1e-9, min_val) if scale == "log" else min_val
         self.max_val = max_val
         self.scale = scale
         self.decimals = decimals
