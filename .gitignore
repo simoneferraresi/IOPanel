@@ -102,3 +102,5 @@ resources_rc.py
 venv/
 env/
 ENV/
+# Python profiler output
+/profile_output.prof
