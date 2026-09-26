@@ -170,7 +170,7 @@ class AppConfig(BaseModel):
                 continue  # Handle cameras in the next loop
 
             if section_lower == "app":
-                init_data["app_name"] = section_data.get("name", "IOPanel")
+                init_data["name"] = section_data.get("name", "IOPanel")
                 continue
 
             # Check if the section name directly matches a field name
@@ -182,7 +182,7 @@ class AppConfig(BaseModel):
             found_field = False
             for field_name, field_info in cls.model_fields.items():
                 if field_info.alias and field_info.alias == section_lower:
-                    init_data[field_name] = section_data
+                    init_data[field_info.alias] = section_data
                     found_field = True
                     break
             if not found_field:
@@ -201,6 +201,17 @@ class AppConfig(BaseModel):
                 cameras_data[identifier] = CameraConfig(**section_data)
 
         init_data["cameras"] = cameras_data
+
+        # configparser returns every INI value as a string. Pydantic v2 does not
+        # coerce strings to values inside Literal[int, ...], so convert only
+        # integer-shaped input_port values and leave invalid values for normal
+        # Pydantic validation.
+        for section in ("scandefaults", "histogramdefaults"):
+            section_data = init_data.get(section)
+            if section_data and isinstance(section_data.get("input_port"), str):
+                value = section_data["input_port"]
+                if value.isdecimal():
+                    section_data["input_port"] = int(value)
 
         # Finally, validate the prepared dictionary
         return cls(**init_data)
