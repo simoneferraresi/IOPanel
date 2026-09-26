@@ -188,6 +188,16 @@ class ScanWorker(QtCore.QObject):
     @Slot()
     def do_scan(self):
         scan_started = False
+
+        def report_cancelled():
+            self.error_signal.emit(
+                InstrumentError(
+                    code=CT400StatusCode.SCAN_ERROR_USER_CANCELLED,
+                    message="Scan was cancelled by the user.",
+                    source=self.__class__.__name__,
+                )
+            )
+
         try:
             if self._running:
                 logger.info(
@@ -203,20 +213,23 @@ class ScanWorker(QtCore.QObject):
                 QThread.msleep(self._LASER_COMMAND_DELAY_MS)
             else:
                 logger.info("ScanWorker: Run started but worker already stopped. Aborting.")
-                self.error_signal.emit("Scan aborted before start.")
+                report_cancelled()
                 return
 
             if not self._running:
-                raise CT400Error("Scan cancelled before set_scan")
+                report_cancelled()
+                return
             logger.info(
                 f"ScanWorker: Setting up scan from {self.start_wl}nm to {self.end_wl}nm, Res: {self.resolution}pm, Power: {self.laser_power}mW"
             )
             self.ct400.set_scan(self.laser_power, self.start_wl, self.end_wl)
             if not self._running:
-                raise CT400Error("Scan cancelled after set_scan")
+                report_cancelled()
+                return
             self.ct400.set_sampling_res(self.resolution)
             if not self._running:
-                raise CT400Error("Scan cancelled after set_sampling_res")
+                report_cancelled()
+                return
 
             self.ct400.start_scan()
             scan_started = True
@@ -250,7 +263,8 @@ class ScanWorker(QtCore.QObject):
 
             if not self._running:
                 logger.info("ScanWorker: Scan cancelled by user.")
-                raise CT400Error("Scan cancelled by user.")
+                report_cancelled()
+                return
 
             logger.info("ScanWorker: Retrieving data points...")
             detectors_to_get = [Detector.DE_1]

@@ -1,4 +1,5 @@
 import logging
+import math
 import time
 
 import numpy as np
@@ -101,7 +102,20 @@ class DummyCT400(AbstractCT400):
         logger.info("Dummy get_data_points called. Generating deterministic simulated data.")
         span_pm = (self._scan_max_wavelength - self._scan_min_wavelength) * 1000
         step_nm = self._sampling_resolution_pm / 1000
-        num_intervals = int(np.floor(span_pm / self._sampling_resolution_pm))
+        interval_count = span_pm / self._sampling_resolution_pm
+        nearest_interval_count = round(interval_count)
+        # Decimal wavelength endpoints are binary floats. Account only for
+        # subtraction precision at their magnitude so an exactly divisible
+        # range does not lose its final sample to floor(3.999999999...).
+        interval_tolerance = (
+            8
+            * max(math.ulp(self._scan_min_wavelength), math.ulp(self._scan_max_wavelength))
+            * 1000
+            / self._sampling_resolution_pm
+        )
+        if abs(interval_count - nearest_interval_count) <= interval_tolerance:
+            interval_count = nearest_interval_count
+        num_intervals = int(math.floor(interval_count))
         wavelengths = self._scan_min_wavelength + np.arange(num_intervals + 1) * step_nm
         peak_center = (self._scan_min_wavelength + self._scan_max_wavelength) / 2
         peak_width = (self._scan_max_wavelength - self._scan_min_wavelength) / 6

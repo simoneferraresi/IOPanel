@@ -298,7 +298,11 @@ class MainWindow(QMainWindow):
 
         # Update UI visuals based on whether the device is real or dummy
         is_real_ct400 = isinstance(self.ct400_device, CT400)
-        self.control_panel.on_instrument_connected(is_real_ct400)
+        is_simulated_ct400 = isinstance(self.ct400_device, DummyCT400)
+        # DummyCT400 exposes the same scan interface and is safe to operate in
+        # development mode. Keep it unavailable to connection controls, but
+        # allow scans and label their results as simulated below.
+        self.control_panel.on_instrument_connected(is_real_ct400 or is_simulated_ct400)
         self.histogram_control.on_instrument_connected(is_real_ct400)
 
         if is_real_ct400:
@@ -306,6 +310,9 @@ class MainWindow(QMainWindow):
         else:
             # The status was already set to UNAVAILABLE by the worker's error
             pass
+
+        if is_simulated_ct400:
+            self.ct400_status_label.setText("CT400: SIMULATED (Dummy)")
 
         # Now, check if the piezos finished first. If so, update the alignment tab.
         if self.piezo_left and self.piezo_right:
@@ -1107,6 +1114,8 @@ class MainWindow(QMainWindow):
         if self.plot_widget and hasattr(self.plot_widget, "update_plot"):
             try:
                 self.plot_widget.update_plot(wavelengths, plotting_power_data, final_pout)
+                if isinstance(self.ct400_device, DummyCT400):
+                    self.plot_widget.plot_widget.setTitle("SIMULATED CT400 DATA", color="darkorange", size="11pt")
             except Exception as e:
                 logger.error(f"Error updating plot widget: {e}", exc_info=True)
 
