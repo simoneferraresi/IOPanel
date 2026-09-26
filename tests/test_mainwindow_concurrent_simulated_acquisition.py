@@ -111,6 +111,9 @@ simulation_height = 12
 
 def _start_scan_during_stream(qtbot, window, frame_spy):
     control = window.control_panel
+    camera = window.cameras[0]
+    camera_panel = window.camera_panels[camera.identifier]
+    initial_display_pixel = camera_panel._latest_pixmap.toImage().pixelColor(0, 0).value()
     camera_frame_count = frame_spy.count()
     qtbot.mouseClick(control.scan_btn, Qt.MouseButton.LeftButton)
     qtbot.waitUntil(
@@ -122,6 +125,7 @@ def _start_scan_during_stream(qtbot, window, frame_spy):
             frame_spy.count() >= camera_frame_count + 2
             and control.scanning
             and window.ct400_device._is_scanning
+            and camera_panel._latest_pixmap.toImage().pixelColor(0, 0).value() != initial_display_pixel
         ),
         timeout=3000,
     )
