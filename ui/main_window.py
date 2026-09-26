@@ -16,6 +16,8 @@ for the entire graphical user interface. Its responsibilities include:
     application closes.
 """
 
+from __future__ import annotations
+
 import logging
 import sys
 from enum import Enum, auto
@@ -39,8 +41,6 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from vmbpy import VmbCameraError, VmbSystem, VmbSystemError
-
 from config_model import AppConfig, CameraConfig
 from hardware.ct400_init_worker import CT400InitWorker
 from hardware.dummy_ct400 import DummyCT400
@@ -61,7 +61,7 @@ except ImportError:
         file=sys.stderr,
     )
 
-from hardware.camera import VimbaCam
+from hardware.camera import VIMBA_AVAILABLE, VimbaCam, VmbCameraError, VmbSystem, VmbSystemError
 from hardware.camera_init_worker import CameraInitWorker
 from hardware.ct400 import CT400
 from hardware.interfaces import AbstractCT400
@@ -328,7 +328,7 @@ class MainWindow(QMainWindow):
         else:
             logger.error("VimbaSystem not active, skipping camera initialization.")
             if self.camera_container.layout():
-                error_label = QLabel("Vimba API could not be initialized. Cameras unavailable.")
+                error_label = QLabel("Camera driver unavailable. Install the camera extra and Allied Vision SDK.")
                 error_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 self.camera_container.layout().addWidget(error_label)
 
@@ -372,6 +372,10 @@ class MainWindow(QMainWindow):
         """
         if self.vmb_instance is not None:
             logger.info("VmbSystem already active.")
+            return
+        if not VIMBA_AVAILABLE:
+            logger.warning("Vimba camera support is not installed; camera initialization is disabled.")
+            self.vmb_instance = None
             return
         try:
             logger.info("Attempting to start VmbSystem...")
