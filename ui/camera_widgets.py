@@ -501,6 +501,10 @@ class CameraPanel(QFrame):
         self.main_layout.setContentsMargins(4, 4, 4, 4)
         self.main_layout.setSpacing(4)
 
+        self.title_label = QLabel(self._panel_title, self)
+        self.title_label.setStyleSheet("font-weight: bold;")
+        self.main_layout.addWidget(self.title_label)
+
         # --- NEW: Remember last screenshot directory ---
         from pathlib import Path  # Ensure Path is imported at top of file
 

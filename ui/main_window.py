@@ -63,6 +63,7 @@ except ImportError:
 
 from hardware.camera import VIMBA_AVAILABLE, VimbaCam, VmbCameraError, VmbSystem, VmbSystemError
 from hardware.camera_init_worker import CameraInitWorker
+from hardware.simulated_camera import SimulatedCamera
 from hardware.ct400 import CT400
 from hardware.interfaces import AbstractCT400
 from ui.camera_widgets import CameraPanel
@@ -321,16 +322,15 @@ class MainWindow(QMainWindow):
         # 2. Start CT400 initialization (NOW asynchronous)
         self._init_ct400_lazy()
 
-        # 3. Start Vimba system (still blocking, we'll fix this next)
-        self._start_vimbasystem()
-        if self.vmb_instance:
-            self._init_cameras_lazy()
-        else:
-            logger.error("VimbaSystem not active, skipping camera initialization.")
-            if self.camera_container.layout():
-                error_label = QLabel("Camera driver unavailable. Install the camera extra and Allied Vision SDK.")
-                error_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.camera_container.layout().addWidget(error_label)
+        # Start the proprietary Vimba system only when a physical camera is
+        # explicitly configured. Simulated cameras use the same panel workflow
+        # and remain available on driver-free development machines.
+        needs_vimba = any(cam.enabled and cam.backend == "vimba" for cam in self.config.cameras.values())
+        if needs_vimba:
+            self._start_vimbasystem()
+            if not self.vmb_instance:
+                logger.error("VimbaSystem not active; physical camera initialization will report unavailable.")
+        self._init_cameras_lazy()
 
     def _init_ct400_lazy(self):
         """Initializes the CT400 on a background thread."""
@@ -932,6 +932,10 @@ class MainWindow(QMainWindow):
                 camera_instance.close()
             return
 
+        if isinstance(camera_instance, SimulatedCamera) and not camera_instance.open():
+            camera_instance.close()
+            camera_instance = None
+
         if camera_instance:
             logger.info(f"Camera '{cam_config.name}' is online. Connecting to UI.")
             self.cameras.append(camera_instance)
@@ -995,9 +999,10 @@ class MainWindow(QMainWindow):
             return None
 
     def _create_camera_panel(self, cam_instance: VimbaCam | None, cam_config: "CameraConfig") -> CameraPanel:
+        title = f"{cam_config.name} [SIMULATED]" if cam_config.backend == "simulation" else cam_config.name
         panel = CameraPanel(
             cam_instance,
-            cam_config.name,
+            title,
             config=cam_config,
             parent=self.camera_container,
         )
