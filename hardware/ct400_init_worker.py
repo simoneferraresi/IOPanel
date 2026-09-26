@@ -62,6 +62,14 @@ class CT400InitWorker(BaseWorker):
             return
 
         logger.info("CT400InitWorker: Starting initialization...")
+        if self.config.instruments.ct400_backend == "simulation":
+            self.status_updated.emit("SIMULATED", "CT400: Starting simulated backend.")
+            ct400_device = DummyCT400()
+            self.status_updated.emit("SIMULATED", "CT400: Simulated backend ready.")
+            self.ct400_initialized.emit(ct400_device)
+            self.finished.emit()
+            return
+
         self.status_updated.emit("UNKNOWN", "CT400: Searching for DLL...")
 
         dll_path_obj = self._find_dll()

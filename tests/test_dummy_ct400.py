@@ -21,6 +21,17 @@ def test_dummy_scan_data_honors_range_and_resolution_deterministically():
     assert device.get_all_powers() == device.get_all_powers()
 
 
+def test_dummy_scan_includes_endpoint_for_decimal_wavelength_range():
+    device = DummyCT400(scan_duration=0)
+    device.set_scan(1.0, 1550.0, 1550.004)
+    device.set_sampling_res(1)
+
+    wavelengths, powers = device.get_data_points([Detector.DE_1])
+
+    np.testing.assert_allclose(wavelengths, [1550.0, 1550.001, 1550.002, 1550.003, 1550.004])
+    assert powers.shape == (1, 5)
+
+
 def test_dummy_scan_can_complete_immediately_and_inject_an_error():
     device = DummyCT400(scan_duration=0)
     device.start_scan()
@@ -69,6 +80,24 @@ def test_scan_worker_reports_simulated_error_and_still_cleans_up(monkeypatch):
     assert len(errors) == 1
     assert errors[0].code == CT400StatusCode.SCAN_ERROR_GENERIC
     assert errors[0].message == "simulated scan failure"
+    assert finished == [True]
+    assert not device._is_scanning
+    assert not device._laser_enabled
+
+
+def test_scan_worker_reports_cancellation_as_noncritical_and_cleans_up(monkeypatch):
+    monkeypatch.setattr(ScanWorker, "_LASER_COMMAND_DELAY_MS", 0)
+    device = DummyCT400()
+    worker = ScanWorker(device, 1500.0, 1501.0, 100, 1.0, LaserInput.LI_1)
+    errors, finished = [], []
+    worker.error_signal.connect(errors.append)
+    worker.finished.connect(lambda: finished.append(True))
+    worker.stop()
+
+    worker.do_scan()
+
+    assert len(errors) == 1
+    assert errors[0].code == CT400StatusCode.SCAN_ERROR_USER_CANCELLED
     assert finished == [True]
     assert not device._is_scanning
     assert not device._laser_enabled

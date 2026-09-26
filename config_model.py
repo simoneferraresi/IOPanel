@@ -34,6 +34,9 @@ class LoggingConfig(BaseModel):
 class InstrumentsConfig(BaseModel):
     """Configuration for physical hardware addresses and driver paths."""
 
+    ct400_backend: Literal["physical", "simulation"] = Field(
+        default="physical", description="Select the physical CT400 driver or deterministic DummyCT400 backend."
+    )
     ct400_dll_path: str = Field(default="", description="The absolute path to the CT400_lib.dll file.")
     tunics_gpib_address: int = Field(
         default=10, ge=0, le=30, description="The GPIB address of the Tunics laser source (0-30)."
