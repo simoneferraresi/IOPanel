@@ -144,7 +144,7 @@ uv sync --extra test
 uv run pytest -q
 ```
 
-The test extra installs pytest and pytest-qt. Run a focused test while iterating, for example `uv run pytest tests/test_config_model.py -q` or `uv run pytest tests/test_mainwindow_camera_integration.py -q`. The full suite exercises Qt widgets and uses the configured offscreen test environment where needed.
+The test extra installs pytest and pytest-qt. Run a focused test while iterating, for example `uv run pytest tests/test_config_model.py -q` or `uv run pytest tests/test_mainwindow_camera_integration.py -q`. The full suite exercises Qt widgets and currently runs on the standard Windows GitHub Actions runner without proprietary drivers.
 
 The full hardware-independent suite runs without proprietary instrument drivers. CI runs this suite for pull requests targeting `main`.
 
