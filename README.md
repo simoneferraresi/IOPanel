@@ -133,6 +133,29 @@ python app.py --log-level DEBUG --config config.production.ini
 
 ## Development
 
+### Local development workflow
+
+The hardware-independent install below requires the Vimba-optional dependency change to be present on `main`. On the current base, `uv sync --extra test` cannot resolve the declared `vmbpy>=1.10.0` requirement. The install succeeds with the optional-driver change applied; land that change before relying on this workflow.
+
+Use a project-local environment; do not install project packages into the system Python. After cloning or switching branches, create/update the environment with:
+
+```bash
+uv sync --extra test
+uv run pytest -q
+```
+
+The test extra installs pytest and pytest-qt. Run a focused test while iterating, for example `uv run pytest tests/test_config_model.py -q` or `uv run pytest tests/test_camera_driver_optional.py -q`. The camera-driver test is available once the optional Vimba support change is merged. The full suite may exercise Qt widgets and requires a display plugin where applicable.
+
+The current full-suite baseline also has a known failure in `tests/test_camera_widgets.py::test_parameter_control_linear_slider` (initial midpoint maps to slider value 499 rather than 500); track progress in issue #6. Keep this test unchanged while addressing the conversion.
+
+Development and CI should not require proprietary hardware drivers. `hardware/dummy_ct400.py` provides the existing `DummyCT400` implementation; use it for CT400-independent work and tests. Camera discovery and opening should be exercised with mocks or the driver's unavailable path. Do not treat these tests as evidence that a physical CT400 or camera works.
+
+Vimba support is optional. For camera development, install the project camera extra (`uv sync --extra camera`) and the matching Allied Vision Vimba X SDK/transport layer on the laboratory PC. VmbPy's Python binding alone does not provide the vendor transport layer needed to communicate with cameras. Without the binding, camera discovery should report no cameras and camera startup should give an actionable unavailable message, while non-camera modules remain importable.
+
+Perform hardware integration checks on the laboratory PC, where the CT400 DLL, its matching architecture/runtime, the Allied Vision SDK, and physical devices are available. Check startup, CT400 connection and scan behavior, camera discovery, opening/streaming, and clean shutdown there. Keep these checks separate from the driver-free automated test job.
+
+For changes, branch from the intended base (`main` for independent work), link the branch to a GitHub issue, and keep each PR scoped to one issue. Use descriptive commit subjects in imperative form, run the focused tests and `git diff --check`, then open a draft PR when review is useful. Add tests for behavior changes and state clearly which hardware checks remain outstanding. CI should run hardware-independent tests on a standard runner with no proprietary drivers installed; hardware integration results must be recorded separately after lab testing.
+
 ### Compiling Qt Resources
 
 The application uses icons stored in a Qt Resource File (`resources/resources.qrc`). If you add or change icons, you must recompile the `resources_rc.py` file.
