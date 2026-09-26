@@ -465,6 +465,7 @@ class CameraPanel(QFrame):
         self.config = config
         self._panel_title = title  # Use this for logging before camera is set
         self._latest_pixmap: QPixmap | None = None
+        self._camera_error_active = False
         self._display_size_cache: QtCore.QSize | None = None
 
         self._thread_pool = QThreadPool.globalInstance()
@@ -727,8 +728,9 @@ class CameraPanel(QFrame):
     @Slot(str)
     def _handle_camera_error_message(self, message: str):
         logger.info(f"CameraPanel '{self._panel_title}' received message: {message}")
-        self.video_label.setText(message)
+        self._camera_error_active = True
         self.video_label.setPixmap(QPixmap())
+        self.video_label.setText(message)
         self.video_label.setStyleSheet("background-color: #333; color: #ffc107;")
 
     def set_controls_visibility(self, visible: bool):
@@ -890,6 +892,9 @@ class CameraPanel(QFrame):
         Args:
             frame: The raw numpy array frame from the camera.
         """
+        # A fresh frame marks recovery from a camera acquisition error. Ignore
+        # conversion results already queued when the error was reported.
+        self._camera_error_active = False
         if self.camera and self.isVisible():
             self.watchdog_timer.start()
 
@@ -911,6 +916,8 @@ class CameraPanel(QFrame):
         Args:
             q_img: The `QImage` converted by the background worker.
         """
+        if self._camera_error_active:
+            return
         if q_img.isNull():
             self.set_frame_pixmap(None)
             return
@@ -985,6 +992,8 @@ class CameraPanel(QFrame):
             self._resize_timer.start(CAMERA_RESIZE_UPDATE_DELAY_MS)
 
     def _delayed_display_update(self):
+        if self._camera_error_active:
+            return
         if self._latest_pixmap and not self._latest_pixmap.isNull():
             target_size = self.video_label.size()
             if target_size.isEmpty() or target_size.width() <= 0 or target_size.height() <= 0:
