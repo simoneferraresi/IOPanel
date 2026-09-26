@@ -135,6 +135,8 @@ python app.py --log-level DEBUG --config config.production.ini
 
 ### Local development workflow
 
+The hardware-independent install below requires the Vimba-optional dependency change to be present on `main`. On the current base, `uv sync --extra test` cannot resolve the declared `vmbpy>=1.10.0` requirement. The install succeeds with the optional-driver change applied; land that change before relying on this workflow.
+
 Use a project-local environment; do not install project packages into the system Python. After cloning or switching branches, create/update the environment with:
 
 ```bash
@@ -143,6 +145,8 @@ uv run pytest -q
 ```
 
 The test extra installs pytest and pytest-qt. Run a focused test while iterating, for example `uv run pytest tests/test_config_model.py -q` or `uv run pytest tests/test_camera_driver_optional.py -q`. The camera-driver test is available once the optional Vimba support change is merged. The full suite may exercise Qt widgets and requires a display plugin where applicable.
+
+The current full-suite baseline also has a known failure in `tests/test_camera_widgets.py::test_parameter_control_linear_slider` (initial midpoint maps to slider value 499 rather than 500); track progress in issue #6. Keep this test unchanged while addressing the conversion.
 
 Development and CI should not require proprietary hardware drivers. `hardware/dummy_ct400.py` provides the existing `DummyCT400` implementation; use it for CT400-independent work and tests. Camera discovery and opening should be exercised with mocks or the driver's unavailable path. Do not treat these tests as evidence that a physical CT400 or camera works.
 
