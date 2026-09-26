@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from hardware.camera import VimbaCam
+from hardware.camera import VIMBA_AVAILABLE, VimbaCam
 
 logger = logging.getLogger("LabApp.DiscoveryDialog")
 
@@ -81,6 +81,14 @@ class CameraDiscoveryDialog(QDialog):
         QApplication.processEvents()  # Update UI to show wait cursor
 
         try:
+            if not VIMBA_AVAILABLE:
+                self.table.setRowCount(1)
+                item = QTableWidgetItem("Vimba driver unavailable. Install the camera extra and Allied Vision SDK.")
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.table.setItem(0, 0, item)
+                self.table.setSpan(0, 0, 1, 4)
+                return
+
             cameras_info = VimbaCam.list_cameras()
             if not cameras_info:
                 # Add a placeholder row if no cameras are found

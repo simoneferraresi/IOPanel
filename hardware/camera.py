@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 import time
 from collections import deque
@@ -7,20 +9,39 @@ from typing import Any, TypeAlias
 
 import numpy as np
 from PySide6.QtCore import QMutex, QMutexLocker, QObject, QThread, Signal, Slot
-from vmbpy import (
-    COLOR_PIXEL_FORMATS,
-    MONO_PIXEL_FORMATS,
-    OPENCV_PIXEL_FORMATS,
-    Camera,
-    Frame,
-    FrameStatus,
-    PixelFormat,
-    Stream,
-    VmbCameraError,
-    VmbSystem,
-    VmbSystemError,
-    intersect_pixel_formats,
-)
+try:
+    from vmbpy import (
+        COLOR_PIXEL_FORMATS,
+        MONO_PIXEL_FORMATS,
+        OPENCV_PIXEL_FORMATS,
+        Camera,
+        Frame,
+        FrameStatus,
+        PixelFormat,
+        Stream,
+        VmbCameraError,
+        VmbSystem,
+        VmbSystemError,
+        intersect_pixel_formats,
+    )
+
+    VIMBA_AVAILABLE = True
+    VIMBA_IMPORT_ERROR: ImportError | None = None
+except ImportError as exc:
+    # The Vimba binding is installed with the vendor SDK on laboratory PCs.
+    # Keep application and non-camera code importable on development machines.
+    COLOR_PIXEL_FORMATS = MONO_PIXEL_FORMATS = OPENCV_PIXEL_FORMATS = ()
+    Camera = Frame = FrameStatus = PixelFormat = Stream = object
+    VmbSystem = None
+    intersect_pixel_formats = None
+    VIMBA_AVAILABLE = False
+    VIMBA_IMPORT_ERROR = exc
+
+    class VmbCameraError(Exception):
+        """Fallback exception name used when the optional Vimba binding is absent."""
+
+    class VmbSystemError(Exception):
+        """Fallback exception name used when the optional Vimba binding is absent."""
 
 logger = logging.getLogger("LabApp.camera")
 
@@ -176,6 +197,10 @@ class VimbaCam(QObject):
             A list of dictionaries, where each dictionary represents a camera
             and contains keys like 'id', 'serial', 'model', and 'name'.
         """
+        if not VIMBA_AVAILABLE:
+            logger.warning("Camera discovery is unavailable: the optional Vimba binding is not installed.")
+            return []
+
         cameras_info = []
         logger.info("Listing available Vimba cameras...")
         try:
@@ -254,6 +279,12 @@ class VimbaCam(QObject):
         """Opens the camera and starts streaming."""
         logger.info(f"Attempting to open camera: {self.camera_name} (ID: {self.identifier})")
         self._is_closing = False
+        if not VIMBA_AVAILABLE:
+            message = "Vimba camera support is unavailable. Install the camera extra and the Allied Vision SDK."
+            logger.error(message)
+            self.error.emit(message)
+            return False
+
         if self.device:
             logger.warning(f"Camera {self.camera_name} already open.")
             return True

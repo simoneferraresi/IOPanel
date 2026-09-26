@@ -28,8 +28,9 @@ dependencies = [
     "pyqtgraph>=0.13.0",
     "scipy>=1.9.0", # For .mat file saving
     "opencv-python-headless>=4.7.0", # Headless version is smaller and sufficient
-    "vmbpy>=1.10.0", # Make sure to specify the version you are using
     "pydantic>=2.0.0", # For robust configuration management
+    "pyserial>=3.5", # Piezo controller serial-port discovery and communication
+    "PyOpenGL>=3.1.6", # pyqtgraph.opengl widgets used by the alignment panel
 ]
 
 [project.optional-dependencies]
@@ -38,6 +39,9 @@ dependencies = [
 # To install: uv pip install -e ".[matlab]"
 matlab = [
     "matlabengine", # The package name for the MATLAB Engine
+]
+camera = [
+    "vmbpy>=1.1.0", # Use the wheel bundled with the matching Allied Vision SDK on the lab PC
 ]
 test = [
     "pytest>=8.0.0",
