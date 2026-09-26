@@ -14,6 +14,19 @@ Tracking issue: [#20](https://github.com/simoneferraresi/IOPanel/issues/20).
 - Never use unplugging, process termination or a forced worker termination as a routine way to stop an active laser scan. Follow the instrument's approved emergency procedure if normal stop does not complete.
 - Keep completed records in the lab's controlled location. Do not commit device serials, private addresses, operator names or completed live configuration files to the repository.
 
+## CT400 software behavior established by source review
+
+This is a static code finding, not a statement about undocumented DLL semantics:
+
+- Physical startup loads `CT400_lib.dll` and calls `CT400_Init`; the wrapper stores the returned handle. A failed initialization raises an application error. The physical backend remains the default unless `ct400_backend = simulation` is explicitly configured.
+- A scan sends a disable command to the selected input before setup, calls `CT400_SetScan` and `CT400_SetSamplingResolution`, starts via `CT400_ScanStart`, then polls `CT400_ScanWaitEnd`. Its `finally` path calls `CT400_ScanStop` if start succeeded, then sends disable to the selected input.
+- `CT400.stop_scan()` calls `CT400_ScanStop`; it only logs a warning when the result is `-1` and does not propagate that return as an exception. `scan_wait_end()` treats `-1` as a wrapper-call communication error; other negative scan status values are returned and logged for the caller to handle. These interpretations come from repository code; confirm them against the vendor manual for the installed DLL.
+- `CT400.close()` attempts `CT400_CmdLaser(LI_1, DISABLE, 1550.0, 1.0)` for every non-null handle, catches a disable-command exception, then calls `CT400_Close`. This is unconditional with respect to the input selected in the UI. The scan worker separately disables its selected input in `finally`. Thus `close()` does not establish that the selected input is safe, and the LI_1 command's effect on other inputs must not be assumed.
+- The scan worker's `stop()` only clears a Python flag. The loop checks the flag after `scan_wait_end()` returns; there is no source-level evidence that the vendor wait call is interruptible. MainWindow requests worker stop, waits 500 ms for its QThread, then calls `terminate()` if it still runs. Forced termination can bypass Python `finally` cleanup. Do not use close-during-active-scan or forced termination as a lab procedure until the vendor-supported stop/wait behavior and an independent safe-stop method are confirmed.
+- The same close handler closes the CT400 only after scan-thread cleanup. Whether any vendor call can block indefinitely, whether `CT400_ScanStop` is safe concurrently with `CT400_ScanWaitEnd`, and what all return values mean require the matching vendor documentation and/or controlled lab validation.
+
+No authoritative public CT400_lib.dll API manual was located during this review. The names, signatures and return handling below are transcribed from the checked-in Python wrapper, not independently verified vendor specifications. EXFO's [CT400 product page](https://www.exfo.com/en/products/discontinued-products/ct400/) lists the product as discontinued and its service/support end date as March 31, 2023; that page does not document the DLL API.
+
 ## Record sheet
 
 Complete before testing. Use the commit actually tested, and record values as reported by the host, driver/vendor tools and instrument. Redact serials and private network identifiers in any repository issue or PR.
@@ -38,7 +51,7 @@ Complete before testing. Use the commit actually tested, and record values as re
 
 Capture versions before opening IOPanel where possible, using vendor utilities that do not acquire or control the device. `uv.lock` and project metadata identify Python dependencies but do not establish installed CT400 DLL, Vimba SDK, transport-layer, firmware or hardware versions. Do not open a device concurrently from a vendor utility and IOPanel.
 
-## A. Offline checks (no instruments connected)
+## A. Gate A — Offline environment verification (no instruments connected)
 
 Run these on the target PC before connecting or enabling equipment:
 
@@ -59,65 +72,77 @@ Validate the lab-local INI without constructing a window or opening devices:
 uv run python -c "from pathlib import Path; from app import load_raw_config_from_ini; from config_model import AppConfig; AppConfig.from_ini_dict(load_raw_config_from_ini(Path('config.lab.ini'))); print('Configuration is valid')"
 ```
 
+Create `config.lab.ini` only if it does not already exist, by copying the checked-in example and reviewing every value; never overwrite an existing lab configuration. For a repository-only smoke check, the same command can target `config.ini`.
+
 This imports application modules but does not instantiate `MainWindow` or initialize an instrument. Confirm the intended backend explicitly. For physical work, omit `ct400_backend` only if intentionally relying on the backward-compatible default `physical`; never set a simulated backend for a physical validation run. Camera sections default to `vimba`; simulation must be explicitly selected and must not be used to pass a physical test. Check camera identifiers and enabled flags before launch. Do not print or attach the full lab INI to a public issue.
 
 **Pass:** clean dependency/test result; configuration is valid and matches the intended physical devices; operator-approved limits are recorded. **Fail:** unresolved dependency/architecture mismatch, invalid/ambiguous config, unexpected simulation selection, or any unreviewed test failure. Stop before connecting/operating equipment on failure.
 
-## B. CT400-only checks
+## B. Gate B — Passive camera discovery and streaming (no CT400 laser operation)
 
-Perform only with the operator present and the camera subsystem disabled in the lab-local configuration if the application permits that arrangement. Keep the optical path and laser state under the lab's approved procedure.
+Prerequisites: Gate A passes; camera checks and device opening are authorized; CT400 laser operation is prohibited for this gate. Since normal MainWindow startup initializes the configured CT400, use the explicitly selected CT400 simulator for this gate (`ct400_backend = simulation`) while leaving the intended physical camera backend explicitly set to `vimba`. This tests the physical camera through the normal GUI pipeline without connecting to or commanding the CT400. The camera discovery dialog is passive, but still opens the Vimba discovery API and requires authorization. Never rely on implicit fallback.
+
+1. With the application closed, record Vimba SDK, VmbPy, transport-layer and camera versions. Open the discovery dialog and verify the authorized camera identities. Do not start a scan, issue CT400 laser commands or enable a laser during this camera-only gate.
+2. Start the application with a temporary, reviewed INI selecting CT400 simulation and Vimba for the enabled camera(s). Confirm the CT400 is visibly identified as simulated and the camera as physical.
+3. Confirm frames reach and update the real camera panel. Check orientation against an asymmetric target, dimensions, pixel format, intensity scaling and only operator-approved camera controls.
+4. Stop acquisition and close normally; verify the camera can be reopened and no process retains it.
+
+**Pass:** discovery and repeated physical frames work, identity/backend labels are unambiguous, and camera resources release. **Fail/stop:** any CT400 physical connection/laser command occurs, simulator/physical identity is unclear, camera frames are stale or malformed, or close fails. Do not proceed to Gate C until the camera-only run is complete and its configuration is closed.
+
+## C. Gate C — CT400 driver, identity, connection and safe idle
+
+Prerequisites: Gate A passes; qualified operator present; camera backend disabled; approved CT400 manual/site stop procedure and independent safe-state indication are available. No scan is started in this gate.
 
 1. With scan idle and laser in the approved safe state, verify the configured `CT400_lib.dll` exists, its architecture matches Python, and vendor-required runtimes are installed. Record versions; do not copy DLLs from an unverified machine.
 2. Start IOPanel using the reviewed lab-local config and the normal GUI. Startup calls the CT400 initialization path (`CT400_Init`); record whether connection succeeds and the exact status/log message. Confirm it is the physical backend, not a `SIMULATED`/Dummy status. Confirm the expected device using the vendor-approved identity method; do not guess an instrument address.
-3. Before clicking Scan, have the operator approve and enter exact scan boundaries, resolution, speed, power/unit, input port and detector for the connected setup. Record them. Confirm the GUI reflects those entries.
-4. Start one bounded, operator-approved scan from the GUI. Confirm it completes, the plot displays wavelength and measured-power data, requested boundary behavior and sample count agree with the CT400's documented resolution semantics, and values/units are plausible according to the operator's independent checks. Do not assume the simulator's inclusive endpoint convention proves CT400 behavior.
-5. On a separate approved run, use the GUI cancellation action while a scan is active. Observe the cancellation status, scan cessation, CT400 responsiveness and laser-disabled state. Verify laser output state using the site's independent safe indication/check. The software attempts laser disable during worker cleanup and CT400 close; this does not replace independent verification.
-6. With no scan active and output confirmed safe, close IOPanel normally. Confirm it exits cleanly and the CT400 handle/connection is released according to the supported driver/vendor indication. Do not use Task Manager as normal cleanup.
+3. Keep the scan idle. Verify the device is in the operator-confirmed safe state using the site's independent indication. Do not infer that the wrapper's fixed LI_1 close-time command controls the configured/selected input or proves safe state.
+4. With no scan active and output confirmed safe, close IOPanel normally. Confirm it exits cleanly and the CT400 handle/connection is released according to supported driver/vendor indication. Review logs for the close-time disable attempt, but do not treat that attempt as independent confirmation. Do not use Task Manager as normal cleanup.
 
-**Pass:** correct DLL/runtime/bitness and physical CT400 connection; scan data and plot agree with approved settings and vendor expectations; cancellation leaves output safely disabled; normal close releases the connection. **Fail:** any simulated fallback presented as physical, unexplained status/data, failure to stop or independently verify safe output, or unclean resource release. Stop live testing and follow site procedure on any safety concern.
+**Pass:** correct DLL/runtime/bitness and physical CT400 identity/connection; independently verified safe idle state; normal close releases the connection. **Fail:** any simulated backend presented as physical, unclear identity/state, or unclean resource release. Stop live testing and follow site procedure on any safety concern.
 
-## C. Allied Vision camera-only checks
+## D. Gate D — Operator-approved, low-risk CT400 acquisition
 
-1. Before opening IOPanel, record the installed Vimba SDK, VmbPy binding, transport-layer and camera firmware versions. Confirm the transport layer supports the connected interface. The Python binding alone is not the Vimba transport layer.
-2. Enable only the intended camera(s) in the lab-local configuration, with `backend = vimba` (or leave backend unset only when the physical default is intended). Verify configured identifiers using `Instruments > Discover Cameras...` while authorized. Record model/identity in controlled storage and ensure each configured identifier is unique and correct.
-3. Start IOPanel. Confirm each configured physical camera initializes, is identified by its physical name (no `[SIMULATED]` label), and streams frames into its camera panel. Record frame dimensions and pixel format from the application's supported information or the vendor utility while the device is not simultaneously open elsewhere.
-4. Confirm image orientation against a known asymmetric target and the `flip_horizontal` setting. Confirm image intensity is not clipped or unexpectedly scaled for the selected format. Change only operator-approved exposure, gain and supported controls; verify the displayed response and record actual values.
-5. Stop/close using the normal GUI path. Confirm streaming stops, the camera closes and can be reopened in a subsequent normal application start. Check that no other viewer owns the device.
+Prerequisites: Gate C passes; the responsible operator supplies and approves all site-specific scan limits, laser power, input port, detector and speed; the approved manual stop procedure and independent safe-state check are immediately available. Do not copy example/default INI values as operating limits.
 
-**Pass:** expected physical camera identity, supported pixel format, stable updating image with verified orientation/intensity behavior, applied supported control changes and clean close/reopen. **Fail:** camera absent, identity mismatch, unsupported format, stale/corrupt frames, unexplained image transform/scaling, or device remains locked after close.
+Use the physical backend explicitly (or omit the setting only when intentionally relying on the documented physical default); disable cameras for this gate. Before clicking Scan, confirm the GUI reflects the operator-approved boundaries, resolution, speed, power/unit, input port and detector. Start one bounded scan through the GUI only after the operator reviews every value. Record these settings and confirm the plot displays wavelength and measured-power data. Compare returned sample count, wavelength boundaries/order and units against the matching CT400 manual and independent checks; the simulator's endpoint convention is not evidence about the physical DLL. No measurements start automatically.
 
-## D. Concurrent physical scan and camera streaming
+**Pass:** operator-approved settings are displayed and recorded, the scan completes and its data match the vendor-defined semantics and independent checks. **Fail/stop:** unexpected output/state, ambiguous backend, boundary/count mismatch, communication issue or any operator concern. Do not repeat or widen a scan to diagnose an anomaly without new operator approval.
 
-Proceed only after sections B and C pass independently. Use only settings already approved for the exact setup. Start IOPanel once with the physical CT400 and intended Vimba cameras explicitly selected/configured.
+## E. Gate E — Supervised scan cancellation and shutdown
 
-1. Confirm physical device identities and that the camera view is updating before the scan.
-2. Start the operator-approved CT400 scan from the GUI. While it is visibly in progress, observe the camera view continuously and verify multiple distinct frames continue to arrive (not merely a frame before and after the scan). Record scan and frame observations/timestamps without placing unapproved software in the instrument control path.
-3. After completion, verify the plotted scan data are present and agree with the approved wavelength/resolution/power settings while the camera continues updating. If authorized, save scan data to a designated controlled test folder, inspect exported columns/units and provenance, then clearly segregate/delete the test measurement according to lab data policy. Do not treat a screenshot as raw measurement data.
-4. On a separate approved scan, cancel through the GUI while camera streaming remains active. Confirm scan cancellation does not stop camera frames, laser output reaches the independently verified safe state, and a subsequent operator-approved scan can be run if the site procedure allows.
-5. Close the application normally while camera streaming is active and no scan is running. Confirm both camera and CT400 resources release. Only test closing during an active scan if the responsible operator has explicitly approved it and an independent safe stop is available; current shutdown code has a timeout/forced-thread-termination fallback, which warrants special caution.
+Prerequisites: Gate D passes and the lab operator has confirmed the vendor-supported cancellation sequence, expected `CT400_ScanStop`/wait behavior and an independent safe stop before any active scan. Current source contains a forced-termination fallback; do not deliberately provoke it during laser operation.
 
-**Pass:** real camera frames demonstrably continue during the real physical scan, scan results reach the plot, cancellation/error in one path does not silently corrupt the other, and normal shutdown releases both systems. **Fail:** frozen camera, missing/incorrect plot, backend identity uncertainty, cross-path failure, unsafe laser state, or hanging/unclean shutdown. Stop and document exact logs/settings.
+1. Conduct one separately approved cancellation while an active bounded scan is supervised. Use the GUI cancellation control, observe the scan status, selected-input laser safe state via an independent indication, worker completion and CT400 responsiveness.
+2. Do not close the window during an active scan unless the operator has explicitly established that exact shutdown procedure as safe. Do not deliberately interrupt communications or disconnect devices during emission.
+3. After scan has stopped and safe state is independently confirmed, close normally and check handle release.
 
-## E. Negative tests and recovery
+**Pass:** cancellation is cooperative, the scan ceases, selected input is independently safe, no forced termination occurs and the CT400 releases cleanly. **Fail/stop:** stop does not complete, safe state cannot be confirmed, worker is terminated, or resource release is uncertain. Follow the site's emergency procedure; preserve logs without repeating the test.
 
-Automated driver-free tests already cover simulator failures and worker recovery; they do not prove that physical hardware is safe to fault. Never deliberately interrupt an active scan, laser connection or camera link unless the authorized operator has approved the exact procedure and the manufacturer's/site process permits it.
+## F. Gate F — Concurrent physical CT400 scan and camera streaming
 
-- **Camera unavailable at startup:** with IOPanel closed, and only if approved, test a configuration whose camera identifier is absent or whose camera is safely disconnected. Confirm the UI reports the camera unavailable, leaves its view clearly unavailable, and does not label simulated frames as physical or silently substitute a simulator. Confirm CT400 availability/status remains independently understandable. Restore the camera and use a normal restart/reopen procedure; confirm recovery.
-- **Vimba/transport unavailable:** preferably validate this on a separate non-lab Windows installation or controlled software image with no transport layer, not by uninstalling drivers on the live acquisition PC. Confirm the app reports unavailable discovery/opening and no camera is represented as connected. Restore the known-good image before live validation.
-- **CT400 unavailable/communication failure:** first ensure laser output is independently safe and no scan is active. Only use a vendor/site-approved disconnected-start or communication-loss test. Confirm any Dummy/simulation status is explicit and the physical operation is blocked/clearly identified; never count its data as an experiment. Restore the connection and verify normal physical initialization before acquisition.
-- **Mixed camera initialization:** if the lab has multiple configured physical cameras, test one failing identifier alongside one known-good camera only with approval. Confirm failure is attached to the correct panel and does not hide/replace successful physical frames. Do not induce hot-unplug during streaming unless specifically approved.
+Prerequisites: Gates A–E pass; camera and CT400 separately validated; only previously approved CT400 settings are used; operator supervises the entire run.
 
-**Pass:** every failure is visible and attributed to the affected device, no physical failure silently becomes experimental simulation, unaffected subsystems remain usable when expected, and recovery follows an approved restart procedure. **Fail:** ambiguous source/data, hidden error, stale device state, or unsafe/unrecoverable state. File a separate defect with redacted logs and configuration details.
+1. Use a reviewed configuration with physical CT400 and Vimba selected explicitly. Record camera SDK/transport/camera firmware and CT400 DLL/device/firmware versions.
+2. Confirm identity and continuously updating frames before scanning. Start one previously approved scan via the GUI.
+3. Observe and record multiple distinct physical frames arriving while the physical scan is visibly active (with times/evidence that establish overlap), then confirm scan wavelengths/powers appear in the real plot while camera streaming continues.
+4. Only if the operator has approved and Gate E cancellation passed, repeat cancellation with camera streaming and check that cancellation does not stop camera frames and leaves selected laser input independently safe.
+5. Stop scan, verify safe state, stop camera streaming and close normally. Closing the application during an active scan is outside this gate unless separately approved under Gate E.
 
-## F. Final shutdown and safety checks
+**Pass:** physical devices are unambiguous; camera frames overlap in time with scan activity; plot receives scan data; scan completion/cancellation leaves camera operation intact; resources release. **Fail/stop:** frozen camera, missing data, ambiguous provenance, any unsafe laser state or unclean shutdown.
 
-1. Stop the scan through the GUI and wait for the worker to report completion/cancellation. Confirm laser disabled using an independent lab-approved indication; do not rely solely on the GUI message or software cleanup attempt.
-2. Stop camera streaming and close IOPanel normally. Observe process exit and camera/CT400 release indicators. Record Qt/worker errors and any delay. Do not force-terminate the application while the CT400 may be scanning.
-3. Return instruments, laser, shutters, optical path, source, detectors and camera controls to the operator-approved final state. Follow site checkout procedures and notify the responsible operator of anomalies.
-4. Complete the record sheet and attach only redacted logs/results to the internal lab record. Keep raw experimental and identifying information in controlled storage.
+## G. Gate G — Negative tests, recovery and final shutdown
 
-**Pass:** scan and streaming are stopped, laser safe state is independently verified, devices are released, process exits cleanly and equipment is left in the approved state. Otherwise fail and follow the lab escalation procedure.
+Only conduct fault/recovery scenarios with an approved, instrument-specific procedure and no unapproved emission. Do not create a fault merely to complete a checklist.
+
+For approved negative cases, include absent camera at startup, unavailable Vimba SDK/transport, CT400 unavailable while confirmed safe, and mixed camera initialization if the configuration supports it. Prefer a separate controlled software image for missing drivers. Never unplug a live instrument or induce CT400 communication loss during a scan without written/site-approved procedure. For each test verify affected-device attribution, no simulated data presented as physical, unaffected subsystem behavior and approved recovery.
+
+1. Stop scan through the GUI only with the approved procedure and wait for worker completion. Independently verify selected laser input is safe; do not treat the GUI status or the close-time LI_1 command as proof.
+2. Stop camera acquisition and close IOPanel normally; verify no active workers, process handles or locked devices remain. Do not force terminate while any CT400 operation could be active.
+3. Return source, shutter, optical path, detector and camera controls to the operator-approved state; finish lab checkout.
+4. Complete the record sheet and use controlled lab storage. Attach only redacted logs/evidence to internal issue records.
+
+**Pass:** all operations stopped, selected output independently verified safe, devices released and process exited cleanly. Otherwise fail and use the lab escalation procedure.
 
 ## Result record
 
-For each A–F section record `PASS`, `FAIL`, or `NOT RUN`, date/operator reference, observations, expected versus actual behavior, redacted log references, and a separately filed issue for each software defect. State explicitly that simulated/driver-free checks are not hardware results. Record whether any test was stopped early for safety or reliability reasons.
+For each Gate A–G record `PASS`, `FAIL`, or `NOT RUN`, date/operator reference, observations, expected versus actual behavior, redacted log references and separately filed software defects. State explicitly that simulated/driver-free checks are not hardware results. Record any test stopped early for safety or reliability reasons. Do not advance past a failed prerequisite gate.
