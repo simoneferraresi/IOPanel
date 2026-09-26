@@ -8,12 +8,8 @@ on:
 
 jobs:
   camera-without-vimba:
-    runs-on: ubuntu-latest
-    env:
-      QT_QPA_PLATFORM: offscreen
+    runs-on: windows-latest
     steps:
-      - run: sudo apt-get update
-      - run: sudo apt-get install -y libegl1
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
