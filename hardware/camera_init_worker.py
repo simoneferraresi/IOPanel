@@ -1,9 +1,10 @@
 import logging
 
-from PySide6.QtCore import Signal, Slot
+from PySide6.QtCore import QCoreApplication, QThread, Signal, Slot
 
 from config_model import CameraConfig
 from hardware.camera import VimbaCam
+from hardware.simulated_camera import SimulatedCamera
 from logic.task_runner import BaseWorker
 
 logger = logging.getLogger("LabApp.CameraInit")
@@ -31,11 +32,28 @@ class CameraInitWorker(BaseWorker):
         logger.info(f"Worker starting initialization for: {self.cam_config.name} (ID: {self.identifier})")
         cam_instance = None
         try:
-            cam_instance = VimbaCam(
-                identifier=self.identifier,  # Use the passed-in identifier
-                camera_name=self.cam_config.name,
-                flip_horizontal=self.cam_config.flip_horizontal,
-            )
+            if self.cam_config.backend == "simulation":
+                cam_instance = SimulatedCamera(
+                    identifier=self.identifier,
+                    camera_name=f"{self.cam_config.name} [SIMULATED]",
+                    flip_horizontal=self.cam_config.flip_horizontal,
+                    width=self.cam_config.simulation_width,
+                    height=self.cam_config.simulation_height,
+                )
+                app = QCoreApplication.instance()
+                if app is not None and QThread.currentThread() is not app.thread():
+                    cam_instance.moveToThread(app.thread())
+                # The GUI thread opens the simulator after receiving it. This
+                # keeps its QObject and QTimer ownership on the GUI thread.
+                self.camera_initialized.emit(self.identifier, cam_instance, self.cam_config)
+                self.finished.emit()
+                return
+            else:
+                cam_instance = VimbaCam(
+                    identifier=self.identifier,
+                    camera_name=self.cam_config.name,
+                    flip_horizontal=self.cam_config.flip_horizontal,
+                )
             if cam_instance.open():
                 logger.info(f"Worker successfully opened camera: {self.cam_config.name}")
                 self.camera_initialized.emit(self.identifier, cam_instance, self.cam_config)

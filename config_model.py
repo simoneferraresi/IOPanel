@@ -64,6 +64,11 @@ class CameraConfig(BaseModel):
     flip_horizontal: bool = Field(
         default=False, description="If True, the camera's video feed will be flipped horizontally."
     )
+    backend: Literal["vimba", "simulation"] = Field(
+        default="vimba", description="Explicit camera backend; simulation never acts as a Vimba fallback."
+    )
+    simulation_width: int = Field(default=64, gt=1, description="Simulated mono8 frame width in pixels.")
+    simulation_height: int = Field(default=48, gt=1, description="Simulated mono8 frame height in pixels.")
 
 
 class ScanDefaults(BaseModel):
