@@ -130,13 +130,19 @@ Prerequisites: Gates A–E pass; camera and CT400 separately validated; only pre
 
 **Pass:** physical devices are unambiguous; camera frames overlap in time with scan activity; plot receives scan data; scan completion/cancellation leaves camera operation intact; resources release. **Fail/stop:** frozen camera, missing data, ambiguous provenance, any unsafe laser state or unclean shutdown.
 
-## G. Gate G — Negative tests, recovery and final shutdown
+## Negative tests and recovery
 
 Only conduct fault/recovery scenarios with an approved, instrument-specific procedure and no unapproved emission. Do not create a fault merely to complete a checklist.
 
 For approved negative cases, include absent camera at startup, unavailable Vimba SDK/transport, CT400 unavailable while confirmed safe, and mixed camera initialization if the configuration supports it. Prefer a separate controlled software image for missing drivers. Never unplug a live instrument or induce CT400 communication loss during a scan without written/site-approved procedure. For each test verify affected-device attribution, no simulated data presented as physical, unaffected subsystem behavior and approved recovery.
 
-1. Stop scan through the GUI only with the approved procedure and wait for worker completion. Independently verify selected laser input is safe; do not treat the GUI status or the close-time LI_1 command as proof.
+**Pass:** every approved failure is visible and attributed to the affected device; no simulation is presented as physical data; unaffected subsystems remain usable where expected; recovery follows the approved procedure. **Fail/stop:** ambiguous data source, hidden error, stale device state, unsafe state or unrecoverable failure.
+
+## G. Gate G — Final resource release and application shutdown
+
+Prerequisites: no unresolved instrument error; any scan has completed or has been cancelled using the procedure validated at Gate E; the responsible operator confirms the safe-state indication before close.
+
+1. Independently verify the selected laser input is safe; do not treat GUI status or the close-time LI_1 command as proof.
 2. Stop camera acquisition and close IOPanel normally; verify no active workers, process handles or locked devices remain. Do not force terminate while any CT400 operation could be active.
 3. Return source, shutter, optical path, detector and camera controls to the operator-approved state; finish lab checkout.
 4. Complete the record sheet and use controlled lab storage. Attach only redacted logs/evidence to internal issue records.
@@ -145,4 +151,4 @@ For approved negative cases, include absent camera at startup, unavailable Vimba
 
 ## Result record
 
-For each Gate A–G record `PASS`, `FAIL`, or `NOT RUN`, date/operator reference, observations, expected versus actual behavior, redacted log references and separately filed software defects. State explicitly that simulated/driver-free checks are not hardware results. Record any test stopped early for safety or reliability reasons. Do not advance past a failed prerequisite gate.
+For each Gate A–G record `PASS`, `FAIL`, or `NOT RUN`, date/operator reference, observations, expected versus actual behavior, redacted log references and separately filed software defects. Record the negative/recovery cases separately as `PASS`, `FAIL`, or `NOT RUN`. State explicitly that simulated/driver-free checks are not hardware results. Record any test stopped early for safety or reliability reasons. Do not advance past a failed prerequisite gate.
