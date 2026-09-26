@@ -4,6 +4,8 @@ This checklist is for an authorized operator on the laboratory PC. It is a manua
 
 Tracking issue: [#20](https://github.com/simoneferraresi/IOPanel/issues/20).
 
+Recorded offline audit: [laboratory validation report](laboratory-validation-report.md). It contains no physical hardware results; complete the gates below only with the required operator authorization.
+
 ## Safety and scope
 
 - Obtain the site's normal instrument and laser authorization before starting. Follow the CT400, tunable laser, detector, camera and optical-table procedures in force at the lab.
