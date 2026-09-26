@@ -16,4 +16,4 @@ jobs:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --extra test
-      - run: uv run pytest tests/test_camera_driver_optional.py -q
+      - run: uv run pytest tests/test_config_model.py tests/test_camera_driver_optional.py -q
