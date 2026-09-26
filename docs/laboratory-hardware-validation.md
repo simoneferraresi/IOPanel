@@ -45,7 +45,7 @@ Run these on the target PC before connecting or enabling equipment:
 ```powershell
 git status --short --branch
 git rev-parse HEAD
-python -c "import platform, struct, sys; print(sys.version); print(platform.platform()); print(f'Python architecture: {struct.calcsize(\"P\") * 8}-bit')"
+python -c "import platform, struct, sys; print(sys.version); print(platform.platform()); print('Python architecture: {}-bit'.format(struct.calcsize('P') * 8))"
 uv --version
 uv sync --extra test
 uv run pytest -q
@@ -53,7 +53,13 @@ uv run pytest -q
 
 Expected: the recorded commit is the intended release; the environment resolves from the committed lock file; all hardware-independent tests pass. This test command must run without a CT400 DLL, Vimba SDK, cameras or CT400 connected. Investigate any failure; do not skip a test to produce a pass.
 
-Validate the lab-local INI with `config_model.AppConfig.from_ini_dict` using a read-only configuration parsing check, or use the application's normal startup after operator approval. Confirm the intended backend explicitly. For physical work, omit `ct400_backend` only if intentionally relying on the backward-compatible default `physical`; never set a simulated backend for a physical validation run. Camera sections default to `vimba`; simulation must be explicitly selected and must not be used to pass a physical test. Check camera identifiers and enabled flags before launch. Do not print or attach the full lab INI to a public issue.
+Validate the lab-local INI without constructing a window or opening devices:
+
+```powershell
+uv run python -c "from pathlib import Path; from app import load_raw_config_from_ini; from config_model import AppConfig; AppConfig.from_ini_dict(load_raw_config_from_ini(Path('config.lab.ini'))); print('Configuration is valid')"
+```
+
+This imports application modules but does not instantiate `MainWindow` or initialize an instrument. Confirm the intended backend explicitly. For physical work, omit `ct400_backend` only if intentionally relying on the backward-compatible default `physical`; never set a simulated backend for a physical validation run. Camera sections default to `vimba`; simulation must be explicitly selected and must not be used to pass a physical test. Check camera identifiers and enabled flags before launch. Do not print or attach the full lab INI to a public issue.
 
 **Pass:** clean dependency/test result; configuration is valid and matches the intended physical devices; operator-approved limits are recorded. **Fail:** unresolved dependency/architecture mismatch, invalid/ambiguous config, unexpected simulation selection, or any unreviewed test failure. Stop before connecting/operating equipment on failure.
 
