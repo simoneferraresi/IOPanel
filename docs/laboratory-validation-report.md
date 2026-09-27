@@ -44,14 +44,14 @@ The local docs do not establish whether `ScanWaitEnd` is a blocking call in the 
 | Gate | Result | Notes |
 | --- | --- | --- |
 | A — Offline environment/configuration | PASS (offline checks only) | Hardware-independent tests and config parsing passed. The site/operator approval record and approved scan limits are not available in this offline audit. |
-| B — Camera discovery and controlled streaming | NOT RUN | No Vimba discovery, device opening, or streaming was initiated. |
+| B — Camera discovery and controlled streaming | PARTIAL | Gate B1 physical discovery PASS on 2026-09-27; Gate B2 streaming NOT RUN. See the separate run record below. |
 | C — CT400 identity, connection, safe idle | NOT RUN | No CT400 initialization or device query was initiated. Instrument identity, firmware, connection and independent safe-state indication remain unverified. |
 | D — Operator-approved CT400 scan | NOT RUN | No scan settings were provided or used; no laser command or scan was issued. |
 | E — Supervised cancellation/shutdown | NOT RUN | No active scan or cancellation was initiated. Safe interrupt and shutdown behavior remain unresolved. |
 | F — Concurrent scan and camera streaming | NOT RUN | No hardware acquisition was initiated. |
 | G — Final hardware resource release | NOT RUN | No device resources were opened. |
 
-No physical hardware validation has been completed. No simulated result is represented as physical evidence. No hardware or driver failure was observed because no hardware or driver was opened. No production wrapper changes were made.
+At the time of this initial offline audit, no physical hardware validation had been completed. No simulated result is represented as physical evidence. No hardware or driver failure was observed in that audit. No production wrapper changes were made.
 
 ## Remaining questions and next action
 
@@ -90,6 +90,26 @@ Static source review confirms `CT400InitWorker.run()` checks the `simulation` ba
 
 ### Gate B1/B2 state
 
-Gate B1 can use the VmbPy discovery API (`VmbSystem` context and `get_all_cameras()` plus camera identity getters) directly, without launching IOPanel or calling a camera-open/stream method. It will initialize the Vimba X API and enumerate transport layers/camera identities; it may contend with an existing owner, which has not been ruled out. This gate remains NOT RUN pending explicit authorization and operator confirmation that no existing session owns the cameras.
+### Physical camera run — Gate B1 discovery
 
-Gate B2 remains NOT RUN. Do not use `VimbaCam.open()` or normal IOPanel startup without explicit approval for the source-level camera feature changes listed above. Before streaming, agree on how existing trigger/auto-exposure/auto-gain/gamma/pixel-format state will be preserved or explicitly approved, and verify the exact VmbPy close/stop sequence against the installed API. No camera resource-release behavior has been physically observed.
+**Date:** 2026-09-27 (operator-reported run; exact time not provided). **Result: PASS for discovery only.** The operator ran the prepared `tools/vimba_b1_diagnostic.py` in ordinary Windows Command Prompt, using system Python 3.12.8 x64 at `%LOCALAPPDATA%\Programs\Python\Python312\python.exe`, VmbPy 1.0.5, VmbC 1.0.6, and Vimba X GigE Transport Layer 1.10.0. The diagnostic used a ten-second discovery wait and reported normal VmbSystem context exit.
+
+| Configured camera | Discovered identity | Interface | Configuration comparison |
+| --- | --- | --- | --- |
+| Top — `DEV_000F315B9CE1` | `DEV_000F315B9CE1`, Mako G-125B | Ethernet 2 | ID matched |
+| Side — `DEV_000F315BA8F9` | `DEV_000F315BA8F9`, Mako G-125B | Ethernet 3 | ID matched |
+
+The operator reported that both cameras were powered on and free, with the CT400 powered off, and that there were no duplicate camera IDs or serial numbers. Full serial numbers and private network/laboratory settings are not included. This run establishes camera discovery only; it does not establish camera opening, feature compatibility, frame delivery, resource release after streaming, or IOPanel workflow behavior. The earlier immediate discovery returned no devices. Whether the difference was caused by the ten-second wait or by the ordinary Windows Command Prompt versus Codex execution environment remains unknown.
+
+### Gate B2 — Top camera controlled streaming
+
+**Result: NOT RUN.** The B2 diagnostic script is prepared at `tools/vimba_b2_top_stream.py`, restricted to the approved Top ID `DEV_000F315B9CE1`, and has only received static review and a syntax/CLI-help check. It has not entered VmbSystem or opened a camera. The current Codex execution path is sandboxed and is not the ordinary Windows Command Prompt used for Gate B1, so no physical streaming attempt was made. No frame results or physical cleanup observations are available.
+
+The script reads AcquisitionMode, TriggerMode, exposure, gain, pixel format, dimensions, frame rate, and available auto-exposure/auto-gain state before acquisition. It refuses to stream unless the existing mode is Continuous and trigger mode is Off; it performs no feature writes. The VmbPy 1.0.5 source documents `with camera` context management, asynchronous `start_streaming(handler=...)`, `queue_frame(frame)` as the callback's last frame operation, and `stop_streaming()` for cleanup. These source findings do not establish physical cleanup behavior. Streaming, frame format/intensity, and normal physical cleanup remain unverified.
+
+The current Codex shell is sandboxed and is not the ordinary Command Prompt required for the physical run. To perform the already-authorized Gate B2 in ordinary Windows Command Prompt, run:
+
+```bat
+cd /d "%USERPROFILE%\Desktop\IOPanel-lab-validation"
+"%LOCALAPPDATA%\Programs\Python\Python312\python.exe" tools\vimba_b2_top_stream.py --camera-id DEV_000F315B9CE1
+```
