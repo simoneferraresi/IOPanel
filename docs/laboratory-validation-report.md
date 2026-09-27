@@ -44,14 +44,14 @@ The local docs do not establish whether `ScanWaitEnd` is a blocking call in the 
 | Gate | Result | Notes |
 | --- | --- | --- |
 | A — Offline environment/configuration | PASS (offline checks only) | Hardware-independent tests and config parsing passed. The site/operator approval record and approved scan limits are not available in this offline audit. |
-| B — Camera discovery and controlled streaming | NOT RUN | No Vimba discovery, device opening, or streaming was initiated. |
+| B — Camera discovery and controlled streaming | PARTIAL | Gate B1 discovery PASS; Gate B2 Top-camera streaming PASS. Side-camera streaming and the complete IOPanel camera workflow remain NOT RUN. See the separate run records below. |
 | C — CT400 identity, connection, safe idle | NOT RUN | No CT400 initialization or device query was initiated. Instrument identity, firmware, connection and independent safe-state indication remain unverified. |
 | D — Operator-approved CT400 scan | NOT RUN | No scan settings were provided or used; no laser command or scan was issued. |
 | E — Supervised cancellation/shutdown | NOT RUN | No active scan or cancellation was initiated. Safe interrupt and shutdown behavior remain unresolved. |
 | F — Concurrent scan and camera streaming | NOT RUN | No hardware acquisition was initiated. |
 | G — Final hardware resource release | NOT RUN | No device resources were opened. |
 
-No physical hardware validation has been completed. No simulated result is represented as physical evidence. No hardware or driver failure was observed because no hardware or driver was opened. No production wrapper changes were made.
+At the time of this initial offline audit, no physical hardware validation had been completed. No simulated result is represented as physical evidence. No hardware or driver failure was observed in that audit. No production wrapper changes were made.
 
 ## Remaining questions and next action
 
@@ -90,6 +90,39 @@ Static source review confirms `CT400InitWorker.run()` checks the `simulation` ba
 
 ### Gate B1/B2 state
 
-Gate B1 can use the VmbPy discovery API (`VmbSystem` context and `get_all_cameras()` plus camera identity getters) directly, without launching IOPanel or calling a camera-open/stream method. It will initialize the Vimba X API and enumerate transport layers/camera identities; it may contend with an existing owner, which has not been ruled out. This gate remains NOT RUN pending explicit authorization and operator confirmation that no existing session owns the cameras.
+### Physical camera run — Gate B1 discovery
 
-Gate B2 remains NOT RUN. Do not use `VimbaCam.open()` or normal IOPanel startup without explicit approval for the source-level camera feature changes listed above. Before streaming, agree on how existing trigger/auto-exposure/auto-gain/gamma/pixel-format state will be preserved or explicitly approved, and verify the exact VmbPy close/stop sequence against the installed API. No camera resource-release behavior has been physically observed.
+**Date:** 2026-09-27 (operator-reported run; exact time not provided). **Result: PASS for discovery only.** The operator ran the prepared `tools/vimba_b1_diagnostic.py` in ordinary Windows Command Prompt, using system Python 3.12.8 x64 at `%LOCALAPPDATA%\Programs\Python\Python312\python.exe`, VmbPy 1.0.5, VmbC 1.0.6, and Vimba X GigE Transport Layer 1.10.0. The diagnostic used a ten-second discovery wait and reported normal VmbSystem context exit.
+
+| Configured camera | Discovered identity | Interface | Configuration comparison |
+| --- | --- | --- | --- |
+| Top — `DEV_000F315B9CE1` | `DEV_000F315B9CE1`, Mako G-125B | Ethernet 2 | ID matched |
+| Side — `DEV_000F315BA8F9` | `DEV_000F315BA8F9`, Mako G-125B | Ethernet 3 | ID matched |
+
+The operator reported that both cameras were powered on and free, with the CT400 powered off, and that there were no duplicate camera IDs or serial numbers. Full serial numbers and private network/laboratory settings are not included. This run establishes camera discovery only; it does not establish camera opening, feature compatibility, frame delivery, resource release after streaming, or IOPanel workflow behavior. The earlier immediate discovery returned no devices. Whether the difference was caused by the ten-second wait or by the ordinary Windows Command Prompt versus Codex execution environment remains unknown.
+
+### Physical camera run — Gate B2 Top streaming
+
+**Date:** 2026-09-27 (operator-reported run; exact time not provided). **Result: PASS for the Top camera only.** The operator ran `tools/vimba_b2_top_stream.py` from ordinary Windows Command Prompt using Python 3.12.8 x64, VmbPy 1.0.5, and VmbC 1.0.6. After the ten-second VmbSystem discovery wait, the script selected the exact configured Top ID `DEV_000F315B9CE1`, identified as an Allied Vision Mako G-125B. It did not open the Side camera. The CT400 remained powered off; neither CT400 nor the IOPanel GUI was contacted/launched.
+
+Before streaming, the script read AcquisitionMode `Continuous`, TriggerMode `Off`, Exposure `16955 µs`, Gain `30.0`, ExposureAuto `Off`, GainAuto `Off`, PixelFormat `Mono8`, dimensions `1292 × 964`, and reported frame rate `30.335204 fps`. It performed no feature writes. It received ten complete frames with distinct, increasing frame IDs 1–10 and increasing arrival timestamps. The last frame arrived 0.375 seconds after acquisition started. Sampled mean intensities were approximately 4–7; there were no incomplete frames, callback errors, or requeue errors.
+
+`stop_streaming()` succeeded. The camera and VmbSystem contexts both exited normally, with no cleanup errors. The script reported PASS. No raw frames or full camera serial numbers were recorded or committed. This establishes only the standalone Top-camera streaming path; it does not establish Side-camera streaming or IOPanel's physical camera workflow.
+
+The 15-second deadline bounds the asynchronous frame-collection wait; the observed ten-frame collection completed in 0.375 seconds. It is not an absolute wall-clock timeout for synchronous SDK open/start/stop/shutdown calls, for which VmbPy 1.0.5 provides no caller-supplied timeout. No force-termination was used.
+
+### Gate B3 — Side camera controlled streaming (prepared; NOT RUN)
+
+After separate authorization, run a Side-only diagnostic using exact ID `DEV_000F315BA8F9`, system Python 3.12.8, VmbPy 1.0.5, and the same Vimba X runtime. Preserve the B2 read-only preflight: read AcquisitionMode, TriggerMode, exposure, gain, auto modes, pixel format, dimensions, and frame rate; stop before streaming unless the existing settings are Continuous and trigger Off. Do not write features. Use a ten-second discovery wait, collect ten complete frames with a 15-second frame-collection deadline, capture status, dimensions, format, frame IDs/timestamps and lightweight intensity statistics, always requeue callback frames, then stop and verify normal camera/VmbSystem cleanup. Do not fall back to the first camera. Stop on an unexpected identity, settings state, discovery/access error, missing frames, callback/requeue error, or cleanup error. No Side camera has been opened in B1 or B2.
+
+### Gate B4 — IOPanel application workflow with simulated CT400 (prepared; NOT RUN)
+
+Gate B4 requires separate authorization, successful B3, both cameras confirmed free, and a reviewed temporary config that explicitly selects `ct400_backend = simulation` and `backend = vimba` for Top and Side. Preserve the existing untracked `config.camera-validation.local.ini`; do not edit or publish it. Its current CT400 backend is simulation, while camera backends are omitted and therefore rely on the `CameraConfig` default `vimba`; prepare/review a separate B4 config with explicit camera backends before any GUI launch. Source review shows `CT400InitWorker` returns `DummyCT400` before DLL lookup when simulation is selected. `_begin_lazy_init()` starts that CT400 worker, initializes VmbSystem when physical cameras are enabled, and opens/starts streaming for enabled cameras. The piezo initialization call is currently commented out, so the startup path does not run piezo discovery.
+
+Before B4, the operator must explicitly approve the startup camera writes in `VimbaCam._configure_camera()` for each camera: `AcquisitionMode=Continuous`, `TriggerMode=Off`, `ExposureAuto=Off`, and `GainAuto=Off`; Gamma is set to 1.0 clamped to the camera's writable range; pixel format is set to `Mono8` when available, otherwise the first supported OpenCV mono format, then `BGR8`/`RGB8` or the first supported color format. Pixel format is written even if it already has the selected value. IOPanel does not set numeric exposure, gain, dimensions, or frame rate during startup. Top's observed pre-B4 values were Exposure 16955 µs, Gain 30.0, Mono8, 1292 × 964, with auto modes off; Side values must be established in B3. Gamma values/ranges have not been measured. Approval must cover the exact resulting pixel format and Gamma change, and confirm retaining each camera's current exposure and gain with auto modes disabled.
+
+On an authorized B4 run, confirm the GUI labels CT400 as simulated, both expected physical camera IDs initialize and stream, and no camera errors occur. Stop on a physical CT400 indication, an unexpected camera identity/settings change, failed stream/resource cleanup, or other hardware activity outside this scope. B4 is not authorized or run here.
+
+### Offline test warning follow-up
+
+One earlier full-suite run emitted a `RuntimeWarning` from pytest-qt 4.4.0 at `pytestqt/wait_signal.py:741`: it could not disconnect `MultiSignalBlocker._quit_loop_by_timeout` from `timeout()`, during `test_scan_failure_is_reported_while_camera_keeps_streaming`. That run still passed all 29 tests. On 2026-09-27 the documented offline suite passed with 29 tests using `uv run --offline --no-sync pytest -q -p no:cacheprovider --basetemp=<workspace-local-temp>` with `UV_CACHE_DIR` also pointed to a workspace-local temporary directory. An initial attempt using the shared uv cache was denied by the sandbox; no sync/install was performed. Three additional full-suite runs under system Python each passed 29 tests, and eight repetitions of the implicated test each passed; none reproduced the warning. No production code, test assertions, warning filters, or hardware code were changed. Current evidence indicates an intermittent pytest-qt/Qt signal-cleanup warning; its cause is not established, so it remains a low-confidence flake rather than a confirmed defect.
