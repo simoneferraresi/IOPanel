@@ -21,6 +21,7 @@ APPROVED_CAMERA_ID = "DEV_000F315B9CE1"
 TARGET_COMPLETE_FRAMES = 10
 MAX_ACQUISITION_SECONDS = 15.0
 FRAME_BUFFER_COUNT = 5
+DISCOVERY_WAIT_SECONDS = 10.0
 
 
 def read_feature(camera, candidates: tuple[str, ...]):
@@ -164,6 +165,8 @@ def main() -> int:
             VmbSystem.get_instance(), result, "system_context_closed", "VmbSystem"
         ) as vmb:
             print(f"Vimba runtime: {vmb.get_version()}")
+            print(f"Waiting {DISCOVERY_WAIT_SECONDS:g}s for camera discovery...")
+            time.sleep(DISCOVERY_WAIT_SECONDS)
             try:
                 camera = vmb.get_camera_by_id(args.camera_id)
                 if camera.get_id() != args.camera_id:
