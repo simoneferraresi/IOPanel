@@ -39,7 +39,7 @@ The Python wrapper's `scan_wait_end()` treats `-1` as a communication/call error
 
 The local docs do not establish whether `ScanWaitEnd` is a blocking call in the operational sense required by Issue #22, whether `ScanStop` can interrupt it safely from another thread, or what return codes are safe to treat as cancellation. Static review also confirms `CT400.close()` issues a disable request for `LI_1` before `CT400_Close`, while scan cleanup disables the selected input. The vendor header does not say that disabling `LI_1` disables other inputs. No laser commands were sent to test this behavior.
 
-## Physical gates
+## Physical gates (initial audit status; historical; see completed camera qualification below)
 
 | Gate | Result | Notes |
 | --- | --- | --- |
@@ -51,7 +51,7 @@ The local docs do not establish whether `ScanWaitEnd` is a blocking call in the 
 | F — Concurrent scan and camera streaming | NOT RUN | No hardware acquisition was initiated. |
 | G — Final hardware resource release | NOT RUN | No device resources were opened. |
 
-At the time of this initial offline audit, no physical hardware validation had been completed. No simulated result is represented as physical evidence. No hardware or driver failure was observed in that audit. No production wrapper changes were made.
+At the time of this initial offline audit, no physical hardware validation had been completed; the later camera qualification below supersedes the earlier camera status. No simulated result is represented as physical evidence. No hardware or driver failure was observed in that audit. No production wrapper changes were made.
 
 ## Remaining questions and next action
 
@@ -84,7 +84,7 @@ GitHub CLI was checked independently of the GitHub connector. `gh auth status` r
 
 ### Temporary camera-validation configuration
 
-Created local-only `config.camera-validation.local.ini` as a copy of the existing config with `ct400_backend = simulation` added. Offline model parsing confirmed DummyCT400 is selected and the two camera configurations are unchanged. The original `config.ini` was not edited. The temporary file contains private laboratory camera configuration and is intentionally untracked and excluded from publication.
+Created a local-only temporary camera-validation configuration as a copy of the existing config with `ct400_backend = simulation` added. Offline model parsing confirmed DummyCT400 is selected and the two camera configurations are unchanged. The original `config.ini` was not edited. The temporary file contains private laboratory camera configuration and is intentionally untracked and excluded from publication.
 
 Static source review confirms `CT400InitWorker.run()` checks the `simulation` backend before DLL lookup or `CT400(...)` construction and returns `DummyCT400`. Thus, if this temporary file is passed to IOPanel, the CT400 initialization worker cannot load or call the physical CT400 DLL. This proof applies to that worker path; it does not make application startup a discovery-only action, because enabled Vimba cameras open during startup.
 
@@ -92,18 +92,18 @@ Static source review confirms `CT400InitWorker.run()` checks the `simulation` ba
 
 ### Physical camera run — Gate B1 discovery
 
-**Date:** 2026-09-27 (operator-reported run; exact time not provided). **Result: PASS for discovery only.** The operator ran the prepared `tools/vimba_b1_diagnostic.py` in ordinary Windows Command Prompt, using system Python 3.12.8 x64 at `%LOCALAPPDATA%\Programs\Python\Python312\python.exe`, VmbPy 1.0.5, VmbC 1.0.6, and Vimba X GigE Transport Layer 1.10.0. The diagnostic used a ten-second discovery wait and reported normal VmbSystem context exit.
+**Date:** 2026-09-27 (operator-reported run; exact time not provided). **Result: PASS for discovery only.** The operator ran the prepared `tools/vimba_b1_diagnostic.py` in ordinary Windows Command Prompt, using system Python 3.12.8 x64, VmbPy 1.0.5, VmbC 1.0.6, and Vimba X GigE Transport Layer 1.10.0. The diagnostic used a ten-second discovery wait and reported normal VmbSystem context exit.
 
 | Configured camera | Discovered identity | Interface | Configuration comparison |
 | --- | --- | --- | --- |
-| Top — `DEV_000F315B9CE1` | `DEV_000F315B9CE1`, Mako G-125B | Ethernet 2 | ID matched |
-| Side — `DEV_000F315BA8F9` | `DEV_000F315BA8F9`, Mako G-125B | Ethernet 3 | ID matched |
+| Top — Top camera | Top camera, Mako G-125B | Ethernet 2 | ID matched |
+| Side — Side camera | Side camera, Mako G-125B | Ethernet 3 | ID matched |
 
 The operator reported that both cameras were powered on and free, with the CT400 powered off, and that there were no duplicate camera IDs or serial numbers. Full serial numbers and private network/laboratory settings are not included. This run establishes camera discovery only; it does not establish camera opening, feature compatibility, frame delivery, resource release after streaming, or IOPanel workflow behavior. The earlier immediate discovery returned no devices. Whether the difference was caused by the ten-second wait or by the ordinary Windows Command Prompt versus Codex execution environment remains unknown.
 
 ### Physical camera run — Gate B2 Top streaming
 
-**Date:** 2026-09-27 (operator-reported run; exact time not provided). **Result: PASS for the Top camera only.** The operator ran `tools/vimba_b2_top_stream.py` from ordinary Windows Command Prompt using Python 3.12.8 x64, VmbPy 1.0.5, and VmbC 1.0.6. After the ten-second VmbSystem discovery wait, the script selected the exact configured Top ID `DEV_000F315B9CE1`, identified as an Allied Vision Mako G-125B. It did not open the Side camera. The CT400 remained powered off; neither CT400 nor the IOPanel GUI was contacted/launched.
+**Date:** 2026-09-27 (operator-reported run; exact time not provided). **Result: PASS for the Top camera only.** The operator ran `tools/vimba_b2_top_stream.py` from ordinary Windows Command Prompt using Python 3.12.8 x64, VmbPy 1.0.5, and VmbC 1.0.6. After the ten-second VmbSystem discovery wait, the script selected the configured Top camera, identified as an Allied Vision Mako G-125B. It did not open the Side camera. The CT400 remained powered off; neither CT400 nor the IOPanel GUI was contacted/launched.
 
 Before streaming, the script read AcquisitionMode `Continuous`, TriggerMode `Off`, Exposure `16955 µs`, Gain `30.0`, ExposureAuto `Off`, GainAuto `Off`, PixelFormat `Mono8`, dimensions `1292 × 964`, and reported frame rate `30.335204 fps`. It performed no feature writes. It received ten complete frames with distinct, increasing frame IDs 1–10 and increasing arrival timestamps. The last frame arrived 0.375 seconds after acquisition started. Sampled mean intensities were approximately 4–7; there were no incomplete frames, callback errors, or requeue errors.
 
@@ -113,9 +113,9 @@ The 15-second deadline bounds the asynchronous frame-collection wait; the observ
 
 ### Gate B3 — Side camera controlled streaming
 
-The Side-only diagnostic `tools/vimba_b3_side_stream.py` was prepared from the validated B2 procedure and remains restricted to exact ID `DEV_000F315BA8F9`; the original Top diagnostic is unchanged. It waits ten seconds after entering VmbSystem, reads the existing camera settings without feature writes, requires `AcquisitionMode=Continuous` and `TriggerMode=Off`, targets ten complete frames within a 15-second frame-collection deadline, requeues callback frames, and explicitly stops streaming and exits both contexts. The 15-second deadline bounds frame collection only; synchronous SDK operations have no guaranteed timeout.
+The Side-only diagnostic `tools/vimba_b3_side_stream.py` was prepared from the validated B2 procedure and remains restricted to the Side camera; the original Top diagnostic is unchanged. It waits ten seconds after entering VmbSystem, reads the existing camera settings without feature writes, requires `AcquisitionMode=Continuous` and `TriggerMode=Off`, targets ten complete frames within a 15-second frame-collection deadline, requeues callback frames, and explicitly stops streaming and exits both contexts. The 15-second deadline bounds frame collection only; synchronous SDK operations have no guaranteed timeout.
 
-**Physical run — 2026-09-27, operator-reported. Result: PASS for Side camera streaming only.** The approved device was Side `DEV_000F315BA8F9`, Allied Vision Mako G-125B. The run used Python 3.12.8 x64, VmbPy 1.0.5, VmbC 1.0.6, and the ten-second discovery wait. Before streaming, the read-only inspection reported AcquisitionMode `Continuous`, TriggerMode `Off`, exposure `6180 µs`, gain `30`, PixelFormat `Mono8`, dimensions `1292 × 964`, and frame rate approximately `30.335 fps`.
+**Physical run — 2026-09-27, operator-reported. Result: PASS for Side camera streaming only.** The approved device was the Side camera, Allied Vision Mako G-125B. The run used Python 3.12.8 x64, VmbPy 1.0.5, VmbC 1.0.6, and the ten-second discovery wait. Before streaming, the read-only inspection reported AcquisitionMode `Continuous`, TriggerMode `Off`, exposure `6180 µs`, gain `30`, PixelFormat `Mono8`, dimensions `1292 × 964`, and frame rate approximately `30.335 fps`.
 
 Ten complete frames arrived with distinct IDs and increasing timestamps; the last arrived 0.359 seconds after acquisition start. Sampled mean intensities were approximately 3.89–6.88. There were no incomplete frames or callback/requeue errors. `stop_streaming()` succeeded; the camera and VmbSystem contexts exited normally; no cleanup errors were reported. The final diagnostic result was PASS. No full serial number, raw frame, private configuration, or network settings are recorded. This validates only standalone Side-camera streaming; it does not establish IOPanel's camera workflow or CT400 behavior.
 
@@ -125,7 +125,7 @@ Ten complete frames arrived with distinct IDs and increasing timestamps; the las
 
 **Run record — 2026-09-27, local time (Europe/Rome).** IOPanel 0.3.0 was launched with system Python 3.12.8 x64, VmbPy 1.0.5, VmbC 1.0.6, Vimba X 2024.1.0.3916, and the private B4 configuration selecting simulated CT400 plus Vimba for the exact approved Top and Side IDs. The application checkout was `a41e06ac77ab521de6cafc6c571a6e562c1550a9`, the last known checkout before the log's 20:12:48 start; the log itself does not contain a Git SHA. No private config path or contents are included here.
 
-The log records MainWindow initialization and event-loop start, then successful VmbSystem entry. `CT400InitWorker` selected `DummyCT400`; it did not initialize the physical CT400. Camera logs identify Top `DEV_000F315B9CE1` and Side `DEV_000F315BA8F9`. For each, the log records successful device open, successful writes of AcquisitionMode `Continuous`, TriggerMode `Off`, ExposureAuto `Off`, and GainAuto `Off`, selection of PixelFormat `Mono8`, and streaming start. Both persistent conversion workers were created and started.
+The log records MainWindow initialization and event-loop start, then successful VmbSystem entry. `CT400InitWorker` selected `DummyCT400`; it did not initialize the physical CT400. Camera logs identify the Top and Side cameras. For each, the log records successful device open, successful writes of AcquisitionMode `Continuous`, TriggerMode `Off`, ExposureAuto `Off`, and GainAuto `Off`, selection of PixelFormat `Mono8`, and streaming start. Both persistent conversion workers were created and started.
 
 For each panel, the log records `_display_converted_image` receiving a first non-null pixmap with dimensions 1292 × 964 and then setting the panel aspect ratio. This verifies an initial converted-pixmap path reached the panel code, but it is not operator visual confirmation and does not establish sustained display, measured FPS, or simultaneous frame continuity. The log contains no Gamma value/range readback and no post-run feature readback. Gamma outcome and post-run camera settings remain unverified.
 
@@ -140,10 +140,10 @@ The B4 private configuration used here is separate from the operational `config.
 After separate authorization, run it from the repository directory in an ordinary Windows Command Prompt with the installed system Python:
 
 ```bat
-"%LOCALAPPDATA%\Programs\Python\Python312\python.exe" tools\vimba_b4_postrun_settings.py
+python tools\vimba_b4_postrun_settings.py
 ```
 
-### VmbPy and Vimba X compatibility
+### VmbPy and Vimba X compatibility (historical profile analysis)
 
 The laboratory pairing Vimba X 2024.1.0.3916 / VmbC 1.0.6 / VmbPy 1.0.5 completed the B1–B3 diagnostics and the B4 IOPanel startup, camera streaming-start, initial conversion, and clean shutdown path. `pyproject.toml` still declares `vmbpy>=1.1.0`, and `uv.lock` currently selects VmbPy 1.2.2. Allied Vision's VmbPy release notes identify 1.1.0 as the change that includes Vimba X library dependencies in the wheel; the 1.0.5 laboratory binding is supplied with its installed SDK. [Allied Vision VmbPy release notes](https://github.com/alliedvision/VmbPy/releases)
 
@@ -155,8 +155,21 @@ The working checkout has `resources/resources.qrc` with 16 references to `resour
 
 For reproducible use, first decide whether this qrc is still needed. If retained, restore the intended SVG sources as tracked assets with narrow `.gitignore` exceptions, generate the ignored Python output with `pyside6-rcc resources/resources.qrc -o resources_rc.py`, and import that generated module before any `:/icons/...` use. Add a packaging check that validates all qrc paths, runs the compiler, imports the generated module, and checks representative resource aliases. Generation was not attempted locally because all 16 source files are absent; the command is based on Qt for Python's documented interface and has not yet been validated against this checkout's missing inputs. [Qt for Python `pyside6-rcc` documentation](https://doc.qt.io/qtforpython-6/tools/pyside-rcc.html)
 
-The B4 application log has no stylesheet parse warning, though its file logger does not capture all Qt diagnostics. An independent offscreen QApplication reproduced `QtWarningMsg: Could not parse application stylesheet` under PySide6 6.8.1.1 / Qt 6.8.1 when applying the current application stylesheet and creating a widget. Isolation identified the CSS custom-property declarations (`--primary-*`, etc.) inside the emitted `:root` block in `ui/theme.py`; Qt QSS does not support these declarations, as the adjacent source comment itself notes. Keeping the block's ordinary `border` declaration while removing the custom-property declarations suppresses the warning; replacing the declarations in memory confirmed the cause. No production stylesheet was changed. The narrow regression test should apply the app stylesheet, create a widget, capture Qt messages, and assert no stylesheet parse warning. Follow-up issues: #27 resource bundle, #28 stylesheet warning, and #29 SDK compatibility.
+The B4 application log has no stylesheet parse warning, though its file logger does not capture all Qt diagnostics. An independent offscreen QApplication reproduced `QtWarningMsg: Could not parse application stylesheet` under PySide6 6.8.1.1 / Qt 6.8.1 when applying the current application stylesheet and creating a widget. Isolation identified the CSS custom-property declarations (`--primary-*`, etc.) inside the emitted `:root` block in the application stylesheet; Qt QSS does not support these declarations, as the adjacent source comment itself notes. Keeping the block's ordinary `border` declaration while removing the custom-property declarations suppresses the warning; replacing the declarations in memory confirmed the cause. No production stylesheet was changed. The narrow regression test should apply the app stylesheet, create a widget, capture Qt messages, and assert no stylesheet parse warning. Follow-up issues: #27 resource bundle, #28 stylesheet warning, and #29 SDK compatibility.
 
 ### Offline test warning follow-up
 
 One earlier full-suite run emitted a `RuntimeWarning` from pytest-qt 4.4.0 at `pytestqt/wait_signal.py:741`: it could not disconnect `MultiSignalBlocker._quit_loop_by_timeout` from `timeout()`, during `test_scan_failure_is_reported_while_camera_keeps_streaming`. That run still passed all 29 tests. On 2026-09-27 the documented offline suite passed with 29 tests using `uv run --offline --no-sync pytest -q -p no:cacheprovider --basetemp=<workspace-local-temp>` with `UV_CACHE_DIR` also pointed to a workspace-local temporary directory. An initial attempt using the shared uv cache was denied by the sandbox; no sync/install was performed. Three additional full-suite runs under system Python each passed 29 tests, and eight repetitions of the implicated test each passed; none reproduced the warning. No production code, test assertions, warning filters, or hardware code were changed. Current evidence indicates an intermittent pytest-qt/Qt signal-cleanup warning; its cause is not established, so it remains a low-confidence flake rather than a confirmed defect.
+
+
+## Completed physical camera qualification: preferred candidate
+
+**Result: PASS for the tested IOPanel camera path.** The isolated project/candidate environment was Windows x64 with Python 3.12.8, Allied Vision Vimba X 2026-2, VmbPy 1.2.2, VmbC 1.3.1 and VmbImageTransform 2.3. The physical devices were two Allied Vision Mako G-125B cameras, Top and Side, using the Vimba/Vimba X backend.
+
+Both cameras passed standalone physical streaming. Normal IOPanel startup with both cameras and DummyCT400 opened and streamed both cameras, displayed converted frames, and shut down cleanly with VmbSystem released. Manual Exposure and Gamma controls were exercised successfully on each camera. One-shot Auto Exposure succeeded on both; one-shot Auto Gain also succeeded on both after the Vimba X update. VmbPy 1.2.2 / VmbC 1.3.1 worked with the existing Vimba X installation, and the physical dual-camera path continued to work after Vimba X was updated to 2026-2. Continuous dual-camera operation was observed during normal operator use; no separately timed formal endurance gate was run.
+
+The final isolated GenTL test removed all legacy Allied Vision Vimba 6 transport-layer paths from `GENICAM_GENTL64_PATH`, kept Basler Pylon paths unchanged, and retained `C:\Program Files\Allied Vision\Vimba X\cti`. Both cameras opened, streamed, displayed frames and closed normally. This demonstrates practical independence from the legacy Vimba 6 GenTL transport layers for the tested IOPanel camera path. It does not establish that every possible DLL-loading mechanism was forensically excluded. Vimba 6 may remain installed for rollback/reference; its GenTL transport layers were not required by this tested camera path.
+
+CT400 was intentionally simulated throughout this camera qualification. These camera results do not validate physical CT400 operation under the candidate environment. Physical CT400 validation remains a separate activity.
+
+Earlier B1-B4 and compatibility entries in this report record historical, narrower observations made on the former Vimba X 2024.1.0.3916 / VmbC 1.0.6 / VmbPy 1.0.5 profile. They are retained as historical/rollback evidence and are superseded by this completed qualification wherever they describe current preferred-profile status or say that camera controls, display, or VmbPy 1.2.2 physical validation remain unverified.

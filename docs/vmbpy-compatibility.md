@@ -1,24 +1,24 @@
 # VmbPy compatibility profiles
 
-IOPanel has two camera-development profiles. Their Python API overlap does not make their native runtime pairings interchangeable.
+IOPanel documents a preferred validated laboratory profile, a historical rollback profile, and driver-free development. Their Python API overlap does not make native runtime pairings interchangeable.
 
 ## Supported profiles
 
 | Profile | Binding/runtime | Support statement |
 |---|---|---|
-| Laboratory SDK-managed | Windows x64; Python 3.12.8; Vimba X 2024.1.0.3916; VmbC 1.0.6; VmbPy 1.0.5 | Physically validated for the bounded B1–B4 path below. VmbPy is supplied and managed by the installed Allied Vision SDK. Keep it outside normal project dependency synchronization. |
-| Development packaged wheel | Project-local virtual environment; `uv sync --extra camera`; VmbPy version from `uv.lock` (currently 1.2.2) | Supported for development and API-level tests. It is not evidence of physical-camera compatibility with the laboratory installation. The platform-specific wheel may bundle its matching VmbC runtime; transport layers and device drivers still come from Vimba X. |
+| Preferred laboratory candidate | Windows x64; Python 3.12.8; Vimba X 2026-2; VmbPy 1.2.2; VmbC 1.3.1; VmbImageTransform 2.3 | Physically validated with two Allied Vision Mako G-125B cameras using the Vimba/Vimba X backend in an isolated project/candidate environment. |
+| Historical rollback | Windows x64; Python 3.12.8; Vimba X 2024.1.0.3916; VmbC 1.0.6; VmbPy 1.0.5 | Previously validated profile retained for rollback/reference. |
 | Driver-free development | Project-local environment without the camera extra | Supported for simulated-camera and non-camera work. VmbPy is optional. |
 
-Do not install or synchronize the packaged camera extra into the laboratory's SDK-managed system interpreter. In particular, VmbPy 1.2.2 expects VmbC 1.3.1 in its source-level compatibility check, while the validated laboratory runtime is VmbC 1.0.6. The 1.2.2 wheel profile should use its isolated project environment and a matching VmbC runtime (bundled in the selected binary wheel if supplied). Do not combine the 1.2.2 binding with the laboratory VmbC 1.0.6 runtime.
+Keep the preferred VmbPy 1.2.2 environment isolated from the historical VmbPy 1.0.5 / VmbC 1.0.6 rollback environment. Vimba 6 may remain installed for rollback/reference; current IOPanel camera operation has been shown not to require its GenTL transport layers.
 
 ## Validation scope
 
-The recorded physical evidence for the 1.0.5 tuple covers B1 discovery of both cameras, B2 standalone Top streaming, B3 standalone Side streaming, and B4 application startup, opening both cameras, starting both streams and conversion workers, delivering initial converted images to both panels, and normal shutdown. This is bounded evidence only. It does not establish every IOPanel camera control or feature operation, every VmbPy API, or long-duration stability. VmbPy 1.2.2 has not received physical-camera validation in this laboratory.
+The preferred profile passed standalone physical streaming on Top and Side; IOPanel startup with both cameras and DummyCT400; opening, streaming and converted-frame display on both; clean shutdown and VmbSystem release; manual Exposure and Gamma on each; and one-shot Auto Exposure on both. One-shot Auto Gain also succeeded on both after the Vimba X update. VmbPy 1.2.2 / VmbC 1.3.1 worked with the existing Vimba X installation and continued to work after Vimba X was updated to 2026-2. A final isolated GenTL test removed legacy Allied Vision Vimba 6 transport-layer paths from `GENICAM_GENTL64_PATH`, retained Basler Pylon paths unchanged, and retained `C:\Program Files\Allied Vision\Vimba X\cti`; both cameras opened, streamed, displayed frames and closed normally. This demonstrates practical independence from legacy Vimba 6 GenTL transport layers for the tested IOPanel camera path, without forensically excluding every possible DLL-loading mechanism. Dual-camera operation was also observed during normal use, but no separately timed formal endurance gate was run. CT400 was intentionally simulated; this camera qualification does not validate physical CT400 operation, which remains separate.
 
 ## API audit: IOPanel usage
 
-The 1.0.5 column was checked against the read-only system-Python installation on the laboratory PC. The 1.2.2 column was checked against Allied Vision's tagged 1.2.2 source and package metadata. API matches below are source-level findings; only the laboratory profile has the physical evidence described above.
+The 1.0.5 column was checked against the read-only system-Python installation on the laboratory PC. The 1.2.2 column was checked against Allied Vision's tagged 1.2.2 source and package metadata. API matches below are source-level findings; physical evidence for 1.2.2 is summarized above.
 
 | IOPanel API surface | VmbPy 1.0.5 | VmbPy 1.2.2 | Assessment |
 |---|---|---|---|
@@ -31,12 +31,12 @@ The 1.0.5 column was checked against the read-only system-Python installation on
 | `get_pixel_formats()` / `set_pixel_format(format)` | Present; returns supported `PixelFormat` values and accepts one | Present with the same public purpose | Confirmed compatible at API surface. |
 | Pixel-format constants and `intersect_pixel_formats()` | `MONO_PIXEL_FORMATS`, `COLOR_PIXEL_FORMATS`, `OPENCV_PIXEL_FORMATS`, helper exported | Same names and helper exported | Confirmed compatible at API surface. |
 | `FrameStatus.Complete`, `Frame.as_opencv_image()` | Present | Present | Confirmed compatible at API surface; actual format conversion depends on installed optional numeric/image dependencies and runtime. |
-| Callback streaming: `start_streaming(handler, buffer_count=...)`, `queue_frame(frame)`, `stop_streaming()` | Present; frame handler receives camera, stream, frame | Same public handler shape and operations | Confirmed compatible at API surface. Timing, shutdown reliability and long-duration behavior are not established for 1.2.2. |
+| Callback streaming: `start_streaming(handler, buffer_count=...)`, `queue_frame(frame)`, `stop_streaming()` | Present; frame handler receives camera, stream, frame | Same public handler shape and operations | Confirmed compatible at API surface. The tested open/stream/display/shutdown path passed; no separately timed endurance gate was run. |
 | Camera identity getters `get_id()`, `get_serial()`, `get_model()`, `get_name()` | Present | Present | Confirmed compatible at API surface. |
 | Direct `Camera` construction | Constructor takes the older internal camera-info form | Constructor now also receives its interface | Confirmed internal API difference; IOPanel obtains cameras through `VmbSystem` and does not construct `Camera` directly. |
 | Native runtime check | Expects VmbC 1.0.6; compatible with recorded laboratory VmbC 1.0.6 | Expects VmbC 1.3.1 in the inspected 1.2.2 source | Confirmed material runtime difference. Do not pair these profiles by substituting only the Python package. |
 
-**Not established:** physical discovery, opening, feature writes, image conversion, streaming stability, or shutdown using VmbPy 1.2.2 with the laboratory cameras and Vimba X transport layers. Source-level API matches do not answer those hardware/runtime questions.
+**Scope limit:** these results establish the listed IOPanel camera path and controls only. They do not establish every VmbPy API, every camera feature, or long-duration endurance.
 
 No meaningful physical-compatibility CI matrix is claimed: testing each wheel without its matching VmbC runtime and installed transport layer would not establish camera compatibility. Hardware-independent tests cover the adapter's expected import/API surface and optional-binding failure behavior only.
 

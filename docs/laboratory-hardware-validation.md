@@ -4,7 +4,7 @@ This checklist is for an authorized operator on the laboratory PC. It is a manua
 
 Tracking issue: [#20](https://github.com/simoneferraresi/IOPanel/issues/20).
 
-Recorded offline audit: [laboratory validation report](laboratory-validation-report.md). It contains no physical hardware results; complete the gates below only with the required operator authorization.
+Camera qualification is complete for the preferred profile described in the [laboratory validation report](laboratory-validation-report.md). The procedure below remains the controlled workflow for future checks. The qualification used DummyCT400 and does not validate physical CT400 operation, which remains a separate activity.
 
 ## Safety and scope
 
@@ -43,7 +43,7 @@ Complete before testing. Use the commit actually tested, and record values as re
 | CT400 model, serial (lab record only), firmware | |
 | CT400 DLL path/version, file architecture, vendor runtime | |
 | Laser source model, firmware, connection/interface | |
-| Vimba SDK version and installed transport layer(s) | |
+| Vimba X version and installed transport layer(s) | |
 | VmbPy version and Python environment | |
 | Camera model, serial (lab record only), firmware, transport | |
 | Camera pixel format and frame dimensions | |
@@ -51,7 +51,7 @@ Complete before testing. Use the commit actually tested, and record values as re
 | Approved camera exposure/gain and other changed controls | |
 | Log path and report/evidence path (controlled lab storage) | |
 
-Capture versions before opening IOPanel where possible, using vendor utilities that do not acquire or control the device. `uv.lock` and project metadata identify Python dependencies but do not establish installed CT400 DLL, Vimba SDK, transport-layer, firmware or hardware versions. Do not open a device concurrently from a vendor utility and IOPanel.
+Capture versions before opening IOPanel where possible, using vendor utilities that do not acquire or control the device. `uv.lock` and project metadata identify Python dependencies but do not establish installed CT400 DLL, Vimba X, transport-layer, firmware or hardware versions. Do not open a device concurrently from a vendor utility and IOPanel.
 
 ## A. Gate A — Offline environment verification (no instruments connected)
 
@@ -66,7 +66,7 @@ uv sync --extra test
 uv run pytest -q
 ```
 
-Expected: the recorded commit is the intended release; the environment resolves from the committed lock file; all hardware-independent tests pass. This test command must run without a CT400 DLL, Vimba SDK, cameras or CT400 connected. Investigate any failure; do not skip a test to produce a pass.
+Expected: the recorded commit is the intended release; the environment resolves from the committed lock file; all hardware-independent tests pass. This test command must run without a CT400 DLL, Vimba X, cameras or CT400 connected. Investigate any failure; do not skip a test to produce a pass.
 
 Validate the lab-local INI without constructing a window or opening devices:
 
@@ -84,7 +84,7 @@ This imports application modules but does not instantiate `MainWindow` or initia
 
 Prerequisites: Gate A passes; camera checks and device opening are authorized; CT400 laser operation is prohibited for this gate. Since normal MainWindow startup initializes the configured CT400, use the explicitly selected CT400 simulator for this gate (`ct400_backend = simulation`) while leaving the intended physical camera backend explicitly set to `vimba`. This tests the physical camera through the normal GUI pipeline without connecting to or commanding the CT400. The camera discovery dialog is passive, but still opens the Vimba discovery API and requires authorization. Never rely on implicit fallback.
 
-1. With the application closed, record Vimba SDK, VmbPy, transport-layer and camera versions. Open the discovery dialog and verify the authorized camera identities. Do not start a scan, issue CT400 laser commands or enable a laser during this camera-only gate.
+1. With the application closed, record Vimba X, VmbPy, transport-layer and camera versions. Open the discovery dialog and verify the authorized camera identities. Do not start a scan, issue CT400 laser commands or enable a laser during this camera-only gate.
 2. Start the application with a temporary, reviewed INI selecting CT400 simulation and Vimba for the enabled camera(s). Confirm the CT400 is visibly identified as simulated and the camera as physical.
 3. Confirm frames reach and update the real camera panel. Check orientation against an asymmetric target, dimensions, pixel format, intensity scaling and only operator-approved camera controls.
 4. Stop acquisition and close normally; verify the camera can be reopened and no process retains it.
@@ -136,7 +136,7 @@ Prerequisites: Gates A–E pass; camera and CT400 separately validated; only pre
 
 Only conduct fault/recovery scenarios with an approved, instrument-specific procedure and no unapproved emission. Do not create a fault merely to complete a checklist.
 
-For approved negative cases, include absent camera at startup, unavailable Vimba SDK/transport, CT400 unavailable while confirmed safe, and mixed camera initialization if the configuration supports it. Prefer a separate controlled software image for missing drivers. Never unplug a live instrument or induce CT400 communication loss during a scan without written/site-approved procedure. For each test verify affected-device attribution, no simulated data presented as physical, unaffected subsystem behavior and approved recovery.
+For approved negative cases, include absent camera at startup, unavailable Vimba X/transport, CT400 unavailable while confirmed safe, and mixed camera initialization if the configuration supports it. Prefer a separate controlled software image for missing drivers. Never unplug a live instrument or induce CT400 communication loss during a scan without written/site-approved procedure. For each test verify affected-device attribution, no simulated data presented as physical, unaffected subsystem behavior and approved recovery.
 
 **Pass:** every approved failure is visible and attributed to the affected device; no simulation is presented as physical data; unaffected subsystems remain usable where expected; recovery follows the approved procedure. **Fail/stop:** ambiguous data source, hidden error, stale device state, unsafe state or unrecoverable failure.
 
