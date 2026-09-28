@@ -9,9 +9,7 @@ The `_Theme` class contains a single, authoritative `TOKENS` dictionary that ser
 as the source of truth for all style values. The QSS constants are defined as
 templates that are populated from this dictionary.
 
-This approach provides the organizational benefits of a theme engine while
-preserving the exact, character-for-character output of the static stylesheet,
-including all conceptual `var()` comments and syntax.
+This approach uses Python theme tokens to generate valid Qt Style Sheets.
 
 The public API consists of the generated stylesheet strings:
 - APP_STYLESHEET: The main, global stylesheet for the entire application.
@@ -137,70 +135,11 @@ class _Theme:
 
 # --- QSS TEMPLATES ---
 # NOTE: Literal curly braces `{` and `}` in QSS must be escaped as `{{` and `}}`.
+# Design-system values are defined in _Theme.LIGHT_TOKENS and DARK_TOKENS.
+# Qt Style Sheets do not support CSS custom properties, so tokens are expanded
+# with Python formatting rather than emitted into the runtime stylesheet.
 
 _APP_STYLESHEET_TEMPLATE = """
-/* ----------------------------------------
-   Design System Variables (Conceptual)
------------------------------------------
-   NOTE: QSS does not support CSS variables (`var(...)`).
-   These are defined here for clarity and maintainability.
-   Use find/replace or consider a QSS pre-processor (like qtsass)
-   if extensive theming or easier refactoring is needed.
------------------------------------------ */
-:root {{
-    /* Primary color palette */
-    --primary-50: #eff6ff;
-    --primary-100: #dbeafe;
-    --primary-200: #bfdbfe;
-    --primary-300: #93c5fd;
-    --primary-400: #60a5fa;
-    --primary-500: #3b82f6;
-    --primary-600: #2563eb;
-    --primary-700: #1d4ed8;
-    --primary-800: #1e40af;
-    --primary-900: #1e3a8a;
-
-    /* Neutral color palette */
-    --neutral-50: #f9fafb;
-    --neutral-100: #f3f4f6;
-    --neutral-200: #e5e7eb;
-    --neutral-300: #d1d5db;
-    --neutral-400: #9ca3af;
-    --neutral-500: #6b7280;
-    --neutral-600: #4b5563;
-    --neutral-700: #374151;
-    --neutral-800: #1f2937;
-    --neutral-900: #111827;
-
-    /* Success and error states */
-    --success: #10b981;
-    --success-light: #d1fae5;
-    --error: #ef4444;
-    --error-light: #fee2e2;
-    --warning: #f59e0b;
-    --warning-light: #fef3c7;
-
-    /* Spacing system */
-    --space-xs: 4px;
-    --space-sm: 8px;
-    --space-md: 12px;
-    --space-lg: 16px;
-    --space-xl: 24px;
-
-    /* Font sizes */
-    --font-xs: 12px;
-    --font-sm: 14px;
-    --font-md: 16px;
-    --font-lg: 18px;
-    --font-xl: 20px;
-
-    /* Border radius */
-    --radius-sm: 4px;
-    --radius-md: 6px;
-    --radius-lg: 8px;
-    --radius-full: 9999px; /* Used for pills/badges */
-}}
-
 /* ----------------------------------------
    General Widget Styling
 ----------------------------------------- */
