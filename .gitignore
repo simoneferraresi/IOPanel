@@ -89,12 +89,13 @@ config.local.ini
 *.mat
 *.png
 *.svg
+!resources/icons/*.svg
 *.fig
 
-# Compiled resource files (this is important!)
-# This file is generated from resources.qrc, so the source .qrc should be versioned,
-# but the generated .py file should not.
+# Compiled resource module. Generated from resources/resources.qrc and
+# intentionally versioned so a fresh checkout can launch without compiling it.
 resources_rc.py
+!resources/resources_rc.py
 
 # Environment
 .env

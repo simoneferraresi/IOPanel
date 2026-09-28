@@ -160,12 +160,17 @@ For changes, branch from the intended base (`main` for independent work), link t
 
 ### Compiling Qt Resources
 
-The application uses icons stored in a Qt Resource File (`resources/resources.qrc`). If you add or change icons, you must recompile the `resources_rc.py` file.
+The SVG source assets under `resources/icons/` and their aliases in
+`resources/resources.qrc` are versioned. `resources/resources_rc.py` is generated
+from that source and intentionally committed so a fresh clone can launch with
+`python app.py` without a separate resource-compilation step. When changing an
+icon or the resource collection, regenerate the module from the project
+environment and commit it with the source changes:
 
 Run the following command from the project root:
 
 ```bash
-pyside6-rcc resources/resources.qrc -o resources/resources_rc.py
+uv run pyside6-rcc resources/resources.qrc -o resources/resources_rc.py
 ```
 
 ### Project Structure
