@@ -41,7 +41,7 @@ matlab = [
     "matlabengine", # The package name for the MATLAB Engine
 ]
 camera = [
-    "vmbpy>=1.1.0", # Use the wheel bundled with the matching Allied Vision SDK on the lab PC
+    "vmbpy>=1.0.5,<2", # Lab SDK-managed and packaged-wheel profiles are documented separately
 ]
 test = [
     "pytest>=8.0.0",
