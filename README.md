@@ -48,7 +48,7 @@ This project is designed to be run from a local Python environment and uses [`uv
     -   See the [official `uv` installation guide](https://github.com/astral-sh/uv#installation) for more options.
 -   **Git**
 -   **Required Hardware Drivers:**
-    -   **Allied Vision Vimba SDK:** For camera support. Please install the version you have tested with (e.g., Vimba SDK v6.0). Download from the official Allied Vision website.
+    -   **Allied Vision Vimba X:** For physical camera support. The preferred laboratory profile is Vimba X 2026-2 with VmbPy 1.2.2, VmbC 1.3.1 and VmbImageTransform 2.3 on Windows x64 / Python 3.12.8. See the [VmbPy compatibility profiles](docs/vmbpy-compatibility.md).
     -   **Yenista CT400 Drivers:** The `CT400_lib.dll` file is required. This is provided with the instrument. Ensure you have the correct 32-bit or 64-bit version that matches your Python interpreter.
 -   **(Optional) MATLAB:** Required *only* for saving scan plots as `.fig` files. If you need this feature, you must also install the MATLAB Engine for Python.
 
@@ -150,13 +150,13 @@ The full hardware-independent suite runs without proprietary instrument drivers.
 
 Development and CI should not require proprietary hardware drivers. `hardware/dummy_ct400.py` provides the existing `DummyCT400` implementation; use it for CT400-independent work and tests. Camera discovery and opening should be exercised with mocks or the driver's unavailable path. Do not treat these tests as evidence that a physical CT400 or camera works.
 
-Camera support has separate driver-free, packaged-wheel development, and laboratory SDK-managed profiles:
+Camera support has driver-free development, the preferred physical-camera profile, and a historical rollback profile:
 
 - **Driver-free development:** VmbPy is not required. Use the simulated camera backend for camera UI work; application and simulation imports remain available when VmbPy or its runtime is unavailable.
-- **Packaged-wheel camera development:** use `uv sync --extra camera` only in the project-local virtual environment, then run with `uv run`. The current lock resolves VmbPy 1.2.2. Its API is useful for development and API checks, but it has not been validated with physical cameras in the laboratory. Platform-specific wheels may bundle VmbC; transport layers and device drivers remain separate and are supplied by Vimba X.
-- **Laboratory SDK-managed operation:** use the binding supplied with the installed Allied Vision SDK and the laboratory's ordinary system Python. The physically validated tuple is Vimba X 2024.1.0.3916, VmbC 1.0.6, VmbPy 1.0.5, and Python 3.12.8 x64. This VmbPy is externally managed by the SDK. Do not run dependency synchronization or installation against that system interpreter or otherwise replace its binding.
+- **Preferred laboratory camera profile:** Windows x64, Python 3.12.8, Allied Vision Vimba X 2026-2, VmbPy 1.2.2, VmbC 1.3.1, and VmbImageTransform 2.3, using the Vimba/Vimba X physical backend. This isolated project/candidate environment has been physically validated with two Allied Vision Mako G-125B cameras. See the [qualification record](docs/laboratory-validation-report.md).
+- **Historical rollback profile:** Windows x64, Python 3.12.8, Vimba X 2024.1.0.3916, VmbC 1.0.6, and VmbPy 1.0.5 was previously validated and is retained for rollback/reference.
 
-The B1–B4 evidence covers bounded camera discovery, standalone streaming, application startup and initial display, and normal shutdown with this tuple. It does not establish every camera feature/control or long-duration stability. The VmbPy API is optional for CT400-only and simulated-camera work.
+The completed camera qualification includes both standalone streams; normal IOPanel startup with both cameras and DummyCT400; converted-frame display; clean shutdown and VmbSystem release; manual Exposure and Gamma on both cameras; one-shot Auto Exposure on both; and one-shot Auto Gain on both after the Vimba X update. Continuous dual-camera use succeeded during normal operation, but no timed endurance gate was run. CT400 was intentionally simulated, so physical CT400 operation remains unvalidated and requires separate validation. The VmbPy API is optional for CT400-only and simulated-camera work.
 
 For driver-free camera UI development, set `backend = simulation` in an enabled `[Camera:*]` section. The simulator delivers a deterministic mono8 quadrant pattern through the normal camera panel pipeline; its displayed name is marked `[SIMULATED]`. `simulation_width` and `simulation_height` configure frame dimensions. The default backend remains `vimba`, and a missing or failed physical camera is never replaced by the simulator. For operator-supervised CT400 and Allied Vision checks, follow the [laboratory hardware validation protocol](docs/laboratory-hardware-validation.md); no driver-free result establishes physical compatibility.
 
@@ -212,7 +212,6 @@ IOPanel/
     ├── discovery_dialog.py     # Dialog for finding connected cameras
     ├── main_window.py          # Main QMainWindow, orchestrates all UI components
     ├── plot_widgets.py         # Widgets for plotting (scan graph, histogram)
-    └── theme.py                # Global and component-specific QSS stylesheets
 ```
 
 ---
