@@ -51,7 +51,6 @@ from ui.constants import (
     OP_AUTO_EXPOSURE,
     OP_AUTO_GAIN,
 )
-from ui.theme import CAMERA_PANEL_STYLE
 
 logger = logging.getLogger("LabApp.camera_widgets")
 
@@ -493,18 +492,15 @@ class CameraPanel(QFrame):
         self.setFrameStyle(QFrame.Shape.StyledPanel | QFrame.Shadow.Raised)
         self.setMinimumSize(320, 240)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        try:
-            self.setStyleSheet(CAMERA_PANEL_STYLE)
-        except NameError:
-            logger.warning("CAMERA_PANEL_STYLE not found, using default styles.")
-
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(4, 4, 4, 4)
         self.main_layout.setSpacing(4)
 
-        self.title_label = QLabel(self._panel_title, self)
-        self.title_label.setStyleSheet("font-weight: bold;")
-        self.main_layout.addWidget(self.title_label)
+        self.title_label = None
+        if config.backend == "simulation":
+            self.title_label = QLabel(self._panel_title, self)
+            self.title_label.setObjectName("simulatedCameraTitle")
+            self.main_layout.addWidget(self.title_label)
 
         # --- NEW: Remember last screenshot directory ---
         from pathlib import Path  # Ensure Path is imported at top of file

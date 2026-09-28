@@ -25,13 +25,19 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 
 from config_model import AppConfig
 from ui.main_window import MainWindow
-from ui.theme import APP_STYLESHEET
 
 # Application Metadata
 APP_NAME = "IOPanel"
 APP_VERSION = "0.3.0"
 DEFAULT_LOG_FILE = Path("lab_app.log")
 DEFAULT_CONFIG_FILE = Path("config.ini")
+
+
+def configure_qt_application(app: QApplication, app_name: str = APP_NAME) -> None:
+    """Set application metadata and use Qt's native Fusion widget style."""
+    app.setApplicationName(app_name)
+    app.setApplicationVersion(APP_VERSION)
+    app.setStyle("Fusion")
 
 
 def setup_logger(
@@ -240,10 +246,7 @@ def main() -> int:
 
     try:
         app = QApplication(sys.argv)
-        app.setApplicationName(app_config.app_name)
-        app.setApplicationVersion(APP_VERSION)
-        app.setStyle("Fusion")
-        app.setStyleSheet(APP_STYLESHEET)
+        configure_qt_application(app, app_config.app_name)
 
         window = MainWindow(config=app_config)
         window.show()
