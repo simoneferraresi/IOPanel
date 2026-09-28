@@ -26,16 +26,21 @@ try:
     )
 
     VIMBA_AVAILABLE = True
-    VIMBA_IMPORT_ERROR: ImportError | None = None
-except ImportError as exc:
-    # The Vimba binding is installed with the vendor SDK on laboratory PCs.
-    # Keep application and non-camera code importable on development machines.
+    VIMBA_IMPORT_ERROR: Exception | None = None
+except Exception as exc:
+    # VmbPy can fail during import when its VmbC runtime is missing/incompatible.
+    # Treat only the optional dependency errors as unavailable; surface other bugs.
+    error_type = type(exc)
+    is_vmbpy_system_error = error_type.__module__ == "vmbpy.error" and error_type.__name__ == "VmbSystemError"
+    if not isinstance(exc, ImportError) and not is_vmbpy_system_error:
+        raise
+
     COLOR_PIXEL_FORMATS = MONO_PIXEL_FORMATS = OPENCV_PIXEL_FORMATS = ()
     Camera = Frame = FrameStatus = PixelFormat = Stream = object
     VmbSystem = None
     intersect_pixel_formats = None
     VIMBA_AVAILABLE = False
-    VIMBA_IMPORT_ERROR = exc
+    VIMBA_IMPORT_ERROR: Exception | None = exc
 
     class VmbCameraError(Exception):
         """Fallback exception name used when the optional Vimba binding is absent."""
@@ -280,7 +285,7 @@ class VimbaCam(QObject):
         logger.info(f"Attempting to open camera: {self.camera_name} (ID: {self.identifier})")
         self._is_closing = False
         if not VIMBA_AVAILABLE:
-            message = "Vimba camera support is unavailable. Install the camera extra and the Allied Vision SDK."
+            message = "Vimba camera support is unavailable. Use a VmbPy binding compatible with the installed Vimba X/VmbC runtime."
             logger.error(message)
             self.error.emit(message)
             return False
