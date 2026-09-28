@@ -54,9 +54,22 @@ from ui.constants import (
     PROP_MONITORING,
     PROP_SCANNING,
 )
-from ui.theme import CT400_CONTROL_PANEL_STYLE
 
 logger = logging.getLogger("LabApp.control_panel")
+
+SCAN_BUTTON_STYLE = """
+QPushButton#scanButton { background-color: #2e7d32; color: white; }
+QPushButton#scanButton[scanning="true"] { background-color: #c62828; color: white; }
+QPushButton#scanButton:disabled,
+QPushButton#scanButton[scanning="true"]:disabled { background-color: #e0e0e0; color: #888888; }
+"""
+
+MONITOR_BUTTON_STYLE = """
+QPushButton#monitorButton { background-color: #1976d2; color: white; }
+QPushButton#monitorButton[monitoring="true"] { background-color: #c62828; color: white; }
+QPushButton#monitorButton:disabled,
+QPushButton#monitorButton[monitoring="true"]:disabled { background-color: #e0e0e0; color: #888888; }
+"""
 
 
 ###############################################################################
@@ -427,11 +440,6 @@ class BaseControlPanel(QWidget, ABC, metaclass=QABCMeta):
 
         self._init_base_ui()
 
-        try:
-            self.setStyleSheet(CT400_CONTROL_PANEL_STYLE)
-        except NameError:
-            logger.warning("CT400_CONTROL_PANEL_STYLE not found.")
-
     def _init_base_ui(self):
         """Initializes UI elements common to all control panels."""
         self.main_layout = QVBoxLayout(self)
@@ -598,6 +606,7 @@ class CT400ControlPanel(BaseControlPanel):
         control_layout = QVBoxLayout()
         self.scan_btn = QPushButton("Start Scan")
         self.scan_btn.setObjectName(ID_SCAN_BUTTON)
+        self.scan_btn.setStyleSheet(SCAN_BUTTON_STYLE)
         self.scan_btn.setIcon(QtGui.QIcon(":/icons/play.svg"))
         self.scan_btn.setMinimumHeight(35)
         self.scan_btn.setMinimumWidth(130)
@@ -871,6 +880,7 @@ class HistogramControlPanel(BaseControlPanel):
         operation_layout = QVBoxLayout()
         self.monitor_btn = QPushButton("Start Monitoring")
         self.monitor_btn.setObjectName(ID_MONITOR_BUTTON)
+        self.monitor_btn.setStyleSheet(MONITOR_BUTTON_STYLE)
         self.monitor_btn.setIcon(QtGui.QIcon(":/icons/play.svg"))
         self.monitor_btn.setMinimumHeight(100)
         self.monitor_btn.setMinimumWidth(150)

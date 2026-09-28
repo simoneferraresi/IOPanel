@@ -28,6 +28,17 @@ from ui.plot_widgets import ColorBarWidget, Plot3DWidget
 
 logger = logging.getLogger("LabApp.AlignmentPanel")
 
+ALIGNMENT_ACTION_BUTTON_STYLE = """
+QPushButton#alignButton { background-color: #2e7d32; color: white; }
+QPushButton#alignButton[running="true"] { background-color: #c62828; color: white; }
+QPushButton#alignButton:disabled,
+QPushButton#alignButton[running="true"]:disabled { background-color: #e0e0e0; color: #888888; }
+QPushButton#mapButton { background-color: #2e7d32; color: white; }
+QPushButton#mapButton[running="true"] { background-color: #c62828; color: white; }
+QPushButton#mapButton:disabled,
+QPushButton#mapButton[running="true"]:disabled { background-color: #e0e0e0; color: #888888; }
+"""
+
 
 class AlignmentPanel(QWidget):
     start_alignment_requested = Signal(object)
@@ -123,6 +134,8 @@ class AlignmentPanel(QWidget):
         self.spiral_align_button = QPushButton("Start Spiral Alignment")
         self.spiral_align_button.setToolTip("Recommended: Performs a wide search then a fine alignment.")
         self.align_button = QPushButton("Start Fine-Tune Only")
+        self.align_button.setObjectName("alignButton")
+        self.align_button.setStyleSheet(ALIGNMENT_ACTION_BUTTON_STYLE)
         self.align_button.setToolTip("Runs only the fine-tuning alignment from the current position.")
 
         # Add both buttons to the form
@@ -156,6 +169,7 @@ class AlignmentPanel(QWidget):
         map_form.addRow("Step X/Y (nm):", self._create_hbox(self.x_step_spin, self.y_step_spin))
         self.map_button = QPushButton("Generate 3D Map")
         self.map_button.setObjectName("mapButton")
+        self.map_button.setStyleSheet(ALIGNMENT_ACTION_BUTTON_STYLE)
         self.map_button.setCheckable(True)
         self.map_button.setMinimumHeight(35)
         map_form.addRow(self.map_button)

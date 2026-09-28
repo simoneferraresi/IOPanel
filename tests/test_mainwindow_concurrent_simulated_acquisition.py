@@ -120,6 +120,7 @@ def _start_scan_during_stream(qtbot, window, frame_spy):
         lambda: control.scanning and control.scan_thread is not None and control.scan_thread.isRunning(),
         timeout=2500,
     )
+    assert control.scan_btn.property("scanning") is True
     qtbot.waitUntil(
         lambda: (
             frame_spy.count() >= camera_frame_count + 2
@@ -155,6 +156,7 @@ def test_mainwindow_scan_updates_real_plot_while_camera_frames_continue(qtbot, m
         scan_thread = control.scan_thread
         progression_gate.set()
         qtbot.waitUntil(lambda: not control.scanning, timeout=3000)
+        assert control.scan_btn.property("scanning") is False
         qtbot.waitUntil(lambda: _qt_thread_stopped(scan_thread), timeout=1500)
 
         expected_wavelengths = 1550.0 + np.arange(5) * 0.001
