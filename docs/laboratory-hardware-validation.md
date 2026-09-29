@@ -16,18 +16,19 @@ Camera qualification is complete for the preferred profile described in the [lab
 - Never use unplugging, process termination or a forced worker termination as a routine way to stop an active laser scan. Follow the instrument's approved emergency procedure if normal stop does not complete.
 - Keep completed records in the lab's controlled location. Do not commit device serials, private addresses, operator names or completed live configuration files to the repository.
 
-## CT400 software behavior established by source review
+## CT400 software behavior established by the Programming Guide and source review
 
-This is a static code finding, not a statement about undocumented DLL semantics:
+Yenista CT400 Programming Guide 1.4 is the source for the API behavior below. It applies to CT400 library v1.4.x / DSP 1.12. This section describes documented software semantics and current IOPanel behavior; it is not physical qualification.
 
-- Physical startup loads `CT400_lib.dll` and calls `CT400_Init`; the wrapper stores the returned handle. A failed initialization raises an application error. The physical backend remains the default unless `ct400_backend = simulation` is explicitly configured.
-- A scan sends a disable command to the selected input before setup, calls `CT400_SetScan` and `CT400_SetSamplingResolution`, starts via `CT400_ScanStart`, then polls `CT400_ScanWaitEnd`. Its `finally` path calls `CT400_ScanStop` if start succeeded, then sends disable to the selected input.
-- `CT400.stop_scan()` calls `CT400_ScanStop`; it only logs a warning when the result is `-1` and does not propagate that return as an exception. `scan_wait_end()` treats `-1` as a wrapper-call communication error; other negative scan status values are returned and logged for the caller to handle. These interpretations come from repository code; confirm them against the vendor manual for the installed DLL.
-- `CT400.close()` attempts `CT400_CmdLaser(LI_1, DISABLE, 1550.0, 1.0)` for every non-null handle, catches a disable-command exception, then calls `CT400_Close`. This is unconditional with respect to the input selected in the UI. The scan worker separately disables its selected input in `finally`. Thus `close()` does not establish that the selected input is safe, and the LI_1 command's effect on other inputs must not be assumed.
-- The scan worker's `stop()` only clears a Python flag. The loop checks the flag after `scan_wait_end()` returns; there is no source-level evidence that the vendor wait call is interruptible. MainWindow requests worker stop, waits 500 ms for its QThread, then calls `terminate()` if it still runs. Forced termination can bypass Python `finally` cleanup. Do not use close-during-active-scan or forced termination as a lab procedure until the vendor-supported stop/wait behavior and an independent safe-stop method are confirmed.
-- The same close handler closes the CT400 only after scan-thread cleanup. Whether any vendor call can block indefinitely, whether `CT400_ScanStop` is safe concurrently with `CT400_ScanWaitEnd`, and what all return values mean require the matching vendor documentation and/or controlled lab validation.
+- Physical startup loads `CT400_lib.dll` and calls `CT400_Init`; a successful call provides the handle used by the wrapper. The physical backend remains the default unless `ct400_backend = simulation` is explicitly configured.
+- `CT400_ScanStart` starts a scan. `CT400_ScanWaitEnd` is a blocking wait-for-completion operation and IOPanel calls it once per scan. Its result is 0 for success, 1 for user cancellation following `CT400_ScanStop`, and 2–5 for documented fatal measurement errors. Documented 100-series and 999 results are warnings, not automatically fatal errors. Unknown raw results are retained without assigning an invented meaning.
+- `CT400_ScanStop` is the documented user Stop operation. The cancellation result is observed when the blocking `CT400_ScanWaitEnd` returns code 1. The current IOPanel lifecycle is configure → `CT400_ScanStart` → one blocking `CT400_ScanWaitEnd` → classify result → retrieve data when appropriate → selected-input cleanup. A normally completed scan does not issue an unnecessary `CT400_ScanStop`.
+- The application does not force-terminate an active CT400 scan thread. On close during a scan, IOPanel requests cooperative Stop and defers close until WaitEnd returns and worker cleanup completes. The Programming Guide does not document general same-handle DLL thread safety/reentrancy; physical Stop-while-WaitEnd behavior remains to be qualified under supervision.
+- `CT400_CmdLaser` addresses an explicit laser input `LI_1` through `LI_4`. `CT400.close()` is resource/connection cleanup only: for a live handle it calls `CT400_Close`, with no hidden laser command and no hard-coded `LI_1` policy. The Programming Guide does not say that `CT400_Close` disables a laser or establishes an optical safe state.
+- Operational laser cleanup belongs to the workflow that selected the input: ScanWorker disables its selected scan input; power monitoring disables its selected monitor input; successful GUI Disconnect disables the configured CT400 input; application shutdown explicitly disables the configured input when required by the confirmed connection state, then releases the native handle. A successful earlier Disconnect avoids an unnecessary duplicate disable.
+- The application serializes CT400 workflows using exclusive states `IDLE`, `CONNECTING`, `DISCONNECTING`, `SCANNING`, `MONITORING` and `ALIGNMENT`. `ALIGNMENT` covers fine alignment, spiral alignment and 2D mapping. Only one workflow owns the CT400 at a time. Shutdown waits for the owner to finish; scan uses ScanStop/WaitEnd/cleanup, monitoring stops fetching and disables its selected input, connection operations finish before shutdown resumes, and alignment requests cooperative `AlignmentWorker.stop()` and waits for selected-input cleanup and `operation_finished`.
 
-No authoritative public CT400_lib.dll API manual was located during this review. The names, signatures and return handling below are transcribed from the checked-in Python wrapper, not independently verified vendor specifications. EXFO's [CT400 product page](https://www.exfo.com/en/products/discontinued-products/ct400/) lists the product as discontinued and its service/support end date as March 31, 2023; that page does not document the DLL API.
+This serialization is a conservative application policy because the Programming Guide does not document general same-handle reentrancy or thread safety. It does not claim the hardware or DLL cannot support concurrency. No software-only or simulator result establishes physical compatibility or optical safe state.
 
 ## Record sheet
 
@@ -97,8 +98,9 @@ Prerequisites: Gate A passes; qualified operator present; camera backend disable
 
 1. With scan idle and laser in the approved safe state, verify the configured `CT400_lib.dll` exists, its architecture matches Python, and vendor-required runtimes are installed. Record versions; do not copy DLLs from an unverified machine.
 2. Start IOPanel using the reviewed lab-local config and the normal GUI. Startup calls the CT400 initialization path (`CT400_Init`); record whether connection succeeds and the exact status/log message. Confirm it is the physical backend, not a `SIMULATED`/Dummy status. Confirm the expected device using the vendor-approved identity method; do not guess an instrument address.
-3. Keep the scan idle. Verify the device is in the operator-confirmed safe state using the site's independent indication. Do not infer that the wrapper's fixed LI_1 close-time command controls the configured/selected input or proves safe state.
-4. With no scan active and output confirmed safe, close IOPanel normally. Confirm it exits cleanly and the CT400 handle/connection is released according to supported driver/vendor indication. Review logs for the close-time disable attempt, but do not treat that attempt as independent confirmation. Do not use Task Manager as normal cleanup.
+3. Keep the scan idle. Verify the device is in the operator-confirmed safe state using the site's independent indication. `CT400.close()` is resource release only; do not infer laser state from `CT400_Close`.
+4. If needed to qualify the configured laser interface, perform the normal GUI Connect/Disconnect operation only with operator authorization and no scan active. Do not perform a laser-enable operation merely to pass this gate.
+5. After safe state is independently confirmed, close IOPanel normally. Confirm native resource release using supported driver/vendor indication. Do not use Task Manager as normal cleanup.
 
 **Pass:** correct DLL/runtime/bitness and physical CT400 identity/connection; independently verified safe idle state; normal close releases the connection. **Fail:** any simulated backend presented as physical, unclear identity/state, or unclean resource release. Stop live testing and follow site procedure on any safety concern.
 
@@ -112,13 +114,13 @@ Use the physical backend explicitly (or omit the setting only when intentionally
 
 ## E. Gate E — Supervised scan cancellation and shutdown
 
-Prerequisites: Gate D passes and the lab operator has confirmed the vendor-supported cancellation sequence, expected `CT400_ScanStop`/wait behavior and an independent safe stop before any active scan. Current source contains a forced-termination fallback; do not deliberately provoke it during laser operation.
+Prerequisites: Gate D passes; the lab operator approves one bounded cancellation test; approved settings and an independent safe-state indication are available. The remaining uncertainty is the physical DLL's behavior when `CT400_ScanStop` is called while `CT400_ScanWaitEnd` is blocked. Do not deliberately test overlapping calls outside this supervised sequence.
 
-1. Conduct one separately approved cancellation while an active bounded scan is supervised. Use the GUI cancellation control, observe the scan status, selected-input laser safe state via an independent indication, worker completion and CT400 responsiveness.
-2. Do not close the window during an active scan unless the operator has explicitly established that exact shutdown procedure as safe. Do not deliberately interrupt communications or disconnect devices during emission.
-3. After scan has stopped and safe state is independently confirmed, close normally and check handle release.
+1. Run one separately approved, supervised bounded scan. Click the GUI Stop control once. Observe that IOPanel issues `CT400_ScanStop`, waits for the blocking `CT400_ScanWaitEnd` to return, and reports the vendor cancellation result (code 1 when cancellation is confirmed).
+2. Confirm the selected input's safe state using an independent indication. Confirm the application remains responsive, selected-input cleanup completes, and no forced thread termination occurs.
+3. If also qualifying close-during-scan, let the normal deferred-close path finish only after WaitEnd and cleanup complete. Confirm native resource release afterward. Do not deliberately interrupt communications or disconnect devices during emission.
 
-**Pass:** cancellation is cooperative, the scan ceases, selected input is independently safe, no forced termination occurs and the CT400 releases cleanly. **Fail/stop:** stop does not complete, safe state cannot be confirmed, worker is terminated, or resource release is uncertain. Follow the site's emergency procedure; preserve logs without repeating the test.
+**Pass:** Stop is issued once, WaitEnd returns the documented cancellation behavior, the selected input is independently confirmed safe, the application remains responsive, no forced termination occurs, and resources release cleanly. **Fail/stop:** Stop/WaitEnd does not complete, code/result is unexpected, safe state cannot be confirmed, or resource release is uncertain. Follow the site's emergency procedure; preserve logs without repeating the test.
 
 ## F. Gate F — Concurrent physical CT400 scan and camera streaming
 
@@ -144,8 +146,8 @@ For approved negative cases, include absent camera at startup, unavailable Vimba
 
 Prerequisites: no unresolved instrument error; any scan has completed or has been cancelled using the procedure validated at Gate E; the responsible operator confirms the safe-state indication before close.
 
-1. Independently verify the selected laser input is safe; do not treat GUI status or the close-time LI_1 command as proof.
-2. Stop camera acquisition and close IOPanel normally; verify no active workers, process handles or locked devices remain. Do not force terminate while any CT400 operation could be active.
+1. Verify all CT400 operations are IDLE and independently confirm the selected input's safe state. Do not treat successful `CT400_Close` as proof that optical output is safe.
+2. Stop camera acquisition and close IOPanel normally. Verify there is no active CT400 owner and that native resources release cleanly. Do not force terminate while any CT400 operation could be active.
 3. Return source, shutter, optical path, detector and camera controls to the operator-approved state; finish lab checkout.
 4. Complete the record sheet and use controlled lab storage. Attach only redacted logs/evidence to internal issue records.
 

@@ -432,6 +432,42 @@ def test_alignment_modes_own_ct400_until_post_cleanup(qtbot, monkeypatch, tmp_pa
             window.close()
 
 
+def test_single_fine_alignment_click_starts_one_owned_operation(qtbot, monkeypatch, tmp_path):
+    window, _gate, _frame_spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path)
+    alignment = _prepare_alignment_panel(window)
+    release = threading.Event()
+    started = threading.Event()
+    events = []
+    worker = _arm_blocking_alignment(alignment, release, started, events)
+    operation_spy = QSignalSpy(alignment.operation_started)
+    worker_request_spy = QSignalSpy(alignment.start_alignment_requested)
+
+    try:
+        qtbot.mouseClick(alignment.align_button, Qt.MouseButton.LeftButton)
+        qtbot.waitUntil(started.is_set, timeout=1500)
+
+        assert operation_spy.count() == 1
+        assert worker_request_spy.count() == 1
+        assert [event for event in events if event[0] == "laser-enable"] == [
+            ("laser-enable", alignment.input_port_combo.currentData())
+        ]
+        assert window._ct400_operation_state.name == "ALIGNMENT"
+        assert alignment._active_mode == "fine alignment"
+        assert alignment.align_button.isChecked()
+        assert alignment.stop_operation_button.isEnabled()
+
+        alignment.request_stop()
+        assert window._ct400_operation_state.name == "ALIGNMENT"
+        release.set()
+        qtbot.waitUntil(lambda: window._ct400_operation_state.name == "IDLE", timeout=3000)
+        assert not alignment.align_button.isChecked()
+        assert not alignment.stop_operation_button.isEnabled()
+    finally:
+        release.set()
+        if window.isVisible():
+            window.close()
+
+
 def test_alignment_error_disables_selected_input_before_releasing_owner(qtbot, monkeypatch, tmp_path):
     monkeypatch.setattr(alignment_panel_module.QMessageBox, "critical", lambda *_args: None)
     window, _gate, _frame_spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path)

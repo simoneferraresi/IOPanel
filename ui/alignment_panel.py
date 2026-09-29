@@ -242,7 +242,6 @@ class AlignmentPanel(QWidget):
         self.map_button.clicked.connect(self.toggle_mapping)
         self.spiral_align_button.clicked.connect(self.toggle_spiral_alignment)
         self.stop_operation_button.clicked.connect(self.request_stop)
-        self.align_button.clicked.connect(self.toggle_alignment)
 
         # --- NEW: Connect the plot's signal to the color bar's slot ---
         self.plot3d_widget.colormap_updated.connect(self.colorbar_widget.update_colormap)
