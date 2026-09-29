@@ -184,6 +184,86 @@ def _start_scan_during_stream(qtbot, window, frame_spy):
     return camera_frame_count
 
 
+def test_scan_owns_ct400_and_blocks_monitor_and_detector_writes(qtbot, monkeypatch, tmp_path):
+    window, gate, frame_spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path)
+    scan = window.control_panel
+    monitor = window.histogram_control
+    device = window.ct400_device
+    detector_writes = []
+    device.set_detector_array = lambda *args: detector_writes.append(args)
+
+    try:
+        # Make the action available in this explicit DummyCT400 test so the
+        # coordinator's SCANNING gate itself is exercised.
+        window.ct400_connect_action.setEnabled(True)
+        _start_scan_during_stream(qtbot, window, frame_spy)
+        assert window._ct400_operation_state.name == "SCANNING"
+        assert not monitor.monitor_btn.isEnabled()
+        assert not window.ct400_connect_action.isEnabled()
+        assert scan.scan_btn.isEnabled()
+        assert scan.scan_btn.text() == "Stop Scan"
+
+        # Programmatic checkbox changes still emit the callback; its ownership
+        # guard must prevent an independent native detector write.
+        monitor.detector_cbs[0].setChecked(not monitor.detector_cbs[0].isChecked())
+        assert detector_writes == []
+
+        scan_thread = scan.scan_thread
+        gate.set()
+        qtbot.waitUntil(lambda: not scan.scanning, timeout=2500)
+        qtbot.waitUntil(lambda: window._ct400_operation_state.name == "IDLE", timeout=1000)
+        qtbot.waitUntil(lambda: _qt_thread_stopped(scan_thread), timeout=1500)
+        assert monitor.monitor_btn.isEnabled()
+    finally:
+        gate.set()
+        if window.isVisible():
+            window.close()
+
+
+def test_monitor_owns_ct400_until_selected_input_cleanup_finishes(qtbot, monkeypatch, tmp_path):
+    window, _gate, _frame_spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path)
+    monitor = window.histogram_control
+    scan = window.control_panel
+    device = window.ct400_device
+    monitor.on_instrument_connected(True)
+    index = monitor.input_port.findData(LaserInput.LI_4)
+    monitor.input_port.setCurrentIndex(index)
+    disable_states = []
+    original_cmd = device.cmd_laser
+
+    def record_laser(*args, **kwargs):
+        if _laser_call_enable((args, kwargs)) is Enable.DISABLE:
+            disable_states.append(window._ct400_operation_state.name)
+        return original_cmd(*args, **kwargs)
+
+    device.cmd_laser = record_laser
+    try:
+        window.ct400_connect_action.setEnabled(True)
+        monitor._start_monitoring()
+        assert window._ct400_operation_state.name == "MONITORING"
+        assert not scan.scan_btn.isEnabled()
+        assert not window.ct400_connect_action.isEnabled()
+        assert monitor.monitor_btn.isEnabled()
+        monitor._stop_monitoring()
+        qtbot.waitUntil(lambda: window._ct400_operation_state.name == "IDLE", timeout=1500)
+        assert disable_states == ["MONITORING"]
+        assert _laser_call_input(device.cmd_laser_calls[-1]) == LaserInput.LI_4
+        assert _laser_call_enable(device.cmd_laser_calls[-1]) == Enable.DISABLE
+        assert scan.scan_btn.isEnabled()
+
+        original_set_detectors = device.set_detector_array
+        device.set_detector_array = lambda *_args: (_ for _ in ()).throw(RuntimeError("fake setup failure"))
+        monitor._start_monitoring()
+        assert window._ct400_operation_state.name == "IDLE"
+        assert not monitor.monitoring
+        assert scan.scan_btn.isEnabled()
+        device.set_detector_array = original_set_detectors
+    finally:
+        monitor.cleanup_worker_thread()
+        if window.isVisible():
+            window.close()
+
+
 def test_mainwindow_scan_updates_real_plot_while_camera_frames_continue(qtbot, monkeypatch, tmp_path):
     window, progression_gate, frame_spy, dialog_messages = _start_application(qtbot, monkeypatch, tmp_path)
     camera = window.cameras[0]
@@ -467,18 +547,20 @@ def test_monitor_stop_and_active_cleanup_disable_its_selected_input(qtbot, monke
     panel.input_port.setCurrentIndex(index)
 
     try:
-        assert panel._apply_monitoring_settings()
+        panel._start_monitoring()
         assert _laser_call_input(device.cmd_laser_calls[-1]) == LaserInput.LI_4
         assert _laser_call_enable(device.cmd_laser_calls[-1]) == Enable.ENABLE
-
-        panel.monitoring = True
+        assert window._ct400_operation_state.name == "MONITORING"
         panel._stop_monitoring()
+        qtbot.waitUntil(lambda: window._ct400_operation_state.name == "IDLE", timeout=1500)
         assert _laser_call_input(device.cmd_laser_calls[-1]) == LaserInput.LI_4
         assert _laser_call_enable(device.cmd_laser_calls[-1]) == Enable.DISABLE
 
-        assert panel._apply_monitoring_settings()
-        panel.monitoring = True
-        panel.cleanup_worker_thread()
+        panel._start_monitoring()
+        assert window._ct400_operation_state.name == "MONITORING"
+        window.close()
+        assert window.isVisible()
+        qtbot.waitUntil(lambda: not window.isVisible(), timeout=2500)
         assert _laser_call_input(device.cmd_laser_calls[-1]) == LaserInput.LI_4
         assert _laser_call_enable(device.cmd_laser_calls[-1]) == Enable.DISABLE
     finally:
@@ -517,7 +599,9 @@ def test_close_waits_for_active_ct400_connection_operation(
     try:
         window._handle_ct400_connect_action_triggered(connect)
         qtbot.waitUntil(operation_started.is_set, timeout=1500)
-        assert window._ct400_connection_operation_active
+        assert window._ct400_operation_state.name == ("CONNECTING" if connect else "DISCONNECTING")
+        assert not window.control_panel.scan_btn.isEnabled()
+        assert not window.histogram_control.monitor_btn.isEnabled()
         assert native_operation_active.is_set()
 
         window.close()
@@ -534,7 +618,7 @@ def test_close_waits_for_active_ct400_connection_operation(
         release.set()
         qtbot.waitUntil(lambda: not window.isVisible(), timeout=4000)
 
-        assert not window._ct400_connection_operation_active
+        assert window._ct400_operation_state.name == "IDLE"
         assert not window._pending_ct400_connection_close
         assert events[-1] == ("close", 73, False)
         assert sum(event[0] == "close" for event in events) == 1
@@ -559,6 +643,55 @@ def test_close_waits_for_active_ct400_connection_operation(
             assert window._ct400_connection_configured
             assert len(laser_starts) == 2
             assert all(event[2]["enable"] == Enable.DISABLE for event in laser_starts)
+    finally:
+        release.set()
+        if window.isVisible():
+            window.close()
+
+
+@pytest.mark.parametrize(
+    ("connect", "failure", "configured", "controls_enabled"),
+    [
+        (True, None, True, True),
+        (True, "connect", False, False),
+        (False, None, False, False),
+        (False, "disconnect", True, False),
+    ],
+    ids=["connect-success", "connect-failure", "disconnect-success", "disconnect-failure"],
+)
+def test_ct400_operation_completion_restores_controls_from_confirmed_state(
+    qtbot, monkeypatch, tmp_path, connect, failure, configured, controls_enabled
+):
+    window, _gate, _frame_spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path)
+    events = []
+    release = threading.Event()
+    operation_started = threading.Event()
+    native_operation_active = threading.Event()
+    device = _fake_blocking_connection_ct400(
+        events, release, operation_started, native_operation_active, failure
+    )
+    window.ct400_device = device
+    window.control_panel.set_instrument(device)
+    window.histogram_control.set_instrument(device)
+    if not connect:
+        window._handle_ct400_connection_success("CT400 Connected")
+    else:
+        window.control_panel.on_instrument_connected(False)
+        window.histogram_control.on_instrument_connected(False)
+
+    try:
+        window._handle_ct400_connect_action_triggered(connect)
+        qtbot.waitUntil(operation_started.is_set, timeout=1500)
+        assert window._ct400_operation_state.name == ("CONNECTING" if connect else "DISCONNECTING")
+        assert not window.control_panel.scan_btn.isEnabled()
+        assert not window.histogram_control.monitor_btn.isEnabled()
+        release.set()
+        qtbot.waitUntil(lambda: window._ct400_operation_state.name == "IDLE", timeout=2500)
+
+        assert window._ct400_connection_configured is configured
+        assert window.control_panel.scan_btn.isEnabled() is controls_enabled
+        assert window.histogram_control.monitor_btn.isEnabled() is controls_enabled
+        assert window.ct400_connect_action.isEnabled()
     finally:
         release.set()
         if window.isVisible():

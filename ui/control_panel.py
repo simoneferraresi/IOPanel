@@ -399,6 +399,7 @@ class ScanWorker(QtCore.QObject):
 class PowerFetchWorker(QObject):
     data_ready = Signal(PowerData)
     error_occurred = Signal(str)
+    stop_completed = Signal()
 
     def __init__(self, ct400_device: AbstractCT400 | None, parent: QObject | None = None):
         super().__init__(parent)
@@ -447,6 +448,7 @@ class PowerFetchWorker(QObject):
     def request_stop(self):
         with QMutexLocker(self._is_running_lock):
             self._is_actually_running = False
+        self.stop_completed.emit()
 
 
 class QABCMeta(type(QWidget), ABCMeta):
@@ -480,6 +482,7 @@ class BaseControlPanel(QWidget, ABC, metaclass=QABCMeta):
         self.ct400 = ct400_device
         self.config = config
         self.is_instrument_connected = self.ct400 is not None
+        self.ct400_operation_state = "IDLE"
 
         # These will be created in _init_base_ui and used by subclasses
         self.main_layout: QVBoxLayout
@@ -541,17 +544,27 @@ class BaseControlPanel(QWidget, ABC, metaclass=QABCMeta):
         self.is_instrument_connected = is_connected
 
         # Enable configuration inputs only if connected AND not busy.
-        enable_config_inputs = is_connected and not self.is_busy()
+        enable_config_inputs = (
+            is_connected and not self.is_busy() and self.ct400_operation_state == "IDLE"
+        )
 
         for widget in self._get_configurable_widgets():
             widget.setEnabled(enable_config_inputs)
 
-        self._get_main_action_button().setEnabled(is_connected)
+        owns_operation = self._owns_operation_state(self.ct400_operation_state)
+        self._get_main_action_button().setEnabled(is_connected and (self.ct400_operation_state == "IDLE" or owns_operation))
 
         # If the instrument disconnects while the panel is busy, force a stop.
         if not is_connected and self.is_busy():
             logger.warning(f"Instrument disconnected during operation on '{self.objectName()}'. Forcing stop.")
             self._force_stop()
+
+    def set_ct400_operation_state(self, state: str):
+        self.ct400_operation_state = state
+        self.on_instrument_connected(self.is_instrument_connected)
+
+    def _owns_operation_state(self, state: str) -> bool:
+        return False
 
     def _get_laser_power_mw(self) -> float:
         """Converts the power input from mW or dBm to a float value in mW."""
@@ -595,6 +608,8 @@ class CT400ControlPanel(BaseControlPanel):
     scan_data_ready = QtCore.Signal(np.ndarray, np.ndarray, float)
     scan_warning = QtCore.Signal(str)
     progress_updated = QtCore.Signal(int)
+    operation_started = QtCore.Signal()
+    operation_finished = QtCore.Signal()
 
     def __init__(
         self,
@@ -702,6 +717,9 @@ class CT400ControlPanel(BaseControlPanel):
     def _force_stop(self):
         self._stop_scan(cancelled=True)
 
+    def _owns_operation_state(self, state: str) -> bool:
+        return state == "SCANNING" and self.scanning
+
     # --- End of Abstract Method Implementation ---
 
     @Slot()
@@ -727,11 +745,14 @@ class CT400ControlPanel(BaseControlPanel):
         return value
 
     def _start_scan(self):
+        if self.ct400_operation_state != "IDLE":
+            return
         if not self.is_instrument_connected:
             QMessageBox.warning(self, "Not Connected", "CT400 device is not connected.")
             return
         if self.scanning:
             return
+        operation_claimed = False
         try:
             start_wl = float(self.initial_wl.text())
             end_wl = float(self.final_wl.text())
@@ -747,6 +768,8 @@ class CT400ControlPanel(BaseControlPanel):
                 raise ValueError("Invalid scan parameters.")
 
             self.scanning = True
+            self.operation_started.emit()
+            operation_claimed = True
             self.scan_btn.setText("Stop Scan")
             self.scan_btn.setIcon(QtGui.QIcon(":/icons/stop.svg"))
             self.scan_btn.setProperty(PROP_SCANNING, True)
@@ -789,10 +812,15 @@ class CT400ControlPanel(BaseControlPanel):
         except ValueError as ve:
             QMessageBox.critical(self, "Invalid Input", f"Invalid scan parameter: {ve}")
             logger.warning(f"Scan start validation failed: {ve}")
+            if operation_claimed:
+                self._reset_scan_ui()
+                self.operation_finished.emit()
         except Exception as e:
             QMessageBox.critical(self, "Scan Start Error", f"Could not start scan: {e}")
             logger.error(f"Error starting scan: {e}", exc_info=True)
             self._reset_scan_ui()
+            if operation_claimed:
+                self.operation_finished.emit()
 
     def _stop_scan(self, cancelled=False):
         logger.info(f"Stopping scan (Cancelled: {cancelled}).")
@@ -862,6 +890,7 @@ class CT400ControlPanel(BaseControlPanel):
             self.scan_thread = None
 
         self._reset_scan_ui(status_msg=status_msg)
+        self.operation_finished.emit()
 
     def _reset_scan_ui(self, status_msg: str = MSG_SCAN_READY):
         self.scanning = False
@@ -884,6 +913,8 @@ class CT400ControlPanel(BaseControlPanel):
 class HistogramControlPanel(BaseControlPanel):
     _THREAD_WAIT_TIMEOUT_MS = 2000
     power_data_ready = QtCore.Signal(dict)
+    operation_started = QtCore.Signal()
+    operation_finished = QtCore.Signal()
 
     def __init__(
         self,
@@ -893,6 +924,8 @@ class HistogramControlPanel(BaseControlPanel):
     ):
         # State specific to this panel
         self.monitoring = False
+        self._monitor_stop_pending = False
+        self._monitor_starting = False
         self.power_fetch_thread = QThread(self)
         self.power_fetch_worker = PowerFetchWorker(ct400_device)
         self.timer = QTimer(self)
@@ -968,6 +1001,7 @@ class HistogramControlPanel(BaseControlPanel):
         self.power_fetch_worker.moveToThread(self.power_fetch_thread)
         self.power_fetch_worker.data_ready.connect(self._handle_worker_data_ready)
         self.power_fetch_worker.error_occurred.connect(self._handle_worker_error)
+        self.power_fetch_worker.stop_completed.connect(self._finish_monitor_stop)
         self.power_fetch_thread.started.connect(lambda: logger.info("Power fetch worker thread started."))
         self.power_fetch_thread.finished.connect(self.power_fetch_worker.deleteLater)
         self.power_fetch_thread.finished.connect(self.power_fetch_thread.deleteLater)
@@ -1002,6 +1036,9 @@ class HistogramControlPanel(BaseControlPanel):
     def _force_stop(self):
         self._stop_monitoring(instrument_error_or_disconnect=True)
 
+    def _owns_operation_state(self, state: str) -> bool:
+        return state == "MONITORING" and self.monitoring and not self._monitor_stop_pending
+
     # --- End of Abstract Method Implementation ---
 
     # We must override on_instrument_connected to handle the detector checkboxes,
@@ -1012,7 +1049,7 @@ class HistogramControlPanel(BaseControlPanel):
 
         # Now, handle the specific logic for detector checkboxes
         for cb in self.detector_cbs:
-            cb.setEnabled(is_connected)
+            cb.setEnabled(is_connected and self.ct400_operation_state == "IDLE")
 
     def _get_laser_power_mw(self) -> float:
         value = float(self.laser_power.text())
@@ -1028,6 +1065,8 @@ class HistogramControlPanel(BaseControlPanel):
             self._stop_monitoring()
 
     def _apply_monitoring_settings(self) -> bool:
+        if self.ct400_operation_state != "IDLE" and not self._monitor_starting:
+            return False
         if not self.is_instrument_connected:
             logger.error("Monitor Panel: Cannot apply settings, instrument not connected.")
             return False
@@ -1066,13 +1105,20 @@ class HistogramControlPanel(BaseControlPanel):
             return False
 
     def _start_monitoring(self):
+        if self.ct400_operation_state != "IDLE":
+            return
         if not self.is_instrument_connected:
             QMessageBox.warning(self, "Not Connected", "CT400 device is not connected.")
             return
         if self.monitoring:
             return
+        self._monitor_starting = True
+        self.operation_started.emit()
         if not self._apply_monitoring_settings():
+            self._monitor_starting = False
+            self.operation_finished.emit()
             return
+        self._monitor_starting = False
 
         logger.info("Monitor Panel: Starting power monitoring.")
         self.monitoring = True
@@ -1089,7 +1135,7 @@ class HistogramControlPanel(BaseControlPanel):
         logger.debug(f"Monitor Panel: Timer started (Interval: {self.timer.interval()}ms) to trigger worker.")
 
     def _stop_monitoring(self, instrument_error_or_disconnect=False):
-        if not self.monitoring and not instrument_error_or_disconnect:
+        if (not self.monitoring and not instrument_error_or_disconnect) or self._monitor_stop_pending:
             return
 
         logger.info(
@@ -1097,6 +1143,7 @@ class HistogramControlPanel(BaseControlPanel):
         )
         was_actively_monitoring = self.monitoring
         self.monitoring = False
+        self._monitor_stop_pending = was_actively_monitoring
         if self.timer.isActive():
             logger.debug("Monitor Panel: Stopping QTimer.")
             self.timer.stop()
@@ -1106,17 +1153,25 @@ class HistogramControlPanel(BaseControlPanel):
                 "request_stop",
                 Qt.ConnectionType.QueuedConnection,
             )
+        if not was_actively_monitoring:
+            self._finish_monitor_stop()
+        else:
+            self.monitor_btn.setText("Stopping Monitoring…")
+            self.monitor_btn.setEnabled(False)
 
-        if was_actively_monitoring and not instrument_error_or_disconnect:
+    @Slot()
+    def _finish_monitor_stop(self):
+        if self._monitor_stop_pending:
+            self._monitor_stop_pending = False
             self._perform_laser_disable()
-
-        self.monitor_btn.setText("Start Monitoring")
-        self.monitor_btn.setIcon(QtGui.QIcon(":/icons/play.svg"))
-        self.monitor_btn.setProperty(PROP_MONITORING, False)
-        self.monitor_btn.style().unpolish(self.monitor_btn)
-        self.monitor_btn.style().polish(self.monitor_btn)
-        self.on_instrument_connected(self.is_instrument_connected)
-        logger.debug("Monitor Panel: UI reset and stop requested.")
+            self.monitor_btn.setText("Start Monitoring")
+            self.monitor_btn.setIcon(QtGui.QIcon(":/icons/play.svg"))
+            self.monitor_btn.setProperty(PROP_MONITORING, False)
+            self.monitor_btn.style().unpolish(self.monitor_btn)
+            self.monitor_btn.style().polish(self.monitor_btn)
+            self.on_instrument_connected(self.is_instrument_connected)
+            self.operation_finished.emit()
+            logger.debug("Monitor Panel: selected-input cleanup complete; ownership released.")
 
     def _perform_laser_disable(self):
         if self.is_instrument_connected and self.ct400:
@@ -1259,7 +1314,7 @@ class HistogramControlPanel(BaseControlPanel):
 
     @Slot()
     def _detector_selection_changed(self):
-        if self.is_instrument_connected and self.ct400:
+        if self.is_instrument_connected and self.ct400 and self.ct400_operation_state == "IDLE":
             logger.info("Monitor Panel: Detector selection changed, re-applying to CT400.")
             try:
                 det_enables = [Enable.ENABLE if cb.isChecked() else Enable.DISABLE for cb in self.detector_cbs]
