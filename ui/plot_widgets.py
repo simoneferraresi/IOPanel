@@ -1007,7 +1007,7 @@ class PlotWidget(QWidget):
 
             # Filter out non-finite points FOR PLOTTING ONLY
             # This prevents PyQtGraph from trying to plot NaNs/Infs which can cause extreme axes
-            finite_mask = np.isfinite(y_data_np)
+            finite_mask = np.isfinite(x_data_np) & np.isfinite(y_data_np)
             x_plot_data = x_data_np[finite_mask]
             y_plot_data = y_data_np[finite_mask]
 
@@ -1017,6 +1017,13 @@ class PlotWidget(QWidget):
                 )
 
             self.plot_data_item.setData(x_plot_data, y_plot_data)
+
+            # Fit the new live trace once. Passing the live item explicitly keeps
+            # a frozen reference trace from changing the scan's visible range.
+            # Unlike enableAutoRange(), autoRange() does not stay active, so users
+            # can zoom and pan normally after each scan update.
+            if len(x_plot_data) > 0:
+                self.plot_widget.plotItem.vb.autoRange(items=[self.plot_data_item])
 
             if len(x_data_np) > 0:
                 title_text = f"Wavelength Scan ({x_data_np[0]:.1f} - {x_data_np[-1]:.1f} nm)"
