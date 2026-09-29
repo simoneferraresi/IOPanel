@@ -42,6 +42,38 @@ def _fake_physical_ct400(events):
     return device
 
 
+def _fake_blocking_connection_ct400(events, release, operation_started, native_operation_active, failure):
+    device = CT400.__new__(CT400)
+    device.handle = 73
+    laser_call_count = 0
+
+    def block_native_call(name, kwargs):
+        nonlocal laser_call_count
+        if name == "laser":
+            laser_call_count += 1
+        call_number = laser_call_count
+        events.append((f"{name}_started", call_number, kwargs))
+        native_operation_active.set()
+        operation_started.set()
+        try:
+            if not release.wait(5):
+                raise TimeoutError("test did not release fake CT400 operation")
+            if (failure == "connect" and name == "connect") or (
+                failure == "disconnect" and name == "laser" and call_number == 1
+            ):
+                raise RuntimeError(f"fake {name} operation failed")
+            events.append((f"{name}_completed", call_number, kwargs))
+        finally:
+            native_operation_active.clear()
+
+    device.set_laser = lambda *args, **kwargs: block_native_call("connect", kwargs)
+    device.cmd_laser = lambda *args, **kwargs: block_native_call("laser", kwargs)
+    device.dll = SimpleNamespace(
+        CT400_Close=lambda handle: events.append(("close", handle, native_operation_active.is_set())) or 0,
+    )
+    return device
+
+
 def _laser_call_input(call):
     args, kwargs = call
     return kwargs.get("laser_input", args[0] if args else None)
@@ -450,5 +482,84 @@ def test_monitor_stop_and_active_cleanup_disable_its_selected_input(qtbot, monke
         assert _laser_call_input(device.cmd_laser_calls[-1]) == LaserInput.LI_4
         assert _laser_call_enable(device.cmd_laser_calls[-1]) == Enable.DISABLE
     finally:
+        if window.isVisible():
+            window.close()
+
+
+@pytest.mark.parametrize(
+    ("connect", "failure"),
+    [(True, None), (True, "connect"), (False, None), (False, "disconnect")],
+    ids=["connect-success", "connect-failure", "disconnect-success", "disconnect-failure"],
+)
+def test_close_waits_for_active_ct400_connection_operation(
+    qtbot, monkeypatch, tmp_path, connect, failure
+):
+    window, _gate, _frame_spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path)
+    events = []
+    release = threading.Event()
+    operation_started = threading.Event()
+    native_operation_active = threading.Event()
+    device = _fake_blocking_connection_ct400(
+        events,
+        release,
+        operation_started,
+        native_operation_active,
+        failure,
+    )
+    window.ct400_device = device
+    window.config.scan_defaults.input_port = 3
+    window.config.scan_defaults.safe_parking_wavelength = 1532.5
+    window.config.scan_defaults.laser_power = 0.75
+
+    if not connect:
+        window._handle_ct400_connection_success("CT400 Connected")
+
+    try:
+        window._handle_ct400_connect_action_triggered(connect)
+        qtbot.waitUntil(operation_started.is_set, timeout=1500)
+        assert window._ct400_connection_operation_active
+        assert native_operation_active.is_set()
+
+        window.close()
+
+        assert window.isVisible()
+        assert window._pending_ct400_connection_close
+        assert "Waiting for CT400 connection operation" in window.statusBar().currentMessage()
+        assert device.handle == 73
+        assert not any(event[0] == "close" for event in events)
+        # The only laser command during the blocked disconnect is its own
+        # worker call; shutdown has not overlapped it with another command.
+        assert sum(event[0] == "laser_started" for event in events) == (0 if connect else 1)
+
+        release.set()
+        qtbot.waitUntil(lambda: not window.isVisible(), timeout=4000)
+
+        assert not window._ct400_connection_operation_active
+        assert not window._pending_ct400_connection_close
+        assert events[-1] == ("close", 73, False)
+        assert sum(event[0] == "close" for event in events) == 1
+
+        laser_starts = [event for event in events if event[0] == "laser_started"]
+        if connect and failure is None:
+            assert window._ct400_connection_configured
+            assert len(laser_starts) == 1
+            assert laser_starts[0][2] == {
+                "laser_input": LaserInput.LI_3,
+                "enable": Enable.DISABLE,
+                "wavelength": 1532.5,
+                "power": 0.75,
+            }
+        elif connect and failure == "connect":
+            assert not window._ct400_connection_configured
+            assert laser_starts == []
+        elif not connect and failure is None:
+            assert not window._ct400_connection_configured
+            assert len(laser_starts) == 1
+        else:
+            assert window._ct400_connection_configured
+            assert len(laser_starts) == 2
+            assert all(event[2]["enable"] == Enable.DISABLE for event in laser_starts)
+    finally:
+        release.set()
         if window.isVisible():
             window.close()

@@ -180,6 +180,11 @@ class MainWindow(QMainWindow):
         self.vmb_instance: VmbSystem | None = None
         self.is_ct400_connected_state: bool = False
         self._ct400_connection_configured: bool = False
+        self._ct400_connection_operation_active: bool = False
+        self._pending_ct400_connection_close: bool = False
+        self._ct400_error_reset_timer = QTimer(self)
+        self._ct400_error_reset_timer.setSingleShot(True)
+        self._ct400_error_reset_timer.timeout.connect(self._reset_ct400_error_visuals)
         self.camera_control_actions: dict[str, QAction] = {}
         self.cameras_menu: QMenu | None = None
 
@@ -633,11 +638,16 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(message, timeout)
 
         if state == CT400Status.ERROR:
-            QTimer.singleShot(
-                3000, lambda: self._update_ct400_visuals(CT400Status.DISCONNECTED, "Error occurred. Ready to connect.")
-            )
+            self._ct400_error_reset_timer.start(3000)
+        elif self._ct400_error_reset_timer.isActive():
+            self._ct400_error_reset_timer.stop()
 
         self.is_ct400_connected_state = state == CT400Status.CONNECTED
+
+    @Slot()
+    def _reset_ct400_error_visuals(self):
+        """Return an error status to disconnected while owned by this window."""
+        self._update_ct400_visuals(CT400Status.DISCONNECTED, "Error occurred. Ready to connect.")
 
     def _create_menus(self):
         """Creates the main menu bar and all its actions."""
@@ -773,19 +783,39 @@ class MainWindow(QMainWindow):
                 action.setEnabled(True)
             return
 
+        if self._ct400_connection_operation_active:
+            logger.warning("Ignoring CT400 Connect/Disconnect request while an operation is active.")
+            if action:
+                action.setChecked(self.is_ct400_connected_state)
+                action.setEnabled(True)
+            return
+
         worker = CT400ConnectionWorker(self.ct400_device, self.config, connect=checked)
         worker.signals.connection_succeeded.connect(self._handle_ct400_connection_success)
         worker.signals.connection_failed.connect(self._handle_ct400_connection_failure)
         worker.signals.disconnection_succeeded.connect(self._handle_ct400_disconnection_success)
         worker.signals.disconnection_failed.connect(self._handle_ct400_connection_failure)
-        worker.signals.finished.connect(lambda: self.ct400_connect_action.setEnabled(True))
+        worker.signals.finished.connect(self._handle_ct400_connection_operation_finished)
 
         if checked:
             self._update_ct400_visuals(state=CT400Status.CONNECTING, message="CT400: Attempting to connect...")
         else:
             self._update_ct400_visuals(state=CT400Status.DISCONNECTING, message="CT400: Disconnecting...")
 
+        self._ct400_connection_operation_active = True
         QThreadPool.globalInstance().start(worker)
+
+    @Slot()
+    def _handle_ct400_connection_operation_finished(self):
+        """Release connection-operation ownership and resume deferred shutdown."""
+        self._ct400_connection_operation_active = False
+        action = getattr(self, "ct400_connect_action", None)
+        if action is not None:
+            action.setEnabled(True)
+
+        if self._pending_ct400_connection_close:
+            self._pending_ct400_connection_close = False
+            QTimer.singleShot(0, self.close)
 
     @Slot(str)
     def _handle_ct400_connection_success(self, message: str):
@@ -1186,6 +1216,13 @@ class MainWindow(QMainWindow):
             scan_panel._stop_scan(cancelled=True)
             if not scan_thread.isRunning():
                 self._resume_close_after_scan()
+            return
+
+        if self._ct400_connection_operation_active:
+            event.ignore()
+            self._pending_ct400_connection_close = True
+            self.statusBar().showMessage("Waiting for CT400 connection operation to finish…", 0)
+            logger.info("Deferring application close until the CT400 Connect/Disconnect operation finishes.")
             return
 
         self.statusBar().showMessage("Shutting down...", 0)
