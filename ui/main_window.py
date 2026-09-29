@@ -947,7 +947,9 @@ class MainWindow(QMainWindow):
         }
 
         if not camera_configs_to_init:
-            self.cameras_menu.addAction(QAction("No enabled cameras found in config", self)).setEnabled(False)
+            no_cameras_action = QAction("No enabled cameras found in config", self)
+            no_cameras_action.setEnabled(False)
+            self.cameras_menu.addAction(no_cameras_action)
             logger.info("No valid, enabled cameras to initialize.")
             return
 
