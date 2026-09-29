@@ -1,5 +1,40 @@
 # Laboratory validation report
 
+## Current qualification summary — completed physical qualification
+
+The qualification is complete for the bounded workflows below. The physical qualification date was not included in the evidence supplied for this update and is not inferred from the documentation update date. The rows and statements in the initial audit and later run records retain their original historical scope; they are not current status.
+
+| Gate | Current status | Evidence summary |
+| --- | --- | --- |
+| A — Offline environment/configuration | PASS | Previously qualified offline checks. These do not establish hardware behavior. |
+| B — Physical camera path | PASS | Preferred Vimba X 2026-2 / VmbPy 1.2.2 profile passed standalone and IOPanel dual-camera checks. |
+| C — Physical CT400 initialization and connection | PASS | Physical backend initialized; GUI Connect and Disconnect succeeded; independent safe-state indication was normal; native resource released. This evidence is the expected physical backend and successful controlled workflow, not a serial/model query or a claim that the native handle identifies the device. |
+| D — Physical scan | PASS | One bounded natural-completion scan returned the complete expected data, and selected Input 1 was independently confirmed safe. |
+| E — Physical cancellation | PASS | One GUI Stop request interrupted the active workflow while WaitEnd was blocked; ScanStop reported no failure and WaitEnd returned code 1, classified as `USER_CANCELLED`. Cleanup completed without forced termination and Input 1 was independently confirmed safe. |
+| F — Concurrent physical CT400 and dual-camera streaming | PASS | Two natural-completion scans each returned all expected data while both camera feeds remained visibly live and updating before, during and after the sweeps. No interference was observed in this workflow. |
+| G — Shutdown and return to approved state | PASS | Disconnect, camera stop/close, CT400 resource release, VmbSystem exit and application shutdown completed; operator confirmed approved source, optical path/shutter, detector and camera states and normal independent safe-state indication. |
+
+Gate-F settings for both scans were 1550–1560 nm, 1 pm, 10 nm/s, 1 mW, Input 1, Det 1. Each scan returned 10001 monotonic wavelength points, detector shape `(1, 10001)`, and all detector samples reached the plot; the final wavelength was 1560.000 nm. Gate D used the same range, resolution, power, input and detector. For Gate E only, speed was reduced to 1 nm/s to provide a controlled cancellation window.
+
+During both Gate-F scans, warning 117 (“power too low on IN port 1”) was reported. The operator confirmed the output lensed fiber was intentionally uncoupled from any waveguide/chip during these qualification runs, so low measured power was expected in this setup. Both scans completed and returned full data. This is a setup-specific explanation, not a general explanation for warning 117; the warning remains surfaced and is not redefined or suppressed.
+
+Gate C used Input 1, GPIB address 10, laser type `LS_TunicsT100s_HP`, a configured wavelength range of 1440–1640 nm, connection speed 10 nm/s, disconnect parking wavelength 1550 nm and power 1 mW. These are the qualified workflow settings, not general safe limits. No serial number, physical address evidence beyond the configured connection setting, or CT400 handle is recorded here.
+
+**Runtime/software records:** the application logged CT400 and camera initialization, streams, scans, data retrieval and cleanup as summarized above. The two Gate-F scans and Gate-D scan were natural completions; Gate E was the only cancellation run.
+
+**Operator-confirmed observations:** the expected physical CT400 backend and successful controlled connection workflow were confirmed; the independent safe-state indication was normal after Gate C, Gate D and Gate E. Both physical camera views remained live and updating during both Gate-F sweeps, with no observed freeze, blanking, stream failure or camera error. The operator also confirmed the intentionally uncoupled output fiber for the warning 117 context and the approved source, optical path/shutter, detector and camera state at Gate G.
+
+Physical evidence resolves the installed-system question for the tested Stop → blocked WaitEnd → code-1 cancellation workflow and confirms selected-input safe-state indication after natural completion and cancellation. The Programming Guide still does not provide a general same-handle thread-safety/reentrancy guarantee. Closing IOPanel while a physical scan remained active as a standalone test was NOT RUN. Cancellation while both physical cameras streamed was NOT RUN. Formal timed endurance/stress testing was NOT RUN. These are deliberate scope limits.
+
+### Current follow-up and issue recommendations
+
+- **Hardware validation tracking (#20): recommend keeping the issue open only for the missing CT400 firmware-version record and vendor-supported physical device identity.** The report records Windows 10 build 19045, Python 3.12.8 x64, CT400 DLL version 1.4.1.0, and successful physical-backend initialization. It contains no CT400 firmware version or model/serial/device identity result from a vendor-supported query. A native handle and successful connection workflow do not establish identity. If maintainers confirm those two metadata items were aspirational rather than required acceptance criteria, update the issue criteria and close after publication; otherwise record them in controlled lab evidence before closure.
+- **CT400 cancellation / ScanWaitEnd (#22): recommend closing after the documentation PR is merged.** Its remaining physical acceptance point is satisfied by the tested installed-system Stop → blocked WaitEnd → code-1 workflow, safe-state confirmation and clean resource release. This does not create a general vendor guarantee of same-handle thread safety/reentrancy. The standalone close-while-active and camera-concurrent cancellation variants were NOT RUN and are outside that completed acceptance point.
+- **Selected-input safe-state handling (#23): recommend closing after the documentation PR is merged.** The operator independently confirmed the selected input's safe state after natural completion, cancellation and final Disconnect/shutdown, with clean native-resource release. This does not establish that `CT400_Close` itself guarantees optical safety or that disabling one selected input disables every input.
+- **New issue candidate:** “Auto-range wavelength scan plot immediately when new data arrive.” Proposed body: “After valid wavelength/power data are applied in `PlotWidget.update_plot()`, explicitly auto-range the X and Y axes so the new trace is visible without mouse movement or another interaction. Preserve NaN/Inf filtering, avoid pathological ranges for empty or nonfinite data, and preserve plot interaction plus frozen/reference-trace behavior. Add focused regression coverage for a new trace appearing in range immediately, nonfinite/empty inputs, and frozen/reference behavior. Likely implementation area: `PlotWidget.update_plot()` and focused plot-widget tests. Keep this isolated from hardware validation.” This is follow-up work only and has not been implemented here.
+
+Recommended repository organization: publish one documentation-only qualification update, with separate follow-up issues for plot auto-ranging and any broader vendor-contract question. Do not combine the UI change with the hardware evidence update.
+
 ## Run 1 — Offline audit
 
 **Date:** 2026-09-26
@@ -39,7 +74,7 @@ The Python wrapper's `scan_wait_end()` treats `-1` as a communication/call error
 
 The local docs do not establish whether `ScanWaitEnd` is a blocking call in the operational sense required by Issue #22, whether `ScanStop` can interrupt it safely from another thread, or what return codes are safe to treat as cancellation. At the time of this initial audit, static review found `CT400.close()` issuing a disable request for `LI_1` before `CT400_Close`, while scan cleanup disabled the selected input. The vendor header did not say that disabling `LI_1` disables other inputs. No laser commands were sent to test this behavior; the Issue #23 section below records the software correction.
 
-## Physical gates (initial audit status; historical; see completed camera qualification below)
+## Physical gates (initial offline-audit snapshot; historical; superseded by Current qualification summary)
 
 | Gate | Result | Notes |
 | --- | --- | --- |
@@ -53,12 +88,12 @@ The local docs do not establish whether `ScanWaitEnd` is a blocking call in the 
 
 At the time of this initial offline audit, no physical hardware validation had been completed; the later camera qualification below supersedes the earlier camera status. No simulated result is represented as physical evidence. No hardware or driver failure was observed in that audit. No production wrapper changes were made.
 
-## Remaining questions and next action
+## Remaining questions and next action at initial audit (historical)
 
 - Issue #22's ScanWaitEnd/ScanStop ordering and scan-code questions are superseded by the versioned Programming Guide review in “CT400 Programming Guide lifecycle correction — Issue #22” below. Generic DLL thread-safety/reentrancy remains undocumented; this report does not claim that physical cross-thread behavior is validated.
 - Obtain vendor confirmation of the installed header/DLL pairing and whether `CT400_Close` or any `CT400_CmdLaser` disable operation affects other inputs.
 - Before live validation, have the responsible operator approve device-specific settings and safe-state indications, then proceed through the existing protocol one gate at a time. Gates B–G each require separate authorization before hardware operation.
-- Physical cancellation and close-during-acquisition qualification remain outstanding; no scan or laser command was issued during the software correction.
+- At the time of that audit, physical cancellation and close-during-acquisition qualification remained outstanding; no scan or laser command was issued during the software correction. The later Gate-E cancellation result is recorded in the current summary; standalone close-while-active remains NOT RUN.
 
 ## Follow-up audit — software, Git and camera preparation
 
@@ -121,7 +156,7 @@ Ten complete frames arrived with distinct IDs and increasing timestamps; the las
 
 ### Gate B4 — IOPanel application workflow with simulated CT400
 
-**Result: PARTIAL.** The application startup, both configured camera open/start paths, and normal resource shutdown are verified from the operator-provided B4 log. The complete GUI image/FPS workflow and post-run camera feature state are not verified. Physical CT400 validation remains deferred.
+**Historical B4 result: PARTIAL.** The application startup, both configured camera open/start paths, and normal resource shutdown are verified from the operator-provided B4 log. The complete GUI image/FPS workflow and post-run camera feature state were not verified in that run. At that time, physical CT400 validation remained deferred; the later qualification is summarized at the top of this report.
 
 **Run record — 2026-09-27, local time (Europe/Rome).** IOPanel 0.3.0 was launched with system Python 3.12.8 x64, VmbPy 1.0.5, VmbC 1.0.6, Vimba X 2024.1.0.3916, and the private B4 configuration selecting simulated CT400 plus Vimba for the exact approved Top and Side IDs. The application checkout was `a41e06ac77ab521de6cafc6c571a6e562c1550a9`, the last known checkout before the log's 20:12:48 start; the log itself does not contain a Git SHA. No private config path or contents are included here.
 
@@ -167,7 +202,7 @@ Documented warnings are `100`–`104`, `106`, `108`–`115`, `117`–`124`, and 
 
 The scan worker now performs configure → one `CT400_ScanStart` → one blocking `CT400_ScanWaitEnd` → classify result → retrieve data for success/warnings → selected-input disable in `finally` → finish. It calls `CT400_ScanStop` only for a user stop request, at most once; it does not call Stop after normal completion. The UI remains busy until the wait returns and cleanup/worker shutdown finish. Closing the application during an active scan requests Stop and defers close; it neither closes CT400 beneath `ScanWaitEnd` nor terminates the scan thread. A Stop/WaitEnd completion race follows the actual WaitEnd result.
 
-The guide establishes this Stop and cancellation result workflow, but does not explicitly document a general same-handle DLL thread-safety or reentrancy guarantee. The application issues the documented Stop request while the worker is blocked in WaitEnd; this native concurrency point remains a vendor-contract caveat. Physical behavior, safe-state indication, and hardware cleanup still require supervised laboratory qualification. No physical CT400 validation is claimed by these software changes.
+The guide establishes this Stop and cancellation result workflow, but does not explicitly document a general same-handle DLL thread-safety or reentrancy guarantee. The application issues the documented Stop request while the worker is blocked in WaitEnd; this native concurrency point remains a vendor-contract caveat. At the time of this software correction, physical behavior, safe-state indication, and hardware cleanup still required supervised laboratory qualification. The later physical results are recorded in the current summary and do not extend the vendor contract.
 
 ## CT400 selected-input cleanup — Issue #23
 
@@ -175,7 +210,7 @@ The Yenista CT400 Programming Guide 1.4 documents `CT400_CmdLaser` with an expli
 
 IOPanel now keeps laser policy above the native resource wrapper. `CT400.close()` only releases the native handle and is idempotent. Scan cleanup disables the scan panel's selected input; monitor stop and cleanup disable the monitor panel's selected input; connected application shutdown disables the configured connection input using the configured safe wavelength and power before releasing the handle. A successfully disconnected CT400 skips that redundant shutdown laser command while still releasing an initialized native handle. No all-input shutdown behavior is assumed.
 
-This is a software-only change. The selected-input calls and resource-release ordering are covered by fake-backed tests. Physical laser disable behavior, optical output state, and any effect of `CT400_Close` on hardware remain unverified; Issue #23 remains open pending supervised physical safe-state validation.
+This software change was initially supported by fake-backed tests. Subsequent physical qualification independently confirmed the selected input's approved safe state after Gate-D natural completion and Gate-E cancellation. This is evidence for those tested workflows only; it does not establish an undocumented effect of `CT400_Close` or all-input behavior. See the current issue recommendation above.
 
 ## CT400 operation ownership — Issue #38
 
@@ -189,7 +224,7 @@ IOPanel now grants one application-level owner of the shared CT400 handle at a t
 | Monitor | no | no | no | — | no |
 | Alignment | no | no | no | no | — |
 
-This is a conservative application safety/concurrency policy because the Yenista Programming Guide does not document general same-handle thread safety or reentrancy. It does not establish that the hardware cannot support concurrent operations. Scan cancellation remains available to the active scan owner; monitoring releases ownership only after its worker read has finished and selected-input disable cleanup has run; alignment releases ownership only after its worker's selected-input laser-disable cleanup attempt. The policy is exercised with DummyCT400 and fake connection/alignment operations. No physical CT400 concurrency behavior has been tested or is claimed.
+This is a conservative application safety/concurrency policy because the Yenista Programming Guide does not document general same-handle thread safety or reentrancy. It does not establish that the hardware cannot support concurrent operations. Scan cancellation remains available to the active scan owner; monitoring releases ownership only after its worker read has finished and selected-input disable cleanup has run; alignment releases ownership only after its worker's selected-input laser-disable cleanup attempt. The policy was exercised with DummyCT400 and fake connection/alignment operations. No physical overlap between separate CT400 control workflows is established here; the later physical scan-with-camera-streaming result is recorded in the current qualification summary.
 
 ### Offline test warning follow-up
 
@@ -202,8 +237,8 @@ One earlier full-suite run emitted a `RuntimeWarning` from pytest-qt 4.4.0 at `p
 
 Both cameras passed standalone physical streaming. Normal IOPanel startup with both cameras and DummyCT400 opened and streamed both cameras, displayed converted frames, and shut down cleanly with VmbSystem released. Manual Exposure and Gamma controls were exercised successfully on each camera. One-shot Auto Exposure succeeded on both; one-shot Auto Gain also succeeded on both after the Vimba X update. VmbPy 1.2.2 / VmbC 1.3.1 worked with the existing Vimba X installation, and the physical dual-camera path continued to work after Vimba X was updated to 2026-2. Continuous dual-camera operation was observed during normal operator use; no separately timed formal endurance gate was run.
 
-The final isolated GenTL test removed all legacy Allied Vision Vimba 6 transport-layer paths from `GENICAM_GENTL64_PATH`, kept Basler Pylon paths unchanged, and retained `C:\Program Files\Allied Vision\Vimba X\cti`. Both cameras opened, streamed, displayed frames and closed normally. This demonstrates practical independence from the legacy Vimba 6 GenTL transport layers for the tested IOPanel camera path. It does not establish that every possible DLL-loading mechanism was forensically excluded. Vimba 6 may remain installed for rollback/reference; its GenTL transport layers were not required by this tested camera path.
+The final isolated GenTL test removed all legacy Allied Vision Vimba 6 transport-layer paths from `GENICAM_GENTL64_PATH`, kept Basler Pylon paths unchanged, and retained the Vimba X GenTL transport layer. Both cameras opened, streamed, displayed frames and closed normally. This demonstrates practical independence from the legacy Vimba 6 GenTL transport layers for the tested IOPanel camera path. It does not establish that every possible DLL-loading mechanism was forensically excluded. Vimba 6 may remain installed for rollback/reference; its GenTL transport layers were not required by this tested camera path.
 
-CT400 was intentionally simulated throughout this camera qualification. These camera results do not validate physical CT400 operation under the candidate environment. Physical CT400 validation remains a separate activity.
+CT400 was intentionally simulated throughout this camera-only qualification. Those camera results alone did not validate physical CT400 operation. The later Gate-F run separately exercised the preferred VmbPy 1.2.2 path concurrently with the physical CT400; see the current qualification summary.
 
 Earlier B1-B4 and compatibility entries in this report record historical, narrower observations made on the former Vimba X 2024.1.0.3916 / VmbC 1.0.6 / VmbPy 1.0.5 profile. They are retained as historical/rollback evidence and are superseded by this completed qualification wherever they describe current preferred-profile status or say that camera controls, display, or VmbPy 1.2.2 physical validation remain unverified.

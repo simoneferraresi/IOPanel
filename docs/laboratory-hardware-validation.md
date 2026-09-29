@@ -4,7 +4,21 @@ This checklist is for an authorized operator on the laboratory PC. It is a manua
 
 Tracking issue: [#20](https://github.com/simoneferraresi/IOPanel/issues/20).
 
-Camera qualification is complete for the preferred profile described in the [laboratory validation report](laboratory-validation-report.md). The procedure below remains the controlled workflow for future checks. The qualification used DummyCT400 and does not validate physical CT400 operation, which remains a separate activity.
+The preferred camera profile and the supervised CT400 qualification are complete for the scope recorded in the [laboratory validation report](laboratory-validation-report.md). The procedure below remains the controlled workflow for future checks. Earlier camera-only qualification used DummyCT400 and did not validate physical CT400 operation; the later Gate-F run provides separate evidence for concurrent physical CT400 and dual-camera operation.
+
+## Current qualification status
+
+| Gate | Current result | Evidence scope |
+| --- | --- | --- |
+| A — Offline environment/configuration | PASS | Previously qualified hardware-independent and configuration checks; these are not physical evidence. |
+| B — Physical camera path | PASS | Previously qualified preferred Vimba X profile and dual-camera workflow; see the report. |
+| C — CT400 initialization, GUI connection/disconnection and safe idle | PASS | Physical CT400 backend initialized; controlled GUI connect/disconnect and clean resource release; independent safe-state indication confirmed. No serial-number identity query or device identifier was recorded. |
+| D — Bounded physical scan | PASS | One supervised natural-completion scan at the recorded report settings; full data and independent safe-state confirmation. |
+| E — Physical cancellation | PASS | One GUI Stop; blocked WaitEnd returned code 1; cleanup and independent safe-state indication succeeded. Close-while-scan-active was NOT RUN as a standalone test. |
+| F — Concurrent CT400 and dual-camera operation | PASS | Two natural-completion physical scans with both Vimba camera feeds visibly live before, during and after; cancellation with cameras streaming was NOT RUN. |
+| G — Shutdown and return to approved state | PASS | Runtime cleanup completed and operator confirmed approved source, optical path/shutter, detector and camera state. |
+
+These results are specific to the installed/tested setup and the workflows described in the report. Physical success does not establish undocumented vendor guarantees, including general same-handle CT400 DLL thread safety or reentrancy. Formal timed endurance/stress testing was NOT RUN. Gate-F warning 117 was observed in the intentionally uncoupled optical qualification setup; see the report for its exact context. Software tests and simulated-device results remain separate from physical evidence.
 
 ## Safety and scope
 
@@ -23,12 +37,12 @@ Yenista CT400 Programming Guide 1.4 is the source for the API behavior below. It
 - Physical startup loads `CT400_lib.dll` and calls `CT400_Init`; a successful call provides the handle used by the wrapper. The physical backend remains the default unless `ct400_backend = simulation` is explicitly configured.
 - `CT400_ScanStart` starts a scan. `CT400_ScanWaitEnd` is a blocking wait-for-completion operation and IOPanel calls it once per scan. Its result is 0 for success, 1 for user cancellation following `CT400_ScanStop`, and 2–5 for documented fatal measurement errors. Documented 100-series and 999 results are warnings, not automatically fatal errors. Unknown raw results are retained without assigning an invented meaning.
 - `CT400_ScanStop` is the documented user Stop operation. The cancellation result is observed when the blocking `CT400_ScanWaitEnd` returns code 1. The current IOPanel lifecycle is configure → `CT400_ScanStart` → one blocking `CT400_ScanWaitEnd` → classify result → retrieve data when appropriate → selected-input cleanup. A normally completed scan does not issue an unnecessary `CT400_ScanStop`.
-- The application does not force-terminate an active CT400 scan thread. On close during a scan, IOPanel requests cooperative Stop and defers close until WaitEnd returns and worker cleanup completes. The Programming Guide does not document general same-handle DLL thread safety/reentrancy; physical Stop-while-WaitEnd behavior remains to be qualified under supervision.
+- The application does not force-terminate an active CT400 scan thread. On close during a scan, IOPanel requests cooperative Stop and defers close until WaitEnd returns and worker cleanup completes. Gate E physically confirmed the tested GUI Stop → blocked WaitEnd → code-1 workflow on the installed setup. The Programming Guide does not document a general same-handle DLL thread-safety/reentrancy guarantee.
 - `CT400_CmdLaser` addresses an explicit laser input `LI_1` through `LI_4`. `CT400.close()` is resource/connection cleanup only: for a live handle it calls `CT400_Close`, with no hidden laser command and no hard-coded `LI_1` policy. The Programming Guide does not say that `CT400_Close` disables a laser or establishes an optical safe state.
 - Operational laser cleanup belongs to the workflow that selected the input: ScanWorker disables its selected scan input; power monitoring disables its selected monitor input; successful GUI Disconnect disables the configured CT400 input; application shutdown explicitly disables the configured input when required by the confirmed connection state, then releases the native handle. A successful earlier Disconnect avoids an unnecessary duplicate disable.
 - The application serializes CT400 workflows using exclusive states `IDLE`, `CONNECTING`, `DISCONNECTING`, `SCANNING`, `MONITORING` and `ALIGNMENT`. `ALIGNMENT` covers fine alignment, spiral alignment and 2D mapping. Only one workflow owns the CT400 at a time. Shutdown waits for the owner to finish; scan uses ScanStop/WaitEnd/cleanup, monitoring stops fetching and disables its selected input, connection operations finish before shutdown resumes, and alignment requests cooperative `AlignmentWorker.stop()` and waits for selected-input cleanup and `operation_finished`.
 
-This serialization is a conservative application policy because the Programming Guide does not document general same-handle reentrancy or thread safety. It does not claim the hardware or DLL cannot support concurrency. No software-only or simulator result establishes physical compatibility or optical safe state.
+This serialization is a conservative application policy because the Programming Guide does not document general same-handle reentrancy or thread safety. It does not claim the hardware or DLL cannot support concurrency. Physical results for the specific qualified workflows are recorded above and in the report; software-only or simulator results do not establish physical compatibility or optical safe state.
 
 ## Record sheet
 
@@ -97,12 +111,12 @@ Prerequisites: Gate A passes; camera checks and device opening are authorized; C
 Prerequisites: Gate A passes; qualified operator present; camera backend disabled; approved CT400 manual/site stop procedure and independent safe-state indication are available. No scan is started in this gate.
 
 1. With scan idle and laser in the approved safe state, verify the configured `CT400_lib.dll` exists, its architecture matches Python, and vendor-required runtimes are installed. Record versions; do not copy DLLs from an unverified machine.
-2. Start IOPanel using the reviewed lab-local config and the normal GUI. Startup calls the CT400 initialization path (`CT400_Init`); record whether connection succeeds and the exact status/log message. Confirm it is the physical backend, not a `SIMULATED`/Dummy status. Confirm the expected device using the vendor-approved identity method; do not guess an instrument address.
+2. Start IOPanel using the reviewed lab-local config and the normal GUI. Startup calls the CT400 initialization path (`CT400_Init`); record whether connection succeeds and the exact status/log message. Confirm it is the expected physical CT400 backend, not a `SIMULATED`/Dummy status. If a vendor-approved model/serial identity method is available, record its result in controlled lab storage; do not infer identity from a native handle or guess an instrument address.
 3. Keep the scan idle. Verify the device is in the operator-confirmed safe state using the site's independent indication. `CT400.close()` is resource release only; do not infer laser state from `CT400_Close`.
 4. If needed to qualify the configured laser interface, perform the normal GUI Connect/Disconnect operation only with operator authorization and no scan active. Do not perform a laser-enable operation merely to pass this gate.
 5. After safe state is independently confirmed, close IOPanel normally. Confirm native resource release using supported driver/vendor indication. Do not use Task Manager as normal cleanup.
 
-**Pass:** correct DLL/runtime/bitness and physical CT400 identity/connection; independently verified safe idle state; normal close releases the connection. **Fail:** any simulated backend presented as physical, unclear identity/state, or unclean resource release. Stop live testing and follow site procedure on any safety concern.
+**Pass:** correct DLL/runtime/bitness and expected physical backend initialized; authorized controlled connection/disconnection succeeds where performed; safe idle state is independently verified; normal close releases the connection. Record model/serial identity only when actually queried. **Fail:** any simulated backend presented as physical, unclear backend/state, or unclean resource release. Stop live testing and follow site procedure on any safety concern.
 
 ## D. Gate D — Operator-approved, low-risk CT400 acquisition
 
@@ -132,7 +146,7 @@ Prerequisites: Gates A–E pass; camera and CT400 separately validated; only pre
 4. Only if the operator has approved and Gate E cancellation passed, repeat cancellation with camera streaming and check that cancellation does not stop camera frames and leaves selected laser input independently safe.
 5. Stop scan, verify safe state, stop camera streaming and close normally. Closing the application during an active scan is outside this gate unless separately approved under Gate E.
 
-**Pass:** physical devices are unambiguous; camera frames overlap in time with scan activity; plot receives scan data; scan completion/cancellation leaves camera operation intact; resources release. **Fail/stop:** frozen camera, missing data, ambiguous provenance, any unsafe laser state or unclean shutdown.
+**Pass for the natural-completion concurrency qualification:** physical devices are unambiguous; camera frames overlap in time with the scan; the plot receives scan data; cameras remain operational after scan completion; resources release. The optional cancellation-with-cameras extension is a separate scope item and must be recorded as `NOT RUN` unless performed. **Fail/stop:** frozen camera, missing data, ambiguous provenance, any unsafe laser state or unclean shutdown.
 
 ## Negative tests and recovery
 
