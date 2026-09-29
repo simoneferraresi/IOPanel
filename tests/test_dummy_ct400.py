@@ -1,7 +1,10 @@
+import threading
+import time
+
 import numpy as np
 import pytest
 
-from hardware.ct400_types import CT400StatusCode, Detector, Enable, LaserInput
+from hardware.ct400_types import CT400ScanResultKind, Detector, Enable, LaserInput
 from hardware.dummy_ct400 import DummyCT400
 from ui.control_panel import ScanWorker
 
@@ -32,15 +35,20 @@ def test_dummy_scan_includes_endpoint_for_decimal_wavelength_range():
     assert powers.shape == (1, 5)
 
 
-def test_dummy_scan_can_complete_immediately_and_inject_an_error():
+def test_dummy_scan_waits_once_for_completion_or_returns_documented_scan_error():
     device = DummyCT400(scan_duration=0)
     device.start_scan()
-    assert device.scan_wait_end() == (CT400StatusCode.SCAN_COMPLETED, "")
+    result = device.scan_wait_end()
+    assert (result.raw_code, result.error_message, result.kind) == (0, "", CT400ScanResultKind.SUCCESS)
 
-    failing_device = DummyCT400(scan_duration=0, scan_error="simulated scan failure")
+    failing_device = DummyCT400(scan_duration=0, scan_error="simulated scan failure", scan_result_code=2)
     failing_device.start_scan()
-    assert failing_device.scan_wait_end() == (-1, "simulated scan failure")
-    assert failing_device.scan_wait_end() == (CT400StatusCode.SCAN_COMPLETED, "")
+    failed = failing_device.scan_wait_end()
+    assert (failed.raw_code, failed.error_message, failed.kind) == (
+        2,
+        "simulated scan failure",
+        CT400ScanResultKind.FATAL_ERROR,
+    )
 
 
 def test_scan_worker_acquires_dummy_data_and_cleans_up(monkeypatch):
@@ -63,6 +71,23 @@ def test_scan_worker_acquires_dummy_data_and_cleans_up(monkeypatch):
     assert finished == [True]
     assert not device._is_scanning
     assert not device._laser_enabled
+    assert device.scan_wait_end_calls == 1
+    assert device.get_data_points_calls == 1
+    assert device.stop_scan_calls == 0
+
+
+def test_selected_input_cleanup_occurs_once_after_completed_scan(monkeypatch):
+    monkeypatch.setattr(ScanWorker, "_LASER_COMMAND_DELAY_MS", 0)
+    device = DummyCT400(scan_duration=0)
+    worker = ScanWorker(device, 1500.0, 1501.0, 100, 1.0, LaserInput.LI_3)
+
+    worker.do_scan()
+
+    assert len(device.cmd_laser_calls) == 2  # pre-scan disable plus finally cleanup
+    _cleanup_args, cleanup_kwargs = device.cmd_laser_calls[-1]
+    assert cleanup_kwargs["laser_input"] == LaserInput.LI_3
+    assert cleanup_kwargs["enable"] == Enable.DISABLE
+    assert device.stop_scan_calls == 0
 
 
 def test_scan_worker_reports_simulated_error_and_still_cleans_up(monkeypatch):
@@ -78,29 +103,163 @@ def test_scan_worker_reports_simulated_error_and_still_cleans_up(monkeypatch):
 
     assert completed == []
     assert len(errors) == 1
-    assert errors[0].code == CT400StatusCode.SCAN_ERROR_GENERIC
+    assert errors[0].code == 2
     assert errors[0].message == "simulated scan failure"
     assert finished == [True]
     assert not device._is_scanning
     assert not device._laser_enabled
 
 
-def test_scan_worker_reports_cancellation_as_noncritical_and_cleans_up(monkeypatch):
+def test_blocked_wait_is_released_by_one_stop_and_reports_vendor_cancellation(monkeypatch, qtbot):
     monkeypatch.setattr(ScanWorker, "_LASER_COMMAND_DELAY_MS", 0)
-    device = DummyCT400()
+    wait_gate = threading.Event()
+    device = DummyCT400(wait_gate=wait_gate)
     worker = ScanWorker(device, 1500.0, 1501.0, 100, 1.0, LaserInput.LI_1)
     errors, finished = [], []
     worker.error_signal.connect(errors.append)
     worker.finished.connect(lambda: finished.append(True))
-    worker.stop()
+    thread = threading.Thread(target=worker.do_scan)
+    thread.start()
+    deadline = time.monotonic() + 1
+    while not device._is_scanning and time.monotonic() < deadline:
+        time.sleep(0.001)
+    assert device._is_scanning
+    assert worker.stop()
+    assert not worker.stop()
+    thread.join(timeout=1)
+    qtbot.wait(1)
+
+    assert len(errors) == 1
+    assert errors[0].code == 1
+    assert errors[0].kind == CT400ScanResultKind.USER_CANCELLED
+    assert finished == [True]
+    assert device.stop_scan_calls == 1
+    assert not device._is_scanning
+    assert not device._laser_enabled
+
+
+@pytest.mark.parametrize("code", [2, 3, 4, 5])
+def test_documented_fatal_scan_codes_do_not_retrieve_data(monkeypatch, code):
+    monkeypatch.setattr(ScanWorker, "_LASER_COMMAND_DELAY_MS", 0)
+    device = DummyCT400(scan_duration=0, scan_error=f"error {code}", scan_result_code=code)
+    worker = ScanWorker(device, 1500.0, 1501.0, 100, 1.0, LaserInput.LI_1)
+    completed, errors = [], []
+    worker.completed_signal.connect(lambda *data: completed.append(data))
+    worker.error_signal.connect(errors.append)
 
     worker.do_scan()
 
+    assert completed == []
     assert len(errors) == 1
-    assert errors[0].code == CT400StatusCode.SCAN_ERROR_USER_CANCELLED
+    assert errors[0].code == code
+    assert errors[0].kind == CT400ScanResultKind.FATAL_ERROR
+    assert errors[0].message == f"error {code}"
+
+
+@pytest.mark.parametrize("code", [100, 999])
+def test_documented_warnings_are_reported_and_still_retrieve_data(monkeypatch, code):
+    monkeypatch.setattr(ScanWorker, "_LASER_COMMAND_DELAY_MS", 0)
+    device = DummyCT400(scan_duration=0, scan_error=f"warning {code}", scan_result_code=code)
+    worker = ScanWorker(device, 1500.0, 1501.0, 100, 1.0, LaserInput.LI_1)
+    completed, errors, warnings = [], [], []
+    worker.completed_signal.connect(lambda *data: completed.append(data))
+    worker.error_signal.connect(errors.append)
+    worker.warning_signal.connect(lambda *args: warnings.append(args))
+
+    worker.do_scan()
+
+    assert len(completed) == 1
+    assert errors == []
+    assert warnings == [(code, f"warning {code}")]
+
+
+@pytest.mark.parametrize("code", [6, -1, -10])
+def test_unknown_or_negative_scan_code_is_preserved_and_not_plotted(monkeypatch, code):
+    monkeypatch.setattr(ScanWorker, "_LASER_COMMAND_DELAY_MS", 0)
+    device = DummyCT400(scan_duration=0, scan_error=f"raw {code}", scan_result_code=code)
+    worker = ScanWorker(device, 1500.0, 1501.0, 100, 1.0, LaserInput.LI_1)
+    completed, errors = [], []
+    worker.completed_signal.connect(lambda *data: completed.append(data))
+    worker.error_signal.connect(errors.append)
+
+    worker.do_scan()
+
+    assert completed == []
+    assert errors[0].code == code
+    assert errors[0].kind == CT400ScanResultKind.UNEXPECTED
+    assert errors[0].message == f"raw {code}"
+
+
+def test_normal_and_warning_results_do_not_call_scan_stop(monkeypatch):
+    monkeypatch.setattr(ScanWorker, "_LASER_COMMAND_DELAY_MS", 0)
+    for kwargs in ({}, {"scan_error": "resolution adjusted", "scan_result_code": 999}):
+        device = DummyCT400(scan_duration=0, **kwargs)
+        worker = ScanWorker(device, 1500.0, 1501.0, 100, 1.0, LaserInput.LI_1)
+        worker.do_scan()
+        assert device.stop_scan_calls == 0
+
+
+def test_stop_completion_race_uses_waitend_success_result(monkeypatch, qtbot):
+    monkeypatch.setattr(ScanWorker, "_LASER_COMMAND_DELAY_MS", 0)
+
+    class StopDoesNotInterrupt(DummyCT400):
+        def stop_scan(self):
+            self.stop_scan_calls += 1
+
+    gate = threading.Event()
+    device = StopDoesNotInterrupt(wait_gate=gate)
+    worker = ScanWorker(device, 1500.0, 1501.0, 100, 1.0, LaserInput.LI_1)
+    errors, completed = [], []
+    worker.error_signal.connect(errors.append)
+    worker.completed_signal.connect(lambda *args: completed.append(args))
+    thread = threading.Thread(target=worker.do_scan)
+    thread.start()
+    deadline = time.monotonic() + 1
+    while not device._is_scanning and time.monotonic() < deadline:
+        time.sleep(0.001)
+
+    assert worker.stop()
+    gate.set()
+    thread.join(timeout=1)
+    qtbot.wait(1)
+
+    assert device.stop_scan_calls == 1
+    assert device.scan_wait_end_calls == 1
+    assert errors == []
+    assert len(completed) == 1
+    assert device.get_data_points_calls == 1
+
+
+def test_stop_failure_is_reported_and_worker_waits_for_waitend(monkeypatch, qtbot):
+    monkeypatch.setattr(ScanWorker, "_LASER_COMMAND_DELAY_MS", 0)
+
+    class StopFails(DummyCT400):
+        def stop_scan(self):
+            self.stop_scan_calls += 1
+            raise RuntimeError("controlled stop failure")
+
+    gate = threading.Event()
+    device = StopFails(wait_gate=gate)
+    worker = ScanWorker(device, 1500.0, 1501.0, 100, 1.0, LaserInput.LI_1)
+    stop_failures, finished = [], []
+    worker.stop_failed_signal.connect(stop_failures.append)
+    worker.finished.connect(lambda: finished.append(True))
+    thread = threading.Thread(target=worker.do_scan)
+    thread.start()
+    deadline = time.monotonic() + 1
+    while not device._is_scanning and time.monotonic() < deadline:
+        time.sleep(0.001)
+
+    worker.stop()
+    qtbot.waitUntil(lambda: bool(stop_failures), timeout=1000)
+    assert thread.is_alive()
+    assert finished == []
+    assert "controlled stop failure" in stop_failures[0]
+    gate.set()
+    thread.join(timeout=1)
+    qtbot.wait(1)
     assert finished == [True]
-    assert not device._is_scanning
-    assert not device._laser_enabled
+    assert device.stop_scan_calls == 1
 
 
 def test_dummy_rejects_invalid_scan_duration():

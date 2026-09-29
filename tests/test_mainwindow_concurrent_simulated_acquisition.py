@@ -1,7 +1,7 @@
 import threading
 
 import numpy as np
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QThread, Qt
 from PySide6.QtTest import QSignalSpy
 
 import app
@@ -17,13 +17,8 @@ class GatedDummyCT400(DummyCT400):
     """Use an explicit test gate to keep ScanWorker active until assertions finish."""
 
     def __init__(self, progression_gate, scan_error=None):
-        super().__init__(scan_duration=0, scan_error=scan_error)
+        super().__init__(scan_duration=0, scan_error=scan_error, wait_gate=progression_gate)
         self.progression_gate = progression_gate
-
-    def scan_wait_end(self):
-        if self._is_scanning and not self.progression_gate.is_set():
-            return 1, ""
-        return super().scan_wait_end()
 
 
 def _qt_thread_stopped(thread):
@@ -241,13 +236,43 @@ def test_cancel_and_close_stop_scan_without_stopping_camera_early(qtbot, monkeyp
     _start_scan_during_stream(qtbot, window, frame_spy)
     active_scan_thread = control.scan_thread
     frames_before_close = frame_spy.count()
+    close_during_wait = []
+    original_close = dummy.close
+    stops_before_close = dummy.stop_scan_calls
+
+    def record_close():
+        try:
+            close_during_wait.append(active_scan_thread.isRunning())
+        except RuntimeError:
+            close_during_wait.append(False)
+        original_close()
+
+    dummy.close = record_close
+    window.is_ct400_connected_state = True
+    scan_terminations = []
+    original_terminate = QThread.terminate
+
+    def record_scan_termination(thread):
+        if thread is active_scan_thread:
+            scan_terminations.append(True)
+        return original_terminate(thread)
+
+    monkeypatch.setattr(QThread, "terminate", record_scan_termination)
     window.close()
+    assert window.isVisible()
+    assert dummy.stop_scan_calls == stops_before_close + 1
+    assert close_during_wait == []
+    assert control.scanning
+    _progression_gate.set()
 
     qtbot.waitUntil(lambda: _qt_thread_stopped(active_scan_thread), timeout=1500)
     qtbot.waitUntil(lambda: not camera_thread.is_alive(), timeout=1500)
+    qtbot.waitUntil(lambda: bool(close_during_wait), timeout=1500)
     assert frame_spy.count() >= frames_before_close
+    assert close_during_wait == [False]
+    assert scan_terminations == []
     assert not dummy._is_scanning
     assert not dummy._laser_enabled
     assert not camera.is_streaming
     assert not window.cameras
-    assert not camera_panel.conversion_thread.isRunning()
+    assert _qt_thread_stopped(camera_panel.conversion_thread)

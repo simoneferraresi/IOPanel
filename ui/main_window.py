@@ -1138,6 +1138,25 @@ class MainWindow(QMainWindow):
         are shut down gracefully. This is the single source of truth for cleanup.
         """
         logger.info("Application close requested. Initiating shutdown sequence...")
+        scan_panel = getattr(self, "control_panel", None)
+        scan_thread = getattr(scan_panel, "scan_thread", None)
+        try:
+            scan_active = scan_thread is not None and scan_thread.isRunning()
+        except RuntimeError:
+            scan_active = False
+        if scan_active:
+            event.ignore()
+            self.statusBar().showMessage("Stopping/waiting for CT400 scan to finish…", 0)
+            logger.info("Deferring application close until the active CT400 scan worker finishes.")
+            self._pending_scan_close = True
+            if not getattr(self, "_close_resume_connected", False):
+                self._close_resume_connected = True
+                scan_thread.finished.connect(self._resume_close_after_scan)
+            scan_panel._stop_scan(cancelled=True)
+            if not scan_thread.isRunning():
+                self._resume_close_after_scan()
+            return
+
         self.statusBar().showMessage("Shutting down...", 0)
 
         # Helper to safely check and stop a thread
@@ -1173,11 +1192,6 @@ class MainWindow(QMainWindow):
         if hasattr(self, "histogram_control") and self.histogram_control:
             self.histogram_control.cleanup_worker_thread()
 
-        if hasattr(self, "control_panel") and self.control_panel.is_busy():
-            self.control_panel._stop_scan(cancelled=True)
-            # Wait for the scan thread specifically
-            safe_stop_thread(self.control_panel.scan_thread, "Scan Thread")
-
         # 2. Close all camera streams
         self._cleanup_cameras()
 
@@ -1201,6 +1215,13 @@ class MainWindow(QMainWindow):
         logger.info("Shutdown complete.")
         event.accept()
 
+    @Slot()
+    def _resume_close_after_scan(self):
+        """Resume a deferred close on the GUI thread after scan cleanup."""
+        if getattr(self, "_pending_scan_close", False):
+            self._pending_scan_close = False
+            QTimer.singleShot(0, self.close)
+
     def _connect_signals(self):
         """Connects signals between different components of the application."""
         if hasattr(self, "control_panel") and self.control_panel:
@@ -1209,6 +1230,7 @@ class MainWindow(QMainWindow):
             self.control_panel.progress_updated.connect(
                 lambda value: self.statusBar().showMessage(f"Scan Progress: {value}%", 1000 if value < 100 else 0)
             )
+            self.control_panel.scan_warning.connect(lambda message: self.statusBar().showMessage(message, 10000))
         else:
             logger.warning("CT400 Control Panel not initialized, skipping signal connection.")
 

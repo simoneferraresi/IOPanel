@@ -55,10 +55,10 @@ At the time of this initial offline audit, no physical hardware validation had b
 
 ## Remaining questions and next action
 
-- Obtain vendor confirmation or a matching versioned API reference for `ScanWaitEnd` blocking/timeout behavior, `ScanStop` interruption and cross-thread safety, and all scan result codes.
+- Issue #22's ScanWaitEnd/ScanStop ordering and scan-code questions are superseded by the versioned Programming Guide review in “CT400 Programming Guide lifecycle correction — Issue #22” below. Generic DLL thread-safety/reentrancy remains undocumented; this report does not claim that physical cross-thread behavior is validated.
 - Obtain vendor confirmation of the installed header/DLL pairing and whether `CT400_Close` or any `CT400_CmdLaser` disable operation affects other inputs.
 - Before live validation, have the responsible operator approve device-specific settings and safe-state indications, then proceed through the existing protocol one gate at a time. Gates B–G each require separate authorization before hardware operation.
-- Keep cancellation and close-during-acquisition tests blocked until a safe vendor-supported stop procedure is independently established. Do not remove the current forced-termination fallback or change laser cleanup based solely on this static audit.
+- Physical cancellation and close-during-acquisition qualification remain outstanding; no scan or laser command was issued during the software correction.
 
 ## Follow-up audit — software, Git and camera preparation
 
@@ -156,6 +156,18 @@ The working checkout has `resources/resources.qrc` with 16 references to `resour
 For reproducible use, first decide whether this qrc is still needed. If retained, restore the intended SVG sources as tracked assets with narrow `.gitignore` exceptions, generate the ignored Python output with `pyside6-rcc resources/resources.qrc -o resources_rc.py`, and import that generated module before any `:/icons/...` use. Add a packaging check that validates all qrc paths, runs the compiler, imports the generated module, and checks representative resource aliases. Generation was not attempted locally because all 16 source files are absent; the command is based on Qt for Python's documented interface and has not yet been validated against this checkout's missing inputs. [Qt for Python `pyside6-rcc` documentation](https://doc.qt.io/qtforpython-6/tools/pyside-rcc.html)
 
 The B4 application log has no stylesheet parse warning, though its file logger does not capture all Qt diagnostics. An independent offscreen QApplication reproduced `QtWarningMsg: Could not parse application stylesheet` under PySide6 6.8.1.1 / Qt 6.8.1 when applying the current application stylesheet and creating a widget. Isolation identified the CSS custom-property declarations (`--primary-*`, etc.) inside the emitted `:root` block in the application stylesheet; Qt QSS does not support these declarations, as the adjacent source comment itself notes. Keeping the block's ordinary `border` declaration while removing the custom-property declarations suppresses the warning; replacing the declarations in memory confirmed the cause. No production stylesheet was changed. The narrow regression test should apply the app stylesheet, create a widget, capture Qt messages, and assert no stylesheet parse warning. Follow-up issues: #27 resource bundle, #28 stylesheet warning, and #29 SDK compatibility.
+
+## CT400 Programming Guide lifecycle correction — Issue #22
+
+**Source:** Yenista *CT400 Programming Guide CT400_PG_1.4v1.0* (applies to CT400 library v1.4.x / DSP 1.12) and *CT400 User Manual CT400_UM_3.8v1.0*. The installed laboratory DLL was previously statically identified as Windows x64, version 1.4.1.0. No DLL was loaded and no physical operation was performed for this software correction.
+
+The Programming Guide defines `CT400_ScanStart` as starting a scan (`0` success, `-1` failure), `CT400_ScanStop` as the user Stop action corresponding to the official CT400 GUI's red Stop button after Start (`0` success, `-1` failure), and `CT400_ScanWaitEnd` as waiting for the scan to finish and returning errors or warnings. `ScanWaitEnd` is not a polling API: `0` is success; positive values are result codes; no in-progress status is documented. Code `1` means measurement cancelled by the user, and the guide says this occurs only after `CT400_ScanStop` is called by the user. Codes `2`–`5` are documented scan errors: data exchange with DSP, wavelength referencing, switch failure, and DSP communication, respectively. Initialization error `-1001` applies to `CT400_Init` compatibility handling, not `ScanWaitEnd`.
+
+Documented warnings are `100`–`104`, `106`, `108`–`115`, `117`–`124`, and `999`; omitted numbers such as `105`, `107`, and `116` are not assigned meanings. Warning `999` says the scan is performed after sampling resolution is adjusted. Warnings are retained and surfaced separately from fatal errors; completed data is still retrieved for documented warning results. The raw integer return and vendor `tcError` string are preserved, including unknown values. No meanings are inferred for undocumented codes.
+
+The scan worker now performs configure → one `CT400_ScanStart` → one blocking `CT400_ScanWaitEnd` → classify result → retrieve data for success/warnings → selected-input disable in `finally` → finish. It calls `CT400_ScanStop` only for a user stop request, at most once; it does not call Stop after normal completion. The UI remains busy until the wait returns and cleanup/worker shutdown finish. Closing the application during an active scan requests Stop and defers close; it neither closes CT400 beneath `ScanWaitEnd` nor terminates the scan thread. A Stop/WaitEnd completion race follows the actual WaitEnd result.
+
+The guide establishes this Stop and cancellation result workflow, but does not explicitly document a general same-handle DLL thread-safety or reentrancy guarantee. The application issues the documented Stop request while the worker is blocked in WaitEnd; this native concurrency point remains a vendor-contract caveat. Physical behavior, safe-state indication, and hardware cleanup still require supervised laboratory qualification. No physical CT400 validation is claimed by these software changes.
 
 ### Offline test warning follow-up
 

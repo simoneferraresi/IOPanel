@@ -32,6 +32,7 @@ from hardware.ct400_types import (
     LaserInput,
     LaserSource,
     PowerData,
+    ScanWaitResult,
     Unit,
 )
 
@@ -76,7 +77,7 @@ class CT400(AbstractCT400):
                                   to initialize.
     """
 
-    _ERROR_BUFFER_SIZE = 4096  # Increased for safety, as discussed.
+    _ERROR_BUFFER_SIZE = 1024
 
     def __init__(self, dll_path: Path):
         """
@@ -356,15 +357,28 @@ class CT400(AbstractCT400):
 
     def stop_scan(self) -> None:
         """
-        Stops an ongoing wavelength scan. This is a safe-to-call function.
+        Requests user cancellation through CT400_ScanStop.
+
+        The Programming Guide identifies this with the CT400 GUI Stop button.
+        It does not state a general DLL thread-safety/reentrancy guarantee.
         """
         result = self.dll.CT400_ScanStop(self.handle)
         if result == -1:
-            logger.warning("CT400_ScanStop returned an error. The scan might have already finished or failed.")
+            raise CT400CommunicationError(
+                f"CT400_ScanStop failed (raw return code: {result}); cancellation was not confirmed."
+            )
+        if result != 0:
+            raise CT400CommunicationError(
+                f"CT400_ScanStop returned unexpected code {result}; cancellation was not confirmed."
+            )
 
-    def scan_wait_end(self) -> tuple[int, str]:
+    def scan_wait_end(self) -> ScanWaitResult:
         """
-        Waits for the scan to end or polls its current status.
+        Blocks until the scan finishes and returns its raw result and tcError.
+
+        Per the CT400 Programming Guide, zero is success, positive values are
+        documented errors/warnings, and negative values are not documented
+        ScanWaitEnd outcomes. No running/polling state is implied.
         This implementation creates and manages the ctypes error buffer internally,
         preventing it from leaking into other application layers and mitigating
         the risk of buffer overflows by decoding safely.
@@ -373,7 +387,7 @@ class CT400(AbstractCT400):
         """
         # Buffer is now an implementation detail, not part of the interface.
         error_buf = create_string_buffer(self._ERROR_BUFFER_SIZE)  # A reasonable size
-        result = self.dll.CT400_ScanWaitEnd(self.handle, error_buf)
+        result = int(self.dll.CT400_ScanWaitEnd(self.handle, error_buf))
         # Safely decode the buffer.
         error_msg = ""
         try:
@@ -382,15 +396,9 @@ class CT400(AbstractCT400):
         except Exception as e:
             logger.error(f"Failed to decode error buffer from CT400_ScanWaitEnd: {e}")
             error_msg = "Could not decode error message from device."
-        if result < 0 and result != -1:  # Specific documented error codes
-            logger.error(f"CT400 Scan Error (Code: {result}): {error_msg}")
-        elif result == -1:  # A general failure of the function call itself
-            # This is a special case. -1 means the function call itself failed,
-            # whereas other negative numbers are specific scan error codes.
-            raise CT400CommunicationError(
-                f"The call to CT400_ScanWaitEnd failed. Check device connection. Message: {error_msg}"
-            )
-        return result, error_msg
+        if result < 0:
+            logger.error("CT400_ScanWaitEnd returned undocumented negative code %s: %s", result, error_msg)
+        return ScanWaitResult(raw_code=result, error_message=error_msg)
 
     def get_data_points(self, dets_used: list[Detector]) -> tuple[np.ndarray, np.ndarray]:
         """

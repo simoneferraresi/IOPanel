@@ -1,4 +1,5 @@
 import logging
+import threading
 from abc import ABC, ABCMeta, abstractmethod
 
 import numpy as np
@@ -33,7 +34,7 @@ from PySide6.QtWidgets import (
 from config_model import AppConfig
 from hardware.ct400 import CT400Error
 from hardware.ct400_types import (
-    CT400StatusCode,  # <-- NEW
+    CT400ScanResultKind,
     Detector,
     Enable,
     InstrumentError,  # <-- NEW
@@ -165,12 +166,13 @@ class ScanSettings:
 # --- REFACTOR: Inherit from QObject for the recommended worker-thread pattern ---
 class ScanWorker(QtCore.QObject):
     _LASER_COMMAND_DELAY_MS = 150
-    _SCAN_POLL_INTERVAL_MS = 100
 
     completed_signal = QtCore.Signal(np.ndarray, np.ndarray, float)
     progress_signal = QtCore.Signal(int)
     # The error signal now emits a structured error object
     error_signal = QtCore.Signal(InstrumentError)
+    warning_signal = QtCore.Signal(int, str)
+    stop_failed_signal = QtCore.Signal(str)
     finished = QtCore.Signal()
 
     def __init__(
@@ -196,23 +198,44 @@ class ScanWorker(QtCore.QObject):
         self.input_port = input_port
         self.disable_wl = disable_wl
         self.disable_power = disable_power
-        self._running = True
+        self._state_lock = threading.Lock()
+        self._cancel_requested = False
+        self._stop_requested = False
+        self._finished = False
+        self._started = False
+        self._final_kind: CT400ScanResultKind | None = None
+
+    def _is_cancel_requested(self) -> bool:
+        with self._state_lock:
+            return self._cancel_requested
+
+    def _report_cancelled(self, code: int | None = None, message: str = "Scan was cancelled by the user."):
+        self.error_signal.emit(
+            InstrumentError(
+                code=code,
+                message=message,
+                source=self.__class__.__name__,
+                kind=CT400ScanResultKind.USER_CANCELLED,
+            )
+        )
+
+    def _issue_stop_once(self):
+        with self._state_lock:
+            if not self._started or self._stop_requested or self._finished:
+                return False
+            self._stop_requested = True
+        try:
+            self.ct400.stop_scan()
+        except Exception as e:
+            message = f"CT400_ScanStop failed; scan remains active until ScanWaitEnd returns: {e}"
+            logger.error(message)
+            self.stop_failed_signal.emit(message)
+        return True
 
     @Slot()
     def do_scan(self):
-        scan_started = False
-
-        def report_cancelled():
-            self.error_signal.emit(
-                InstrumentError(
-                    code=CT400StatusCode.SCAN_ERROR_USER_CANCELLED,
-                    message="Scan was cancelled by the user.",
-                    source=self.__class__.__name__,
-                )
-            )
-
         try:
-            if self._running:
+            if not self._is_cancel_requested():
                 logger.info(
                     f"ScanWorker: Ensuring laser is disabled on input {self.input_port.name} before starting scan operations."
                 )
@@ -225,59 +248,64 @@ class ScanWorker(QtCore.QObject):
                 logger.info(f"ScanWorker: Defensive laser disable command sent for input {self.input_port.name}.")
                 QThread.msleep(self._LASER_COMMAND_DELAY_MS)
             else:
-                logger.info("ScanWorker: Run started but worker already stopped. Aborting.")
-                report_cancelled()
+                logger.info("ScanWorker: Cancelled before scan setup.")
+                self._report_cancelled()
                 return
 
-            if not self._running:
-                report_cancelled()
+            if self._is_cancel_requested():
+                self._report_cancelled()
                 return
             logger.info(
                 f"ScanWorker: Setting up scan from {self.start_wl}nm to {self.end_wl}nm, Res: {self.resolution}pm, Power: {self.laser_power}mW"
             )
             self.ct400.set_scan(self.laser_power, self.start_wl, self.end_wl)
-            if not self._running:
-                report_cancelled()
+            if self._is_cancel_requested():
+                self._report_cancelled()
                 return
             self.ct400.set_sampling_res(self.resolution)
-            if not self._running:
-                report_cancelled()
+            if self._is_cancel_requested():
+                self._report_cancelled()
                 return
 
             self.ct400.start_scan()
-            scan_started = True
+            with self._state_lock:
+                self._started = True
             logger.info("ScanWorker: CT400 scan started.")
+            if self._is_cancel_requested():
+                self._issue_stop_once()
 
-            while self._running:
-                # --- REVISED ERROR HANDLING ---
-                status_code, error_msg = self.ct400.scan_wait_end()
+            result = self.ct400.scan_wait_end()
+            raw_code = int(result.raw_code)
+            error_msg = result.error_message
+            kind = result.kind
+            self._final_kind = kind
 
-                if status_code == CT400StatusCode.SCAN_COMPLETED:
-                    logger.info("ScanWorker: Scan completed successfully.")
-                    self.progress_signal.emit(100)
-                    break
-                elif status_code < 0:
-                    logger.error(f"ScanWorker: Scan error (ScanWaitEnd): {error_msg} (Code: {status_code})")
-                    raise CT400Error(error_msg)  # The message is now clean
-
-                # Check for our own cancellation *after* checking hardware status
-                if not self._running:
-                    logger.info("ScanWorker: Scan cancelled by user during polling.")
-                    # Emit a specific, structured error for user cancellation
-                    err = InstrumentError(
-                        code=CT400StatusCode.SCAN_ERROR_USER_CANCELLED,
-                        message="Scan was cancelled by the user.",
-                        source=self.__class__.__name__,
-                    )
-                    self.error_signal.emit(err)
-                    return  # Exit cleanly
-
-                QThread.msleep(self._SCAN_POLL_INTERVAL_MS)
-
-            if not self._running:
-                logger.info("ScanWorker: Scan cancelled by user.")
-                report_cancelled()
+            if kind == CT400ScanResultKind.USER_CANCELLED:
+                logger.info("ScanWorker: CT400 confirmed user cancellation (code 1).")
+                self._report_cancelled(raw_code, error_msg or "Scan was cancelled by the user.")
                 return
+            if kind == CT400ScanResultKind.FATAL_ERROR:
+                self.error_signal.emit(InstrumentError(
+                    code=raw_code,
+                    message=error_msg or f"CT400 scan failed with documented error code {raw_code}.",
+                    source=self.__class__.__name__,
+                    kind=kind,
+                ))
+                return
+            if kind == CT400ScanResultKind.UNEXPECTED:
+                self.error_signal.emit(InstrumentError(
+                    code=raw_code,
+                    message=error_msg or f"Unexpected CT400_ScanWaitEnd return code {raw_code}.",
+                    source=self.__class__.__name__,
+                    kind=kind,
+                ))
+                return
+
+            if kind == CT400ScanResultKind.WARNING:
+                self.warning_signal.emit(raw_code, error_msg)
+            else:
+                logger.info("ScanWorker: Scan completed successfully.")
+            self.progress_signal.emit(100)
 
             logger.info("ScanWorker: Retrieving data points...")
             detectors_to_get = [Detector.DE_1]
@@ -313,21 +341,19 @@ class ScanWorker(QtCore.QObject):
             logger.error(f"ScanWorker: CT400 Error: {e}")
             # Map the generic exception to our structured error type
             err = InstrumentError(
-                code=CT400StatusCode.SCAN_ERROR_GENERIC, message=str(e), source=self.__class__.__name__
+                code=None, message=str(e), source=self.__class__.__name__
             )
             self.error_signal.emit(err)
         except Exception as e:
             logger.exception(f"ScanWorker: Unexpected error: {e}")
             err = InstrumentError(
-                code=CT400StatusCode.UNKNOWN_ERROR,
+                code=None,
                 message=f"An unexpected error occurred: {e}",
                 source=self.__class__.__name__,
             )
             self.error_signal.emit(err)
         finally:
             try:
-                if scan_started:
-                    self.ct400.stop_scan()
                 self.ct400.cmd_laser(
                     laser_input=self.input_port,
                     enable=Enable.DISABLE,
@@ -336,12 +362,25 @@ class ScanWorker(QtCore.QObject):
                 )
             except Exception as e:
                 logger.error(f"ScanWorker: Error during cleanup in finally block: {e}")
+            with self._state_lock:
+                self._finished = True
             logger.info("ScanWorker: Finished.")
             self.finished.emit()
 
     def stop(self):
-        logger.info("ScanWorker: Stop requested.")
-        self._running = False
+        """Issue at most one documented Stop request for an active scan.
+
+        The guide defines ScanStop as the user stop action and code 1 as its
+        cancellation result. It does not specify a general same-handle DLL
+        thread-safety/reentrancy guarantee; this call necessarily overlaps the
+        blocking ScanWaitEnd operation in the documented cancellation flow.
+        """
+        with self._state_lock:
+            if self._finished or self._cancel_requested:
+                return False
+            self._cancel_requested = True
+        self._issue_stop_once()
+        return True
 
 
 ###############################################################################
@@ -544,6 +583,7 @@ class BaseControlPanel(QWidget, ABC, metaclass=QABCMeta):
 ###############################################################################
 class CT400ControlPanel(BaseControlPanel):
     scan_data_ready = QtCore.Signal(np.ndarray, np.ndarray, float)
+    scan_warning = QtCore.Signal(str)
     progress_updated = QtCore.Signal(int)
 
     def __init__(
@@ -725,6 +765,8 @@ class CT400ControlPanel(BaseControlPanel):
             self.scan_worker.progress_signal.connect(self.progress_updated)
             self.scan_worker.completed_signal.connect(self._handle_scan_completed)
             self.scan_worker.error_signal.connect(self._handle_scan_error)
+            self.scan_worker.warning_signal.connect(self._handle_scan_warning)
+            self.scan_worker.stop_failed_signal.connect(self._handle_stop_failed)
 
             # When worker finishes, it tells the thread to quit
             self.scan_worker.finished.connect(self.scan_thread.quit)
@@ -746,24 +788,32 @@ class CT400ControlPanel(BaseControlPanel):
         logger.info(f"Stopping scan (Cancelled: {cancelled}).")
         # Check both the worker and thread exist
         if self.scan_worker and self.scan_thread and self.scan_thread.isRunning():
+            if cancelled:
+                self.scan_btn.setText("Stopping Scan…")
+                self.scan_btn.setEnabled(False)
+                self.scan_btn.setToolTip("Waiting for CT400_ScanWaitEnd to confirm the stop request.")
             self.scan_worker.stop()
-            # The worker will finish its current loop, run the finally block,
-            # and emit finished(), which will quit the thread.
-        if cancelled:
-            self._reset_scan_ui(status_msg=MSG_SCAN_CANCELLED)
 
     @Slot(InstrumentError)  # <-- NEW SIGNATURE
     def _handle_scan_error(self, error: InstrumentError):
-        logger.error(f"ScanPanel received error from {error.source}: {error.message} (Code: {error.code.name})")
+        logger.error(f"ScanPanel received result from {error.source}: {error.message} (Code: {error.code_name})")
 
-        # Now we can have logic based on the error code, not just the string!
-        if error.code == CT400StatusCode.SCAN_ERROR_USER_CANCELLED:
-            # This is not a critical error, so we don't show a pop-up.
-            # The UI is already reset by the stop/cancel logic.
+        if error.kind == CT400ScanResultKind.USER_CANCELLED:
             logger.info("Scan was cancelled, no message box shown.")
             return
 
-        QMessageBox.critical(self, "Scan Error", f"A scan error occurred:\n\n{error.message}")
+        title = "CT400 Scan Error" if error.kind == CT400ScanResultKind.FATAL_ERROR else "Unexpected CT400 Result"
+        QMessageBox.critical(self, title, f"CT400_ScanWaitEnd returned {error.code_name}:\n\n{error.message}")
+
+    @Slot(int, str)
+    def _handle_scan_warning(self, code: int, message: str):
+        warning = f"CT400 scan warning {code}: {message or 'completed with a documented warning.'}"
+        logger.warning(warning)
+        self.scan_warning.emit(warning)
+
+    @Slot(str)
+    def _handle_stop_failed(self, message: str):
+        QMessageBox.critical(self, "CT400 Stop Failed", message)
 
     @Slot(int)
     def update_progress_bar(self, value: int):
@@ -786,8 +836,7 @@ class CT400ControlPanel(BaseControlPanel):
     def _scan_thread_finished(self):
         logger.info("ScanPanel: Scan thread finished.")
         status_msg = MSG_SCAN_FINISHED
-        # Check if the worker still exists and was stopped manually
-        if self.scan_worker and not self.scan_worker._running and self.scanning:
+        if self.scan_worker and self.scan_worker._final_kind == CT400ScanResultKind.USER_CANCELLED:
             status_msg = MSG_SCAN_CANCELLED
 
         # Now that the thread is finished, we can safely delete the worker and thread objects.
@@ -803,6 +852,7 @@ class CT400ControlPanel(BaseControlPanel):
     def _reset_scan_ui(self, status_msg: str = MSG_SCAN_READY):
         self.scanning = False
         self.scan_btn.setText("Start Scan")
+        self.scan_btn.setToolTip("")
         self.scan_btn.setIcon(QtGui.QIcon(":/icons/play.svg"))
         self.scan_btn.setProperty(PROP_SCANNING, False)
         self.scan_btn.style().unpolish(self.scan_btn)
