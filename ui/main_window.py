@@ -138,6 +138,7 @@ class CT400OperationState(Enum):
     DISCONNECTING = auto()
     SCANNING = auto()
     MONITORING = auto()
+    ALIGNMENT = auto()
 
 
 class MainWindow(QMainWindow):
@@ -191,7 +192,7 @@ class MainWindow(QMainWindow):
         self.is_ct400_connected_state: bool = False
         self._ct400_connection_configured: bool = False
         self._ct400_operation_state = CT400OperationState.IDLE
-        self._pending_ct400_connection_close: bool = False
+        self._pending_ct400_operation_close: bool = False
         self._ct400_error_reset_timer = QTimer(self)
         self._ct400_error_reset_timer.setSingleShot(True)
         self._ct400_error_reset_timer.timeout.connect(self._reset_ct400_error_visuals)
@@ -828,6 +829,8 @@ class MainWindow(QMainWindow):
             self.control_panel.set_ct400_operation_state(state.name)
         if hasattr(self, "histogram_control") and self.histogram_control:
             self.histogram_control.set_ct400_operation_state(state.name)
+        if hasattr(self, "alignment_tab") and self.alignment_tab:
+            self.alignment_tab.set_ct400_operation_state(state.name)
         action = getattr(self, "ct400_connect_action", None)
         if action is not None:
             if state is CT400OperationState.IDLE:
@@ -856,8 +859,24 @@ class MainWindow(QMainWindow):
     def _handle_ct400_monitor_finished(self):
         if self._ct400_operation_state is CT400OperationState.MONITORING:
             self._set_ct400_operation_state(CT400OperationState.IDLE)
-        if self._pending_ct400_connection_close and self._ct400_operation_state is CT400OperationState.IDLE:
-            self._pending_ct400_connection_close = False
+        self._resume_close_after_ct400_operation()
+
+    @Slot()
+    def _handle_alignment_operation_started(self):
+        if self._ct400_operation_state is CT400OperationState.IDLE:
+            self._set_ct400_operation_state(CT400OperationState.ALIGNMENT)
+        else:
+            logger.error("Rejected alignment start while CT400 is owned by %s", self._ct400_operation_state.name)
+
+    @Slot()
+    def _handle_alignment_operation_finished(self):
+        if self._ct400_operation_state is CT400OperationState.ALIGNMENT:
+            self._set_ct400_operation_state(CT400OperationState.IDLE)
+        self._resume_close_after_ct400_operation()
+
+    def _resume_close_after_ct400_operation(self):
+        if self._pending_ct400_operation_close and self._ct400_operation_state is CT400OperationState.IDLE:
+            self._pending_ct400_operation_close = False
             QTimer.singleShot(0, self.close)
 
     @Slot()
@@ -869,9 +888,7 @@ class MainWindow(QMainWindow):
         if action is not None:
             action.setEnabled(True)
 
-        if self._pending_ct400_connection_close:
-            self._pending_ct400_connection_close = False
-            QTimer.singleShot(0, self.close)
+        self._resume_close_after_ct400_operation()
 
     @Slot(str)
     def _handle_ct400_connection_success(self, message: str):
@@ -1276,16 +1293,24 @@ class MainWindow(QMainWindow):
 
         if self._ct400_operation_state in (CT400OperationState.CONNECTING, CT400OperationState.DISCONNECTING):
             event.ignore()
-            self._pending_ct400_connection_close = True
+            self._pending_ct400_operation_close = True
             self.statusBar().showMessage("Waiting for CT400 connection operation to finish…", 0)
             logger.info("Deferring application close until the CT400 Connect/Disconnect operation finishes.")
             return
 
         if self._ct400_operation_state is CT400OperationState.MONITORING:
             event.ignore()
-            self._pending_ct400_connection_close = True
+            self._pending_ct400_operation_close = True
             self.statusBar().showMessage("Stopping power monitoring before CT400 shutdown…", 0)
             self.histogram_control._stop_monitoring()
+            return
+
+        if self._ct400_operation_state is CT400OperationState.ALIGNMENT:
+            event.ignore()
+            self._pending_ct400_operation_close = True
+            self.statusBar().showMessage("Stopping/waiting for alignment CT400 cleanup…", 0)
+            logger.info("Deferring application close until alignment laser cleanup completes.")
+            self.alignment_tab.request_stop()
             return
 
         self.statusBar().showMessage("Shutting down...", 0)
@@ -1395,3 +1420,7 @@ class MainWindow(QMainWindow):
             self.histogram_control.operation_finished.connect(self._handle_ct400_monitor_finished)
         else:
             logger.warning("Histogram Control Panel not initialized, skipping signal connection.")
+
+        if hasattr(self, "alignment_tab") and self.alignment_tab:
+            self.alignment_tab.operation_started.connect(self._handle_alignment_operation_started)
+            self.alignment_tab.operation_finished.connect(self._handle_alignment_operation_finished)

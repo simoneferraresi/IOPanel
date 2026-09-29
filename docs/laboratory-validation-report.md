@@ -179,16 +179,17 @@ This is a software-only change. The selected-input calls and resource-release or
 
 ## CT400 operation ownership — Issue #38
 
-IOPanel now grants one application-level owner of the shared CT400 handle at a time. The compatibility policy is:
+IOPanel now grants one application-level owner of the shared CT400 handle at a time. `ALIGNMENT` covers fine alignment, spiral alignment, and 2D mapping. The compatibility policy is:
 
-| Active operation | Connect | Disconnect | Scan | Monitor |
-| --- | --- | --- | --- | --- |
-| Connect | — | no | no | no |
-| Disconnect | no | — | no | no |
-| Scan | no | no | — | no |
-| Monitor | no | no | no | — |
+| Active operation | Connect | Disconnect | Scan | Monitor | Alignment |
+| --- | --- | --- | --- | --- | --- |
+| Connect | — | no | no | no | no |
+| Disconnect | no | — | no | no | no |
+| Scan | no | no | — | no | no |
+| Monitor | no | no | no | — | no |
+| Alignment | no | no | no | no | — |
 
-This is a conservative application safety/concurrency policy because the Yenista Programming Guide does not document general same-handle thread safety or reentrancy. It does not establish that the hardware cannot support concurrent operations. Scan cancellation remains available to the active scan owner; monitoring releases ownership only after its worker read has finished and selected-input disable cleanup has run. The policy is exercised with DummyCT400 and fake connection operations. No physical CT400 concurrency behavior has been tested or is claimed.
+This is a conservative application safety/concurrency policy because the Yenista Programming Guide does not document general same-handle thread safety or reentrancy. It does not establish that the hardware cannot support concurrent operations. Scan cancellation remains available to the active scan owner; monitoring releases ownership only after its worker read has finished and selected-input disable cleanup has run; alignment releases ownership only after its worker's selected-input laser-disable cleanup attempt. The policy is exercised with DummyCT400 and fake connection/alignment operations. No physical CT400 concurrency behavior has been tested or is claimed.
 
 ### Offline test warning follow-up
 

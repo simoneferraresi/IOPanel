@@ -74,6 +74,7 @@ class AlignmentWorker(QObject):
     error_occurred = Signal(str)
     mapping_progress = Signal(int, int)  # percentage, total_points
     mapping_finished = Signal(object, object, object)  # x_coords, y_coords, z_power_grid
+    operation_finished = Signal()
 
     def __init__(
         self,
@@ -87,15 +88,31 @@ class AlignmentWorker(QObject):
         self.piezo_right = piezo_right
         self._is_running = False
 
+    def begin_operation(self):
+        """Mark an accepted UI operation active before its queued slot runs."""
+        self._is_running = True
+
+    def _finish_operation(self, settings: AlignmentSettings | MappingSettings):
+        """Attempt selected-input cleanup before publishing operation completion."""
+        try:
+            self._shutdown_laser(settings)
+        except Exception as exc:
+            logger.exception("Alignment laser disable could not be confirmed.")
+            self.error_occurred.emit(f"Laser disable could not be confirmed for input {settings.input_port}: {exc}")
+        finally:
+            self._is_running = False
+            self.operation_finished.emit()
+
     @Slot(AlignmentSettings, SpiralSearchSettings)
     def run_spiral_alignment(self, align_settings: AlignmentSettings, spiral_settings: SpiralSearchSettings):
         """
         Performs a coarse spiral search to find the approximate peak, then runs
         a fine-grained hill-climbing alignment from that point.
         """
-        self._is_running = True
         logger.info("Starting spiral alignment workflow...")
         try:
+            if not self._is_running:
+                raise InterruptedError("Spiral alignment cancelled before start.")
             self._prepare_laser(align_settings)
 
             # Phase 1: Coarse Spiral Search on BOTH stages
@@ -153,8 +170,7 @@ class AlignmentWorker(QObject):
             logger.exception("An error occurred during spiral alignment.")
             self.error_occurred.emit(f"Error during spiral alignment: {e}")
         finally:
-            self._shutdown_laser(align_settings)
-            self._is_running = False
+            self._finish_operation(align_settings)
 
     def _find_coarse_peak_spiral(
         self, piezo: PiezoController, settings: SpiralSearchSettings, samples_per_point: int
@@ -262,9 +278,10 @@ class AlignmentWorker(QObject):
 
     @Slot(AlignmentSettings)
     def run_alignment(self, settings: AlignmentSettings):
-        self._is_running = True
         initial_power = -999.0
         try:
+            if not self._is_running:
+                raise InterruptedError("Alignment cancelled before start.")
             # --- CAPTURE INITIAL POSITIONS ---
             initial_positions = {
                 "left_x": self.piezo_left.get_voltage("x"),
@@ -321,8 +338,7 @@ class AlignmentWorker(QObject):
             logger.exception("An error occurred during alignment.")
             self.alignment_finished.emit(f"Error: {e}", -999, -999, None, None)
         finally:
-            self._shutdown_laser(settings)
-            self._is_running = False
+            self._finish_operation(settings)
 
     def _align_stage(self, piezo: PiezoController, settings: AlignmentSettings):
         """Performs the hill-climbing algorithm on a single piezo stage."""
@@ -428,9 +444,10 @@ class AlignmentWorker(QObject):
     @Slot(MappingSettings)
     def run_mapping(self, settings: MappingSettings):
         """Performs a 2D raster scan to generate a power map."""
-        self._is_running = True
         logger.info(f"Starting power mapping with settings: {settings}")
         try:
+            if not self._is_running:
+                raise InterruptedError("Mapping cancelled before start.")
             self._prepare_laser(settings)  # <-- Turn laser ON
 
             piezo_to_use = self.piezo_left if settings.stage_to_map == "left" else self.piezo_right
@@ -502,11 +519,15 @@ class AlignmentWorker(QObject):
             self.error_occurred.emit(f"Error during mapping: {e}")
         finally:
             # Important: ensure the laser is turned off even if the mapping is cancelled or fails
-            if "initial_x_v" in locals() and "piezo_to_use" in locals():
-                piezo_to_use.set_voltage("x", initial_x_v)
-                piezo_to_use.set_voltage("y", initial_y_v)
-            self._shutdown_laser(settings)  # <-- Turn laser OFF
-            self._is_running = False
+            try:
+                if "initial_x_v" in locals() and "piezo_to_use" in locals():
+                    piezo_to_use.set_voltage("x", initial_x_v)
+                    piezo_to_use.set_voltage("y", initial_y_v)
+            except Exception as exc:
+                logger.exception("Could not restore mapping stage position during cleanup.")
+                self.error_occurred.emit(f"Could not restore mapping stage position: {exc}")
+            finally:
+                self._finish_operation(settings)
 
 
 class InterruptedError(Exception):

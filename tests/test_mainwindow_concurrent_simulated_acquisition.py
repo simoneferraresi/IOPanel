@@ -12,9 +12,11 @@ from hardware import camera_init_worker, ct400_init_worker
 from hardware.dummy_ct400 import DummyCT400
 from hardware.ct400 import CT400
 from hardware.ct400_types import Enable, LaserInput
+from hardware.alignment_worker import AlignmentSettings, MappingSettings, SpiralSearchSettings
 from hardware.simulated_camera import SimulatedCamera
 from ui import control_panel as control_panel_module
 from ui import main_window as main_window_module
+from ui import alignment_panel as alignment_panel_module
 
 
 class GatedDummyCT400(DummyCT400):
@@ -23,6 +25,72 @@ class GatedDummyCT400(DummyCT400):
     def __init__(self, progression_gate, scan_error=None):
         super().__init__(scan_duration=0, scan_error=scan_error, wait_gate=progression_gate)
         self.progression_gate = progression_gate
+
+
+class FakeAlignmentPiezo:
+    VOLTS_PER_NM = 0.001
+
+    def __init__(self, port):
+        self.port = port
+
+    def get_voltage(self, _axis):
+        return 0.0
+
+    def set_voltage(self, _axis, _value):
+        return None
+
+    def move_nm(self, _axis, _distance):
+        return None
+
+    def get_min_voltage(self, _axis):
+        return -100.0
+
+    def get_max_voltage(self, _axis):
+        return 100.0
+
+
+def _prepare_alignment_panel(window, device=None):
+    panel = window.alignment_tab
+    panel.set_hardware(
+        device or window.ct400_device,
+        FakeAlignmentPiezo("fake-left"),
+        FakeAlignmentPiezo("fake-right"),
+    )
+    return panel
+
+
+def _arm_blocking_alignment(panel, release, started, events, fail_read=False):
+    worker = panel.alignment_worker
+
+    def prepare(settings):
+        events.append(("laser-enable", settings.input_port))
+        started.set()
+        if not release.wait(5):
+            raise TimeoutError("test did not release alignment worker")
+
+    def read_power(_samples):
+        events.append(("get-all-powers",))
+        if fail_read:
+            raise RuntimeError("fake alignment read failure")
+        return -20.0
+
+    def shutdown(settings):
+        events.append(("laser-disable", settings.input_port))
+
+    worker._prepare_laser = prepare
+    worker._read_power = read_power
+    worker._shutdown_laser = shutdown
+    worker.operation_finished.connect(
+        lambda: events.append(("cleanup-complete",)),
+        Qt.ConnectionType.DirectConnection,
+    )
+    panel.operation_finished.connect(lambda: events.append(("ownership-idle", window_state(panel))), Qt.ConnectionType.DirectConnection)
+    return worker
+
+
+def window_state(panel):
+    window = panel.window()
+    return window._ct400_operation_state.name
 
 
 def _qt_thread_stopped(thread):
@@ -260,6 +328,178 @@ def test_monitor_owns_ct400_until_selected_input_cleanup_finishes(qtbot, monkeyp
         device.set_detector_array = original_set_detectors
     finally:
         monitor.cleanup_worker_thread()
+        if window.isVisible():
+            window.close()
+
+
+def test_scan_ownership_blocks_alignment_start(qtbot, monkeypatch, tmp_path):
+    window, gate, frame_spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path)
+    alignment = _prepare_alignment_panel(window)
+    starts = QSignalSpy(alignment.operation_started)
+
+    try:
+        _start_scan_during_stream(qtbot, window, frame_spy)
+        assert window._ct400_operation_state.name == "SCANNING"
+        assert not alignment.align_button.isEnabled()
+        assert not alignment.spiral_align_button.isEnabled()
+        assert not alignment.map_button.isEnabled()
+        assert window.control_panel.scan_btn.isEnabled()
+        alignment.toggle_alignment(True)
+        alignment.toggle_spiral_alignment()
+        alignment.toggle_mapping(True)
+        assert starts.count() == 0
+
+        gate.set()
+        qtbot.waitUntil(lambda: window._ct400_operation_state.name == "IDLE", timeout=3000)
+    finally:
+        gate.set()
+        if window.isVisible():
+            window.close()
+
+
+def test_monitoring_ownership_blocks_alignment_and_keeps_monitor_stop(qtbot, monkeypatch, tmp_path):
+    window, _gate, _frame_spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path)
+    alignment = _prepare_alignment_panel(window)
+    monitor = window.histogram_control
+    starts = QSignalSpy(alignment.operation_started)
+
+    try:
+        monitor._start_monitoring()
+        assert window._ct400_operation_state.name == "MONITORING"
+        assert monitor.monitor_btn.isEnabled()
+        assert "Stop" in monitor.monitor_btn.text()
+        assert not alignment.align_button.isEnabled()
+        alignment.toggle_alignment(True)
+        alignment.toggle_spiral_alignment()
+        alignment.toggle_mapping(True)
+        assert starts.count() == 0
+
+        monitor._stop_monitoring()
+        qtbot.waitUntil(lambda: window._ct400_operation_state.name == "IDLE", timeout=2000)
+    finally:
+        monitor._stop_monitoring()
+        if window.isVisible():
+            window.close()
+
+
+@pytest.mark.parametrize("mode", ["fine", "spiral", "mapping"])
+def test_alignment_modes_own_ct400_until_post_cleanup(qtbot, monkeypatch, tmp_path, mode):
+    window, _gate, _frame_spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path)
+    alignment = _prepare_alignment_panel(window)
+    release = threading.Event()
+    started = threading.Event()
+    events = []
+    worker = _arm_blocking_alignment(alignment, release, started, events)
+    monitor = window.histogram_control
+    detector_writes = []
+    monitor.ct400.set_detector_array = lambda *args: detector_writes.append(args)
+
+    try:
+        window.ct400_connect_action.setEnabled(True)
+        if mode == "fine":
+            qtbot.mouseClick(alignment.align_button, Qt.MouseButton.LeftButton)
+        elif mode == "spiral":
+            qtbot.mouseClick(alignment.spiral_align_button, Qt.MouseButton.LeftButton)
+        else:
+            qtbot.mouseClick(alignment.map_button, Qt.MouseButton.LeftButton)
+
+        qtbot.waitUntil(started.is_set, timeout=1500)
+        assert window._ct400_operation_state.name == "ALIGNMENT"
+        assert not window.control_panel.scan_btn.isEnabled()
+        assert not monitor.monitor_btn.isEnabled()
+        assert not window.ct400_connect_action.isEnabled()
+        assert alignment.stop_operation_button.isEnabled()
+        assert not alignment.align_button.isEnabled()
+        assert not alignment.spiral_align_button.isEnabled()
+        assert not alignment.map_button.isEnabled()
+
+        monitor.detector_cbs[0].setChecked(not monitor.detector_cbs[0].isChecked())
+        assert detector_writes == []
+
+        alignment.request_stop()
+        assert window._ct400_operation_state.name == "ALIGNMENT"
+        assert not any(event[0] == "laser-disable" for event in events)
+        release.set()
+        qtbot.waitUntil(lambda: window._ct400_operation_state.name == "IDLE", timeout=3000)
+        event_names = [event[0] for event in events]
+        assert event_names.index("laser-enable") < event_names.index("laser-disable")
+        assert event_names.index("laser-disable") < event_names.index("cleanup-complete")
+        assert event_names.index("cleanup-complete") < event_names.index("ownership-idle")
+        assert events[-1] == ("ownership-idle", "IDLE")
+    finally:
+        release.set()
+        if window.isVisible():
+            window.close()
+
+
+def test_alignment_error_disables_selected_input_before_releasing_owner(qtbot, monkeypatch, tmp_path):
+    monkeypatch.setattr(alignment_panel_module.QMessageBox, "critical", lambda *_args: None)
+    window, _gate, _frame_spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path)
+    alignment = _prepare_alignment_panel(window)
+    release = threading.Event()
+    started = threading.Event()
+    events = []
+    _arm_blocking_alignment(alignment, release, started, events, fail_read=True)
+
+    try:
+        qtbot.mouseClick(alignment.align_button, Qt.MouseButton.LeftButton)
+        qtbot.waitUntil(started.is_set, timeout=1500)
+        release.set()
+        qtbot.waitUntil(lambda: window._ct400_operation_state.name == "IDLE", timeout=3000)
+        event_names = [event[0] for event in events]
+        assert "get-all-powers" in event_names
+        assert event_names.index("get-all-powers") < event_names.index("laser-disable")
+        assert event_names.index("laser-disable") < event_names.index("cleanup-complete")
+        assert event_names.index("cleanup-complete") < event_names.index("ownership-idle")
+    finally:
+        release.set()
+        if window.isVisible():
+            window.close()
+
+
+def test_close_during_alignment_waits_for_cleanup_before_ct400_close(qtbot, monkeypatch, tmp_path):
+    window, _gate, _frame_spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path)
+    events = []
+    device = _fake_physical_ct400(events)
+    window.ct400_device = device
+    alignment = _prepare_alignment_panel(window, device)
+    release = threading.Event()
+    started = threading.Event()
+    _arm_blocking_alignment(alignment, release, started, events)
+    alignment.input_port_combo.setCurrentIndex(alignment.input_port_combo.findData(3))
+    terminations = []
+    original_terminate = QThread.terminate
+
+    def record_terminate(thread):
+        if thread is alignment.worker_thread:
+            terminations.append(True)
+        return original_terminate(thread)
+
+    monkeypatch.setattr(QThread, "terminate", record_terminate)
+
+    try:
+        qtbot.mouseClick(alignment.align_button, Qt.MouseButton.LeftButton)
+        qtbot.waitUntil(started.is_set, timeout=1500)
+        worker_thread = alignment.worker_thread
+        window.close()
+        assert window.isVisible()
+        assert window._pending_ct400_operation_close
+        assert window._ct400_operation_state.name == "ALIGNMENT"
+        assert not any(event[0] == "close" for event in events)
+        alignment.request_stop()
+        release.set()
+        qtbot.waitUntil(lambda: not window.isVisible(), timeout=3500)
+
+        names = [event[0] for event in events]
+        assert names.index("laser-disable") < names.index("cleanup-complete")
+        assert names.index("cleanup-complete") < names.index("ownership-idle")
+        assert names.index("ownership-idle") < names.index("close")
+        assert ("laser-disable", 3) in events
+        assert events[-1] == ("close", 73)
+        assert terminations == []
+        assert not worker_thread.isRunning() if worker_thread else True
+    finally:
+        release.set()
         if window.isVisible():
             window.close()
 
@@ -589,6 +829,8 @@ def test_close_waits_for_active_ct400_connection_operation(
         failure,
     )
     window.ct400_device = device
+    alignment = _prepare_alignment_panel(window, device)
+    alignment_starts = QSignalSpy(alignment.operation_started)
     window.config.scan_defaults.input_port = 3
     window.config.scan_defaults.safe_parking_wavelength = 1532.5
     window.config.scan_defaults.laser_power = 0.75
@@ -602,12 +844,18 @@ def test_close_waits_for_active_ct400_connection_operation(
         assert window._ct400_operation_state.name == ("CONNECTING" if connect else "DISCONNECTING")
         assert not window.control_panel.scan_btn.isEnabled()
         assert not window.histogram_control.monitor_btn.isEnabled()
+        assert not alignment.align_button.isEnabled()
+        assert not alignment.spiral_align_button.isEnabled()
+        assert not alignment.map_button.isEnabled()
+        alignment.toggle_spiral_alignment()
+        assert alignment_starts.count() == 0
+        assert not alignment.alignment_worker._is_running
         assert native_operation_active.is_set()
 
         window.close()
 
         assert window.isVisible()
-        assert window._pending_ct400_connection_close
+        assert window._pending_ct400_operation_close
         assert "Waiting for CT400 connection operation" in window.statusBar().currentMessage()
         assert device.handle == 73
         assert not any(event[0] == "close" for event in events)
@@ -619,7 +867,7 @@ def test_close_waits_for_active_ct400_connection_operation(
         qtbot.waitUntil(lambda: not window.isVisible(), timeout=4000)
 
         assert window._ct400_operation_state.name == "IDLE"
-        assert not window._pending_ct400_connection_close
+        assert not window._pending_ct400_operation_close
         assert events[-1] == ("close", 73, False)
         assert sum(event[0] == "close" for event in events) == 1
 
