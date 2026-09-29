@@ -9,6 +9,7 @@ from .ct400_types import (
     LaserInput,
     LaserSource,
     PowerData,
+    ScanWaitResult,
 )
 
 
@@ -58,17 +59,16 @@ class AbstractCT400(ABC):
     def stop_scan(self) -> None: ...
 
     @abstractmethod
-    def scan_wait_end(self) -> tuple[int, str]:
+    def scan_wait_end(self) -> ScanWaitResult:
         """
-        Waits for the scan to end or polls its current status.
+        Blocks until the CT400 scan finishes and returns its documented result.
 
         This method now fully encapsulates the underlying C-style error buffer,
         making the interface safer and cleaner.
 
         Returns:
-            A tuple containing:
-            - The integer status code from the device (0 for complete, 1 for running, <0 for error).
-            - The decoded error message string, if any.
+            The raw vendor return code and decoded tcError text. Unknown codes
+            are preserved and classified as unexpected by ScanWaitResult.
         """
 
     @abstractmethod

@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from enum import IntEnum
+from enum import Enum, IntEnum, auto
 
 
 # --- Enums Mirroring the C Header for Type Safety and Readability ---
@@ -53,28 +53,76 @@ class PowerData:
     detectors: "dict[Detector, float]"
 
 
-class CT400StatusCode(IntEnum):
+class CT400ScanCode(IntEnum):
+    """ScanWaitEnd codes documented by CT400 Programming Guide 1.4.
+
+    Unknown values remain plain integers in ScanWaitResult.raw_code.  These
+    names describe vendor codes only; application errors have no vendor code.
     """
-    Defines specific, known status or error codes from the CT400 device.
-    This provides a structured alternative to parsing error strings.
-    """
 
-    # Success Codes
-    SCAN_COMPLETED = 0
+    SUCCESS = 0
+    USER_CANCELLED = 1
+    DATA_EXCHANGE_DSP_FAILURE = 2
+    WAVELENGTH_REFERENCING_ERROR = 3
+    SWITCH_FAILURE = 4
+    DSP_COMMUNICATION_FAILURE = 5
+    WARNING_100 = 100
+    WARNING_101 = 101
+    WARNING_102 = 102
+    WARNING_103 = 103
+    WARNING_104 = 104
+    WARNING_106 = 106
+    WARNING_108 = 108
+    WARNING_109 = 109
+    WARNING_110 = 110
+    WARNING_111 = 111
+    WARNING_112 = 112
+    WARNING_113 = 113
+    WARNING_114 = 114
+    WARNING_115 = 115
+    WARNING_117 = 117
+    WARNING_118 = 118
+    WARNING_119 = 119
+    WARNING_120 = 120
+    WARNING_121 = 121
+    WARNING_122 = 122
+    WARNING_123 = 123
+    WARNING_124 = 124
+    # Scan is performed after sampling resolution is adjusted.
+    WARNING_999 = 999
 
-    # In-Progress Codes
-    SCAN_RUNNING = 1
 
-    # Error Codes (Maps to negative values from the DLL)
-    SCAN_ERROR_GENERIC = -1
-    SCAN_ERROR_NO_LASER = -2
-    SCAN_ERROR_NO_DETECTOR = -3
-    SCAN_ERROR_MIN_WAVELENGTH = -4
-    SCAN_ERROR_MAX_WAVELENGTH = -5
-    SCAN_ERROR_SWEEP_SPEED = -6
-    SCAN_ERROR_COMMUNICATION = -10
-    SCAN_ERROR_USER_CANCELLED = -99  # Our own internal code
-    UNKNOWN_ERROR = -100  # For any other error
+class CT400ScanResultKind(Enum):
+    SUCCESS = auto()
+    USER_CANCELLED = auto()
+    FATAL_ERROR = auto()
+    WARNING = auto()
+    UNEXPECTED = auto()
+
+
+_CT400_WARNING_CODES = frozenset(
+    (*range(100, 105), 106, *range(108, 116), *range(117, 125), 999)
+)
+
+
+@dataclass(frozen=True)
+class ScanWaitResult:
+    """Raw ScanWaitEnd result plus a classification from the vendor guide."""
+
+    raw_code: int
+    error_message: str
+
+    @property
+    def kind(self) -> CT400ScanResultKind:
+        if self.raw_code == CT400ScanCode.SUCCESS:
+            return CT400ScanResultKind.SUCCESS
+        if self.raw_code == CT400ScanCode.USER_CANCELLED:
+            return CT400ScanResultKind.USER_CANCELLED
+        if 2 <= self.raw_code <= 5:
+            return CT400ScanResultKind.FATAL_ERROR
+        if self.raw_code in _CT400_WARNING_CODES:
+            return CT400ScanResultKind.WARNING
+        return CT400ScanResultKind.UNEXPECTED
 
 
 @dataclass(frozen=True)
@@ -84,6 +132,16 @@ class InstrumentError:
     This is emitted by signals instead of a raw string.
     """
 
-    code: CT400StatusCode
+    code: int | None
     message: str
     source: str  # e.g., "ScanWorker", "PowerFetchWorker"
+    kind: CT400ScanResultKind | None = None
+
+    @property
+    def code_name(self) -> str:
+        if self.code is None:
+            return "APPLICATION_ERROR"
+        try:
+            return CT400ScanCode(self.code).name
+        except ValueError:
+            return str(self.code)

@@ -1,10 +1,11 @@
 import logging
 import math
+import threading
 import time
 
 import numpy as np
 
-from hardware.ct400_types import Detector, Enable, PowerData
+from hardware.ct400_types import Detector, Enable, PowerData, ScanWaitResult
 from hardware.interfaces import AbstractCT400
 
 logger = logging.getLogger("LabApp.DummyCT400")
@@ -13,7 +14,13 @@ logger = logging.getLogger("LabApp.DummyCT400")
 class DummyCT400(AbstractCT400):
     """A dummy implementation of the CT400 interface for testing and UI development."""
 
-    def __init__(self, scan_duration: float = 5.0, scan_error: str | None = None):
+    def __init__(
+        self,
+        scan_duration: float = 5.0,
+        scan_error: str | None = None,
+        scan_result_code: int = 2,
+        wait_gate: threading.Event | None = None,
+    ):
         if scan_duration < 0:
             raise ValueError("scan_duration must be non-negative")
         logger.warning("=" * 50)
@@ -25,10 +32,17 @@ class DummyCT400(AbstractCT400):
         self._scan_start_time = 0
         self._scan_duration = scan_duration
         self._scan_error = scan_error
+        self._scan_result_code = scan_result_code
+        self._wait_gate = wait_gate
+        self._stop_requested = threading.Event()
+        self.stop_scan_calls = 0
         self._scan_min_wavelength = 1550.0
         self._scan_max_wavelength = 1560.0
         self._sampling_resolution_pm = 10
         self._laser_enabled = False
+        self.scan_wait_end_calls = 0
+        self.get_data_points_calls = 0
+        self.cmd_laser_calls = []
 
     def is_connected(self) -> bool:
         logger.debug(f"Dummy is_connected called. Returning: {self._is_connected}")
@@ -41,6 +55,7 @@ class DummyCT400(AbstractCT400):
 
     def cmd_laser(self, *args, **kwargs) -> None:
         logger.info("Dummy cmd_laser called with args: %s, kwargs: %s", args, kwargs)
+        self.cmd_laser_calls.append((args, kwargs))
         # Check if the command is to disable the laser
         # This is a simplified check. A more robust dummy would parse kwargs more carefully.
         if "enable" in kwargs and kwargs["enable"] == Enable.DISABLE:
@@ -74,32 +89,41 @@ class DummyCT400(AbstractCT400):
 
     def start_scan(self) -> None:
         logger.info("Dummy start_scan called. Simulating a scan start.")
+        self._stop_requested.clear()
         self._is_scanning = True
         self._scan_start_time = time.monotonic()
 
     def stop_scan(self) -> None:
         logger.info("Dummy stop_scan called.")
-        self._is_scanning = False
+        self.stop_scan_calls += 1
+        if self._is_scanning:
+            self._stop_requested.set()
 
-    def scan_wait_end(self) -> tuple[int, str]:
-        """Dummy implementation, returns status code and an empty error string."""
+    def scan_wait_end(self) -> ScanWaitResult:
+        """Block until completion or Stop, like the documented wait operation."""
+        self.scan_wait_end_calls += 1
         if not self._is_scanning:
-            return 0, ""  # Not scanning or already finished
+            return ScanWaitResult(0, "")
 
-        if self._scan_error is not None:
-            self._is_scanning = False
-            return -1, self._scan_error
-
-        elapsed = time.monotonic() - self._scan_start_time
-        if elapsed >= self._scan_duration:
-            logger.info("Dummy scan_wait_end: Scan finished.")
-            self._is_scanning = False
-            return 0, ""  # 0 means scan completed successfully
+        if self._wait_gate is not None:
+            while not self._wait_gate.is_set() and not self._stop_requested.wait(0.01):
+                pass
         else:
-            return 1, ""  # 1 means scan is still running
+            remaining = self._scan_duration - (time.monotonic() - self._scan_start_time)
+            if remaining > 0:
+                self._stop_requested.wait(remaining)
+
+        self._is_scanning = False
+        if self._stop_requested.is_set():
+            return ScanWaitResult(1, "Measurement cancelled by user.")
+        if self._scan_error is not None:
+            return ScanWaitResult(self._scan_result_code, self._scan_error)
+        logger.info("Dummy scan_wait_end: Scan finished.")
+        return ScanWaitResult(0, "")
 
     def get_data_points(self, dets_used: list[Detector]) -> tuple[np.ndarray, np.ndarray]:
         logger.info("Dummy get_data_points called. Generating deterministic simulated data.")
+        self.get_data_points_calls += 1
         span_pm = (self._scan_max_wavelength - self._scan_min_wavelength) * 1000
         step_nm = self._sampling_resolution_pm / 1000
         interval_count = span_pm / self._sampling_resolution_pm
