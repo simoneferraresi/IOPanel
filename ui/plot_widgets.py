@@ -53,6 +53,16 @@ except Exception as e:
 logger = logging.getLogger("LabApp.plot_widgets")
 
 
+def derive_scan_export_targets(selected_path: str | Path, include_fig: bool = False) -> dict[str, Path]:
+    """Return the CSV/MAT bundle (and optional FIG) for a selected export path."""
+    path = Path(selected_path)
+    stem = path.with_suffix("") if path.suffix.lower() in {".csv", ".mat", ".fig"} else path
+    targets = {"CSV": stem.with_name(stem.name + ".csv"), "MAT": stem.with_name(stem.name + ".mat")}
+    if include_fig:
+        targets["FIG"] = stem.with_name(stem.name + ".fig")
+    return targets
+
+
 class ColorBarWidget(QWidget):
     """A custom widget to display a color bar with min/max labels."""
 
@@ -1139,20 +1149,37 @@ class PlotWidget(QWidget):
             self.save_btn.setEnabled(True)
             return
 
+        # Resolve the full bundle once and ask about every existing target before
+        # writing any of them. A FIG is included whenever this build supports it.
+        targets = derive_scan_export_targets(selected_path_with_ext, include_fig=MATLAB_ENGINE_AVAILABLE)
+        conflicts = [path for path in targets.values() if path.exists()]
+        if conflicts:
+            conflict_list = "\n".join(str(path) for path in conflicts)
+            answer = QMessageBox.question(
+                self,
+                "Overwrite Existing Files?",
+                "The following export targets already exist:\n"
+                f"{conflict_list}\n\nOverwrite all listed files?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                logger.info("Scan export cancelled because overwrite was declined.")
+                self.save_btn.setEnabled(True)
+                return
+
         # --- NEW: Update the memory ---
         # Extract the directory from the file selected by the user
         self.last_save_dir = Path(selected_path_with_ext).parent
         # ------------------------------
 
-        # Get the base filename without any extension
-        base_path = Path(selected_path_with_ext).with_suffix("")  # Get path without extension
         self.saved_files_list: list[Path] = []
         self.error_list: list[str] = []
         self.pending_saves = 0  # Counter for async operations
 
         # --- Save CSV (Synchronous) ---
         try:
-            csv_path = base_path.with_suffix(".csv")
+            csv_path = targets["CSV"]
             np.savetxt(
                 str(csv_path.resolve()),
                 data_to_save,
@@ -1171,7 +1198,7 @@ class PlotWidget(QWidget):
 
         # --- Save MAT (Synchronous) ---
         try:
-            mat_path = base_path.with_suffix(".mat")
+            mat_path = targets["MAT"]
             mat_data = {
                 "wl_nm": wavelengths,
                 "pow_dBm": powers,
@@ -1197,7 +1224,7 @@ class PlotWidget(QWidget):
                     self.error_list.append("FIG: Save skipped (MATLAB Engine failed to start/unavailable).")
             else:
                 self.pending_saves += 1
-                fig_path = base_path.with_suffix(".fig")
+                fig_path = targets["FIG"]
                 self.matlab_status_label.setText(f"Queueing {fig_path.name} save...")
 
                 # --- Manage previous thread/worker instance ---
