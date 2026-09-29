@@ -80,10 +80,13 @@ def _arm_blocking_alignment(panel, release, started, events, fail_read=False):
     worker._prepare_laser = prepare
     worker._read_power = read_power
     worker._shutdown_laser = shutdown
-    worker.operation_finished.connect(
-        lambda: events.append(("cleanup-complete",)),
-        Qt.ConnectionType.DirectConnection,
-    )
+    def record_worker_finished():
+        # Observe the cleanup guarantee independently of MainWindow's receiver
+        # on the same signal. Qt receiver delivery order is not a contract.
+        laser_disable_attempted = any(event[0] == "laser-disable" for event in events)
+        events.append(("cleanup-complete", laser_disable_attempted))
+
+    worker.operation_finished.connect(record_worker_finished, Qt.ConnectionType.DirectConnection)
     panel.operation_finished.connect(lambda: events.append(("ownership-idle", window_state(panel))), Qt.ConnectionType.DirectConnection)
     return worker
 
@@ -423,8 +426,9 @@ def test_alignment_modes_own_ct400_until_post_cleanup(qtbot, monkeypatch, tmp_pa
         qtbot.waitUntil(lambda: window._ct400_operation_state.name == "IDLE", timeout=3000)
         event_names = [event[0] for event in events]
         assert event_names.index("laser-enable") < event_names.index("laser-disable")
-        assert event_names.index("laser-disable") < event_names.index("cleanup-complete")
-        assert event_names.index("cleanup-complete") < event_names.index("ownership-idle")
+        cleanup_events = [event for event in events if event[0] == "cleanup-complete"]
+        assert cleanup_events == [("cleanup-complete", True)]
+        assert event_names.index("laser-disable") < event_names.index("ownership-idle")
         assert events[-1] == ("ownership-idle", "IDLE")
     finally:
         release.set()
@@ -485,8 +489,9 @@ def test_alignment_error_disables_selected_input_before_releasing_owner(qtbot, m
         event_names = [event[0] for event in events]
         assert "get-all-powers" in event_names
         assert event_names.index("get-all-powers") < event_names.index("laser-disable")
-        assert event_names.index("laser-disable") < event_names.index("cleanup-complete")
-        assert event_names.index("cleanup-complete") < event_names.index("ownership-idle")
+        cleanup_events = [event for event in events if event[0] == "cleanup-complete"]
+        assert cleanup_events == [("cleanup-complete", True)]
+        assert event_names.index("laser-disable") < event_names.index("ownership-idle")
     finally:
         release.set()
         if window.isVisible():
@@ -527,8 +532,9 @@ def test_close_during_alignment_waits_for_cleanup_before_ct400_close(qtbot, monk
         qtbot.waitUntil(lambda: not window.isVisible(), timeout=3500)
 
         names = [event[0] for event in events]
-        assert names.index("laser-disable") < names.index("cleanup-complete")
-        assert names.index("cleanup-complete") < names.index("ownership-idle")
+        cleanup_events = [event for event in events if event[0] == "cleanup-complete"]
+        assert cleanup_events == [("cleanup-complete", True)]
+        assert names.index("laser-disable") < names.index("ownership-idle")
         assert names.index("ownership-idle") < names.index("close")
         assert ("laser-disable", 3) in events
         assert events[-1] == ("close", 73)
