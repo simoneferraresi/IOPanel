@@ -1120,6 +1120,7 @@ class HistogramControlPanel(BaseControlPanel):
 
     def _perform_laser_disable(self):
         if self.is_instrument_connected and self.ct400:
+            input_port_enum = None
             try:
                 logger.info("Monitor Panel: Disabling laser via _perform_laser_disable.")
                 input_port_data = self.input_port.currentData()
@@ -1141,17 +1142,38 @@ class HistogramControlPanel(BaseControlPanel):
                     float(default_power_disable),
                 )
                 logger.info(f"Monitor Panel: Laser disable command sent for port {input_port_enum.name}.")
+                return True
             except (CT400Error, ValueError) as e:
-                logger.error(f"Monitor Panel: Failed to disable laser: {e}")
+                logger.error(
+                    "Monitor Panel: Laser disable could not be confirmed for input %s: %s",
+                    getattr(input_port_enum, "name", "unknown"),
+                    e,
+                )
+                QMessageBox.warning(
+                    self,
+                    "Laser Disable Not Confirmed",
+                    f"Laser disable could not be confirmed for input "
+                    f"{getattr(input_port_enum, 'name', 'unknown')}:\n\n{e}",
+                )
             except Exception as e_unexp:
                 logger.error(
-                    f"Monitor Panel: Unexpected error disabling laser: {e_unexp}",
+                    "Monitor Panel: Laser disable could not be confirmed for input %s: %s",
+                    getattr(input_port_enum, "name", "unknown"),
+                    e_unexp,
                     exc_info=True,
                 )
+                QMessageBox.warning(
+                    self,
+                    "Laser Disable Not Confirmed",
+                    f"Laser disable could not be confirmed for input "
+                    f"{getattr(input_port_enum, 'name', 'unknown')}:\n\n{e_unexp}",
+                )
+                return False
         else:
             logger.warning(
                 "Monitor Panel: Cannot disable laser, CT400 not connected/available or instrument flag is false."
             )
+        return False
 
     @Slot()
     def _request_power_fetch_from_worker(self):

@@ -487,30 +487,32 @@ class CT400(AbstractCT400):
 
     def close(self) -> None:
         """
-        Closes the connection to the CT400 device and releases resources.
-        This method is idempotent; it is safe to call multiple times.
-        It will also attempt to safely turn off the laser.
+        Closes the native CT400 connection and releases its allocated resources.
+
+        Callers are responsible for placing any commanded laser input into the
+        desired state before calling close(). The vendor documentation does
+        not describe CT400_Close as a laser-disable operation. This method is
+        idempotent; it is safe to call multiple times.
         """
         if self.handle is not None:
             logger.info(f"Closing connection to CT400 (Handle: {self.handle})...")
             try:
-                # --- NEW: Safely turn off laser before closing ---
-                logger.debug("Attempting to disable laser as part of close sequence.")
-                # Use some reasonable default values for port and power
-                self.cmd_laser(LaserInput.LI_1, Enable.DISABLE, 1550.0, 1.0)
-            except Exception as e:
-                logger.warning(f"Could not disable laser during close sequence: {e}")
+                result = self.dll.CT400_Close(self.handle)
+                if result == -1:
+                    logger.warning(
+                        "CT400_Close failed with return code %s for handle %s; native resources may not be cleanly released.",
+                        result,
+                        self.handle,
+                    )
+                else:
+                    logger.info("CT400 connection closed successfully.")
+            except Exception:
+                logger.exception("CT400_Close raised while releasing handle %s.", self.handle)
+            finally:
+                # Preserve the wrapper's existing ownership policy: do not
+                # reuse the handle after a close attempt, even on failure.
+                self.handle = None
 
-            result = self.dll.CT400_Close(self.handle)
-            if result == -1:
-                logger.warning(
-                    f"Error code {result} received during CT400_Close. Resources may not be cleanly released."
-                )
-            else:
-                logger.info("CT400 connection closed successfully.")
-
-        # Mark as closed regardless of outcome to prevent reuse
-        self.handle = None
         # Do not delete self.dll, just in case something calls after close.
         # Python's garbage collector will handle it when the object is destroyed.
 
@@ -519,5 +521,5 @@ class CT400(AbstractCT400):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """Ensures the connection is closed when exiting the context."""
+        """Release native resources; context exit does not control laser state."""
         self.close()

@@ -64,6 +64,7 @@ from hardware.camera import VIMBA_AVAILABLE, VimbaCam, VmbCameraError, VmbSystem
 from hardware.camera_init_worker import CameraInitWorker
 from hardware.simulated_camera import SimulatedCamera
 from hardware.ct400 import CT400
+from hardware.ct400_types import Enable, LaserInput
 from hardware.interfaces import AbstractCT400
 from ui.camera_widgets import CameraPanel
 from ui.constants import (
@@ -178,6 +179,12 @@ class MainWindow(QMainWindow):
         self.shared_scan_settings = ScanSettings()
         self.vmb_instance: VmbSystem | None = None
         self.is_ct400_connected_state: bool = False
+        self._ct400_connection_configured: bool = False
+        self._ct400_connection_operation_active: bool = False
+        self._pending_ct400_connection_close: bool = False
+        self._ct400_error_reset_timer = QTimer(self)
+        self._ct400_error_reset_timer.setSingleShot(True)
+        self._ct400_error_reset_timer.timeout.connect(self._reset_ct400_error_visuals)
         self.camera_control_actions: dict[str, QAction] = {}
         self.cameras_menu: QMenu | None = None
 
@@ -631,11 +638,16 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(message, timeout)
 
         if state == CT400Status.ERROR:
-            QTimer.singleShot(
-                3000, lambda: self._update_ct400_visuals(CT400Status.DISCONNECTED, "Error occurred. Ready to connect.")
-            )
+            self._ct400_error_reset_timer.start(3000)
+        elif self._ct400_error_reset_timer.isActive():
+            self._ct400_error_reset_timer.stop()
 
         self.is_ct400_connected_state = state == CT400Status.CONNECTED
+
+    @Slot()
+    def _reset_ct400_error_visuals(self):
+        """Return an error status to disconnected while owned by this window."""
+        self._update_ct400_visuals(CT400Status.DISCONNECTED, "Error occurred. Ready to connect.")
 
     def _create_menus(self):
         """Creates the main menu bar and all its actions."""
@@ -771,23 +783,44 @@ class MainWindow(QMainWindow):
                 action.setEnabled(True)
             return
 
+        if self._ct400_connection_operation_active:
+            logger.warning("Ignoring CT400 Connect/Disconnect request while an operation is active.")
+            if action:
+                action.setChecked(self.is_ct400_connected_state)
+                action.setEnabled(True)
+            return
+
         worker = CT400ConnectionWorker(self.ct400_device, self.config, connect=checked)
         worker.signals.connection_succeeded.connect(self._handle_ct400_connection_success)
         worker.signals.connection_failed.connect(self._handle_ct400_connection_failure)
         worker.signals.disconnection_succeeded.connect(self._handle_ct400_disconnection_success)
         worker.signals.disconnection_failed.connect(self._handle_ct400_connection_failure)
-        worker.signals.finished.connect(lambda: self.ct400_connect_action.setEnabled(True))
+        worker.signals.finished.connect(self._handle_ct400_connection_operation_finished)
 
         if checked:
             self._update_ct400_visuals(state=CT400Status.CONNECTING, message="CT400: Attempting to connect...")
         else:
             self._update_ct400_visuals(state=CT400Status.DISCONNECTING, message="CT400: Disconnecting...")
 
+        self._ct400_connection_operation_active = True
         QThreadPool.globalInstance().start(worker)
+
+    @Slot()
+    def _handle_ct400_connection_operation_finished(self):
+        """Release connection-operation ownership and resume deferred shutdown."""
+        self._ct400_connection_operation_active = False
+        action = getattr(self, "ct400_connect_action", None)
+        if action is not None:
+            action.setEnabled(True)
+
+        if self._pending_ct400_connection_close:
+            self._pending_ct400_connection_close = False
+            QTimer.singleShot(0, self.close)
 
     @Slot(str)
     def _handle_ct400_connection_success(self, message: str):
         """Slot to handle a successful CT400 connection."""
+        self._ct400_connection_configured = True
         self._update_ct400_visuals(state=CT400Status.CONNECTED, message=message)
         self.control_panel.on_instrument_connected(True)
         self.histogram_control.on_instrument_connected(True)
@@ -802,6 +835,7 @@ class MainWindow(QMainWindow):
     @Slot(str)
     def _handle_ct400_disconnection_success(self, message: str):
         """Slot to handle a successful CT400 disconnection."""
+        self._ct400_connection_configured = False
         self._update_ct400_visuals(state=CT400Status.DISCONNECTED, message=message)
         self.control_panel.on_instrument_connected(False)
         self.histogram_control.on_instrument_connected(False)
@@ -1132,6 +1166,33 @@ class MainWindow(QMainWindow):
 
         logger.info("Camera cleanup finished.")
 
+    def _disable_configured_ct400_input_for_shutdown(self) -> bool:
+        """Apply the connection-level selected-input cleanup before close."""
+        laser_input = LaserInput(self.config.scan_defaults.input_port)
+        try:
+            self.ct400_device.cmd_laser(
+                laser_input=laser_input,
+                enable=Enable.DISABLE,
+                wavelength=self.config.scan_defaults.safe_parking_wavelength,
+                power=self.config.scan_defaults.laser_power,
+            )
+            logger.info("Shutdown disabled configured CT400 input %s.", laser_input.name)
+            return True
+        except Exception as exc:
+            logger.error(
+                "Shutdown laser disable could not be confirmed for configured input %s: %s",
+                laser_input.name,
+                exc,
+                exc_info=True,
+            )
+            QMessageBox.warning(
+                self,
+                "Laser Disable Not Confirmed",
+                f"Laser disable could not be confirmed for configured input {laser_input.name}.\n\n"
+                f"The application will continue resource cleanup. CT400 native resource close is a separate operation.\n\n{exc}",
+            )
+            return False
+
     def closeEvent(self, event: QtGui.QCloseEvent):
         """
         Handles the user closing the window. Ensures all hardware and threads
@@ -1155,6 +1216,13 @@ class MainWindow(QMainWindow):
             scan_panel._stop_scan(cancelled=True)
             if not scan_thread.isRunning():
                 self._resume_close_after_scan()
+            return
+
+        if self._ct400_connection_operation_active:
+            event.ignore()
+            self._pending_ct400_connection_close = True
+            self.statusBar().showMessage("Waiting for CT400 connection operation to finish…", 0)
+            logger.info("Deferring application close until the CT400 Connect/Disconnect operation finishes.")
             return
 
         self.statusBar().showMessage("Shutting down...", 0)
@@ -1202,12 +1270,33 @@ class MainWindow(QMainWindow):
             if self.piezo_right and self.piezo_right.is_connected():
                 self.piezo_right.disconnect()
 
-            # Disconnect from CT400 if it was connected
-            if self.ct400_device and self.is_ct400_connected_state:
-                logger.info("MainWindow.closeEvent: Closing CT400 device connection.")
-                self.ct400_device.close()
         except Exception as e:
-            logger.error(f"Error disconnecting hardware: {e}")
+            logger.error(f"Error disconnecting piezo hardware: {e}")
+
+        # Stop monitoring above so its own selected input is handled before
+        # releasing the CT400. A successful GUI disconnect already disabled
+        # the configured input. Retain that knowledge separately from the UI
+        # connection flag so an error-state disconnect is retried at shutdown.
+        device = self.ct400_device
+        if isinstance(device, CT400):
+            if self.is_ct400_connected_state or self._ct400_connection_configured:
+                self._disable_configured_ct400_input_for_shutdown()
+            if device.handle is not None:
+                logger.info("MainWindow.closeEvent: Releasing initialized CT400 resources.")
+                try:
+                    device.close()
+                except Exception as exc:
+                    logger.error("CT400 native resource close failed: %s", exc, exc_info=True)
+                    QMessageBox.warning(
+                        self,
+                        "CT400 Resource Close Failed",
+                        f"CT400 native resource close failed:\n\n{exc}",
+                    )
+        elif isinstance(device, DummyCT400) and self.is_ct400_connected_state:
+            # Retain the existing simulation close path; never treat the dummy
+            # as a native handle owner or send configured physical commands.
+            logger.info("MainWindow.closeEvent: Closing connected DummyCT400 simulation.")
+            device.close()
 
         # 4. Shut down the main Vimba system API
         self._cleanup_vimbasystem()
