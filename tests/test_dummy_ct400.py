@@ -4,9 +4,9 @@ import time
 import numpy as np
 import pytest
 
-from hardware.ct400_types import CT400ScanResultKind, Detector, Enable, LaserInput
+from hardware.ct400_types import CT400ScanResultKind, Detector, Enable, InstrumentError, LaserInput
 from hardware.dummy_ct400 import DummyCT400
-from ui.control_panel import ScanWorker
+from ui.control_panel import CT400ControlPanel, QMessageBox, ScanWorker
 
 
 def test_dummy_scan_data_honors_range_and_resolution_deterministically():
@@ -136,6 +136,55 @@ def test_blocked_wait_is_released_by_one_stop_and_reports_vendor_cancellation(mo
     assert device.stop_scan_calls == 1
     assert not device._is_scanning
     assert not device._laser_enabled
+
+
+@pytest.mark.parametrize("cancel_stage", ["before_start", "during_setup"])
+def test_early_cancellation_sets_final_kind_and_cleans_up_once(monkeypatch, cancel_stage):
+    monkeypatch.setattr(ScanWorker, "_LASER_COMMAND_DELAY_MS", 0)
+    device = DummyCT400(scan_duration=0)
+    worker = ScanWorker(device, 1500.0, 1501.0, 100, 1.0, LaserInput.LI_1)
+    errors = []
+    events = []
+    worker.error_signal.connect(errors.append)
+
+    if cancel_stage == "before_start":
+        worker.stop()
+    else:
+        def cancel_during_setup(*_args):
+            events.append("set_scan")
+            worker.stop()
+
+        device.set_scan = cancel_during_setup
+
+    device.set_sampling_res = lambda *_args: events.append("sampling")
+    device.start_scan = lambda: events.append("start")
+    device.scan_wait_end = lambda: events.append("wait")
+    device.get_data_points = lambda *_args: events.append("data")
+
+    worker.do_scan()
+
+    assert len(errors) == 1
+    assert errors[0].kind == CT400ScanResultKind.USER_CANCELLED
+    assert worker._final_kind == CT400ScanResultKind.USER_CANCELLED
+    assert events == ([] if cancel_stage == "before_start" else ["set_scan"])
+    assert len(device.cmd_laser_calls) == (1 if cancel_stage == "before_start" else 2)
+    assert device.cmd_laser_calls[-1][1]["enable"] == Enable.DISABLE
+
+
+def test_generic_scan_operation_error_uses_neutral_message(monkeypatch):
+    messages = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "critical",
+        lambda *args: messages.append(args),
+    )
+    error = InstrumentError(code=None, message="setting sampling failed", source="ScanWorker")
+
+    CT400ControlPanel._handle_scan_error(None, error)
+
+    assert len(messages) == 1
+    assert messages[0][1] == "CT400 Operation Error"
+    assert messages[0][2] == "CT400 operation failed:\n\nsetting sampling failed"
 
 
 @pytest.mark.parametrize("code", [2, 3, 4, 5])

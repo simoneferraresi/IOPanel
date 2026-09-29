@@ -166,7 +166,7 @@ def test_mainwindow_scan_updates_real_plot_while_camera_frames_continue(qtbot, m
         plotted_x, plotted_y = window.plot_widget.plot_data_item.getData()
         np.testing.assert_allclose(plotted_x, expected_wavelengths)
         np.testing.assert_allclose(plotted_y, window.plot_widget.current_powers)
-        assert frame_spy.count() >= frames_during_scan + 1
+        qtbot.waitUntil(lambda: frame_spy.count() > frames_during_scan, timeout=1500)
         assert camera.is_streaming
         assert not dummy._is_scanning
 

@@ -383,7 +383,8 @@ class CT400(AbstractCT400):
         preventing it from leaking into other application layers and mitigating
         the risk of buffer overflows by decoding safely.
         Returns:
-            A tuple containing the raw status code and the decoded error message.
+            A `ScanWaitResult` containing the raw integer return code and the
+            decoded vendor `tcError` string. Unknown return codes are preserved.
         """
         # Buffer is now an implementation detail, not part of the interface.
         error_buf = create_string_buffer(self._ERROR_BUFFER_SIZE)  # A reasonable size

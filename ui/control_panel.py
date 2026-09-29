@@ -209,7 +209,17 @@ class ScanWorker(QtCore.QObject):
         with self._state_lock:
             return self._cancel_requested
 
+    def _set_final_kind(self, kind: CT400ScanResultKind):
+        with self._state_lock:
+            self._final_kind = kind
+
+    @property
+    def final_kind(self) -> CT400ScanResultKind | None:
+        with self._state_lock:
+            return self._final_kind
+
     def _report_cancelled(self, code: int | None = None, message: str = "Scan was cancelled by the user."):
+        self._set_final_kind(CT400ScanResultKind.USER_CANCELLED)
         self.error_signal.emit(
             InstrumentError(
                 code=code,
@@ -278,7 +288,7 @@ class ScanWorker(QtCore.QObject):
             raw_code = int(result.raw_code)
             error_msg = result.error_message
             kind = result.kind
-            self._final_kind = kind
+            self._set_final_kind(kind)
 
             if kind == CT400ScanResultKind.USER_CANCELLED:
                 logger.info("ScanWorker: CT400 confirmed user cancellation (code 1).")
@@ -802,6 +812,10 @@ class CT400ControlPanel(BaseControlPanel):
             logger.info("Scan was cancelled, no message box shown.")
             return
 
+        if error.kind is None:
+            QMessageBox.critical(self, "CT400 Operation Error", f"CT400 operation failed:\n\n{error.message}")
+            return
+
         title = "CT400 Scan Error" if error.kind == CT400ScanResultKind.FATAL_ERROR else "Unexpected CT400 Result"
         QMessageBox.critical(self, title, f"CT400_ScanWaitEnd returned {error.code_name}:\n\n{error.message}")
 
@@ -836,7 +850,7 @@ class CT400ControlPanel(BaseControlPanel):
     def _scan_thread_finished(self):
         logger.info("ScanPanel: Scan thread finished.")
         status_msg = MSG_SCAN_FINISHED
-        if self.scan_worker and self.scan_worker._final_kind == CT400ScanResultKind.USER_CANCELLED:
+        if self.scan_worker and self.scan_worker.final_kind == CT400ScanResultKind.USER_CANCELLED:
             status_msg = MSG_SCAN_CANCELLED
 
         # Now that the thread is finished, we can safely delete the worker and thread objects.
