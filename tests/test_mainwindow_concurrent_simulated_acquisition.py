@@ -1,6 +1,8 @@
 import threading
+from types import SimpleNamespace
 
 import numpy as np
+import pytest
 from PySide6.QtCore import QThread, Qt
 from PySide6.QtTest import QSignalSpy
 
@@ -8,6 +10,8 @@ import app
 from config_model import AppConfig
 from hardware import camera_init_worker, ct400_init_worker
 from hardware.dummy_ct400 import DummyCT400
+from hardware.ct400 import CT400
+from hardware.ct400_types import Enable, LaserInput
 from hardware.simulated_camera import SimulatedCamera
 from ui import control_panel as control_panel_module
 from ui import main_window as main_window_module
@@ -26,6 +30,26 @@ def _qt_thread_stopped(thread):
         return not thread.isRunning()
     except RuntimeError:
         return True
+
+
+def _fake_physical_ct400(events):
+    device = CT400.__new__(CT400)
+    device.handle = 73
+    device.dll = SimpleNamespace(
+        CT400_Close=lambda handle: events.append(("close", handle)) or 0,
+    )
+    device.cmd_laser = lambda **kwargs: events.append(("cmd_laser", kwargs))
+    return device
+
+
+def _laser_call_input(call):
+    args, kwargs = call
+    return kwargs.get("laser_input", args[0] if args else None)
+
+
+def _laser_call_enable(call):
+    args, kwargs = call
+    return kwargs.get("enable", args[1] if len(args) > 1 else None)
 
 
 def _start_application(qtbot, monkeypatch, tmp_path, scan_error=None):
@@ -237,17 +261,28 @@ def test_cancel_and_close_stop_scan_without_stopping_camera_early(qtbot, monkeyp
     active_scan_thread = control.scan_thread
     frames_before_close = frame_spy.count()
     close_during_wait = []
-    original_close = dummy.close
+    physical_events = []
     stops_before_close = dummy.stop_scan_calls
 
-    def record_close():
+    physical_device = _fake_physical_ct400(physical_events)
+    def record_physical_close(handle):
         try:
             close_during_wait.append(active_scan_thread.isRunning())
         except RuntimeError:
             close_during_wait.append(False)
-        original_close()
+        physical_events.append(("close", handle))
+        return 0
 
-    dummy.close = record_close
+    physical_device.dll.CT400_Close = record_physical_close
+    window.ct400_device = physical_device
+
+    def record_configured_disable(**kwargs):
+        try:
+            physical_events.append(("disable_during_scan", active_scan_thread.isRunning(), kwargs))
+        except RuntimeError:
+            physical_events.append(("disable_during_scan", False, kwargs))
+
+    physical_device.cmd_laser = record_configured_disable
     window.is_ct400_connected_state = True
     scan_terminations = []
     original_terminate = QThread.terminate
@@ -270,9 +305,150 @@ def test_cancel_and_close_stop_scan_without_stopping_camera_early(qtbot, monkeyp
     qtbot.waitUntil(lambda: bool(close_during_wait), timeout=1500)
     assert frame_spy.count() >= frames_before_close
     assert close_during_wait == [False]
+    assert physical_events[0][0] == "disable_during_scan"
+    assert physical_events[0][1] is False
+    assert physical_events[1] == ("close", 73)
     assert scan_terminations == []
     assert not dummy._is_scanning
     assert not dummy._laser_enabled
     assert not camera.is_streaming
     assert not window.cameras
     assert _qt_thread_stopped(camera_panel.conversion_thread)
+
+
+@pytest.mark.parametrize("connected", [True, False])
+def test_shutdown_releases_initialized_ct400_and_only_disables_when_connected(
+    qtbot, monkeypatch, tmp_path, connected
+):
+    window, _gate, _frame_spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path)
+    events = []
+    device = _fake_physical_ct400(events)
+    window.ct400_device = device
+    window.config.scan_defaults.input_port = 3
+    window.config.scan_defaults.safe_parking_wavelength = 1532.5
+    window.config.scan_defaults.laser_power = 0.75
+    window.is_ct400_connected_state = connected
+    if connected:
+        # A successful reconnect must undo any previously confirmed
+        # disconnected state and restore configured-input cleanup at exit.
+        window._handle_ct400_disconnection_success("CT400 Disconnected")
+        assert not window._ct400_connection_configured
+        window._handle_ct400_connection_success("CT400 Connected")
+        assert window._ct400_connection_configured
+    else:
+        # Model the successful GUI Disconnect operation, which already sent
+        # the configured-input disable before shutdown begins.
+        window._ct400_connection_configured = True
+        device.cmd_laser(
+            laser_input=LaserInput.LI_3,
+            enable=Enable.DISABLE,
+            wavelength=1532.5,
+            power=0.75,
+        )
+        window._handle_ct400_disconnection_success("CT400 Disconnected")
+
+    try:
+        window.close()
+        if connected:
+            assert events == [
+                (
+                    "cmd_laser",
+                    {
+                        "laser_input": LaserInput.LI_3,
+                        "enable": Enable.DISABLE,
+                        "wavelength": 1532.5,
+                        "power": 0.75,
+                    },
+                ),
+                ("close", 73),
+            ]
+        else:
+            assert events == [
+                (
+                    "cmd_laser",
+                    {
+                        "laser_input": LaserInput.LI_3,
+                        "enable": Enable.DISABLE,
+                        "wavelength": 1532.5,
+                        "power": 0.75,
+                    },
+                ),
+                ("close", 73),
+            ]
+        assert device.handle is None
+    finally:
+        if window.isVisible():
+            window.close()
+
+
+def test_shutdown_without_ct400_is_harmless(qtbot, monkeypatch, tmp_path):
+    window, _gate, _frame_spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path)
+    window.ct400_device = None
+
+    window.close()
+
+    assert not window.isVisible()
+
+
+def test_failed_disconnect_is_not_treated_as_confirmed_and_shutdown_retries_disable(
+    qtbot, monkeypatch, tmp_path
+):
+    warnings = []
+    window, _gate, _frame_spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "warning",
+        lambda *_args: warnings.append(_args),
+    )
+    events = []
+    device = _fake_physical_ct400(events)
+
+    def failed_disable(**kwargs):
+        events.append(("disable_failed", kwargs))
+        raise RuntimeError("native disable returned failure")
+
+    device.cmd_laser = failed_disable
+    window.ct400_device = device
+    window._ct400_connection_configured = True
+    window.is_ct400_connected_state = False
+    window._handle_ct400_connection_failure("GUI Disconnect failed")
+    assert window._ct400_connection_configured
+
+    window.close()
+
+    assert events[0][0] == "disable_failed"
+    assert events[1] == ("close", 73)
+    assert device.handle is None
+    assert len(warnings) == 1
+    assert warnings[0][1] == "Laser Disable Not Confirmed"
+    assert "CT400 native resource close is a separate operation" in warnings[0][2]
+
+
+def test_monitor_stop_and_active_cleanup_disable_its_selected_input(qtbot, monkeypatch, tmp_path):
+    window, _gate, _frame_spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path)
+    panel = window.histogram_control
+    device = window.ct400_device
+    panel.ct400 = device
+    panel.is_instrument_connected = True
+    index = panel.input_port.findData(LaserInput.LI_4)
+    assert index >= 0
+    panel.input_port.setCurrentIndex(index)
+
+    try:
+        assert panel._apply_monitoring_settings()
+        assert _laser_call_input(device.cmd_laser_calls[-1]) == LaserInput.LI_4
+        assert _laser_call_enable(device.cmd_laser_calls[-1]) == Enable.ENABLE
+
+        panel.monitoring = True
+        panel._stop_monitoring()
+        assert _laser_call_input(device.cmd_laser_calls[-1]) == LaserInput.LI_4
+        assert _laser_call_enable(device.cmd_laser_calls[-1]) == Enable.DISABLE
+
+        assert panel._apply_monitoring_settings()
+        panel.monitoring = True
+        panel.cleanup_worker_thread()
+        assert _laser_call_input(device.cmd_laser_calls[-1]) == LaserInput.LI_4
+        assert _laser_call_enable(device.cmd_laser_calls[-1]) == Enable.DISABLE
+    finally:
+        if window.isVisible():
+            window.close()

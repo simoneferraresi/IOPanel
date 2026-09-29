@@ -37,7 +37,7 @@ The issue-relevant contract extracted from the locally installed CT400 header is
 
 The Python wrapper's `scan_wait_end()` treats `-1` as a communication/call error and returns other negative values to its caller. The local header does not define those other values. Accordingly, detailed status mappings in the Python enums remain unverified against this header. The header is local vendor API material, but its exact match to the installed DLL build is not independently attested; its declarations agree with the DLL file version context and the checked-in ctypes signatures.
 
-The local docs do not establish whether `ScanWaitEnd` is a blocking call in the operational sense required by Issue #22, whether `ScanStop` can interrupt it safely from another thread, or what return codes are safe to treat as cancellation. Static review also confirms `CT400.close()` issues a disable request for `LI_1` before `CT400_Close`, while scan cleanup disables the selected input. The vendor header does not say that disabling `LI_1` disables other inputs. No laser commands were sent to test this behavior.
+The local docs do not establish whether `ScanWaitEnd` is a blocking call in the operational sense required by Issue #22, whether `ScanStop` can interrupt it safely from another thread, or what return codes are safe to treat as cancellation. At the time of this initial audit, static review found `CT400.close()` issuing a disable request for `LI_1` before `CT400_Close`, while scan cleanup disabled the selected input. The vendor header did not say that disabling `LI_1` disables other inputs. No laser commands were sent to test this behavior; the Issue #23 section below records the software correction.
 
 ## Physical gates (initial audit status; historical; see completed camera qualification below)
 
@@ -168,6 +168,14 @@ Documented warnings are `100`–`104`, `106`, `108`–`115`, `117`–`124`, and 
 The scan worker now performs configure → one `CT400_ScanStart` → one blocking `CT400_ScanWaitEnd` → classify result → retrieve data for success/warnings → selected-input disable in `finally` → finish. It calls `CT400_ScanStop` only for a user stop request, at most once; it does not call Stop after normal completion. The UI remains busy until the wait returns and cleanup/worker shutdown finish. Closing the application during an active scan requests Stop and defers close; it neither closes CT400 beneath `ScanWaitEnd` nor terminates the scan thread. A Stop/WaitEnd completion race follows the actual WaitEnd result.
 
 The guide establishes this Stop and cancellation result workflow, but does not explicitly document a general same-handle DLL thread-safety or reentrancy guarantee. The application issues the documented Stop request while the worker is blocked in WaitEnd; this native concurrency point remains a vendor-contract caveat. Physical behavior, safe-state indication, and hardware cleanup still require supervised laboratory qualification. No physical CT400 validation is claimed by these software changes.
+
+## CT400 selected-input cleanup — Issue #23
+
+The Yenista CT400 Programming Guide 1.4 documents `CT400_CmdLaser` with an explicit `LI_1`–`LI_4` input argument and `ENABLE`/`DISABLE` mode. `CT400_Close` is documented as connection and allocated-resource cleanup. The guide does not specify that closing disables one or all laser inputs, stops an active scan, or establishes an optical safe state. The vendor example explicitly disables its selected input before calling `CT400_Close`.
+
+IOPanel now keeps laser policy above the native resource wrapper. `CT400.close()` only releases the native handle and is idempotent. Scan cleanup disables the scan panel's selected input; monitor stop and cleanup disable the monitor panel's selected input; connected application shutdown disables the configured connection input using the configured safe wavelength and power before releasing the handle. A successfully disconnected CT400 skips that redundant shutdown laser command while still releasing an initialized native handle. No all-input shutdown behavior is assumed.
+
+This is a software-only change. The selected-input calls and resource-release ordering are covered by fake-backed tests. Physical laser disable behavior, optical output state, and any effect of `CT400_Close` on hardware remain unverified; Issue #23 remains open pending supervised physical safe-state validation.
 
 ### Offline test warning follow-up
 
