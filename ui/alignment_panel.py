@@ -44,6 +44,8 @@ class AlignmentPanel(QWidget):
     start_alignment_requested = Signal(object)
     start_mapping_requested = Signal(object)
     start_spiral_alignment_requested = Signal(object, object)
+    operation_started = Signal()
+    operation_finished = Signal()
 
     def __init__(
         self,
@@ -61,6 +63,10 @@ class AlignmentPanel(QWidget):
         # --- MODIFICATION: These will be initialized later ---
         self.worker_thread: QThread | None = None
         self.alignment_worker: AlignmentWorker | None = None
+        self._hardware_ready = False
+        self._ct400_operation_state = "IDLE"
+        self._active_mode: str | None = None
+        self._stop_requested = False
 
         self._init_ui()
         # --- MODIFICATION: Don't initialize worker immediately ---
@@ -134,6 +140,7 @@ class AlignmentPanel(QWidget):
         self.spiral_align_button = QPushButton("Start Spiral Alignment")
         self.spiral_align_button.setToolTip("Recommended: Performs a wide search then a fine alignment.")
         self.align_button = QPushButton("Start Fine-Tune Only")
+        self.align_button.setCheckable(True)
         self.align_button.setObjectName("alignButton")
         self.align_button.setStyleSheet(ALIGNMENT_ACTION_BUTTON_STYLE)
         self.align_button.setToolTip("Runs only the fine-tuning alignment from the current position.")
@@ -215,6 +222,9 @@ class AlignmentPanel(QWidget):
         columns_layout.addLayout(left_column_layout)
         columns_layout.addLayout(right_column_layout)
         controls_v_layout.addLayout(columns_layout)
+        self.stop_operation_button = QPushButton("Stop Alignment")
+        self.stop_operation_button.setEnabled(False)
+        controls_v_layout.addWidget(self.stop_operation_button)
 
         # --- Final Assembly ---
         main_layout.addWidget(controls_container)
@@ -231,36 +241,34 @@ class AlignmentPanel(QWidget):
         self.align_button.clicked.connect(self.toggle_alignment)
         self.map_button.clicked.connect(self.toggle_mapping)
         self.spiral_align_button.clicked.connect(self.toggle_spiral_alignment)
-        self.align_button.clicked.connect(self.toggle_alignment)
+        self.stop_operation_button.clicked.connect(self.request_stop)
 
         # --- NEW: Connect the plot's signal to the color bar's slot ---
         self.plot3d_widget.colormap_updated.connect(self.colorbar_widget.update_colormap)
 
     @Slot()
     def toggle_spiral_alignment(self):
-        # This is a one-shot button, not checkable
-        align_settings = AlignmentSettings(
-            laser_wavelength_nm=float(self.wavelength_input.text()),
-            laser_power=float(self.power_input.text()),
-            power_unit=self.power_unit_combo.currentText(),
-            input_port=self.input_port_combo.currentData(),
-            iterations=self.iterations_spin.value(),
-            step_nm=self.step_spin.value(),
-            samples_per_point=self.avg_spin.value(),
-            coupling_type="butt" if self.butt_coupling_cb.isChecked() else "top",
-        )
-        spiral_settings = SpiralSearchSettings(
-            radius_um=self.spiral_radius_spin.value(),
-            step_um=self.spiral_step_spin.value(),
-        )
-
-        self.disable_all_buttons()
-        self.start_spiral_alignment_requested.emit(align_settings, spiral_settings)
+        if not self._can_start_operation():
+            return
+        try:
+            align_settings = self._alignment_settings()
+            spiral_settings = SpiralSearchSettings(
+                radius_um=self.spiral_radius_spin.value(),
+                step_um=self.spiral_step_spin.value(),
+            )
+        except (ValueError, TypeError) as exc:
+            QMessageBox.critical(self, "Invalid Input", f"Please check laser settings. Error: {exc}")
+            return
+        if self._claim_operation("spiral"):
+            self._start_worker_operation(
+                self.start_spiral_alignment_requested.emit,
+                align_settings,
+                spiral_settings,
+            )
 
     def disable_all_buttons(self):
-        self.spiral_align_button.setEnabled(False)
-        self.align_button.setEnabled(False)
-        self.map_button.setEnabled(False)
+        """Compatibility helper that refreshes controls from current ownership."""
+        self._update_control_availability()
 
     def _create_hbox(self, *widgets):
         """Helper to create a QHBoxLayout for a row, reducing boilerplate."""
@@ -286,16 +294,74 @@ class AlignmentPanel(QWidget):
 
     def set_hardware_ready(self, is_ready: bool):
         """Enables or disables the panel's controls."""
-        # Now we disable/enable all the individual group boxes
-        self.laser_group.setEnabled(is_ready)
-        self.align_group.setEnabled(is_ready)
-        self.map_group.setEnabled(is_ready)
-        self.power_group.setEnabled(is_ready)  # Also control the power readout box
+        self._hardware_ready = bool(is_ready)
+        self._update_control_availability()
 
         if not is_ready:
             self.setToolTip("Hardware for alignment is not yet available or failed to initialize.")
         else:
             self.setToolTip("")
+
+    def set_ct400_operation_state(self, state: str):
+        self._ct400_operation_state = state
+        self._update_control_availability()
+
+    def _update_control_availability(self):
+        idle_ready = self._hardware_ready and self._ct400_operation_state == "IDLE" and self._active_mode is None
+        self.laser_group.setEnabled(idle_ready)
+        self.align_group.setEnabled(idle_ready)
+        self.map_group.setEnabled(idle_ready)
+        self.power_group.setEnabled(self._hardware_ready)
+        alignment_owned = self._ct400_operation_state == "ALIGNMENT" and self._active_mode is not None
+        self.stop_operation_button.setEnabled(alignment_owned and not self._stop_requested)
+        self.stop_operation_button.setText(
+            f"Stop {self._active_mode.title()}" if alignment_owned else "Stop Alignment"
+        )
+
+    def _can_start_operation(self) -> bool:
+        if not self._hardware_ready or self._ct400_operation_state != "IDLE" or self._active_mode is not None:
+            return False
+        try:
+            return (
+                self.alignment_worker is not None
+                and self.worker_thread is not None
+                and self.worker_thread.isRunning()
+            )
+        except RuntimeError:
+            return False
+
+    def _claim_operation(self, mode: str) -> bool:
+        if not self._can_start_operation():
+            return False
+        self._active_mode = mode
+        self._stop_requested = False
+        self.operation_started.emit()
+        if self._ct400_operation_state != "ALIGNMENT":
+            self._active_mode = None
+            self._update_control_availability()
+            return False
+        self.alignment_worker.begin_operation()
+        self._update_control_availability()
+        return True
+
+    def _start_worker_operation(self, emit_operation, *args):
+        try:
+            emit_operation(*args)
+        except Exception as exc:
+            logger.exception("Could not start alignment worker operation.")
+            QMessageBox.critical(self, "Alignment Start Error", str(exc))
+            self.alignment_worker.stop()
+            self._active_mode = None
+            self._stop_requested = False
+            self.operation_finished.emit()
+
+    def request_stop(self):
+        if self._ct400_operation_state != "ALIGNMENT" or self._active_mode is None or self._stop_requested:
+            return
+        self._stop_requested = True
+        self.status_label.setText(f"Status: Stopping {self._active_mode}…")
+        self.alignment_worker.stop()
+        self._update_control_availability()
 
     def _setup_worker_and_connections(self):
         """Creates the worker and thread, and connects signals."""
@@ -320,6 +386,7 @@ class AlignmentPanel(QWidget):
         self.start_spiral_alignment_requested.connect(self.alignment_worker.run_spiral_alignment)
         self.alignment_worker.mapping_progress.connect(self.on_mapping_progress)
         self.alignment_worker.mapping_finished.connect(self.on_mapping_finished)
+        self.alignment_worker.operation_finished.connect(self._on_worker_operation_finished)
 
         self.worker_thread.start()
         logger.info("Alignment worker and thread started successfully.")
@@ -327,32 +394,27 @@ class AlignmentPanel(QWidget):
     @Slot(bool)
     def toggle_alignment(self, checked):
         if checked:
+            if not self._can_start_operation():
+                self.align_button.setChecked(False)
+                return
             try:
-                settings = AlignmentSettings(
-                    # NEW: Gather laser settings from the new UI elements
-                    laser_wavelength_nm=float(self.wavelength_input.text()),
-                    laser_power=float(self.power_input.text()),
-                    power_unit=self.power_unit_combo.currentText(),
-                    input_port=self.input_port_combo.currentData(),
-                    # Existing algorithm settings
-                    iterations=self.iterations_spin.value(),
-                    step_nm=self.step_spin.value(),
-                    samples_per_point=self.avg_spin.value(),
-                    coupling_type="butt" if self.butt_coupling_cb.isChecked() else "top",
-                    settling_time_ms=100,
-                )
+                settings = self._alignment_settings()
             except (ValueError, TypeError) as e:
                 QMessageBox.critical(self, "Invalid Input", f"Please check laser settings. Error: {e}")
                 self.align_button.setChecked(False)
                 return
 
+            if not self._claim_operation("fine alignment"):
+                self.align_button.setChecked(False)
+                return
             self.align_button.setText("Stop Alignment")
             self.align_button.setProperty("running", True)
-            self.start_alignment_requested.emit(settings)
+            self._start_worker_operation(self.start_alignment_requested.emit, settings)
         else:
-            self.alignment_worker.stop()
-            self.align_button.setText("Start AutoAlignment")
-            self.align_button.setProperty("running", False)
+            if self._active_mode == "fine alignment":
+                self.request_stop()
+            else:
+                self.align_button.setChecked(False)
 
         # Refresh the style
         self.align_button.style().unpolish(self.align_button)
@@ -362,10 +424,9 @@ class AlignmentPanel(QWidget):
     def toggle_mapping(self, checked):
         """Starts or stops the power mapping process."""
         if checked:
-            self.map_button.setText("Stop Map")
-            self.map_button.setProperty("running", True)
-            self.map_progress.setValue(0)
-            self.map_progress.setVisible(True)
+            if not self._can_start_operation():
+                self.map_button.setChecked(False)
+                return
             try:
                 settings = MappingSettings(
                     # NEW: Gather laser settings
@@ -390,12 +451,19 @@ class AlignmentPanel(QWidget):
                 self.map_progress.setVisible(False)
                 return
 
-            self.start_mapping_requested.emit(settings)
+            if not self._claim_operation("mapping"):
+                self.map_button.setChecked(False)
+                return
+            self.map_button.setText("Stop Map")
+            self.map_button.setProperty("running", True)
+            self.map_progress.setValue(0)
+            self.map_progress.setVisible(True)
+            self._start_worker_operation(self.start_mapping_requested.emit, settings)
         else:
-            self.alignment_worker.stop()
-            self.map_button.setText("Do Map")
-            self.map_button.setProperty("running", False)
-            self.map_progress.setVisible(False)
+            if self._active_mode == "mapping":
+                self.request_stop()
+            else:
+                self.map_button.setChecked(False)
 
         # Refresh the style
         self.map_button.style().unpolish(self.map_button)
@@ -421,6 +489,29 @@ class AlignmentPanel(QWidget):
         self.map_button.style().unpolish(self.map_button)
         self.map_button.style().polish(self.map_button)
         self.map_button.setEnabled(True)
+        self._update_control_availability()
+
+    def _alignment_settings(self) -> AlignmentSettings:
+        return AlignmentSettings(
+            laser_wavelength_nm=float(self.wavelength_input.text()),
+            laser_power=float(self.power_input.text()),
+            power_unit=self.power_unit_combo.currentText(),
+            input_port=self.input_port_combo.currentData(),
+            iterations=self.iterations_spin.value(),
+            step_nm=self.step_spin.value(),
+            samples_per_point=self.avg_spin.value(),
+            coupling_type="butt" if self.butt_coupling_cb.isChecked() else "top",
+            settling_time_ms=100,
+        )
+
+    @Slot()
+    def _on_worker_operation_finished(self):
+        """Release panel-local state only after worker laser cleanup completed."""
+        self._active_mode = None
+        self._stop_requested = False
+        self.status_label.setText("Status: Idle")
+        self.reset_buttons()
+        self.operation_finished.emit()
 
     @Slot(str, float, bool)
     def on_progress_update(self, message: str, power: float, is_final_for_axis: bool):
@@ -436,7 +527,7 @@ class AlignmentPanel(QWidget):
         self, status: str, initial_power: float, final_power: float, initial_positions: dict, final_positions: dict
     ):
         self.reset_buttons()  # This call is now valid
-        self.status_label.setText("Status: Idle")
+        self.status_label.setText("Status: Finishing laser cleanup…")
 
         if status == "Alignment successful" and initial_positions and final_positions:
             self.power_label.setText(f"{final_power:.2f} dBm")
@@ -487,7 +578,7 @@ class AlignmentPanel(QWidget):
         )
 
         self.reset_buttons()
-        self.status_label.setText("Status: Idle")
+        self.status_label.setText("Status: Finishing laser cleanup…")
         self.map_progress.setVisible(False)
         QMessageBox.information(self, "Map Complete", "Power map has been generated.")
 
@@ -495,17 +586,17 @@ class AlignmentPanel(QWidget):
     def on_worker_error(self, message: str):
         """Handles errors reported by the worker thread."""
         QMessageBox.critical(self, "Worker Error", message)
-        self.reset_buttons()  # This call is now valid
         self.status_label.setText("Status: Error!")
         self.map_progress.setVisible(False)
+        self._update_control_availability()
 
     def cleanup(self):
         """Gracefully shuts down the worker thread."""
-        # --- MODIFICATION: Check if worker/thread exist before using ---
         if self.worker_thread and self.worker_thread.isRunning():
-            if self.alignment_worker:
-                self.alignment_worker.stop()
+            if self._active_mode is not None or self._ct400_operation_state == "ALIGNMENT":
+                self.request_stop()
+                logger.warning("Alignment cleanup deferred until its CT400 operation has completed.")
+                return False
             self.worker_thread.quit()
-            if not self.worker_thread.wait(2000):
-                logger.warning("Alignment worker thread did not exit gracefully.")
-                self.worker_thread.terminate()
+            self.worker_thread.wait()
+        return True

@@ -177,6 +177,20 @@ IOPanel now keeps laser policy above the native resource wrapper. `CT400.close()
 
 This is a software-only change. The selected-input calls and resource-release ordering are covered by fake-backed tests. Physical laser disable behavior, optical output state, and any effect of `CT400_Close` on hardware remain unverified; Issue #23 remains open pending supervised physical safe-state validation.
 
+## CT400 operation ownership — Issue #38
+
+IOPanel now grants one application-level owner of the shared CT400 handle at a time. `ALIGNMENT` covers fine alignment, spiral alignment, and 2D mapping. The compatibility policy is:
+
+| Active operation | Connect | Disconnect | Scan | Monitor | Alignment |
+| --- | --- | --- | --- | --- | --- |
+| Connect | — | no | no | no | no |
+| Disconnect | no | — | no | no | no |
+| Scan | no | no | — | no | no |
+| Monitor | no | no | no | — | no |
+| Alignment | no | no | no | no | — |
+
+This is a conservative application safety/concurrency policy because the Yenista Programming Guide does not document general same-handle thread safety or reentrancy. It does not establish that the hardware cannot support concurrent operations. Scan cancellation remains available to the active scan owner; monitoring releases ownership only after its worker read has finished and selected-input disable cleanup has run; alignment releases ownership only after its worker's selected-input laser-disable cleanup attempt. The policy is exercised with DummyCT400 and fake connection/alignment operations. No physical CT400 concurrency behavior has been tested or is claimed.
+
 ### Offline test warning follow-up
 
 One earlier full-suite run emitted a `RuntimeWarning` from pytest-qt 4.4.0 at `pytestqt/wait_signal.py:741`: it could not disconnect `MultiSignalBlocker._quit_loop_by_timeout` from `timeout()`, during `test_scan_failure_is_reported_while_camera_keeps_streaming`. That run still passed all 29 tests. On 2026-09-27 the documented offline suite passed with 29 tests using `uv run --offline --no-sync pytest -q -p no:cacheprovider --basetemp=<workspace-local-temp>` with `UV_CACHE_DIR` also pointed to a workspace-local temporary directory. An initial attempt using the shared uv cache was denied by the sandbox; no sync/install was performed. Three additional full-suite runs under system Python each passed 29 tests, and eight repetitions of the implicated test each passed; none reproduced the warning. No production code, test assertions, warning filters, or hardware code were changed. Current evidence indicates an intermittent pytest-qt/Qt signal-cleanup warning; its cause is not established, so it remains a low-confidence flake rather than a confirmed defect.
