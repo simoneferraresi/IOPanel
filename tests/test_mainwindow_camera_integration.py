@@ -58,6 +58,7 @@ simulation_height = 12
     monkeypatch.setattr(main_window_module.MainWindow, "_connect_camera_signals", observe_camera_signals)
 
     if fail_after_frames is not None:
+
         class FailureInjectedCamera(SimulatedCamera):
             def __init__(self, *args, **kwargs):
                 kwargs["fail_after_frames"] = fail_after_frames
@@ -75,7 +76,7 @@ simulation_height = 12
     # Camera initialization is a short-lived TaskRunner. Its QThread may have
     # finished before the GUI processes the queued bookkeeping callback.
     qtbot.waitUntil(
-        lambda: all(_runner_stopped(task) for task in window.camera_tasks),
+        lambda: all(_runner_stopped(task) for task in window._init_tasks),
         timeout=4000,
     )
 
@@ -100,7 +101,7 @@ def _close_window_and_check_cleanup(window, qtbot):
             assert not ct400_thread.isRunning()
         except RuntimeError:  # Qt has deleted the completed thread wrapper.
             pass
-    for task in window.camera_tasks:
+    for task in window._init_tasks:
         assert _runner_stopped(task)
     assert not panel.conversion_thread.isRunning()
 
