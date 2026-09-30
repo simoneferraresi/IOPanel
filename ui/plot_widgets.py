@@ -973,7 +973,7 @@ class PlotWidget(QWidget):
                 self.is_matlab_engine_starting = False
 
     @Slot(np.ndarray, np.ndarray, float)
-    def update_plot(self, x_data: np.ndarray, y_data: np.ndarray, output_power: float | None = None):
+    def update_plot(self, x_data: np.ndarray, y_data: np.ndarray, output_power: float | None = None) -> bool:
         # Array-only updates are useful for previews and older callers, but are
         # not exportable as a completed acquisition without its snapshot.
         self.current_measurement = None
@@ -1014,7 +1014,7 @@ class PlotWidget(QWidget):
                 self.plot_data_item.setData([], [])
                 self.plot_widget.setTitle("Invalid Scan Data", color="red", size="11pt")
                 self.save_btn.setEnabled(False)
-                return
+                return False
 
             logger.debug(f"Updating plot. Points: {len(x_data_np)}. Pout: {output_power}")
             self.current_wavelengths = x_data_np
@@ -1051,26 +1051,30 @@ class PlotWidget(QWidget):
 
             self.save_btn.setEnabled(self.current_measurement is not None)
             self.freeze_btn.setEnabled(True)
+            return True
         except Exception as e:
             logger.error(f"Error updating plot: {e}", exc_info=True)
             self.plot_widget.setTitle("Error Updating Plot", color="red", size="11pt")
             self.save_btn.setEnabled(False)
             self.freeze_btn.setEnabled(False)
+            return False
 
-    def set_measurement(self, measurement: ScanMeasurement):
+    def set_measurement(self, measurement: ScanMeasurement) -> bool:
         """Display and retain one completed acquisition for subsequent export."""
-        self.current_measurement = measurement
+        self.current_measurement = None
+        self.save_btn.setEnabled(False)
         detector_data = measurement.detector_data
         if detector_data.ndim == 1:
             trace = detector_data
         elif detector_data.ndim == 2 and detector_data.shape[0] > 0:
             trace = detector_data[0]
         else:
-            self.current_measurement = None
             raise ValueError(f"Unexpected detector data shape: {detector_data.shape}")
-        self.update_plot(measurement.wavelengths_nm, trace, measurement.final_pout)
+        if not self.update_plot(measurement.wavelengths_nm, trace, measurement.final_pout):
+            return False
         self.current_measurement = measurement
-        self.save_btn.setEnabled(self.current_wavelengths is not None)
+        self.save_btn.setEnabled(True)
+        return True
 
     @Slot()
     def clear_plot(self):

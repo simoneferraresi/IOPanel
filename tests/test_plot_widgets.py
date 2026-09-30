@@ -90,6 +90,47 @@ def _prepare_export_widget(qtbot):
     return widget
 
 
+def _measurement(wavelengths, detector_data):
+    settings = ScanAcquisitionSettings(1510.0, 1520.0, 25, "7", "3", "dBm", 1.9952623149688795,
+                                      LaserInput.LI_2, (Detector.DE_1,))
+    return ScanMeasurement(settings, np.asarray(wavelengths), np.asarray(detector_data), (Detector.DE_1,), None,
+                           CT400ScanResultKind.SUCCESS, 0, "", "hardware.dummy_ct400.DummyCT400", True,
+                           datetime.now(timezone.utc))
+
+
+def test_rejected_mismatched_measurement_cannot_be_exported(qtbot, monkeypatch):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    accepted = _measurement([1510, 1515, 1520], [[-20, -21, -22]])
+    widget.set_measurement(accepted)
+    assert widget.current_measurement is accepted
+    assert widget.save_btn.isEnabled()
+
+    rejected = _measurement([1510, 1515, 1520], [[-30, -31]])
+    assert not widget.set_measurement(rejected)
+
+    assert widget.current_measurement is None
+    assert not widget.save_btn.isEnabled()
+    monkeypatch.setattr(plot_widgets.QMessageBox, "warning", lambda *_args: None)
+    monkeypatch.setattr(plot_widgets.QFileDialog, "getSaveFileName", lambda *_args: pytest.fail("rejected scan exported"))
+    widget.save_scan_data()
+
+
+def test_rejected_measurement_without_detector_rows_cannot_be_exported(qtbot):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    accepted = _measurement([1510, 1515, 1520], [[-20, -21, -22]])
+    widget.set_measurement(accepted)
+    assert widget.save_btn.isEnabled()
+
+    rejected = _measurement([1510, 1515, 1520], np.empty((0, 3)))
+    with pytest.raises(ValueError, match="Unexpected detector data shape"):
+        widget.set_measurement(rejected)
+
+    assert widget.current_measurement is None
+    assert not widget.save_btn.isEnabled()
+
+
 def test_export_metadata_comes_from_completed_measurement_after_ui_edits(qtbot, monkeypatch, tmp_path):
     widget = _prepare_export_widget(qtbot)
     # Reproduce the old bug: shared UI state changes after the plot was populated.
