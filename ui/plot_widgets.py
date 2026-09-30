@@ -162,6 +162,10 @@ class Plot3DWidget(QWidget):
             self.title_label.setText("Power Map (No Data)")
             return
 
+        expected_z_shape = (len(x), len(y))
+        if z.ndim != 2 or z.shape != expected_z_shape:
+            raise ValueError(f"Mapping z shape {z.shape} does not match expected {expected_z_shape} (len(x), len(y))")
+
         self.title_label.setText("Power Map (mW)")
 
         x_min, x_max = x.min(), x.max()
@@ -194,14 +198,14 @@ class Plot3DWidget(QWidget):
         if z_span < 1e-9:  # Flat surface
             color = (0.8, 0.8, 0.8, 1.0)
             self.surface_plot = gl.GLSurfacePlotItem(
-                x=x_shifted, y=y_shifted, z=z_scaled_shifted.T, color=color, shader="shaded"
+                x=x_shifted, y=y_shifted, z=z_scaled_shifted, color=color, shader="shaded"
             )
         else:
             cmap = pg.colormap.get("viridis")
             normalized_z = (z - z_min) / z_span
             colors = cmap.map(normalized_z, "float")
             self.surface_plot = gl.GLSurfacePlotItem(
-                x=x_shifted, y=y_shifted, z=z_scaled_shifted.T, colors=colors, shader="shaded"
+                x=x_shifted, y=y_shifted, z=z_scaled_shifted, colors=colors, shader="shaded"
             )
 
         self.surface_plot.setGLOptions("opaque")

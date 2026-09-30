@@ -6,8 +6,122 @@ import pytest
 from hardware.ct400_types import CT400ScanResultKind, Detector, LaserInput
 from logic.scan_measurement import ScanAcquisitionSettings, ScanMeasurement
 from ui import plot_widgets
+from ui.alignment_panel import AlignmentPanel
 from ui.control_panel import ScanSettings
 from ui.plot_widgets import PlotWidget, derive_scan_export_targets
+
+
+class _CapturedSurface:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+    def setGLOptions(self, _options):
+        pass
+
+
+@pytest.mark.parametrize(
+    ("x", "y", "z"),
+    [
+        ([10, 20], [1, 2, 3], [[11, 12, 13], [21, 22, 23]]),
+        ([10, 20, 30], [1, 2], [[11, 12], [21, 22], [31, 32]]),
+        ([0, 1], [10, 20], [[1, 2], [100, 200]]),
+    ],
+)
+def test_plot3d_surface_preserves_mapping_xy_orientation(qtbot, monkeypatch, x, y, z):
+    captured = {}
+
+    def make_surface(**kwargs):
+        captured.update(kwargs)
+        return _CapturedSurface(**kwargs)
+
+    monkeypatch.setattr(plot_widgets.gl, "GLSurfacePlotItem", make_surface)
+    widget = plot_widgets.Plot3DWidget()
+    qtbot.addWidget(widget)
+    monkeypatch.setattr(widget.view, "addItem", lambda _item: None)
+
+    widget.update_plot(np.asarray(x), np.asarray(y), np.asarray(z))
+
+    surface_z = captured["z"]
+    assert surface_z.shape == (len(x), len(y))
+    z_array = np.asarray(z)
+    z_span = z_array.max() - z_array.min()
+    expected_z = (z_array - z_array.min()) * (max(max(x) - min(x), max(y) - min(y)) * 0.3 / z_span)
+    np.testing.assert_allclose(surface_z, expected_z)
+    np.testing.assert_array_equal(captured["x"], np.asarray(x) - (min(x) + max(x)) / 2)
+    np.testing.assert_array_equal(captured["y"], np.asarray(y) - (min(y) + max(y)) / 2)
+
+
+def test_plot3d_surface_colors_follow_same_xy_orientation(qtbot, monkeypatch):
+    class FakeColorMap:
+        @staticmethod
+        def map(values, _mode):
+            return np.stack((values, values + 10, values + 20, np.ones_like(values)), axis=-1)
+
+    captured = {}
+    monkeypatch.setattr(
+        plot_widgets.gl, "GLSurfacePlotItem", lambda **kwargs: captured.update(kwargs) or _CapturedSurface(**kwargs)
+    )
+    monkeypatch.setattr(plot_widgets.pg.colormap, "get", lambda _name: FakeColorMap())
+    widget = plot_widgets.Plot3DWidget()
+    qtbot.addWidget(widget)
+    monkeypatch.setattr(widget.view, "addItem", lambda _item: None)
+    z = np.array([[1, 2, 3], [21, 22, 23]])
+
+    widget.update_plot(np.array([10, 20]), np.array([1, 2, 3]), z)
+
+    assert captured["z"].shape == captured["colors"].shape[:2] == z.shape
+    np.testing.assert_array_equal(captured["colors"][..., 0], (z - z.min()) / (z.max() - z.min()))
+    np.testing.assert_array_equal(captured["colors"][..., 1], captured["colors"][..., 0] + 10)
+
+
+def test_plot3d_rejects_mapping_shape_mismatch(qtbot):
+    widget = plot_widgets.Plot3DWidget()
+    qtbot.addWidget(widget)
+
+    with pytest.raises(ValueError, match=r"z shape \(3, 2\).*expected \(2, 3\)"):
+        widget.update_plot(np.array([10, 20]), np.array([1, 2, 3]), np.ones((3, 2)))
+
+
+def test_mapping_finished_reports_peak_using_x_then_y_indices(monkeypatch):
+    from types import SimpleNamespace
+
+    from PySide6.QtWidgets import QMessageBox
+
+    peak_titles = []
+    panel = SimpleNamespace(
+        plot3d_widget=SimpleNamespace(
+            update_plot=lambda *_args: None,
+            title_label=SimpleNamespace(setText=peak_titles.append),
+        ),
+        reset_buttons=lambda: None,
+        status_label=SimpleNamespace(setText=lambda *_args: None),
+        map_progress=SimpleNamespace(setVisible=lambda *_args: None),
+    )
+    monkeypatch.setattr(QMessageBox, "information", lambda *_args: None)
+    grid = np.array([[1, 2, 900], [3, 4, 5]])
+
+    AlignmentPanel.on_mapping_finished(panel, np.array([10, 20]), np.array([1, 2, 3]), grid)
+
+    assert "X=10.00, Y=3.00" in peak_titles[0]
+
+
+@pytest.mark.parametrize("z", [np.full((2, 3), 7.0), np.full((1, 3), 7.0), np.full((3, 1), 7.0)])
+def test_plot3d_flat_surface_preserves_orientation(qtbot, monkeypatch, z):
+    captured = {}
+    monkeypatch.setattr(
+        plot_widgets.gl, "GLSurfacePlotItem", lambda **kwargs: captured.update(kwargs) or _CapturedSurface(**kwargs)
+    )
+    widget = plot_widgets.Plot3DWidget()
+    qtbot.addWidget(widget)
+    monkeypatch.setattr(widget.view, "addItem", lambda _item: None)
+    monkeypatch.setattr(widget.grid_item, "setSpacing", lambda **_kwargs: None)
+    x = np.arange(z.shape[0], dtype=float)
+    y = np.arange(z.shape[1], dtype=float)
+
+    widget.update_plot(x, y, z)
+
+    assert captured["z"].shape == z.shape
+    np.testing.assert_array_equal(captured["z"], np.zeros_like(z))
 
 
 def _view_range(widget):
