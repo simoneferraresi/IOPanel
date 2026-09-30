@@ -1163,18 +1163,13 @@ class MainWindow(QMainWindow):
             action.setChecked(not checked)
             action.setEnabled(False)
 
-    @Slot(np.ndarray, np.ndarray, float)
-    def _handle_scan_data(
-        self,
-        wavelengths: np.ndarray,
-        plotting_power_data: np.ndarray,
-        final_pout: float,
-    ):
-        logger.debug(f"Received scan data signal. Wavelength points: {len(wavelengths)}")
+    @Slot(object)
+    def _handle_scan_data(self, measurement):
+        logger.debug(f"Received scan measurement. Wavelength points: {len(measurement.wavelengths_nm)}")
 
-        if self.plot_widget and hasattr(self.plot_widget, "update_plot"):
+        if self.plot_widget and hasattr(self.plot_widget, "set_measurement"):
             try:
-                self.plot_widget.update_plot(wavelengths, plotting_power_data, final_pout)
+                self.plot_widget.set_measurement(measurement)
                 if isinstance(self.ct400_device, DummyCT400):
                     self.plot_widget.plot_widget.setTitle("SIMULATED CT400 DATA", color="darkorange", size="11pt")
             except Exception as e:
