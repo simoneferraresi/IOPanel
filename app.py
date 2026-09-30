@@ -23,7 +23,7 @@ from pathlib import Path
 from pydantic import ValidationError
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from config_model import AppConfig
+from config_model import AppConfig, ConfigSemanticError
 from ui.main_window import MainWindow
 
 # Application Metadata
@@ -230,6 +230,12 @@ def main() -> int:
     # Validate and parse the raw dictionary using the Pydantic model
     try:
         app_config = AppConfig.from_ini_dict(raw_config_dict)
+    except ConfigSemanticError as e:
+        error_msg = f"Configuration file '{args.config}' has an invalid structure.\n\n{e}"
+        logging.critical(error_msg)
+        _ = QApplication.instance() or QApplication(sys.argv)
+        QMessageBox.critical(None, "Configuration Error", error_msg)
+        return 1
     except ValidationError as e:
         # Pydantic gives beautiful, human-readable errors.
         error_msg = f"Configuration file '{args.config}' is invalid.\n\nErrors:\n{e}"

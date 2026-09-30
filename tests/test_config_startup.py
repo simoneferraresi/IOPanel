@@ -116,6 +116,28 @@ def test_valid_simulation_ini_keeps_optional_model_defaults(tmp_path):
     assert config.histogram_defaults.input_port == 1
 
 
+def test_valid_physical_style_ini_keeps_omitted_backend_default(tmp_path):
+    config_path = tmp_path / "physical-style.ini"
+    config_path.write_text("[Instruments]\nct400_dll_path = lab.dll\n", encoding="utf-8")
+
+    config = AppConfig.from_ini_dict(app.load_raw_config_from_ini(config_path))
+
+    assert config.instruments.ct400_backend == "physical"
+
+
+def test_main_stops_on_config_semantic_failure_before_window(tmp_path, monkeypatch):
+    config_path = tmp_path / "typo.ini"
+    config_path.write_text("[Instrument]\nct400_backend = simulation\n", encoding="utf-8")
+    messages, constructed_windows = _prepare_main(monkeypatch, config_path)
+
+    assert app.main() == 1
+    assert len(messages) == 1
+    assert "Configuration Error" in messages[0][1]
+    assert str(config_path) in messages[0][-1]
+    assert "Instrument" in messages[0][-1]
+    assert constructed_windows == []
+
+
 def test_parseable_schema_invalid_ini_raises_pydantic_validation_error(tmp_path):
     config_path = tmp_path / "invalid.ini"
     config_path.write_text("[ScanDefaults]\nresolution_pm = 0\n", encoding="utf-8")
