@@ -58,53 +58,53 @@ class CT400InitWorker(BaseWorker):
     @Slot()
     def run(self):
         """Initializes the CT400 device."""
-        if not self._is_running:
-            return
-
-        logger.info("CT400InitWorker: Starting initialization...")
-        if self.config.instruments.ct400_backend == "simulation":
-            self.status_updated.emit("SIMULATED", "CT400: Starting simulated backend.")
-            ct400_device = DummyCT400()
-            self.status_updated.emit("SIMULATED", "CT400: Simulated backend ready.")
-            self.ct400_initialized.emit(ct400_device)
-            self.finished.emit()
-            return
-
-        self.status_updated.emit("UNKNOWN", "CT400: Searching for DLL...")
-
-        dll_path_obj = self._find_dll()
-        ct400_device: AbstractCT400
-
-        if not dll_path_obj:
-            msg = "CT400 DLL not found. Using dummy device."
-            logger.warning(msg)
-            self.status_updated.emit("UNAVAILABLE", "CT400: DLL not found. Using Dummy.")
-            ct400_device = DummyCT400()
-            self.ct400_initialized.emit(ct400_device)
-            return
-
         try:
-            self.status_updated.emit("UNKNOWN", "CT400: Initializing hardware...")
-            # This is the slow, blocking call
-            ct400_device = CT400(dll_path_obj)
-            logger.info(f"CT400InitWorker: CT400 device object created using DLL: {dll_path_obj}")
-            self.status_updated.emit("DISCONNECTED", "CT400: Ready (Disconnected)")
-            self.ct400_initialized.emit(ct400_device)
+            if not self._is_running:
+                return
 
-        except (CT400Error, FileNotFoundError, OSError, CT400InitializationError) as e:
-            msg = f"CT400 Init Failed: {e}. Using dummy device."
-            logger.error(msg, exc_info=True)
-            self.status_updated.emit("UNAVAILABLE", "CT400: Init Failed. Using Dummy.")
-            ct400_device = DummyCT400()
-            self.ct400_initialized.emit(ct400_device)
-        except Exception as e:
-            msg = f"Unexpected error during CT400 initialization: {e}. Using dummy device."
-            logger.critical(msg, exc_info=True)
-            self.status_updated.emit("UNAVAILABLE", "CT400: Critical Error. Using Dummy.")
-            ct400_device = DummyCT400()
-            self.ct400_initialized.emit(ct400_device)
+            logger.info("CT400InitWorker: Starting initialization...")
+            if self.config.instruments.ct400_backend == "simulation":
+                self.status_updated.emit("SIMULATED", "CT400: Starting simulated backend.")
+                ct400_device = DummyCT400()
+                self.status_updated.emit("SIMULATED", "CT400: Simulated backend ready.")
+                self.ct400_initialized.emit(ct400_device)
+                return
 
-        self.finished.emit()
+            self.status_updated.emit("UNKNOWN", "CT400: Searching for DLL...")
+
+            dll_path_obj = self._find_dll()
+            ct400_device: AbstractCT400
+
+            if not dll_path_obj:
+                msg = "CT400 DLL not found. Using dummy device."
+                logger.warning(msg)
+                self.status_updated.emit("UNAVAILABLE", "CT400: DLL not found. Using Dummy.")
+                ct400_device = DummyCT400()
+                self.ct400_initialized.emit(ct400_device)
+                return
+
+            try:
+                self.status_updated.emit("UNKNOWN", "CT400: Initializing hardware...")
+                # This is the slow, blocking call
+                ct400_device = CT400(dll_path_obj)
+                logger.info(f"CT400InitWorker: CT400 device object created using DLL: {dll_path_obj}")
+                self.status_updated.emit("DISCONNECTED", "CT400: Ready (Disconnected)")
+                self.ct400_initialized.emit(ct400_device)
+
+            except (CT400Error, FileNotFoundError, OSError, CT400InitializationError) as e:
+                msg = f"CT400 Init Failed: {e}. Using dummy device."
+                logger.error(msg, exc_info=True)
+                self.status_updated.emit("UNAVAILABLE", "CT400: Init Failed. Using Dummy.")
+                ct400_device = DummyCT400()
+                self.ct400_initialized.emit(ct400_device)
+            except Exception as e:
+                msg = f"Unexpected error during CT400 initialization: {e}. Using dummy device."
+                logger.critical(msg, exc_info=True)
+                self.status_updated.emit("UNAVAILABLE", "CT400: Critical Error. Using Dummy.")
+                ct400_device = DummyCT400()
+                self.ct400_initialized.emit(ct400_device)
+        finally:
+            self.finished.emit()
 
     def stop(self):
         self._is_running = False

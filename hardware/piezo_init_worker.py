@@ -28,12 +28,12 @@ class PiezoInitWorker(BaseWorker):
     @Slot()
     def run(self):
         """Finds and connects to the configured piezo controllers."""
-        if not self._is_running:
-            return
-
-        logger.info("Worker starting initialization for Piezo controllers...")
-        piezo_left, piezo_right = None, None
         try:
+            if not self._is_running:
+                return
+
+            logger.info("Worker starting initialization for Piezo controllers...")
+            piezo_left, piezo_right = None, None
             dll_path = Path(self.config.piezo_dll_path)
             if not dll_path.is_file():
                 raise PiezoError(f"Piezo DLL not found at specified path: {dll_path}")
@@ -67,7 +67,6 @@ class PiezoInitWorker(BaseWorker):
         except Exception as e:
             logger.exception(f"Unexpected error in piezo init worker: {e}")
             self.initialization_failed.emit(f"An unexpected error occurred: {e}")
-
         except (PiezoError, FileNotFoundError) as e:
             logger.error(f"Failed to initialize Piezo controllers: {e}", exc_info=True)
             self.initialization_failed.emit(str(e))
@@ -79,8 +78,8 @@ class PiezoInitWorker(BaseWorker):
         except Exception as e:
             logger.exception(f"Unexpected error in piezo init worker: {e}")
             self.initialization_failed.emit(f"An unexpected error occurred: {e}")
-
-        self.finished.emit()
+        finally:
+            self.finished.emit()
 
     def stop(self):
         self._is_running = False
