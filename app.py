@@ -33,6 +33,10 @@ DEFAULT_LOG_FILE = Path("lab_app.log")
 DEFAULT_CONFIG_FILE = Path("config.ini")
 
 
+class ConfigLoadError(Exception):
+    """Raised when the requested configuration file cannot be loaded."""
+
+
 def configure_qt_application(app: QApplication, app_name: str = APP_NAME) -> None:
     """Set application metadata and use Qt's native Fusion widget style."""
     app.setApplicationName(app_name)
@@ -142,21 +146,26 @@ def load_raw_config_from_ini(config_file: Path) -> dict:
         config_file: The path to the .ini configuration file.
 
     Returns:
-        A dictionary representing the INI file's contents. Returns an empty
-        dictionary if the file is not found or cannot be parsed.
+        A dictionary representing the INI file's contents.
+
+    Raises:
+        ConfigLoadError: If the file is missing, unreadable, or invalid INI.
     """
     import configparser
 
     config = configparser.ConfigParser()
-    if not config_file.is_file():
-        logging.warning(f"Configuration file not found: {config_file}. Using default values.")
-        return {}
     try:
-        config.read_string(config_file.read_text(encoding="utf-8"))
+        contents = config_file.read_text(encoding="utf-8")
+    except FileNotFoundError as e:
+        raise ConfigLoadError(f"File does not exist: {config_file}") from e
+    except (OSError, UnicodeError) as e:
+        raise ConfigLoadError(f"Could not read file: {e}") from e
+
+    try:
+        config.read_string(contents)
         return {s: dict(config.items(s)) for s in config.sections()}
-    except (OSError, configparser.Error) as e:
-        logging.error(f"Error reading or parsing config file {config_file}: {e}")
-        return {}
+    except configparser.Error as e:
+        raise ConfigLoadError(f"INI parsing failed: {e}") from e
 
 
 def parse_args() -> argparse.Namespace:
@@ -208,8 +217,15 @@ def main() -> int:
     # This will be replaced by the full-featured logger shortly.
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
-    # Load the raw dictionary from the .ini file
-    raw_config_dict = load_raw_config_from_ini(args.config)
+    # Load the raw dictionary from the .ini file before schema validation.
+    try:
+        raw_config_dict = load_raw_config_from_ini(args.config)
+    except ConfigLoadError as e:
+        error_msg = f"Configuration file '{args.config}' could not be loaded.\n\n{e}"
+        logging.critical(error_msg)
+        _ = QApplication.instance() or QApplication(sys.argv)
+        QMessageBox.critical(None, "Configuration Load Error", error_msg)
+        return 1
 
     # Validate and parse the raw dictionary using the Pydantic model
     try:
