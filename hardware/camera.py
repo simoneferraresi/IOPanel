@@ -365,10 +365,12 @@ class VimbaCam(QObject):
 
     def _open_device_internal(self) -> bool:
         """Internal: Opens device. Assumes VimbaSystem is ACTIVE."""
+        entered_camera = None
         try:
             vmb = VmbSystem.get_instance()
             cam_opened = vmb.get_camera_by_id(self.identifier)
             cam_opened.__enter__()
+            entered_camera = cam_opened
             self.device = cam_opened
             logger.info(f"Successfully opened camera device: {self.camera_name}")
             self._configure_camera()
@@ -377,8 +379,15 @@ class VimbaCam(QObject):
         except VmbCameraError as e:
             error_msg = f"Failed to open camera {self.camera_name}: {e}"
             logger.error(error_msg)
-            self.error.emit(error_msg)
+            if entered_camera is not None:
+                try:
+                    entered_camera.__exit__(None, None, None)
+                except Exception as cleanup_error:
+                    logger.exception(f"Failed to release partially opened camera {self.camera_name}: {cleanup_error}")
             self.device = None
+            self.is_streaming = False
+            self.is_mono = None
+            self.error.emit(error_msg)
             return False
 
     def _configure_camera(self):
