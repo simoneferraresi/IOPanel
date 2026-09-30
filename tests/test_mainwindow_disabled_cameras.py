@@ -32,20 +32,13 @@ def test_mainwindow_starts_offline_with_all_cameras_disabled(qtbot, monkeypatch,
     window.show()
 
     qtbot.waitUntil(
-        lambda: any(
-            action.text() == "No enabled cameras found in config"
-            for action in window.cameras_menu.actions()
-        ),
+        lambda: any(action.text() == "No enabled cameras found in config" for action in window.cameras_menu.actions()),
         timeout=2000,
     )
     placeholder = next(
-        action
-        for action in window.cameras_menu.actions()
-        if action.text() == "No enabled cameras found in config"
+        action for action in window.cameras_menu.actions() if action.text() == "No enabled cameras found in config"
     )
     assert not placeholder.isEnabled()
-    assert window.camera_tasks == []
-    assert window.camera_init_workers == []
-    assert window.camera_init_threads == []
+    assert window._init_tasks == set()
 
     window.close()

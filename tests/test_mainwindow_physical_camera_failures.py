@@ -17,8 +17,7 @@ def _start_with_config(qtbot, monkeypatch, tmp_path, camera_sections):
     config_path = tmp_path / "camera-failures.ini"
     config_path.write_text(
         "[App]\nname = Camera failure integration test\n\n"
-        "[Instruments]\nct400_dll_path = unavailable-in-test-environment.dll\n\n"
-        + "\n\n".join(camera_sections),
+        "[Instruments]\nct400_dll_path = unavailable-in-test-environment.dll\n\n" + "\n\n".join(camera_sections),
         encoding="utf-8",
     )
     config = AppConfig.from_ini_dict(app.load_raw_config_from_ini(config_path))
@@ -43,7 +42,7 @@ def _start_with_config(qtbot, monkeypatch, tmp_path, camera_sections):
 
 def _wait_for_camera_tasks(qtbot, window):
     qtbot.waitUntil(
-        lambda: all(_runner_stopped(task) for task in window.camera_tasks),
+        lambda: all(_runner_stopped(task) for task in window._init_tasks),
         timeout=4000,
     )
 
@@ -54,9 +53,7 @@ def test_mainwindow_reports_configured_camera_when_vimba_is_unavailable(qtbot, m
         qtbot,
         monkeypatch,
         tmp_path,
-        [
-            "[Camera:Lab camera]\nidentifier = physical-camera-1\nenabled = true\nname = Lab camera"
-        ],
+        ["[Camera:Lab camera]\nidentifier = physical-camera-1\nenabled = true\nname = Lab camera"],
     )
 
     qtbot.waitUntil(lambda: "physical-camera-1" in window.camera_panels, timeout=4000)

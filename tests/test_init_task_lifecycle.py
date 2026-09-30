@@ -1,6 +1,6 @@
 from PySide6.QtTest import QSignalSpy
 
-from config_model import AppConfig
+from config_model import AppConfig, CameraConfig
 from hardware import ct400_init_worker, piezo_init_worker
 from hardware.dummy_ct400 import DummyCT400
 from logic.task_runner import BaseWorker, TaskRunner
@@ -204,8 +204,10 @@ def test_mainwindow_clears_finished_ct400_task_and_refresh_restarts(qtbot, monke
     window = _make_main_window(qtbot, monkeypatch)
     window._init_ct400_lazy()
     first_task = window.ct400_task
+    assert first_task in window._init_tasks
     thread_destroyed = QSignalSpy(first_task.thread.destroyed)
     qtbot.waitUntil(lambda: window.ct400_task is None, timeout=3000)
+    assert first_task not in window._init_tasks
 
     assert first_task is not None
     qtbot.waitUntil(lambda: thread_destroyed.count() == 1, timeout=3000)
@@ -216,6 +218,7 @@ def test_mainwindow_clears_finished_ct400_task_and_refresh_restarts(qtbot, monke
     assert replacement_task is not None
     assert replacement_task is not first_task
     qtbot.waitUntil(lambda: window.ct400_task is None, timeout=3000)
+    assert replacement_task not in window._init_tasks
     assert window.ct400_init_thread is None
 
 
@@ -224,8 +227,10 @@ def test_mainwindow_clears_finished_piezo_task_and_refresh_restarts(qtbot, monke
     window = _make_main_window(qtbot, monkeypatch)
     window._init_piezos_lazy()
     first_task = window.piezo_task
+    assert first_task in window._init_tasks
     thread_destroyed = QSignalSpy(first_task.thread.destroyed)
     qtbot.waitUntil(lambda: window.piezo_task is None, timeout=3000)
+    assert first_task not in window._init_tasks
 
     assert first_task is not None
     qtbot.waitUntil(lambda: thread_destroyed.count() == 1, timeout=3000)
@@ -236,6 +241,7 @@ def test_mainwindow_clears_finished_piezo_task_and_refresh_restarts(qtbot, monke
     assert replacement_task is not None
     assert replacement_task is not first_task
     qtbot.waitUntil(lambda: window.piezo_task is None, timeout=3000)
+    assert replacement_task not in window._init_tasks
     assert window.piezo_init_thread is None
 
 
@@ -249,11 +255,88 @@ def test_old_init_task_completion_cannot_clear_newer_task(qtbot, monkeypatch):
     window.ct400_init_thread = ct400_thread
     window.piezo_task = current_task
     window.piezo_init_thread = piezo_thread
+    window._init_tasks.add(current_task)
 
     window._on_ct400_init_task_finished(old_task)
     window._on_piezo_init_task_finished(old_task)
+    window._on_init_task_thread_finished(old_task)
 
     assert window.ct400_task is current_task
     assert window.ct400_init_thread is ct400_thread
     assert window.piezo_task is current_task
     assert window.piezo_init_thread is piezo_thread
+    assert current_task in window._init_tasks
+
+
+def test_worker_finished_does_not_release_task_before_thread_finished(qtbot, monkeypatch):
+    window = _make_main_window(qtbot, monkeypatch)
+    task = TaskRunner(BaseWorker())
+    window._track_init_task(task)
+    finished_spy = QSignalSpy(task.worker.finished)
+    task.worker.finished.emit()
+
+    assert finished_spy.count() == 1
+    assert task in window._init_tasks
+
+    task.thread.finished.emit()
+    assert task not in window._init_tasks
+
+
+def test_registry_removes_only_the_thread_that_finished(qtbot, monkeypatch):
+    window = _make_main_window(qtbot, monkeypatch)
+    first = TaskRunner(BaseWorker())
+    second = TaskRunner(BaseWorker())
+    window._track_init_task(first)
+    window._track_init_task(second)
+
+    first.thread.finished.emit()
+    assert first not in window._init_tasks
+    assert second in window._init_tasks
+
+    second.thread.finished.emit()
+    assert not window._init_tasks
+
+
+def test_hardware_initialization_tasks_are_registered_before_start(qtbot, monkeypatch):
+    config = _config("simulation").model_copy(
+        update={
+            "cameras": {
+                identifier: CameraConfig(
+                    identifier=identifier,
+                    enabled=True,
+                    name=identifier,
+                    backend="simulation",
+                    simulation_width=8,
+                    simulation_height=8,
+                )
+                for identifier in ("camera-one", "camera-two")
+            }
+        }
+    )
+    monkeypatch.setattr(main_window_module.MainWindow, "_begin_lazy_init", lambda _window: None)
+    window = main_window_module.MainWindow(config)
+    qtbot.addWidget(window)
+
+    started_tasks = []
+
+    def assert_registered_before_start(task):
+        assert task in window._init_tasks
+        started_tasks.append(task)
+
+    monkeypatch.setattr(TaskRunner, "start", assert_registered_before_start)
+
+    window._init_ct400_lazy()
+    window._init_piezos_lazy()
+    window._init_cameras_lazy()
+
+    assert len(started_tasks) == 4
+    assert window.ct400_task in started_tasks
+    assert window.piezo_task in started_tasks
+    assert all(task in started_tasks for task in window._init_tasks)
+    camera_tasks = [task for task in started_tasks if task not in {window.ct400_task, window.piezo_task}]
+    assert len(camera_tasks) == 2
+    assert all(task.worker.__class__.__name__ == "CameraInitWorker" for task in camera_tasks)
+
+    for task in list(window._init_tasks):
+        task.thread.finished.emit()
+    assert not window._init_tasks

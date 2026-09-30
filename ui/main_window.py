@@ -22,7 +22,6 @@ import logging
 import sys
 from enum import Enum, auto
 
-import numpy as np
 from PySide6 import QtGui, QtWidgets
 from PySide6.QtCore import QObject, QRunnable, QSize, Qt, QThread, QThreadPool, QTimer, Signal, Slot
 from PySide6.QtGui import QAction, QFont, QIcon
@@ -41,6 +40,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
 from config_model import AppConfig, CameraConfig
 from hardware.ct400_init_worker import CT400InitWorker
 from hardware.dummy_ct400 import DummyCT400
@@ -62,10 +62,10 @@ except ImportError:
 
 from hardware.camera import VIMBA_AVAILABLE, VimbaCam, VmbCameraError, VmbSystem, VmbSystemError
 from hardware.camera_init_worker import CameraInitWorker
-from hardware.simulated_camera import SimulatedCamera
 from hardware.ct400 import CT400
 from hardware.ct400_types import Enable, LaserInput
 from hardware.interfaces import AbstractCT400
+from hardware.simulated_camera import SimulatedCamera
 from ui.camera_widgets import CameraPanel
 from ui.constants import (
     ID_CT400_STATUS_LABEL,
@@ -158,6 +158,7 @@ class MainWindow(QMainWindow):
 
     _ct400_init_task_finished = Signal(object)
     _piezo_init_task_finished = Signal(object)
+    _init_task_thread_finished = Signal(object)
 
     def __init__(self, config: AppConfig, parent=None):
         """Initializes the MainWindow.
@@ -175,7 +176,7 @@ class MainWindow(QMainWindow):
         # --- Member variable initialization ---
         self.cameras: list[VimbaCam] = []
         self.camera_panels: dict[str, CameraPanel] = {}
-        self.camera_tasks = []
+        self._init_tasks: set[TaskRunner] = set()
 
         # --- CT400 and Piezo hardware will be None until workers finish ---
         self.ct400_device: AbstractCT400 | None = None
@@ -184,12 +185,10 @@ class MainWindow(QMainWindow):
 
         # --- CT400 Worker ---
         self.ct400_init_thread: QThread | None = None
-        self.ct400_init_worker: CT400InitWorker | None = None
         self.ct400_task: TaskRunner | None = None
 
         # --- Piezo Worker ---
         self.piezo_init_thread: QThread | None = None
-        self.piezo_init_worker: PiezoInitWorker | None = None
         self.piezo_task: TaskRunner | None = None
 
         self.shared_scan_settings = ScanSettings()
@@ -207,16 +206,13 @@ class MainWindow(QMainWindow):
         self.piezo_connection_succeeded.connect(self._on_piezo_connection_success)
         self.piezo_connection_failed.connect(self._on_piezo_connection_failed)
 
-        # Threading members for asynchronous camera initialization
-        self.camera_init_threads: list[QThread] = []
-        self.camera_init_workers: list[CameraInitWorker] = []
-
         # --- UI and deferred initialization ---
         self._init_ui()
         self._load_defaults_from_config()
         self._connect_signals()
         self._ct400_init_task_finished.connect(self._on_ct400_init_task_finished)
         self._piezo_init_task_finished.connect(self._on_piezo_init_task_finished)
+        self._init_task_thread_finished.connect(self._on_init_task_thread_finished)
 
         # Start slow hardware initializations after the main event loop has started.
         # This ensures the GUI is responsive immediately upon launch.
@@ -378,6 +374,7 @@ class MainWindow(QMainWindow):
         self.ct400_task = task
         self.ct400_init_thread = task.thread
         task.thread.finished.connect(lambda task=task: self._ct400_init_task_finished.emit(task))
+        self._track_init_task(task)
         task.start()
 
     @Slot(object)
@@ -402,7 +399,18 @@ class MainWindow(QMainWindow):
         self.piezo_task = task
         self.piezo_init_thread = task.thread
         task.thread.finished.connect(lambda task=task: self._piezo_init_task_finished.emit(task))
+        self._track_init_task(task)
         task.start()
+
+    def _track_init_task(self, task: TaskRunner):
+        """Own an initialization task until its thread reaches its final boundary."""
+        self._init_tasks.add(task)
+        task.thread.finished.connect(lambda task=task: self._init_task_thread_finished.emit(task))
+
+    @Slot(object)
+    def _on_init_task_thread_finished(self, task):
+        """Release exactly the initialization task whose thread finished."""
+        self._init_tasks.discard(task)
 
     @Slot(object)
     def _on_piezo_init_task_finished(self, task):
@@ -986,16 +994,8 @@ class MainWindow(QMainWindow):
             # Create Runner
             task = TaskRunner(worker)
 
-            # Optional: Remove from list when done to free memory
-            # (This requires a small wrapper or lambda if you want to be perfectly clean)
-            task.worker.finished.connect(lambda t=task: self._cleanup_camera_task(t))
-
-            self.camera_tasks.append(task)
+            self._track_init_task(task)
             task.start()
-
-    def _cleanup_camera_task(self, task):
-        if task in self.camera_tasks:
-            self.camera_tasks.remove(task)
 
     @Slot(str, object, CameraConfig)
     def _on_camera_initialized(self, identifier: str, camera_instance: VimbaCam | None, cam_config: CameraConfig):
@@ -1038,7 +1038,7 @@ class MainWindow(QMainWindow):
             panel.video_label.setText(error_msg)
             panel.video_label.setStyleSheet("background-color: #ffebee; color: #c62828;")
 
-    def _should_initialize_camera(self, identifier: str, cam_config: "CameraConfig") -> bool:
+    def _should_initialize_camera(self, identifier: str, cam_config: CameraConfig) -> bool:
         """Checks if a camera from the config should be initialized."""
         if not cam_config.enabled:
             logger.info(f"Skipping disabled camera: {cam_config.name}")
@@ -1051,7 +1051,7 @@ class MainWindow(QMainWindow):
             return False
         return True
 
-    def _create_and_open_camera(self, cam_config: "CameraConfig") -> VimbaCam | None:
+    def _create_and_open_camera(self, cam_config: CameraConfig) -> VimbaCam | None:
         """Creates a VimbaCam instance and attempts to open it. Returns instance or None."""
         try:
             cam_instance = VimbaCam(
@@ -1084,7 +1084,7 @@ class MainWindow(QMainWindow):
             self.camera_container.layout().addWidget(placeholder)
             return None
 
-    def _create_camera_panel(self, cam_instance: VimbaCam | None, cam_config: "CameraConfig") -> CameraPanel:
+    def _create_camera_panel(self, cam_instance: VimbaCam | None, cam_config: CameraConfig) -> CameraPanel:
         title = f"{cam_config.name} [SIMULATED]" if cam_config.backend == "simulation" else cam_config.name
         panel = CameraPanel(
             cam_instance,
@@ -1207,17 +1207,6 @@ class MainWindow(QMainWindow):
     def _cleanup_cameras(self):
         logger.info(f"Closing {len(self.cameras)} camera(s)...")
 
-        # Stop any camera initialization threads that might still be running.
-        # Iterate over a copy as the list might be modified by the thread's finished signal.
-        threads_to_stop = list(self.camera_init_threads)
-        for thread in threads_to_stop:
-            if thread.isRunning():
-                logger.warning("Force-quitting an incomplete camera init thread during shutdown.")
-                thread.quit()
-                thread.wait(500)  # Give it a moment to quit
-        self.camera_init_threads.clear()
-        self.camera_init_workers.clear()
-
         # Disconnect menu actions
         if hasattr(self, "cameras_menu") and self.cameras_menu is not None:
             for cam_id in list(self.camera_control_actions.keys()):
@@ -1277,7 +1266,9 @@ class MainWindow(QMainWindow):
                 self,
                 "Laser Disable Not Confirmed",
                 f"Laser disable could not be confirmed for configured input {laser_input.name}.\n\n"
-                f"The application will continue resource cleanup. CT400 native resource close is a separate operation.\n\n{exc}",
+                "The application will continue resource cleanup. CT400 native resource close is a separate "
+                "operation.\n\n"
+                f"{exc}",
             )
             return False
 
@@ -1348,12 +1339,8 @@ class MainWindow(QMainWindow):
                 logger.debug(f"{name} was already deleted/finished. Skipping stop.")
 
         # 1. Stop background initialization threads
-        if self.ct400_init_worker:
-            self.ct400_init_worker.stop()
         safe_stop_thread(self.ct400_init_thread, "CT400 Init Thread")
 
-        if self.piezo_init_worker:
-            self.piezo_init_worker.stop()  # Ensure we flag the worker to stop loops
         safe_stop_thread(self.piezo_init_thread, "Piezo Init Thread")
 
         # Cleanup long-running panel workers
