@@ -20,6 +20,10 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
+class ConfigSemanticError(ValueError):
+    """Raised when parsed INI structure would silently lose user intent."""
+
+
 class LoggingConfig(BaseModel):
     """Configuration for the application's logging behavior."""
 
@@ -164,9 +168,14 @@ class AppConfig(BaseModel):
             A fully validated AppConfig instance.
 
         Raises:
+            ConfigSemanticError: If the parsed INI has no sections or contains
+                an unrecognized top-level section or invalid camera structure.
             pydantic.ValidationError: If the provided configuration data
                 does not conform to the model schema.
         """
+        if not config_dict:
+            raise ConfigSemanticError("The parsed configuration contains no sections.")
+
         init_data = {}
         cameras_data = {}
 
@@ -194,18 +203,23 @@ class AppConfig(BaseModel):
                     found_field = True
                     break
             if not found_field:
-                # You can log a warning here for unrecognized sections if you wish
-                pass
+                raise ConfigSemanticError(f"Unrecognized configuration section '{section_name}'.")
 
         # Second, specifically parse the camera sections
+        camera_identifier_sections = {}
         for section_name, section_data in config_dict.items():
             if section_name.lower().startswith("camera:"):
                 identifier = section_data.get("identifier")
-                if not identifier:
-                    # In a real app, you would log this warning
-                    print(f"Warning: Skipping camera section '{section_name}': missing 'identifier' field.")
-                    continue
+                if not isinstance(identifier, str) or not identifier.strip():
+                    raise ConfigSemanticError(f"Camera section '{section_name}' must provide a non-empty 'identifier'.")
+                if identifier in camera_identifier_sections:
+                    previous_section = camera_identifier_sections[identifier]
+                    raise ConfigSemanticError(
+                        f"Duplicate camera identifier '{identifier}' in sections "
+                        f"'{previous_section}' and '{section_name}'."
+                    )
                 # The dictionary key for `AppConfig.cameras` is the identifier.
+                camera_identifier_sections[identifier] = section_name
                 cameras_data[identifier] = CameraConfig(**section_data)
 
         init_data["cameras"] = cameras_data
