@@ -1,8 +1,12 @@
+from datetime import datetime, timezone
+
 import numpy as np
 import pytest
 
-from ui.control_panel import ScanSettings
+from hardware.ct400_types import CT400ScanResultKind, Detector, LaserInput
+from logic.scan_measurement import ScanAcquisitionSettings, ScanMeasurement
 from ui import plot_widgets
+from ui.control_panel import ScanSettings
 from ui.plot_widgets import PlotWidget, derive_scan_export_targets
 
 
@@ -77,10 +81,90 @@ def test_derive_scan_export_targets_preserves_logical_stem(selected, expected_st
 def _prepare_export_widget(qtbot):
     widget = PlotWidget(ScanSettings())
     qtbot.addWidget(widget)
-    widget.current_wavelengths = np.array([1510.0, 1520.0])
-    widget.current_powers = np.array([-20.0, -21.0])
-    widget.current_output_power = None
+    settings = ScanAcquisitionSettings(1510.0, 1520.0, 25, "7", "3", "dBm", 1.9952623149688795,
+                                       LaserInput.LI_2, (Detector.DE_1,))
+    measurement = ScanMeasurement(settings, np.array([1510.0, 1520.0]), np.array([[-20.0, -21.0]]),
+                                  (Detector.DE_1,), None, CT400ScanResultKind.SUCCESS, 0, "",
+                                  "hardware.dummy_ct400.DummyCT400", True, datetime.now(timezone.utc))
+    widget.set_measurement(measurement)
     return widget
+
+
+def _measurement(wavelengths, detector_data):
+    settings = ScanAcquisitionSettings(1510.0, 1520.0, 25, "7", "3", "dBm", 1.9952623149688795,
+                                      LaserInput.LI_2, (Detector.DE_1,))
+    return ScanMeasurement(settings, np.asarray(wavelengths), np.asarray(detector_data), (Detector.DE_1,), None,
+                           CT400ScanResultKind.SUCCESS, 0, "", "hardware.dummy_ct400.DummyCT400", True,
+                           datetime.now(timezone.utc))
+
+
+def test_rejected_mismatched_measurement_cannot_be_exported(qtbot, monkeypatch):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    accepted = _measurement([1510, 1515, 1520], [[-20, -21, -22]])
+    widget.set_measurement(accepted)
+    assert widget.current_measurement is accepted
+    assert widget.save_btn.isEnabled()
+
+    rejected = _measurement([1510, 1515, 1520], [[-30, -31]])
+    assert not widget.set_measurement(rejected)
+
+    assert widget.current_measurement is None
+    assert not widget.save_btn.isEnabled()
+    monkeypatch.setattr(plot_widgets.QMessageBox, "warning", lambda *_args: None)
+    monkeypatch.setattr(plot_widgets.QFileDialog, "getSaveFileName", lambda *_args: pytest.fail("rejected scan exported"))
+    widget.save_scan_data()
+
+
+def test_rejected_measurement_without_detector_rows_cannot_be_exported(qtbot):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    accepted = _measurement([1510, 1515, 1520], [[-20, -21, -22]])
+    widget.set_measurement(accepted)
+    assert widget.save_btn.isEnabled()
+
+    rejected = _measurement([1510, 1515, 1520], np.empty((0, 3)))
+    with pytest.raises(ValueError, match="Unexpected detector data shape"):
+        widget.set_measurement(rejected)
+
+    assert widget.current_measurement is None
+    assert not widget.save_btn.isEnabled()
+
+
+def test_export_metadata_comes_from_completed_measurement_after_ui_edits(qtbot, monkeypatch, tmp_path):
+    widget = _prepare_export_widget(qtbot)
+    # Reproduce the old bug: shared UI state changes after the plot was populated.
+    widget.shared_settings.resolution = "900"
+    widget.shared_settings.motor_speed = "99"
+    widget.shared_settings.laser_power = "42"
+    widget.shared_settings.power_unit = "mW"
+    path = tmp_path / "snapshot.csv"
+    _stub_save_dialog(monkeypatch, path)
+    monkeypatch.setattr(plot_widgets.QMessageBox, "information", lambda *_args: None)
+    monkeypatch.setattr(plot_widgets.QMessageBox, "warning", lambda *_args: None)
+
+    widget.save_scan_data()
+
+    csv_text = path.read_text(encoding="utf-8")
+    assert "# Resolution(pm): 25" in csv_text
+    assert "# Speed(nm/s): 7" in csv_text
+    assert "# LaserPower: 3 dBm" in csv_text
+    assert "# Input: LI_2" in csv_text
+
+
+def test_measurement_owns_read_only_array_copies():
+    settings = ScanAcquisitionSettings(1, 2, 10, "1", "1", "mW", 1, LaserInput.LI_1, (Detector.DE_1,))
+    wavelengths = np.array([1.0, 2.0])
+    powers = np.array([[-3.0, -4.0]])
+    measurement = ScanMeasurement(settings, wavelengths, powers, (Detector.DE_1,), None,
+                                  CT400ScanResultKind.SUCCESS, 0, "", "test.Backend", False,
+                                  datetime.now(timezone.utc))
+    wavelengths[0] = 99
+    powers[0, 0] = 99
+    np.testing.assert_array_equal(measurement.wavelengths_nm, [1, 2])
+    np.testing.assert_array_equal(measurement.detector_data, [[-3, -4]])
+    with pytest.raises(ValueError):
+        measurement.detector_data[0, 0] = 0
 
 
 def _stub_save_dialog(monkeypatch, path):

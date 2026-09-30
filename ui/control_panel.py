@@ -1,6 +1,7 @@
 import logging
 import threading
 from abc import ABC, ABCMeta, abstractmethod
+from datetime import datetime, timezone
 
 import numpy as np
 from PySide6 import QtCore, QtGui
@@ -33,6 +34,7 @@ from PySide6.QtWidgets import (
 
 from config_model import AppConfig
 from hardware.ct400 import CT400Error
+from hardware.dummy_ct400 import DummyCT400
 from hardware.ct400_types import (
     CT400ScanResultKind,
     Detector,
@@ -43,6 +45,7 @@ from hardware.ct400_types import (
     PowerData,
 )
 from hardware.interfaces import AbstractCT400
+from logic.scan_measurement import ScanAcquisitionSettings, ScanMeasurement
 from ui.constants import (
     ID_CT400_MONITOR_PANEL,
     ID_CT400_SCAN_PANEL,
@@ -168,6 +171,7 @@ class ScanWorker(QtCore.QObject):
     _LASER_COMMAND_DELAY_MS = 150
 
     completed_signal = QtCore.Signal(np.ndarray, np.ndarray, float)
+    measurement_ready = QtCore.Signal(object)
     progress_signal = QtCore.Signal(int)
     # The error signal now emits a structured error object
     error_signal = QtCore.Signal(InstrumentError)
@@ -186,6 +190,7 @@ class ScanWorker(QtCore.QObject):
         disable_wl: float = 1550.0,
         disable_power: float = 1.0,
         parent: QtCore.QObject | None = None,
+        acquisition_settings: ScanAcquisitionSettings | None = None,
     ):
         super().__init__(parent)
         if ct400 is None:
@@ -196,6 +201,9 @@ class ScanWorker(QtCore.QObject):
         self.resolution = resolution
         self.laser_power = laser_power
         self.input_port = input_port
+        self.acquisition_settings = acquisition_settings or ScanAcquisitionSettings(
+            start_wl, end_wl, resolution, "N/A", "N/A", "", laser_power, input_port, (Detector.DE_1,)
+        )
         self.disable_wl = disable_wl
         self.disable_power = disable_power
         self._state_lock = threading.Lock()
@@ -346,6 +354,20 @@ class ScanWorker(QtCore.QObject):
                 final_pout = getattr(final_power_reading, "pout", None)
             except Exception as e:
                 logger.warning(f"ScanWorker: Could not get final Pout: {e}")
+            measurement = ScanMeasurement(
+                settings=self.acquisition_settings,
+                wavelengths_nm=wavelengths,
+                detector_data=powers_scan_data,
+                detectors=(Detector.DE_1,),
+                final_pout=final_pout,
+                result_kind=kind,
+                raw_result_code=raw_code,
+                result_message=error_msg,
+                backend=f"{type(self.ct400).__module__}.{type(self.ct400).__qualname__}",
+                simulated=isinstance(self.ct400, DummyCT400),
+                completed_at_utc=datetime.now(timezone.utc),
+            )
+            self.measurement_ready.emit(measurement)
             self.completed_signal.emit(wavelengths, powers_scan_data, final_pout)
         except CT400Error as e:
             logger.error(f"ScanWorker: CT400 Error: {e}")
@@ -605,7 +627,7 @@ class BaseControlPanel(QWidget, ABC, metaclass=QABCMeta):
 # CT400ControlPanel
 ###############################################################################
 class CT400ControlPanel(BaseControlPanel):
-    scan_data_ready = QtCore.Signal(np.ndarray, np.ndarray, float)
+    scan_data_ready = QtCore.Signal(object)
     scan_warning = QtCore.Signal(str)
     progress_updated = QtCore.Signal(int)
     operation_started = QtCore.Signal()
@@ -767,6 +789,18 @@ class CT400ControlPanel(BaseControlPanel):
             if start_wl >= end_wl or resolution <= 0:
                 raise ValueError("Invalid scan parameters.")
 
+            acquisition_settings = ScanAcquisitionSettings(
+                requested_start_wavelength_nm=start_wl,
+                requested_end_wavelength_nm=end_wl,
+                requested_resolution_pm=resolution,
+                requested_speed_nm_s=self.motor_speed.text(),
+                entered_laser_power=self.laser_power.text(),
+                entered_laser_power_unit=self.power_unit.currentText(),
+                laser_power_mw=laser_power_mw,
+                laser_input=input_port_enum,
+                detectors=(Detector.DE_1,),
+            )
+
             self.scanning = True
             self.operation_started.emit()
             operation_claimed = True
@@ -788,6 +822,7 @@ class CT400ControlPanel(BaseControlPanel):
                 resolution,
                 laser_power_mw,
                 input_port_enum,
+                acquisition_settings=acquisition_settings,
                 disable_wl=self.config.scan_defaults.safe_parking_wavelength,
                 disable_power=self.config.scan_defaults.laser_power,
             )
@@ -796,7 +831,7 @@ class CT400ControlPanel(BaseControlPanel):
             # Connect signals
             self.scan_thread.started.connect(self.scan_worker.do_scan)
             self.scan_worker.progress_signal.connect(self.progress_updated)
-            self.scan_worker.completed_signal.connect(self._handle_scan_completed)
+            self.scan_worker.measurement_ready.connect(self._handle_scan_completed)
             self.scan_worker.error_signal.connect(self._handle_scan_error)
             self.scan_worker.warning_signal.connect(self._handle_scan_warning)
             self.scan_worker.stop_failed_signal.connect(self._handle_stop_failed)
@@ -862,16 +897,10 @@ class CT400ControlPanel(BaseControlPanel):
         if self.progress_bar.isVisible():
             self.progress_bar.setValue(value)
 
-    @Slot(np.ndarray, np.ndarray, float)
-    def _handle_scan_completed(self, wavelengths: np.ndarray, powers_scan_data: np.ndarray, final_pout: float):
+    @Slot(object)
+    def _handle_scan_completed(self, measurement: ScanMeasurement):
         logger.info("ScanPanel: Scan completed signal received.")
-        plotting_power_data = np.array([])
-        try:
-            if hasattr(powers_scan_data, "shape") and powers_scan_data.shape[0] > 0:
-                plotting_power_data = powers_scan_data[0]
-        except Exception as e:
-            logger.error(f"Error extracting plotting data: {e}")
-        self.scan_data_ready.emit(wavelengths, plotting_power_data, final_pout)
+        self.scan_data_ready.emit(measurement)
 
     # This slot is connected to the thread's finished signal
     @Slot()

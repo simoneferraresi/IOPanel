@@ -35,6 +35,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from logic.scan_measurement import ScanMeasurement
+
 try:
     import matlab.engine
 
@@ -741,6 +743,7 @@ class PlotWidget(QWidget):
         self.current_wavelengths: np.ndarray | None = None
         self.current_powers: np.ndarray | None = None
         self.current_output_power: float | None = None
+        self.current_measurement: ScanMeasurement | None = None
 
         # --- Worker Thread Setup for MATLAB Saving ---
         # We'll create the thread and worker on-demand when saving to .fig
@@ -970,7 +973,10 @@ class PlotWidget(QWidget):
                 self.is_matlab_engine_starting = False
 
     @Slot(np.ndarray, np.ndarray, float)
-    def update_plot(self, x_data: np.ndarray, y_data: np.ndarray, output_power: float | None = None):
+    def update_plot(self, x_data: np.ndarray, y_data: np.ndarray, output_power: float | None = None) -> bool:
+        # Array-only updates are useful for previews and older callers, but are
+        # not exportable as a completed acquisition without its snapshot.
+        self.current_measurement = None
         try:
             x_data_np = x_data
             y_data_np = y_data
@@ -1008,7 +1014,7 @@ class PlotWidget(QWidget):
                 self.plot_data_item.setData([], [])
                 self.plot_widget.setTitle("Invalid Scan Data", color="red", size="11pt")
                 self.save_btn.setEnabled(False)
-                return
+                return False
 
             logger.debug(f"Updating plot. Points: {len(x_data_np)}. Pout: {output_power}")
             self.current_wavelengths = x_data_np
@@ -1043,13 +1049,32 @@ class PlotWidget(QWidget):
             else:
                 self.plot_widget.setTitle("Wavelength Scan", color="black", size="11pt")
 
-            self.save_btn.setEnabled(True)
+            self.save_btn.setEnabled(self.current_measurement is not None)
             self.freeze_btn.setEnabled(True)
+            return True
         except Exception as e:
             logger.error(f"Error updating plot: {e}", exc_info=True)
             self.plot_widget.setTitle("Error Updating Plot", color="red", size="11pt")
             self.save_btn.setEnabled(False)
             self.freeze_btn.setEnabled(False)
+            return False
+
+    def set_measurement(self, measurement: ScanMeasurement) -> bool:
+        """Display and retain one completed acquisition for subsequent export."""
+        self.current_measurement = None
+        self.save_btn.setEnabled(False)
+        detector_data = measurement.detector_data
+        if detector_data.ndim == 1:
+            trace = detector_data
+        elif detector_data.ndim == 2 and detector_data.shape[0] > 0:
+            trace = detector_data[0]
+        else:
+            raise ValueError(f"Unexpected detector data shape: {detector_data.shape}")
+        if not self.update_plot(measurement.wavelengths_nm, trace, measurement.final_pout):
+            return False
+        self.current_measurement = measurement
+        self.save_btn.setEnabled(True)
+        return True
 
     @Slot()
     def clear_plot(self):
@@ -1062,6 +1087,7 @@ class PlotWidget(QWidget):
         self.current_wavelengths = None
         self.current_powers = None
         self.current_output_power = None
+        self.current_measurement = None
 
         # 3. Reset UI state
         self.plot_widget.setTitle("Wavelength Scan (Cleared)", color="black", size="11pt")
@@ -1087,7 +1113,8 @@ class PlotWidget(QWidget):
 
     @Slot()
     def save_scan_data(self):
-        if self.current_wavelengths is None or self.current_powers is None:
+        measurement = self.current_measurement
+        if measurement is None or self.current_wavelengths is None or self.current_powers is None:
             QMessageBox.warning(self, "No Data", "No scan data available to save.")
             return
 
@@ -1096,11 +1123,9 @@ class PlotWidget(QWidget):
         self.matlab_status_label.setText("")  # Clear previous status
 
         # Retrieve data (already stored in self.current_wavelengths etc.)
-        wavelengths, powers, pout = (
-            self.current_wavelengths,
-            self.current_powers,
-            self.current_output_power,
-        )
+        wavelengths = measurement.wavelengths_nm
+        powers = measurement.detector_data[0] if measurement.detector_data.ndim == 2 else measurement.detector_data
+        pout = measurement.final_pout
         logger.info(f"Saving scan data. Points: {len(wavelengths)}. Pout: {pout}")
 
         if pout is not None:
@@ -1110,11 +1135,14 @@ class PlotWidget(QWidget):
             data_to_save = np.column_stack((wavelengths, powers))
             column_headers = "WL_[nm], Power_Det1_[dB]"
         try:
-            resolution = getattr(self.shared_settings, "resolution", "N/A")
-            motor_speed = getattr(self.shared_settings, "motor_speed", "N/A")
-            laser_power = getattr(self.shared_settings, "laser_power", "N/A")
-            power_unit = getattr(self.shared_settings, "power_unit", "N/A")
+            settings = measurement.settings
+            resolution = settings.requested_resolution_pm
+            motor_speed = settings.requested_speed_nm_s
+            laser_power = settings.entered_laser_power
+            power_unit = settings.entered_laser_power_unit
+            input_port = settings.laser_input.name
             extra_comments = f"# Resolution(pm): {resolution}\n# Speed(nm/s): {motor_speed}\n# LaserPower: {laser_power} {power_unit}\n"
+            extra_comments += f"# Input: {input_port}\n"
             if pout is not None:
                 extra_comments += f"# Pout(dBm): {pout:.3f}\n"
             header_text = extra_comments + "# " + column_headers
@@ -1199,6 +1227,7 @@ class PlotWidget(QWidget):
         # --- Save MAT (Synchronous) ---
         try:
             mat_path = targets["MAT"]
+            # Legacy speed_nms is the frozen UI request, not a hardware readback.
             mat_data = {
                 "wl_nm": wavelengths,
                 "pow_dBm": powers,

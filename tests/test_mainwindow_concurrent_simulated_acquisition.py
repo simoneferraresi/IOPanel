@@ -11,7 +11,7 @@ from config_model import AppConfig
 from hardware import camera_init_worker, ct400_init_worker
 from hardware.dummy_ct400 import DummyCT400
 from hardware.ct400 import CT400
-from hardware.ct400_types import Enable, LaserInput
+from hardware.ct400_types import Detector, Enable, LaserInput
 from hardware.alignment_worker import AlignmentSettings, MappingSettings, SpiralSearchSettings
 from hardware.simulated_camera import SimulatedCamera
 from ui import control_panel as control_panel_module
@@ -558,7 +558,23 @@ def test_mainwindow_scan_updates_real_plot_while_camera_frames_continue(qtbot, m
         assert "SIMULATED" in window.ct400_status_label.text()
         assert "[SIMULATED]" in camera_panel.title_label.text()
 
+        control.motor_speed.setText("7")
+        control.laser_power.setText("3")
+        control.power_unit.setCurrentText("dBm")
+        set_scan_calls = []
+        original_set_scan = dummy.set_scan
+
+        def record_set_scan(*args):
+            set_scan_calls.append(args)
+            original_set_scan(*args)
+
+        dummy.set_scan = record_set_scan
         _start_scan_during_stream(qtbot, window, frame_spy)
+        # Edits made while the acquisition is in progress belong to the next request.
+        control.resolution.setText("999")
+        control.motor_speed.setText("99")
+        control.laser_power.setText("42")
+        control.power_unit.setCurrentText("mW")
         assert not dialog_messages
         assert dummy._is_scanning
         assert np.isclose(dummy._scan_min_wavelength, 1550.0)
@@ -571,6 +587,20 @@ def test_mainwindow_scan_updates_real_plot_while_camera_frames_continue(qtbot, m
         qtbot.waitUntil(lambda: not control.scanning, timeout=3000)
         assert control.scan_btn.property("scanning") is False
         qtbot.waitUntil(lambda: _qt_thread_stopped(scan_thread), timeout=1500)
+
+        measurement = window.plot_widget.current_measurement
+        assert measurement is not None
+        assert measurement.settings.requested_start_wavelength_nm == 1550.0
+        assert measurement.settings.requested_end_wavelength_nm == 1550.004
+        assert measurement.settings.requested_resolution_pm == 1
+        assert measurement.settings.requested_speed_nm_s == "7"
+        assert measurement.settings.entered_laser_power == "3"
+        assert measurement.settings.entered_laser_power_unit == "dBm"
+        assert measurement.settings.laser_power_mw == pytest.approx(10 ** 0.3)
+        assert set_scan_calls[0][0] == pytest.approx(10 ** 0.3)
+        assert measurement.detectors == (Detector.DE_1,)
+        assert measurement.detector_unit is None
+        assert measurement.simulated is True
 
         expected_wavelengths = 1550.0 + np.arange(5) * 0.001
         expected_center = 1550.002
