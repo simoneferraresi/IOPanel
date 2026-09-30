@@ -156,6 +156,9 @@ class MainWindow(QMainWindow):
             which could be a real or dummy implementation.
     """
 
+    _ct400_init_task_finished = Signal(object)
+    _piezo_init_task_finished = Signal(object)
+
     def __init__(self, config: AppConfig, parent=None):
         """Initializes the MainWindow.
 
@@ -182,10 +185,12 @@ class MainWindow(QMainWindow):
         # --- CT400 Worker ---
         self.ct400_init_thread: QThread | None = None
         self.ct400_init_worker: CT400InitWorker | None = None
+        self.ct400_task: TaskRunner | None = None
 
         # --- Piezo Worker ---
         self.piezo_init_thread: QThread | None = None
         self.piezo_init_worker: PiezoInitWorker | None = None
+        self.piezo_task: TaskRunner | None = None
 
         self.shared_scan_settings = ScanSettings()
         self.vmb_instance: VmbSystem | None = None
@@ -210,6 +215,8 @@ class MainWindow(QMainWindow):
         self._init_ui()
         self._load_defaults_from_config()
         self._connect_signals()
+        self._ct400_init_task_finished.connect(self._on_ct400_init_task_finished)
+        self._piezo_init_task_finished.connect(self._on_piezo_init_task_finished)
 
         # Start slow hardware initializations after the main event loop has started.
         # This ensures the GUI is responsive immediately upon launch.
@@ -366,12 +373,19 @@ class MainWindow(QMainWindow):
         worker.ct400_initialized.connect(self._on_ct400_initialized)
         worker.status_updated.connect(self._on_ct400_status_updated)
 
-        # 3. Wrap in TaskRunner and Start
-        # We keep a reference to 'self.ct400_task' so it doesn't get garbage collected immediately
-        self.ct400_task = TaskRunner(worker)
-        self.ct400_task.start()
-        # --- NEW: Expose the thread for isRunning() checks ---
-        self.ct400_init_thread = self.ct400_task.thread
+        # TaskRunner owns the worker and thread for this one-shot operation.
+        task = TaskRunner(worker)
+        self.ct400_task = task
+        self.ct400_init_thread = task.thread
+        task.thread.finished.connect(lambda task=task: self._ct400_init_task_finished.emit(task))
+        task.start()
+
+    @Slot(object)
+    def _on_ct400_init_task_finished(self, task):
+        """Clear only the CT400 task whose thread just finished."""
+        if self.ct400_task is task:
+            self.ct400_task = None
+            self.ct400_init_thread = None
 
     def _init_piezos_lazy(self):
         """Initializes the Piezo controllers on a background thread."""
@@ -383,11 +397,19 @@ class MainWindow(QMainWindow):
         worker.piezos_initialized.connect(self._on_piezos_initialized)
         worker.initialization_failed.connect(self._on_piezo_init_failed)
 
-        # TaskRunner handles thread creation, starting, and cleanup
-        self.piezo_task = TaskRunner(worker)
-        self.piezo_task.start()
-        # --- NEW: Expose the thread for isRunning() checks ---
-        self.piezo_init_thread = self.piezo_task.thread
+        # TaskRunner owns the worker and thread for this one-shot operation.
+        task = TaskRunner(worker)
+        self.piezo_task = task
+        self.piezo_init_thread = task.thread
+        task.thread.finished.connect(lambda task=task: self._piezo_init_task_finished.emit(task))
+        task.start()
+
+    @Slot(object)
+    def _on_piezo_init_task_finished(self, task):
+        """Clear only the piezo task whose thread just finished."""
+        if self.piezo_task is task:
+            self.piezo_task = None
+            self.piezo_init_thread = None
 
     def _start_vimbasystem(self):
         """Initializes and enters the main VimbaSystem context.
@@ -724,12 +746,10 @@ class MainWindow(QMainWindow):
 
         # 1. Refresh Piezos
         # We always try to find piezos if requested, unless a scan is already running.
-        if self.piezo_init_thread and self.piezo_init_thread.isRunning():
+        piezo_task = self.piezo_task
+        if piezo_task is not None and piezo_task.thread.isRunning():
             logger.info("Piezo discovery already running. Skipping.")
         else:
-            # Clean up old task reference if it exists
-            if hasattr(self, "piezo_task"):
-                self.piezo_task = None
             self._init_piezos_lazy()
 
         # 2. Refresh CT400
@@ -739,15 +759,13 @@ class MainWindow(QMainWindow):
         is_none = self.ct400_device is None
 
         if is_dummy or is_none:
-            if self.ct400_init_thread and self.ct400_init_thread.isRunning():
+            ct400_task = self.ct400_task
+            if ct400_task is not None and ct400_task.thread.isRunning():
                 logger.info("CT400 init already running. Skipping.")
             else:
                 logger.info("Current CT400 is Dummy/None. Re-scanning for real hardware...")
                 self._update_ct400_visuals(state=CT400Status.UNKNOWN, message="Searching for CT400...")
 
-                # Clean up old task reference
-                if hasattr(self, "ct400_task"):
-                    self.ct400_task = None
                 self._init_ct400_lazy()
         else:
             logger.info("CT400 is already connected to real hardware. Skipping refresh.")
