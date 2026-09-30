@@ -429,7 +429,8 @@ def test_alignment_modes_own_ct400_until_post_cleanup(qtbot, monkeypatch, tmp_pa
         cleanup_events = [event for event in events if event[0] == "cleanup-complete"]
         assert cleanup_events == [("cleanup-complete", True)]
         assert event_names.index("laser-disable") < event_names.index("ownership-idle")
-        assert events[-1] == ("ownership-idle", "IDLE")
+        ownership_events = [event for event in events if event[0] == "ownership-idle"]
+        assert ownership_events == [("ownership-idle", "IDLE")]
     finally:
         release.set()
         if window.isVisible():
