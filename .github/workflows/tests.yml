@@ -9,6 +9,7 @@ on:
 jobs:
   hardware-independent:
     runs-on: windows-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -16,4 +17,4 @@ jobs:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --extra test
-      - run: uv run pytest -q
+      - run: uv run pytest -vv -o faulthandler_timeout=90
