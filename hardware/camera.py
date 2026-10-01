@@ -8,7 +8,8 @@ from dataclasses import dataclass
 from typing import Any, TypeAlias
 
 import numpy as np
-from PySide6.QtCore import QMutex, QMutexLocker, QObject, QThread, Signal, Slot
+from PySide6.QtCore import QMutex, QMutexLocker, QObject, Signal
+
 try:
     from vmbpy import (
         COLOR_PIXEL_FORMATS,
@@ -47,6 +48,7 @@ except Exception as exc:
 
     class VmbSystemError(Exception):
         """Fallback exception name used when the optional Vimba binding is absent."""
+
 
 logger = logging.getLogger("LabApp.camera")
 
@@ -141,7 +143,7 @@ class VimbaCam(QObject):
     """
 
     _DEFAULT_STREAM_BUFFER_COUNT = 5
-    _RECOVERY_DELAY_MS = 500
+    _RECOVERY_DELAY_SECONDS = 0.5
 
     new_frame = Signal(np.ndarray)
     fps_updated = Signal(float)
@@ -345,23 +347,18 @@ class VimbaCam(QObject):
         self.frame_buffer.clear()
         logger.info(f"Close sequence finished for camera: {self.camera_name}")
 
-    @Slot()
-    def attempt_recovery(self):
-        """Attempts to close and reopen the camera. Public slot for recovery mechanisms."""
+    def recover_once(self) -> bool:
+        """Blocking close/reopen primitive for a dedicated recovery worker."""
         logger.warning(f"Executing recovery attempt for {self.camera_name}...")
         self.close()
-        # Use QThread.msleep() for a non-blocking delay
-        QThread.msleep(self._RECOVERY_DELAY_MS)
+        time.sleep(self._RECOVERY_DELAY_SECONDS)
 
-        # After closing, _is_closing is True. We must reset it before opening again.
-        # The open() method handles this, so we just need to call it.
-        if self.open():
+        success = self.open()
+        if success:
             logger.info(f"Recovery successful for {self.camera_name}.")
-            # Use a more descriptive message for the user
-            self.error.emit(f"Connection to '{self.camera_name}' restored.")
         else:
             logger.error(f"Recovery failed for {self.camera_name}.")
-            self.error.emit(f"Failed to reconnect '{self.camera_name}'.")
+        return success
 
     def _open_device_internal(self) -> bool:
         """Internal: Opens device. Assumes VimbaSystem is ACTIVE."""

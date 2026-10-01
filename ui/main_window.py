@@ -62,6 +62,7 @@ except ImportError:
 
 from hardware.camera import VIMBA_AVAILABLE, VimbaCam, VmbCameraError, VmbSystem, VmbSystemError
 from hardware.camera_init_worker import CameraInitWorker
+from hardware.camera_recovery_worker import CameraRecoveryWorker
 from hardware.ct400 import CT400
 from hardware.ct400_types import Enable, LaserInput
 from hardware.interfaces import AbstractCT400
@@ -159,6 +160,7 @@ class MainWindow(QMainWindow):
     _ct400_init_task_finished = Signal(object)
     _piezo_init_task_finished = Signal(object)
     _init_task_thread_finished = Signal(object)
+    _camera_recovery_thread_finished = Signal(str, object)
 
     def __init__(self, config: AppConfig, parent=None):
         """Initializes the MainWindow.
@@ -177,6 +179,7 @@ class MainWindow(QMainWindow):
         self.cameras: list[VimbaCam] = []
         self.camera_panels: dict[str, CameraPanel] = {}
         self._init_tasks: set[TaskRunner] = set()
+        self._camera_recovery_tasks: dict[str, TaskRunner] = {}
 
         # --- CT400 and Piezo hardware will be None until workers finish ---
         self.ct400_device: AbstractCT400 | None = None
@@ -196,6 +199,7 @@ class MainWindow(QMainWindow):
         self._ct400_operation_state = CT400OperationState.IDLE
         self._pending_ct400_operation_close: bool = False
         self._pending_init_close: bool = False
+        self._pending_camera_lifecycle_close: bool = False
         self._pending_piezo_operation_close: bool = False
         self._piezo_operations_in_flight: set[str] = set()
         self._ct400_error_reset_timer = QTimer(self)
@@ -214,6 +218,7 @@ class MainWindow(QMainWindow):
         self._ct400_init_task_finished.connect(self._on_ct400_init_task_finished)
         self._piezo_init_task_finished.connect(self._on_piezo_init_task_finished)
         self._init_task_thread_finished.connect(self._on_init_task_thread_finished)
+        self._camera_recovery_thread_finished.connect(self._on_camera_recovery_thread_finished)
 
         # Start slow hardware initializations after the main event loop has started.
         # This ensures the GUI is responsive immediately upon launch.
@@ -1103,7 +1108,7 @@ class MainWindow(QMainWindow):
             panel.set_camera(camera_instance)
             self._connect_camera_signals(camera_instance, panel)
             self._create_camera_menu_action(camera_instance, panel)
-            panel.watchdog_timer.start()
+            panel._arm_watchdog()
 
             panel.video_label.setText(MSG_CAMERA_WAITING)
         else:
@@ -1185,6 +1190,60 @@ class MainWindow(QMainWindow):
 
         cam_instance.fps_updated.connect(panel.update_fps)
         cam_instance.error.connect(panel._handle_camera_error_message)
+        panel.recovery_requested.connect(self._request_camera_recovery)
+        panel.auto_operation_finished.connect(self._on_camera_auto_operation_finished)
+
+    @Slot(str)
+    def _request_camera_recovery(self, identifier: str):
+        """Own at most one recovery TaskRunner per camera identifier."""
+        if identifier in self._camera_recovery_tasks or self._pending_camera_lifecycle_close:
+            return
+        camera = next((candidate for candidate in self.cameras if candidate.identifier == identifier), None)
+        panel = self.camera_panels.get(identifier)
+        if camera is None or panel is None:
+            return
+
+        worker = CameraRecoveryWorker(camera, identifier)
+        task = TaskRunner(worker)
+        self._camera_recovery_tasks[identifier] = task
+        worker.task = task
+        worker.recovery_finished.connect(self._on_camera_recovery_result)
+        task.thread.finished.connect(
+            lambda camera_id=identifier, task=task: self._camera_recovery_thread_finished.emit(camera_id, task)
+        )
+        task.start()
+
+    @Slot(str, bool, str, object)
+    def _on_camera_recovery_result(self, identifier: str, success: bool, message: str, task: TaskRunner):
+        current_task = self._camera_recovery_tasks.get(identifier)
+        if current_task is not None and current_task is not task:
+            return
+        panel = self.camera_panels.get(identifier)
+        if panel is None:
+            return
+        if success:
+            panel.recovery_succeeded()
+        else:
+            panel.recovery_failed(message)
+
+    def _on_camera_recovery_thread_finished(self, identifier: str, task: TaskRunner):
+        """Release ownership only at the exact QThread.finished boundary."""
+        if self._camera_recovery_tasks.get(identifier) is task:
+            del self._camera_recovery_tasks[identifier]
+        self._resume_close_after_camera_lifecycle_if_ready()
+
+    @Slot()
+    def _on_camera_auto_operation_finished(self):
+        self._resume_close_after_camera_lifecycle_if_ready()
+
+    def _camera_lifecycle_busy(self) -> bool:
+        return bool(self._camera_recovery_tasks) or any(
+            panel.auto_operation_active for panel in self.camera_panels.values()
+        )
+
+    def _resume_close_after_camera_lifecycle_if_ready(self):
+        if self._pending_camera_lifecycle_close and not self._camera_lifecycle_busy():
+            QTimer.singleShot(0, self.close)
 
     def _create_camera_menu_action(self, cam_instance: VimbaCam, panel: CameraPanel):
         """Creates and registers a menu action to control the camera panel's visibility."""
@@ -1371,6 +1430,13 @@ class MainWindow(QMainWindow):
                 self._resume_close_after_scan()
             return
 
+        if self._camera_lifecycle_busy():
+            event.ignore()
+            self._pending_camera_lifecycle_close = True
+            self.statusBar().showMessage("Waiting for camera operation to finish…", 0)
+            logger.info("Deferring application close until camera recovery/auto operations finish.")
+            return
+
         if self._ct400_operation_state in (CT400OperationState.CONNECTING, CT400OperationState.DISCONNECTING):
             event.ignore()
             self._pending_ct400_operation_close = True
@@ -1460,6 +1526,7 @@ class MainWindow(QMainWindow):
 
         logger.info("Shutdown complete.")
         self._pending_init_close = False
+        self._pending_camera_lifecycle_close = False
         self._pending_piezo_operation_close = False
         event.accept()
 

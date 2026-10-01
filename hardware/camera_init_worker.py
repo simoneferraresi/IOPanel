@@ -56,6 +56,9 @@ class CameraInitWorker(BaseWorker):
                 )
             if cam_instance.open():
                 logger.info(f"Worker successfully opened camera: {self.cam_config.name}")
+                app = QCoreApplication.instance()
+                if app is not None and QThread.currentThread() != app.thread():
+                    cam_instance.moveToThread(app.thread())
                 self.camera_initialized.emit(self.identifier, cam_instance, self.cam_config)
             else:
                 logger.error(f"Worker failed to open camera: {self.cam_config.name}")

@@ -1,6 +1,6 @@
 import logging
 
-from PySide6.QtCore import QObject, QThread, Signal, Slot
+from PySide6.QtCore import QMetaObject, QObject, Qt, QThread, Signal, Slot
 
 logger = logging.getLogger("LabApp.TaskRunner")
 
@@ -39,21 +39,19 @@ class TaskRunner(QObject):
         """
         Args:
             worker: An instance of a class inheriting from BaseWorker.
-            auto_start_run: If True, thread.started is connected to worker.run.
-                            Set False for 'Service' workers (like Alignment) that wait for signals.
+            auto_start_run: If True, queue worker.run() on the moved worker after
+                            starting the thread. Set False for service workers
+                            that wait for signals.
         """
         super().__init__()
         self.worker = worker
+        self.auto_start_run = auto_start_run
         self.thread = QThread()
 
         # 1. Move the worker to the new thread
         self.worker.moveToThread(self.thread)
 
         # 2. Connect Lifecycle Signals
-        # When the thread starts, run the worker logic (if auto_start is True)
-        if auto_start_run:
-            self.thread.started.connect(self.worker.run)
-
         # When the worker says it's finished, quit the thread loop
         self.worker.finished.connect(self.thread.quit)
 
@@ -68,6 +66,8 @@ class TaskRunner(QObject):
         """Starts the background thread."""
         logger.debug(f"Starting thread for worker: {self.worker.__class__.__name__}")
         self.thread.start()
+        if self.auto_start_run:
+            QMetaObject.invokeMethod(self.worker, "run", Qt.ConnectionType.QueuedConnection)
 
     def stop(self):
         """
