@@ -5,7 +5,7 @@ import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, TypeAlias
+from typing import Any
 
 import numpy as np
 from PySide6.QtCore import QMutex, QMutexLocker, QObject, Signal
@@ -53,8 +53,8 @@ except Exception as exc:
 logger = logging.getLogger("LabApp.camera")
 
 # --- NEW: Type Alias for Clarity ---
-CameraInfoDict: TypeAlias = dict[str, Any]
-FeatureRange: TypeAlias = tuple[Any, Any] | None
+type CameraInfoDict = dict[str, Any]
+type FeatureRange = tuple[Any, Any] | None
 
 
 @dataclass

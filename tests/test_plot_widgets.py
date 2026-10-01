@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import numpy as np
 import pytest
@@ -199,7 +199,7 @@ def _prepare_export_widget(qtbot):
                                        LaserInput.LI_2, (Detector.DE_1,))
     measurement = ScanMeasurement(settings, np.array([1510.0, 1520.0]), np.array([[-20.0, -21.0]]),
                                   (Detector.DE_1,), None, CT400ScanResultKind.SUCCESS, 0, "",
-                                  "hardware.dummy_ct400.DummyCT400", True, datetime.now(timezone.utc))
+                                  "hardware.dummy_ct400.DummyCT400", True, datetime.now(UTC))
     widget.set_measurement(measurement)
     return widget
 
@@ -209,7 +209,7 @@ def _measurement(wavelengths, detector_data):
                                       LaserInput.LI_2, (Detector.DE_1,))
     return ScanMeasurement(settings, np.asarray(wavelengths), np.asarray(detector_data), (Detector.DE_1,), None,
                            CT400ScanResultKind.SUCCESS, 0, "", "hardware.dummy_ct400.DummyCT400", True,
-                           datetime.now(timezone.utc))
+                           datetime.now(UTC))
 
 
 def test_rejected_mismatched_measurement_cannot_be_exported(qtbot, monkeypatch):
@@ -272,7 +272,7 @@ def test_measurement_owns_read_only_array_copies():
     powers = np.array([[-3.0, -4.0]])
     measurement = ScanMeasurement(settings, wavelengths, powers, (Detector.DE_1,), None,
                                   CT400ScanResultKind.SUCCESS, 0, "", "test.Backend", False,
-                                  datetime.now(timezone.utc))
+                                  datetime.now(UTC))
     wavelengths[0] = 99
     powers[0, 0] = 99
     np.testing.assert_array_equal(measurement.wavelengths_nm, [1, 2])

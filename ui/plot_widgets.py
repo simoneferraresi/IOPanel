@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import time
 from pathlib import Path
 
@@ -1327,7 +1326,7 @@ class PlotWidget(QWidget):
             # ... (append to saved_files_list, update status_label) ...
             logger.info(f"Successfully saved {filetype}: {message_or_filename}")
             self.saved_files_list.append(message_or_filename)
-            self.matlab_status_label.setText(f"{os.path.basename(message_or_filename)} saved.")
+            self.matlab_status_label.setText(f"{Path(message_or_filename).name} saved.")
         else:
             # ... (append to error_list, update status_label) ...
             logger.error(f"Failed to save {filetype}: {message_or_filename}")

@@ -22,6 +22,7 @@ from ctypes import (
     create_string_buffer,
 )
 from pathlib import Path
+from typing import Self
 
 import numpy as np
 
@@ -516,7 +517,7 @@ class CT400(AbstractCT400):
         # Do not delete self.dll, just in case something calls after close.
         # Python's garbage collector will handle it when the object is destroyed.
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         """Allows the CT400 class to be used as a context manager."""
         return self
 
