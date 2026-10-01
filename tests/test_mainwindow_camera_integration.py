@@ -154,3 +154,28 @@ def test_mainwindow_displays_camera_error_recovers_and_shuts_down(qtbot, monkeyp
     assert not panel._latest_pixmap.isNull()
 
     _close_window_and_check_cleanup(window, qtbot)
+
+
+def test_simulated_acquisition_failure_recovers_once_through_watchdog(qtbot, monkeypatch, tmp_path):
+    window = _start_main_window(qtbot, monkeypatch, tmp_path, fail_after_frames=3)
+    camera_instance = window.cameras[0]
+    panel = window.camera_panels[camera_instance.identifier]
+    initial_frames = QSignalSpy(camera_instance.new_frame)
+    recovery_requests = QSignalSpy(panel.recovery_requested)
+
+    qtbot.waitUntil(lambda: initial_frames.count() >= 2, timeout=2000)
+    qtbot.waitUntil(lambda: not camera_instance.is_streaming, timeout=2000)
+    camera_instance.fail_after_frames = None
+    resumed_frames = QSignalSpy(camera_instance.new_frame)
+
+    qtbot.waitUntil(lambda: resumed_frames.count() >= 1, timeout=7000)
+    qtbot.waitUntil(lambda: camera_instance.identifier not in window._camera_recovery_tasks, timeout=2000)
+    assert not panel._recovery_active, (panel._recovery_active, panel._recovery_failed, panel.video_label.text())
+    assert recovery_requests.count() == 1
+    qtbot.waitUntil(lambda: not panel._camera_error_active, timeout=1000)
+
+    assert camera_instance.is_streaming
+    assert not panel._recovery_active
+    assert not panel._automatic_recovery_used
+    assert camera_instance.identifier not in window._camera_recovery_tasks
+    _close_window_and_check_cleanup(window, qtbot)

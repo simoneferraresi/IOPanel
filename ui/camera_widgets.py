@@ -421,6 +421,13 @@ class AutoOpWorker(QRunnable):
                 Q_ARG(str, self.op_type),
                 Q_ARG(str, str(e)),
             )
+        finally:
+            QMetaObject.invokeMethod(
+                self.panel_callback,
+                "handle_auto_finished",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(str, self.op_type),
+            )
 
 
 # =============================================================================
@@ -441,6 +448,8 @@ class CameraPanel(QFrame):
     """
 
     maximize_requested = Signal()
+    recovery_requested = Signal(str)
+    auto_operation_finished = Signal()
 
     def __init__(
         self,
@@ -465,6 +474,10 @@ class CameraPanel(QFrame):
         self._panel_title = title  # Use this for logging before camera is set
         self._latest_pixmap: QPixmap | None = None
         self._camera_error_active = False
+        self._automatic_recovery_used = False
+        self._recovery_active = False
+        self._recovery_failed = False
+        self._auto_op_active = False
         self._display_size_cache: QtCore.QSize | None = None
 
         self._thread_pool = QThreadPool.globalInstance()
@@ -481,8 +494,7 @@ class CameraPanel(QFrame):
         self.watchdog_timer = QTimer(self)
         self.watchdog_timer.setInterval(CAMERA_WATCHDOG_INTERVAL_MS)
         self.watchdog_timer.setSingleShot(True)
-        if self.camera:
-            self.watchdog_timer.timeout.connect(self.camera.attempt_recovery)
+        self.watchdog_timer.timeout.connect(self._on_watchdog_timeout)
 
         self._current_fps: float = 0.0
         self._show_fps: bool = True
@@ -546,6 +558,69 @@ class CameraPanel(QFrame):
 
         # Update controls AFTER starting worker, just in case
         self._update_controls_from_camera()
+        self._update_control_availability()
+
+    def _update_control_availability(self):
+        available = not self._recovery_active and not self._recovery_failed and not self._auto_op_active
+        self.controls_container.setEnabled(available)
+
+    def _arm_watchdog(self):
+        if (
+            self.camera
+            and self.isVisible()
+            and not self._recovery_active
+            and not self._recovery_failed
+            and not self._auto_op_active
+        ):
+            self.watchdog_timer.start()
+
+    @Slot()
+    def _on_watchdog_timeout(self):
+        if not self.camera or not self.isVisible() or self._recovery_active or self._auto_op_active:
+            return
+        if self._automatic_recovery_used:
+            self._recovery_failed = True
+            self._camera_error_active = True
+            self.video_label.setText("Camera unavailable: no frames after recovery")
+            self.video_label.setStyleSheet("background-color: #333; color: #ffc107;")
+            self._update_control_availability()
+            self.watchdog_timer.stop()
+            return
+        self._automatic_recovery_used = True
+        self.recovery_started()
+        self.recovery_requested.emit(self.camera.identifier)
+
+    def recovery_started(self):
+        self._recovery_active = True
+        self._recovery_failed = False
+        self.watchdog_timer.stop()
+        self._camera_error_active = True
+        self.video_label.setPixmap(QPixmap())
+        self.video_label.setText("Recovering camera…")
+        self.video_label.setStyleSheet("background-color: #333; color: #ffc107;")
+        self._update_control_availability()
+
+    def recovery_succeeded(self):
+        self._recovery_active = False
+        self._recovery_failed = False
+        self._camera_error_active = True
+        self.video_label.setText("Camera reopened; waiting for frames…")
+        self._update_control_availability()
+        self._arm_watchdog()
+
+    def recovery_failed(self, message: str):
+        self._recovery_active = False
+        self._recovery_failed = True
+        self._camera_error_active = True
+        self.watchdog_timer.stop()
+        self.video_label.setPixmap(QPixmap())
+        self.video_label.setText(message or "Camera recovery failed")
+        self.video_label.setStyleSheet("background-color: #333; color: #ffc107;")
+        self._update_control_availability()
+
+    @property
+    def auto_operation_active(self) -> bool:
+        return self._auto_op_active
 
     def _start_conversion_worker(self):
         """Creates and starts the dedicated thread and worker for image conversion."""
@@ -689,7 +764,7 @@ class CameraPanel(QFrame):
     def _handle_parameter_changed(self, name: str, value: float):
         """Handles the valueChanged signal from any ParameterControl widget."""
         # --- FIX: Guard against calls before camera is set ---
-        if not self.camera:
+        if not self.camera or self._recovery_active or self._recovery_failed or self._auto_op_active:
             logger.warning(f"Parameter '{name}' changed, but camera is not yet available.")
             return
 
@@ -815,7 +890,7 @@ class CameraPanel(QFrame):
     def _start_auto_op(self, op_type: str):
         """Starts an auto-operation in a worker thread."""
         # --- FIX: Guard against calls before camera is set ---
-        if not self.camera:
+        if not self.camera or self._recovery_active or self._recovery_failed or self._auto_op_active:
             logger.warning(f"Cannot start '{op_type}': camera is not yet available.")
             return
 
@@ -834,8 +909,22 @@ class CameraPanel(QFrame):
         else:
             return
 
+        self._auto_op_active = True
+        self.watchdog_timer.stop()
+        self.exposure_btn.setEnabled(False)
+        self.gain_btn.setEnabled(False)
+        self._update_control_availability()
         worker = AutoOpWorker(self.camera, op_type, self)
         self._thread_pool.start(worker)
+
+    @Slot(str)
+    def handle_auto_finished(self, op_type: str):
+        self._auto_op_active = False
+        self.exposure_btn.setEnabled(True)
+        self.gain_btn.setEnabled(True)
+        self._update_control_availability()
+        self.auto_operation_finished.emit()
+        self._arm_watchdog()
 
     @Slot(str, float)
     def handle_auto_result(self, op_type: str, result_value: float):
@@ -846,12 +935,10 @@ class CameraPanel(QFrame):
             self.exposure_status.setText("✓")
             self.exposure_status.setStyleSheet("color: green; font-weight: bold;")
             QTimer.singleShot(2500, lambda: self.clear_status_indicators("exposure"))
-            self.exposure_btn.setEnabled(True)
         elif op_type == "auto_gain":
             self.gain_status.setText("✓")
             self.gain_status.setStyleSheet("color: green; font-weight: bold;")
             QTimer.singleShot(2500, lambda: self.clear_status_indicators("gain"))
-            self.gain_btn.setEnabled(True)
 
     @Slot(str, str)
     def handle_auto_error(self, op_type: str, error_str: str):
@@ -860,7 +947,6 @@ class CameraPanel(QFrame):
             self.exposure_status.setText("✗")
             self.exposure_status.setStyleSheet("color: red; font-weight: bold;")
             QTimer.singleShot(3500, lambda: self.clear_status_indicators("exposure"))
-            self.exposure_btn.setEnabled(True)
             # --- REFACTOR: Revert UI using ParameterControl ---
             reverted_value = self.camera.exposure_us
             if reverted_value is not None:
@@ -869,7 +955,6 @@ class CameraPanel(QFrame):
             self.gain_status.setText("✗")
             self.gain_status.setStyleSheet("color: red; font-weight: bold;")
             QTimer.singleShot(3500, lambda: self.clear_status_indicators("gain"))
-            self.gain_btn.setEnabled(True)
 
     def clear_status_indicators(self, control: str | None = None):
         if control is None or control == "exposure":
@@ -890,9 +975,12 @@ class CameraPanel(QFrame):
         """
         # A fresh frame marks recovery from a camera acquisition error. Ignore
         # conversion results already queued when the error was reported.
-        self._camera_error_active = False
-        if self.camera and self.isVisible():
-            self.watchdog_timer.start()
+        if not self._recovery_active:
+            self._camera_error_active = False
+            self._automatic_recovery_used = False
+            self._recovery_failed = False
+            self._update_control_availability()
+            self._arm_watchdog()
 
     @Slot(str)
     def _handle_conversion_error(self, error_msg: str):
@@ -949,7 +1037,7 @@ class CameraPanel(QFrame):
         # --- FIX: Check if camera exists before using it. Use panel title for logging. ---
         if self.camera:
             logger.debug(f"CameraPanel for {self.camera.camera_name} shown, starting watchdog.")
-            self.watchdog_timer.start()
+            self._arm_watchdog()
         else:
             logger.debug(f"Placeholder CameraPanel '{self._panel_title}' shown.")
 
