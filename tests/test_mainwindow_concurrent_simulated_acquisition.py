@@ -523,6 +523,8 @@ def test_close_during_alignment_waits_for_cleanup_before_ct400_close(qtbot, monk
         qtbot.mouseClick(alignment.align_button, Qt.MouseButton.LeftButton)
         qtbot.waitUntil(started.is_set, timeout=1500)
         worker_thread = alignment.worker_thread
+        assert worker_thread is not None
+        thread_finished_spy = QSignalSpy(worker_thread.finished)
         window.close()
         assert window.isVisible()
         assert window._pending_ct400_operation_close
@@ -540,7 +542,10 @@ def test_close_during_alignment_waits_for_cleanup_before_ct400_close(qtbot, monk
         assert ("laser-disable", 3) in events
         assert events[-1] == ("close", 73)
         assert terminations == []
-        assert not worker_thread.isRunning() if worker_thread else True
+        qtbot.waitUntil(lambda: thread_finished_spy.count() == 1, timeout=1500)
+        assert thread_finished_spy.count() == 1
+        assert alignment.worker_thread is None
+        assert alignment.alignment_worker is None
     finally:
         release.set()
         if window.isVisible():

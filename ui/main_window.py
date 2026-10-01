@@ -196,6 +196,7 @@ class MainWindow(QMainWindow):
         self._ct400_operation_state = CT400OperationState.IDLE
         self._pending_ct400_operation_close: bool = False
         self._pending_init_close: bool = False
+        self._pending_piezo_operation_close: bool = False
         self._piezo_operations_in_flight: set[str] = set()
         self._ct400_error_reset_timer = QTimer(self)
         self._ct400_error_reset_timer.setSingleShot(True)
@@ -225,6 +226,9 @@ class MainWindow(QMainWindow):
     @Slot(str)
     def connect_piezo(self, side: str):
         """Connects or disconnects a piezo controller on a worker thread."""
+        if self._pending_piezo_operation_close:
+            logger.info("Ignoring %s piezo operation while application close is pending.", side)
+            return
         if side not in {"left", "right"} or side in self._piezo_operations_in_flight:
             return
         if self._alignment_hardware_transition_blocked():
@@ -295,6 +299,7 @@ class MainWindow(QMainWindow):
             and self.piezo_left.is_connected()
             and self.piezo_right.is_connected()
             and not self._piezo_operations_in_flight
+            and not self._pending_piezo_operation_close
             and not self._alignment_hardware_transition_blocked()
         )
         if ready:
@@ -305,26 +310,39 @@ class MainWindow(QMainWindow):
     @Slot(str)
     def _on_piezo_connection_success(self, side: str):
         logger.info(f"{side.capitalize()} Piezo connected successfully.")
-        self._piezo_operations_in_flight.discard(side)
-        self._update_piezo_action(side)
+        self._complete_piezo_operation(side)
         self.statusBar().showMessage(f"{side.capitalize()} Piezo connected.", 3000)
-        self._sync_alignment_hardware()
 
     @Slot(str)
     def _on_piezo_disconnection_success(self, side: str):
         logger.info(f"{side.capitalize()} Piezo disconnected.")
-        self._piezo_operations_in_flight.discard(side)
-        self._update_piezo_action(side)
+        self._complete_piezo_operation(side)
         self.statusBar().showMessage(f"{side.capitalize()} Piezo disconnected.", 3000)
-        self._sync_alignment_hardware()
 
     @Slot(str, str)
     def _on_piezo_connection_failed(self, side: str, error_message: str):
         logger.error(f"Failed to connect {side} piezo: {error_message}")
-        self._piezo_operations_in_flight.discard(side)
-        self._update_piezo_action(side)
-        self._sync_alignment_hardware()
+        self._complete_piezo_operation(side)
         QMessageBox.critical(self, f"{side.capitalize()} Piezo Error", f"Operation failed: {error_message}")
+
+    def _complete_piezo_operation(self, side: str) -> bool:
+        """Release one side's operation ownership and refresh dependent UI."""
+        was_in_flight = side in self._piezo_operations_in_flight
+        if was_in_flight:
+            self._piezo_operations_in_flight.remove(side)
+        self._update_piezo_action(side)
+        if self._pending_piezo_operation_close:
+            self.alignment_tab.clear_hardware()
+            if was_in_flight:
+                self._resume_close_after_piezo_operation()
+        else:
+            self._sync_alignment_hardware()
+        return was_in_flight
+
+    def _resume_close_after_piezo_operation(self):
+        """Schedule close only after all piezo workers release their controllers."""
+        if self._pending_piezo_operation_close and not self._piezo_operations_in_flight:
+            QTimer.singleShot(0, self.close)
 
     @Slot(str, str)
     def _on_ct400_status_updated(self, state_name: str, message: str):
@@ -346,6 +364,11 @@ class MainWindow(QMainWindow):
         logger.info(f"CT400 initialization finished. Received device: {type(device)}")
         if self._alignment_hardware_transition_blocked() and device is not self.ct400_device:
             logger.warning("Ignoring CT400 replacement while alignment owns the current hardware.")
+            if isinstance(device, CT400):
+                try:
+                    device.close()
+                except Exception:
+                    logger.exception("Could not release rejected CT400 resources.")
             return
         self.ct400_device = device
 
@@ -421,6 +444,9 @@ class MainWindow(QMainWindow):
 
     def _init_piezos_lazy(self):
         """Initializes the Piezo controllers on a background thread."""
+        if self._pending_piezo_operation_close:
+            logger.info("Skipping piezo initialization while application close is pending.")
+            return
         if self._pending_init_close:
             logger.info("Skipping piezo initialization while application close is pending.")
             return
@@ -789,6 +815,9 @@ class MainWindow(QMainWindow):
         logger.info("Manual Instrument Refresh requested.")
         if self._pending_init_close:
             logger.info("Ignoring instrument refresh while application close is pending.")
+            return
+        if self._pending_piezo_operation_close:
+            logger.info("Ignoring instrument refresh while piezo operation shutdown is pending.")
             return
         if self._alignment_hardware_transition_blocked():
             self.statusBar().showMessage("Stop alignment before refreshing instruments.", 5000)
@@ -1371,6 +1400,14 @@ class MainWindow(QMainWindow):
             logger.info("Deferring application close with %d initialization task(s) active.", len(self._init_tasks))
             return
 
+        if self._piezo_operations_in_flight:
+            event.ignore()
+            self._pending_piezo_operation_close = True
+            active_sides = ", ".join(sorted(self._piezo_operations_in_flight))
+            self.statusBar().showMessage("Waiting for piezo operation to finish…", 0)
+            logger.info("Deferring application close while piezo operation(s) remain active: %s", active_sides)
+            return
+
         self.statusBar().showMessage("Shutting down...", 0)
 
         # Cleanup long-running panel workers
@@ -1423,6 +1460,7 @@ class MainWindow(QMainWindow):
 
         logger.info("Shutdown complete.")
         self._pending_init_close = False
+        self._pending_piezo_operation_close = False
         event.accept()
 
     @Slot()
