@@ -77,3 +77,6 @@ exclude = [
     "resources/resources_rc.py",
     ".venv",
 ]
+
+[tool.uv]
+required-version = "==0.12.21"
