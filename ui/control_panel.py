@@ -1,7 +1,7 @@
 import logging
 import threading
 from abc import ABC, ABCMeta, abstractmethod
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import numpy as np
 from PySide6 import QtCore, QtGui
@@ -365,7 +365,7 @@ class ScanWorker(QtCore.QObject):
                 result_message=error_msg,
                 backend=f"{type(self.ct400).__module__}.{type(self.ct400).__qualname__}",
                 simulated=isinstance(self.ct400, DummyCT400),
-                completed_at_utc=datetime.now(timezone.utc),
+                completed_at_utc=datetime.now(UTC),
             )
             self.measurement_ready.emit(measurement)
             self.completed_signal.emit(wavelengths, powers_scan_data, final_pout)

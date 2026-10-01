@@ -7,12 +7,10 @@ authors = [
 ]
 readme = "README.md"
 license = { file = "LICENSE" } # Changed from 'text' to 'file' to point to your new LICENSE file
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Operating System :: Microsoft :: Windows",
     "Topic :: Scientific/Engineering",
@@ -61,11 +59,11 @@ Homepage = "https://github.com/simoneferraresi/IOPanel"
 
 [tool.black]
 line-length = 120
-target-version = ['py310']
+target-version = ['py312']
 
 [tool.ruff]
 # Set the lowest Python version you support.
-target-version = "py310"
+target-version = "py312"
 line-length = 120
 
 # A selection of good default rules.

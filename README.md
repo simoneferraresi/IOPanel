@@ -41,7 +41,7 @@ This project is designed to be run from a local Python environment and uses [`uv
 
 ### 1. Prerequisites
 
--   **Python 3.10+**
+-   **Python 3.12+**
 -   **`uv`**: Install `uv` on your system.
     -   On macOS / Linux: `curl -LsSf https://astral.sh/uv/install.sh | sh`
     -   On Windows: `powershell -c "irm https://astral.sh/uv/install.ps1 | iex"`
