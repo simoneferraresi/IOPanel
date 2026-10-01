@@ -283,14 +283,55 @@ class AlignmentPanel(QWidget):
         piezo_left: PiezoController,
         piezo_right: PiezoController,
     ):
-        """Assigns the live hardware objects and activates the panel."""
-        logger.info("AlignmentPanel receiving live hardware instances.")
+        """Bind the persistent worker to one current hardware tuple."""
+        if self._active_mode is not None or self._ct400_operation_state == "ALIGNMENT":
+            logger.warning("Ignoring alignment hardware replacement while an operation is active.")
+            return
+        same_hardware = self.ct400 is ct400 and self.piezo_left is piezo_left and self.piezo_right is piezo_right
+        if same_hardware and self.worker_thread is not None and self.worker_thread.isRunning():
+            self.set_hardware_ready(True)
+            return
+
+        self.set_hardware_ready(False)
+        self._teardown_worker()
         self.ct400 = ct400
         self.piezo_left = piezo_left
         self.piezo_right = piezo_right
-
         self._setup_worker_and_connections()
-        self.set_hardware_ready(True)
+        self.set_hardware_ready(self.alignment_worker is not None and self.worker_thread is not None)
+
+    def clear_hardware(self):
+        """Detach current hardware while idle and leave controls unavailable."""
+        if self._active_mode is not None or self._ct400_operation_state == "ALIGNMENT":
+            logger.warning("Ignoring hardware clear while an alignment operation is active.")
+            return
+        self.set_hardware_ready(False)
+        self._teardown_worker()
+        self.ct400 = None
+        self.piezo_left = None
+        self.piezo_right = None
+        self._active_mode = None
+
+    def _teardown_worker(self):
+        """Stop the idle persistent worker thread and release its bindings."""
+        worker = self.alignment_worker
+        thread = self.worker_thread
+        if worker is not None:
+            for signal, slot in (
+                (self.start_alignment_requested, worker.run_alignment),
+                (self.start_mapping_requested, worker.run_mapping),
+                (self.start_spiral_alignment_requested, worker.run_spiral_alignment),
+            ):
+                try:
+                    signal.disconnect(slot)
+                except (RuntimeError, TypeError):
+                    pass
+        if thread is not None:
+            if thread.isRunning():
+                thread.quit()
+                thread.wait()
+            self.worker_thread = None
+        self.alignment_worker = None
 
     def set_hardware_ready(self, is_ready: bool):
         """Enables or disables the panel's controls."""
@@ -376,6 +417,8 @@ class AlignmentPanel(QWidget):
         self.worker_thread = QThread(self)
         self.alignment_worker = AlignmentWorker(self.ct400, self.piezo_left, self.piezo_right)
         self.alignment_worker.moveToThread(self.worker_thread)
+        self.worker_thread.finished.connect(self.alignment_worker.deleteLater)
+        self.worker_thread.finished.connect(self.worker_thread.deleteLater)
 
         # Connect signals
         self.start_alignment_requested.connect(self.alignment_worker.run_alignment)
@@ -592,11 +635,9 @@ class AlignmentPanel(QWidget):
 
     def cleanup(self):
         """Gracefully shuts down the worker thread."""
-        if self.worker_thread and self.worker_thread.isRunning():
-            if self._active_mode is not None or self._ct400_operation_state == "ALIGNMENT":
-                self.request_stop()
-                logger.warning("Alignment cleanup deferred until its CT400 operation has completed.")
-                return False
-            self.worker_thread.quit()
-            self.worker_thread.wait()
+        if self._active_mode is not None or self._ct400_operation_state == "ALIGNMENT":
+            self.request_stop()
+            logger.warning("Alignment cleanup deferred until its CT400 operation has completed.")
+            return False
+        self._teardown_worker()
         return True

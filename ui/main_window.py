@@ -196,6 +196,8 @@ class MainWindow(QMainWindow):
         self._ct400_operation_state = CT400OperationState.IDLE
         self._pending_ct400_operation_close: bool = False
         self._pending_init_close: bool = False
+        self._pending_piezo_operation_close: bool = False
+        self._piezo_operations_in_flight: set[str] = set()
         self._ct400_error_reset_timer = QTimer(self)
         self._ct400_error_reset_timer.setSingleShot(True)
         self._ct400_error_reset_timer.timeout.connect(self._reset_ct400_error_visuals)
@@ -224,13 +226,19 @@ class MainWindow(QMainWindow):
     @Slot(str)
     def connect_piezo(self, side: str):
         """Connects or disconnects a piezo controller on a worker thread."""
+        if self._pending_piezo_operation_close:
+            logger.info("Ignoring %s piezo operation while application close is pending.", side)
+            return
+        if side not in {"left", "right"} or side in self._piezo_operations_in_flight:
+            return
+        if self._alignment_hardware_transition_blocked():
+            logger.info("Ignoring %s piezo operation while alignment owns the hardware.", side)
+            return
         if side == "left":
             piezo = self.piezo_left
-            action = self.piezo_connect_left_action
             port = self.config.instruments.piezo_left_serial
         else:
             piezo = self.piezo_right
-            action = self.piezo_connect_right_action
             port = self.config.instruments.piezo_right_serial
 
         if not piezo:
@@ -246,50 +254,95 @@ class MainWindow(QMainWindow):
         worker.signals.disconnection_succeeded.connect(self._on_piezo_disconnection_success)
         worker.signals.connection_failed.connect(self.piezo_connection_failed)
 
-        # Update UI to show "in-progress" state
-        action.setEnabled(False)
-        action.setText(f"{'Connecting' if do_connect else 'Disconnecting'} {side.capitalize()}...")
+        # Reserve the controller before dispatch so Refresh cannot replace it.
+        self._piezo_operations_in_flight.add(side)
+        self._update_piezo_action(side)
+        if not do_connect:
+            self._sync_alignment_hardware()
 
         QThreadPool.globalInstance().start(worker)
+
+    def _update_piezo_action(self, side: str):
+        """Render the action from the current controller and operation state."""
+        action = self.piezo_connect_left_action if side == "left" else self.piezo_connect_right_action
+        piezo = self.piezo_left if side == "left" else self.piezo_right
+        title = side.capitalize()
+        if side in self._piezo_operations_in_flight:
+            action.setText(f"{'Disconnecting' if piezo and piezo.is_connected() else 'Connecting'} {title}...")
+            action.setEnabled(False)
+        elif piezo is None:
+            action.setText(f"{title} Piezo (Not Found)")
+            action.setEnabled(False)
+        else:
+            connected = piezo.is_connected()
+            action.setText(f"{'Disconnect' if connected else 'Connect'} {title} Piezo")
+            action.setEnabled(True)
+
+    def _alignment_hardware_transition_blocked(self) -> bool:
+        panel = getattr(self, "alignment_tab", None)
+        return bool(
+            self._ct400_operation_state is CT400OperationState.ALIGNMENT
+            or (panel is not None and (panel._active_mode is not None or panel._ct400_operation_state == "ALIGNMENT"))
+        )
+
+    def _sync_alignment_hardware(self):
+        """Keep the alignment panel bound only to currently usable hardware."""
+        panel = getattr(self, "alignment_tab", None)
+        if panel is None:
+            return
+        if self._alignment_hardware_transition_blocked():
+            return
+        ready = (
+            self.ct400_device is not None
+            and self.piezo_left is not None
+            and self.piezo_right is not None
+            and self.piezo_left.is_connected()
+            and self.piezo_right.is_connected()
+            and not self._piezo_operations_in_flight
+            and not self._pending_piezo_operation_close
+            and not self._alignment_hardware_transition_blocked()
+        )
+        if ready:
+            panel.set_hardware(self.ct400_device, self.piezo_left, self.piezo_right)
+        else:
+            panel.clear_hardware()
 
     @Slot(str)
     def _on_piezo_connection_success(self, side: str):
         logger.info(f"{side.capitalize()} Piezo connected successfully.")
-        action = self.piezo_connect_left_action if side == "left" else self.piezo_connect_right_action
-        action.setText(f"Disconnect {side.capitalize()} Piezo")
-        action.setEnabled(True)
+        self._complete_piezo_operation(side)
         self.statusBar().showMessage(f"{side.capitalize()} Piezo connected.", 3000)
-
-        # --- Activate Alignment Panel if all hardware is now ready ---
-        if (
-            self.piezo_left
-            and self.piezo_left.is_connected()
-            and self.piezo_right
-            and self.piezo_right.is_connected()
-            and self.ct400_device
-        ):
-            logger.info("All alignment hardware is now connected. Activating panel.")
-            self.alignment_tab.set_hardware(self.ct400_device, self.piezo_left, self.piezo_right)
 
     @Slot(str)
     def _on_piezo_disconnection_success(self, side: str):
         logger.info(f"{side.capitalize()} Piezo disconnected.")
-        action = self.piezo_connect_left_action if side == "left" else self.piezo_connect_right_action
-        action.setText(f"Connect {side.capitalize()} Piezo")
-        action.setEnabled(True)
+        self._complete_piezo_operation(side)
         self.statusBar().showMessage(f"{side.capitalize()} Piezo disconnected.", 3000)
-        # De-activate alignment panel
-        self.alignment_tab.set_hardware_ready(False)
 
     @Slot(str, str)
     def _on_piezo_connection_failed(self, side: str, error_message: str):
         logger.error(f"Failed to connect {side} piezo: {error_message}")
-        action = self.piezo_connect_left_action if side == "left" else self.piezo_connect_right_action
-        action.setText(f"Connect {side.capitalize()} Piezo")  # Revert text
-        action.setEnabled(True)
+        self._complete_piezo_operation(side)
         QMessageBox.critical(self, f"{side.capitalize()} Piezo Error", f"Operation failed: {error_message}")
-        # De-activate alignment panel
-        self.alignment_tab.set_hardware_ready(False)
+
+    def _complete_piezo_operation(self, side: str) -> bool:
+        """Release one side's operation ownership and refresh dependent UI."""
+        was_in_flight = side in self._piezo_operations_in_flight
+        if was_in_flight:
+            self._piezo_operations_in_flight.remove(side)
+        self._update_piezo_action(side)
+        if self._pending_piezo_operation_close:
+            self.alignment_tab.clear_hardware()
+            if was_in_flight:
+                self._resume_close_after_piezo_operation()
+        else:
+            self._sync_alignment_hardware()
+        return was_in_flight
+
+    def _resume_close_after_piezo_operation(self):
+        """Schedule close only after all piezo workers release their controllers."""
+        if self._pending_piezo_operation_close and not self._piezo_operations_in_flight:
+            QTimer.singleShot(0, self.close)
 
     @Slot(str, str)
     def _on_ct400_status_updated(self, state_name: str, message: str):
@@ -309,6 +362,14 @@ class MainWindow(QMainWindow):
         that depends on the CT400.
         """
         logger.info(f"CT400 initialization finished. Received device: {type(device)}")
+        if self._alignment_hardware_transition_blocked() and device is not self.ct400_device:
+            logger.warning("Ignoring CT400 replacement while alignment owns the current hardware.")
+            if isinstance(device, CT400):
+                try:
+                    device.close()
+                except Exception:
+                    logger.exception("Could not release rejected CT400 resources.")
+            return
         self.ct400_device = device
 
         # Now that the device exists, pass it to the control panels
@@ -333,10 +394,7 @@ class MainWindow(QMainWindow):
         if is_simulated_ct400:
             self.ct400_status_label.setText("CT400: SIMULATED (Dummy)")
 
-        # Now, check if the piezos finished first. If so, update the alignment tab.
-        if self.piezo_left and self.piezo_right:
-            logger.info("CT400 is ready, and piezos are already initialized. Setting alignment hardware.")
-            self.alignment_tab.set_hardware(self.ct400_device, self.piezo_left, self.piezo_right)
+        self._sync_alignment_hardware()
 
     def _begin_lazy_init(self):
         """Starts all slow hardware initializations on background threads."""
@@ -386,8 +444,17 @@ class MainWindow(QMainWindow):
 
     def _init_piezos_lazy(self):
         """Initializes the Piezo controllers on a background thread."""
+        if self._pending_piezo_operation_close:
+            logger.info("Skipping piezo initialization while application close is pending.")
+            return
         if self._pending_init_close:
             logger.info("Skipping piezo initialization while application close is pending.")
+            return
+        if self._piezo_operations_in_flight:
+            logger.info("Skipping piezo discovery while a piezo connection operation is active.")
+            return
+        if self._alignment_hardware_transition_blocked():
+            logger.info("Skipping piezo discovery while alignment owns the hardware.")
             return
         logger.info("Starting lazy initialization of Piezo controllers...")
 
@@ -587,36 +654,24 @@ class MainWindow(QMainWindow):
     @Slot(object, object)
     def _on_piezos_initialized(self, piezo_left: PiezoController | None, piezo_right: PiezoController | None):
         logger.info("MainWindow: Piezo discovery finished.")
-        self.piezo_left = piezo_left
-        self.piezo_right = piezo_right
-
-        # --- New logic to configure menu based on discovery ---
-        if self.piezo_left:
-            self.piezo_connect_left_action.setEnabled(True)
-            self.piezo_connect_left_action.setText("Connect Left Piezo")
-            self.piezo_connect_left_action.setToolTip(f"Found on {self.config.instruments.piezo_left_serial}")
-        else:
-            self.piezo_connect_left_action.setEnabled(False)
-            self.piezo_connect_left_action.setText("Left Piezo (Not Found)")
-            self.piezo_connect_left_action.setToolTip("Device not found. Check connection and config.ini.")
-
-        if self.piezo_right:
-            self.piezo_connect_right_action.setEnabled(True)
-            self.piezo_connect_right_action.setText("Connect Right Piezo")
-            self.piezo_connect_right_action.setToolTip(f"Found on {self.config.instruments.piezo_right_serial}")
-        else:
-            self.piezo_connect_right_action.setEnabled(False)
-            self.piezo_connect_right_action.setText("Right Piezo (Not Found)")
-            self.piezo_connect_right_action.setToolTip("Device not found. Check connection and config.ini.")
-        # --- End new logic ---
-
-        # Only set hardware if the CT400 worker has ALREADY finished.
-        if self.ct400_device:
-            logger.info("Piezos are ready, and CT400 is already initialized. Setting alignment hardware.")
-            self.alignment_tab.set_hardware(self.ct400_device, self.piezo_left, self.piezo_right)
-        else:
-            # This is normal, the CT400 worker is just slower.
-            logger.info("Piezos are ready. Waiting for CT400 to initialize...")
+        if self._alignment_hardware_transition_blocked():
+            logger.warning("Ignoring piezo discovery results while alignment owns the current hardware.")
+            return
+        for side, candidate in (("left", piezo_left), ("right", piezo_right)):
+            existing = self.piezo_left if side == "left" else self.piezo_right
+            if side in self._piezo_operations_in_flight:
+                logger.warning("Ignoring %s discovery result while its controller operation is active.", side)
+                continue
+            if existing is not None and existing.is_connected():
+                selected = existing
+            else:
+                selected = candidate
+            if side == "left":
+                self.piezo_left = selected
+            else:
+                self.piezo_right = selected
+            self._update_piezo_action(side)
+        self._sync_alignment_hardware()
 
     @Slot()
     def toggle_cinema_mode(self):
@@ -637,9 +692,9 @@ class MainWindow(QMainWindow):
             "Piezo Error",
             f"Could not initialize Piezo controllers:\n{error_message}\n\nAlignment tab will be unavailable.",
         )
-        self.piezo_connect_left_action.setEnabled(False)
-        self.piezo_connect_right_action.setEnabled(False)
-        # The tab remains disabled, so no further action is needed on it.
+        self._update_piezo_action("left")
+        self._update_piezo_action("right")
+        self._sync_alignment_hardware()
 
     def _update_ct400_visuals(self, state: CT400Status, message: str | None = None):
         """Updates all UI elements related to the CT400 connection status.
@@ -741,6 +796,8 @@ class MainWindow(QMainWindow):
         self.piezo_connect_right_action = QAction("Connect Right Piezo", self)
         self.piezo_connect_right_action.triggered.connect(lambda: self.connect_piezo("right"))
         self.instrument_menu.addAction(self.piezo_connect_right_action)
+        self._update_piezo_action("left")
+        self._update_piezo_action("right")
 
         help_menu = menu_bar.addMenu("&Help")
         about_action = QAction("&About", self)
@@ -759,12 +816,20 @@ class MainWindow(QMainWindow):
         if self._pending_init_close:
             logger.info("Ignoring instrument refresh while application close is pending.")
             return
+        if self._pending_piezo_operation_close:
+            logger.info("Ignoring instrument refresh while piezo operation shutdown is pending.")
+            return
+        if self._alignment_hardware_transition_blocked():
+            self.statusBar().showMessage("Stop alignment before refreshing instruments.", 5000)
+            return
         self.statusBar().showMessage("Scanning for instruments...", 3000)
 
         # 1. Refresh Piezos
         # We always try to find piezos if requested, unless a scan is already running.
         piezo_task = self.piezo_task
-        if piezo_task is not None and piezo_task.thread.isRunning():
+        if self._piezo_operations_in_flight:
+            logger.info("Skipping piezo discovery while a piezo connection operation is active.")
+        elif piezo_task is not None and piezo_task.thread.isRunning():
             logger.info("Piezo discovery already running. Skipping.")
         else:
             self._init_piezos_lazy()
@@ -1335,6 +1400,14 @@ class MainWindow(QMainWindow):
             logger.info("Deferring application close with %d initialization task(s) active.", len(self._init_tasks))
             return
 
+        if self._piezo_operations_in_flight:
+            event.ignore()
+            self._pending_piezo_operation_close = True
+            active_sides = ", ".join(sorted(self._piezo_operations_in_flight))
+            self.statusBar().showMessage("Waiting for piezo operation to finish…", 0)
+            logger.info("Deferring application close while piezo operation(s) remain active: %s", active_sides)
+            return
+
         self.statusBar().showMessage("Shutting down...", 0)
 
         # Cleanup long-running panel workers
@@ -1387,6 +1460,7 @@ class MainWindow(QMainWindow):
 
         logger.info("Shutdown complete.")
         self._pending_init_close = False
+        self._pending_piezo_operation_close = False
         event.accept()
 
     @Slot()
