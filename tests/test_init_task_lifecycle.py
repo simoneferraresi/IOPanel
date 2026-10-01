@@ -211,7 +211,7 @@ def test_mainwindow_clears_finished_ct400_task_and_refresh_restarts(qtbot, monke
 
     assert first_task is not None
     qtbot.waitUntil(lambda: thread_destroyed.count() == 1, timeout=3000)
-    assert window.ct400_init_thread is None
+    assert window.ct400_task is None
 
     window._on_refresh_instruments_triggered()
     replacement_task = window.ct400_task
@@ -219,7 +219,7 @@ def test_mainwindow_clears_finished_ct400_task_and_refresh_restarts(qtbot, monke
     assert replacement_task is not first_task
     qtbot.waitUntil(lambda: window.ct400_task is None, timeout=3000)
     assert replacement_task not in window._init_tasks
-    assert window.ct400_init_thread is None
+    assert window.ct400_task is None
 
 
 def test_mainwindow_clears_finished_piezo_task_and_refresh_restarts(qtbot, monkeypatch):
@@ -234,7 +234,7 @@ def test_mainwindow_clears_finished_piezo_task_and_refresh_restarts(qtbot, monke
 
     assert first_task is not None
     qtbot.waitUntil(lambda: thread_destroyed.count() == 1, timeout=3000)
-    assert window.piezo_init_thread is None
+    assert window.piezo_task is None
 
     window._on_refresh_instruments_triggered()
     replacement_task = window.piezo_task
@@ -242,19 +242,15 @@ def test_mainwindow_clears_finished_piezo_task_and_refresh_restarts(qtbot, monke
     assert replacement_task is not first_task
     qtbot.waitUntil(lambda: window.piezo_task is None, timeout=3000)
     assert replacement_task not in window._init_tasks
-    assert window.piezo_init_thread is None
+    assert window.piezo_task is None
 
 
 def test_old_init_task_completion_cannot_clear_newer_task(qtbot, monkeypatch):
     window = _make_main_window(qtbot, monkeypatch)
     old_task = object()
     current_task = TaskRunner(BaseWorker())
-    ct400_thread = current_task.thread
-    piezo_thread = current_task.thread
     window.ct400_task = current_task
-    window.ct400_init_thread = ct400_thread
     window.piezo_task = current_task
-    window.piezo_init_thread = piezo_thread
     window._init_tasks.add(current_task)
 
     window._on_ct400_init_task_finished(old_task)
@@ -262,9 +258,7 @@ def test_old_init_task_completion_cannot_clear_newer_task(qtbot, monkeypatch):
     window._on_init_task_thread_finished(old_task)
 
     assert window.ct400_task is current_task
-    assert window.ct400_init_thread is ct400_thread
     assert window.piezo_task is current_task
-    assert window.piezo_init_thread is piezo_thread
     assert current_task in window._init_tasks
 
 
