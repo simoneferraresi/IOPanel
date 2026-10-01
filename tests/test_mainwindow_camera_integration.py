@@ -88,7 +88,7 @@ def _close_window_and_check_cleanup(window, qtbot):
     camera_instance = window.cameras[0]
     panel = window.camera_panels[camera_instance.identifier]
     frame_thread = camera_instance._frame_thread
-    ct400_thread = window.ct400_init_thread
+    ct400_task = window.ct400_task
 
     window.close()
 
@@ -96,9 +96,9 @@ def _close_window_and_check_cleanup(window, qtbot):
     qtbot.waitUntil(lambda: not frame_thread.is_alive(), timeout=1500)
     assert not camera_instance.is_streaming
     assert not window.cameras
-    if ct400_thread is not None:
+    if ct400_task is not None:
         try:
-            assert not ct400_thread.isRunning()
+            assert not ct400_task.thread.isRunning()
         except RuntimeError:  # Qt has deleted the completed thread wrapper.
             pass
     for task in window._init_tasks:

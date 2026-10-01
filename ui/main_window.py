@@ -23,7 +23,7 @@ import sys
 from enum import Enum, auto
 
 from PySide6 import QtGui, QtWidgets
-from PySide6.QtCore import QObject, QRunnable, QSize, Qt, QThread, QThreadPool, QTimer, Signal, Slot
+from PySide6.QtCore import QObject, QRunnable, QSize, Qt, QThreadPool, QTimer, Signal, Slot
 from PySide6.QtGui import QAction, QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication,
@@ -184,11 +184,9 @@ class MainWindow(QMainWindow):
         self.piezo_right: PiezoController | None = None
 
         # --- CT400 Worker ---
-        self.ct400_init_thread: QThread | None = None
         self.ct400_task: TaskRunner | None = None
 
         # --- Piezo Worker ---
-        self.piezo_init_thread: QThread | None = None
         self.piezo_task: TaskRunner | None = None
 
         self.shared_scan_settings = ScanSettings()
@@ -197,6 +195,7 @@ class MainWindow(QMainWindow):
         self._ct400_connection_configured: bool = False
         self._ct400_operation_state = CT400OperationState.IDLE
         self._pending_ct400_operation_close: bool = False
+        self._pending_init_close: bool = False
         self._ct400_error_reset_timer = QTimer(self)
         self._ct400_error_reset_timer.setSingleShot(True)
         self._ct400_error_reset_timer.timeout.connect(self._reset_ct400_error_visuals)
@@ -361,6 +360,9 @@ class MainWindow(QMainWindow):
 
     def _init_ct400_lazy(self):
         """Initializes the CT400 on a background thread."""
+        if self._pending_init_close:
+            logger.info("Skipping CT400 initialization while application close is pending.")
+            return
         logger.info("Starting lazy initialization of CT400...")
         # 1. Create the worker
         worker = CT400InitWorker(config=self.config)
@@ -372,7 +374,6 @@ class MainWindow(QMainWindow):
         # TaskRunner owns the worker and thread for this one-shot operation.
         task = TaskRunner(worker)
         self.ct400_task = task
-        self.ct400_init_thread = task.thread
         task.thread.finished.connect(lambda task=task: self._ct400_init_task_finished.emit(task))
         self._track_init_task(task)
         task.start()
@@ -382,10 +383,12 @@ class MainWindow(QMainWindow):
         """Clear only the CT400 task whose thread just finished."""
         if self.ct400_task is task:
             self.ct400_task = None
-            self.ct400_init_thread = None
 
     def _init_piezos_lazy(self):
         """Initializes the Piezo controllers on a background thread."""
+        if self._pending_init_close:
+            logger.info("Skipping piezo initialization while application close is pending.")
+            return
         logger.info("Starting lazy initialization of Piezo controllers...")
 
         worker = PiezoInitWorker(config=self.config.instruments)
@@ -397,7 +400,6 @@ class MainWindow(QMainWindow):
         # TaskRunner owns the worker and thread for this one-shot operation.
         task = TaskRunner(worker)
         self.piezo_task = task
-        self.piezo_init_thread = task.thread
         task.thread.finished.connect(lambda task=task: self._piezo_init_task_finished.emit(task))
         self._track_init_task(task)
         task.start()
@@ -410,14 +412,18 @@ class MainWindow(QMainWindow):
     @Slot(object)
     def _on_init_task_thread_finished(self, task):
         """Release exactly the initialization task whose thread finished."""
-        self._init_tasks.discard(task)
+        if task not in self._init_tasks:
+            return
+        self._init_tasks.remove(task)
+        if self._pending_init_close and not self._init_tasks:
+            logger.info("All initialization tasks finished; resuming deferred application close.")
+            QTimer.singleShot(0, self.close)
 
     @Slot(object)
     def _on_piezo_init_task_finished(self, task):
         """Clear only the piezo task whose thread just finished."""
         if self.piezo_task is task:
             self.piezo_task = None
-            self.piezo_init_thread = None
 
     def _start_vimbasystem(self):
         """Initializes and enters the main VimbaSystem context.
@@ -750,6 +756,9 @@ class MainWindow(QMainWindow):
         Useful if instruments were turned on after the GUI started.
         """
         logger.info("Manual Instrument Refresh requested.")
+        if self._pending_init_close:
+            logger.info("Ignoring instrument refresh while application close is pending.")
+            return
         self.statusBar().showMessage("Scanning for instruments...", 3000)
 
         # 1. Refresh Piezos
@@ -1319,29 +1328,14 @@ class MainWindow(QMainWindow):
             self.alignment_tab.request_stop()
             return
 
+        if self._init_tasks:
+            event.ignore()
+            self._pending_init_close = True
+            self.statusBar().showMessage("Waiting for hardware initialization to finish…", 0)
+            logger.info("Deferring application close with %d initialization task(s) active.", len(self._init_tasks))
+            return
+
         self.statusBar().showMessage("Shutting down...", 0)
-
-        # Helper to safely check and stop a thread
-        def safe_stop_thread(thread_obj, name="Thread"):
-            try:
-                # Check if the Python object exists AND the C++ object is still valid
-                if thread_obj is not None and thread_obj.isRunning():
-                    logger.info(f"MainWindow.closeEvent: Quitting active {name}.")
-                    thread_obj.quit()
-                    # Wait briefly for it to finish; force terminate if stuck
-                    if not thread_obj.wait(500):
-                        logger.warning(f"{name} did not quit gracefully. Terminating.")
-                        thread_obj.terminate()
-                        thread_obj.wait()  # Wait for termination to complete
-            except RuntimeError:
-                # This catches "Internal C++ object (PySide6.QtCore.QThread) already deleted"
-                # It means the thread finished and deleted itself normally before we closed.
-                logger.debug(f"{name} was already deleted/finished. Skipping stop.")
-
-        # 1. Stop background initialization threads
-        safe_stop_thread(self.ct400_init_thread, "CT400 Init Thread")
-
-        safe_stop_thread(self.piezo_init_thread, "Piezo Init Thread")
 
         # Cleanup long-running panel workers
         if hasattr(self, "alignment_tab") and self.alignment_tab:
@@ -1392,6 +1386,7 @@ class MainWindow(QMainWindow):
         self._cleanup_vimbasystem()
 
         logger.info("Shutdown complete.")
+        self._pending_init_close = False
         event.accept()
 
     @Slot()
