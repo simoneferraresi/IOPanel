@@ -53,7 +53,7 @@ class TaskRunner(QObject):
 
         # 2. Connect Lifecycle Signals
         # When the worker says it's finished, quit the thread loop
-        self.worker.finished.connect(self.thread.quit)
+        self.worker.finished.connect(self.thread.quit, Qt.ConnectionType.DirectConnection)
 
         # When the thread loop stops, delete the worker and the thread object
         self.thread.finished.connect(self.worker.deleteLater)

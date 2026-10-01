@@ -74,6 +74,33 @@ def test_worker_finished_precedes_task_thread_finished(qtbot):
     assert thread_done.count() == 1
 
 
+def test_immediate_worker_thread_quits_without_gui_event_processing(qtbot):
+    run_returned = threading.Event()
+
+    class ImmediateWorker(BaseWorker):
+        @Slot()
+        def run(self):
+            self.finished.emit()
+            run_returned.set()
+
+    worker = ImmediateWorker()
+    task = TaskRunner(worker)
+    thread_finished = QSignalSpy(task.thread.finished)
+
+    task.start()
+    assert run_returned.wait(timeout=2)
+    terminated_without_gui_events = task.thread.wait(2000)
+
+    if not terminated_without_gui_events:
+        # Let the normal queued quit/cleanup path complete so the failing
+        # regression cannot leave a live QThread behind.
+        qtbot.waitUntil(lambda: thread_finished.count() == 1, timeout=2000)
+
+    assert terminated_without_gui_events, "QThread.quit depended on GUI event processing"
+    assert thread_finished.count() == 1
+    QCoreApplication.instance().processEvents()
+
+
 def test_auto_start_run_false_keeps_worker_as_service(qtbot):
     worker = ThreadProbeWorker()
     started = QSignalSpy(worker.entered)
