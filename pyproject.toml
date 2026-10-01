@@ -50,6 +50,9 @@ dev = [
     "pre-commit>=3.0.0",
     "PyInstaller>=6.0.0",
 ]
+typecheck = [
+    "pyright[nodejs]==1.1.414",
+]
 
 [project.urls]
 Homepage = "https://github.com/simoneferraresi/IOPanel"
@@ -78,3 +81,17 @@ exclude = [
 
 [tool.uv]
 required-version = "==0.12.21"
+
+[tool.pyright]
+include = [
+    "hardware/interfaces.py",
+    "hardware/ct400.py",
+    "hardware/dummy_ct400.py",
+]
+pythonVersion = "3.12"
+pythonPlatform = "Windows"
+typeCheckingMode = "basic"
+venvPath = "."
+venv = ".venv"
+reportIncompatibleMethodOverride = "error"
+reportImplicitOverride = "error"
