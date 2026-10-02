@@ -87,6 +87,9 @@ include = [
     "hardware/interfaces.py",
     "hardware/ct400.py",
     "hardware/dummy_ct400.py",
+    "hardware/camera_init_worker.py",
+    "hardware/ct400_init_worker.py",
+    "hardware/camera_recovery_worker.py",
 ]
 pythonVersion = "3.12"
 pythonPlatform = "Windows"

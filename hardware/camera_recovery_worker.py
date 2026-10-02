@@ -1,11 +1,12 @@
 """One-shot camera recovery executed outside the GUI thread."""
 
 import logging
+from typing import override
 
 from PySide6.QtCore import Signal, Slot
 
 from hardware.camera import VimbaCam
-from logic.task_runner import BaseWorker
+from logic.task_runner import BaseWorker, TaskRunner
 
 logger = logging.getLogger("LabApp.CameraRecovery")
 
@@ -19,10 +20,11 @@ class CameraRecoveryWorker(BaseWorker):
         super().__init__(parent)
         self.camera = camera
         self.identifier = identifier
-        self.task = None
+        self.task: TaskRunner | None = None
 
+    @override
     @Slot()
-    def run(self):
+    def run(self) -> None:
         success = False
         message = ""
         try:
