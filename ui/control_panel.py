@@ -1098,7 +1098,12 @@ class HistogramControlPanel(BaseControlPanel):
     def _apply_monitoring_settings(self) -> bool:
         if self.ct400_operation_state != "IDLE" and not self._monitor_starting:
             return False
-        if not self.is_instrument_connected:
+        ct400 = self.ct400
+        if self.is_instrument_connected and ct400 is None:
+            logger.error(
+                "Monitor Panel: Inconsistent connected state; CT400 device reference is unavailable."
+            )
+        if not self.is_instrument_connected or ct400 is None:
             logger.error("Monitor Panel: Cannot apply settings, instrument not connected.")
             return False
         try:
@@ -1112,12 +1117,12 @@ class HistogramControlPanel(BaseControlPanel):
 
             det_enables = [Enable.ENABLE if cb.isChecked() else Enable.DISABLE for cb in self.detector_cbs]
             if len(det_enables) == 4:
-                self.ct400.set_detector_array(det_enables[1], det_enables[2], det_enables[3], Enable.DISABLE)
+                ct400.set_detector_array(det_enables[1], det_enables[2], det_enables[3], Enable.DISABLE)
             else:
                 logger.error(f"Monitor Panel: Incorrect number of detector checkboxes ({len(det_enables)}).")
                 return False
 
-            self.ct400.cmd_laser(input_port_enum, Enable.ENABLE, wavelength, power_mw)
+            ct400.cmd_laser(input_port_enum, Enable.ENABLE, wavelength, power_mw)
             logger.info(
                 f"Monitor Panel: Laser commanded for monitoring. Port {input_port_enum.value}, WL {wavelength}nm, P {power_mw:.3f}mW"
             )
@@ -1138,7 +1143,12 @@ class HistogramControlPanel(BaseControlPanel):
     def _start_monitoring(self):
         if self.ct400_operation_state != "IDLE":
             return
-        if not self.is_instrument_connected:
+        ct400 = self.ct400
+        if self.is_instrument_connected and ct400 is None:
+            logger.error(
+                "Monitor Panel: Inconsistent connected state; CT400 device reference is unavailable."
+            )
+        if not self.is_instrument_connected or ct400 is None:
             QMessageBox.warning(self, "Not Connected", "CT400 device is not connected.")
             return
         if self.monitoring:
@@ -1205,7 +1215,8 @@ class HistogramControlPanel(BaseControlPanel):
             logger.debug("Monitor Panel: selected-input cleanup complete; ownership released.")
 
     def _perform_laser_disable(self):
-        if self.is_instrument_connected and self.ct400:
+        ct400 = self.ct400
+        if self.is_instrument_connected and ct400 is not None:
             input_port_enum = None
             try:
                 logger.info("Monitor Panel: Disabling laser via _perform_laser_disable.")
@@ -1221,7 +1232,7 @@ class HistogramControlPanel(BaseControlPanel):
 
                 default_wl_disable = 1550.0
                 default_power_disable = 1.0
-                self.ct400.cmd_laser(
+                ct400.cmd_laser(
                     input_port_enum,
                     Enable.DISABLE,
                     float(default_wl_disable),
@@ -1345,12 +1356,13 @@ class HistogramControlPanel(BaseControlPanel):
 
     @Slot()
     def _detector_selection_changed(self):
-        if self.is_instrument_connected and self.ct400 and self.ct400_operation_state == "IDLE":
+        ct400 = self.ct400
+        if self.is_instrument_connected and ct400 is not None and self.ct400_operation_state == "IDLE":
             logger.info("Monitor Panel: Detector selection changed, re-applying to CT400.")
             try:
                 det_enables = [Enable.ENABLE if cb.isChecked() else Enable.DISABLE for cb in self.detector_cbs]
                 if len(det_enables) == 4:
-                    self.ct400.set_detector_array(det_enables[1], det_enables[2], det_enables[3], Enable.DISABLE)
+                    ct400.set_detector_array(det_enables[1], det_enables[2], det_enables[3], Enable.DISABLE)
                 else:
                     logger.error(f"Monitor Panel: Incorrect detector checkbox count ({len(det_enables)}).")
             except CT400Error as e:
