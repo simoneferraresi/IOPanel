@@ -6,6 +6,32 @@ from logic.task_runner import BaseWorker, TaskRunner
 from ui import main_window as main_window_module
 
 
+def _qt_thread_stopped(thread):
+    if thread is None:
+        return True
+    try:
+        return not thread.isRunning()
+    except RuntimeError:
+        return True
+
+
+def _ensure_histogram_worker_stops(window, request, monkeypatch):
+    thread = window.histogram_control.power_fetch_thread
+    cleanup = window.histogram_control.cleanup_worker_thread
+
+    def cleanup_once():
+        if not _qt_thread_stopped(thread):
+            cleanup()
+
+    monkeypatch.setattr(window.histogram_control, "cleanup_worker_thread", cleanup_once)
+
+    def cleanup_if_running():
+        cleanup_once()
+
+    request.addfinalizer(cleanup_if_running)
+    return thread
+
+
 def _window(qtbot, monkeypatch, config=None):
     monkeypatch.setattr(main_window_module.MainWindow, "_begin_lazy_init", lambda _window: None)
     config = config or AppConfig(instruments={"ct400_backend": "simulation"})
@@ -20,9 +46,10 @@ def _task(window):
     return task
 
 
-def test_close_defers_for_ct400_or_piezo_task_without_stopping_thread(qtbot, monkeypatch):
+def test_close_defers_for_ct400_or_piezo_task_without_stopping_thread(qtbot, monkeypatch, request):
     for role in ("ct400", "piezo"):
         window = _window(qtbot, monkeypatch)
+        histogram_thread = _ensure_histogram_worker_stops(window, request, monkeypatch)
         task = _task(window)
         setattr(window, f"{role}_task", task)
         # Preserve the exact legacy lookup name so this probe would exercise
@@ -40,17 +67,18 @@ def test_close_defers_for_ct400_or_piezo_task_without_stopping_thread(qtbot, mon
         assert not event.isAccepted()
         assert window._pending_init_close
         assert calls == []
+        window.histogram_control.cleanup_worker_thread()
+        assert _qt_thread_stopped(histogram_thread)
         window.deleteLater()
 
 
-def test_camera_init_defers_cleanup_until_last_thread_finished(qtbot, monkeypatch):
+def test_camera_init_defers_cleanup_until_last_thread_finished(qtbot, monkeypatch, request):
     window = _window(qtbot, monkeypatch)
+    histogram_thread = _ensure_histogram_worker_stops(window, request, monkeypatch)
     tasks = [_task(window) for _ in range(3)]  # CT400 and two camera init tasks.
     camera_cleanups = []
     vimba_cleanups = []
     scheduled = []
-    monkeypatch.setattr(window.histogram_control, "cleanup_worker_thread", lambda: None)
-    monkeypatch.setattr(window.alignment_tab, "cleanup", lambda: None)
     monkeypatch.setattr(window, "_cleanup_cameras", lambda: camera_cleanups.append("camera"))
     monkeypatch.setattr(window, "_cleanup_vimbasystem", lambda: vimba_cleanups.append("vimba"))
     monkeypatch.setattr(
@@ -88,9 +116,10 @@ def test_camera_init_defers_cleanup_until_last_thread_finished(qtbot, monkeypatc
     assert camera_cleanups == ["camera"]
     assert vimba_cleanups == ["vimba"]
     assert not window._pending_init_close
+    assert _qt_thread_stopped(histogram_thread)
 
 
-def test_simulated_camera_result_during_pending_close_is_cleaned(qtbot, monkeypatch):
+def test_simulated_camera_result_during_pending_close_is_cleaned(qtbot, monkeypatch, request):
     config = AppConfig(
         instruments={"ct400_backend": "simulation"},
         cameras={
@@ -105,6 +134,7 @@ def test_simulated_camera_result_during_pending_close_is_cleaned(qtbot, monkeypa
         },
     )
     window = _window(qtbot, monkeypatch, config)
+    histogram_thread = _ensure_histogram_worker_stops(window, request, monkeypatch)
     task = _task(window)
     camera_config = config.cameras["late-camera"]
     camera = SimulatedCamera(identifier="late-camera", camera_name="Late camera", width=8, height=8)
@@ -115,9 +145,6 @@ def test_simulated_camera_result_during_pending_close_is_cleaned(qtbot, monkeypa
     vimba_cleanups = []
     scheduled = []
     original_camera_cleanup = window._cleanup_cameras
-    monkeypatch.setattr(window.histogram_control, "cleanup_worker_thread", lambda: None)
-    monkeypatch.setattr(window.alignment_tab, "cleanup", lambda: None)
-
     def record_camera_cleanup():
         cameras_cleaned.append(len(window.cameras))
         original_camera_cleanup()
@@ -148,6 +175,7 @@ def test_simulated_camera_result_during_pending_close_is_cleaned(qtbot, monkeypa
     assert cameras_cleaned == [1]
     assert vimba_cleanups == [True]
     assert not window._pending_init_close
+    assert _qt_thread_stopped(histogram_thread)
 
 
 def test_refresh_and_direct_init_are_blocked_while_init_close_pending(qtbot, monkeypatch):
