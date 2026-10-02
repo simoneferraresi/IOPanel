@@ -2,6 +2,7 @@ import logging
 import threading
 from abc import ABC, ABCMeta, abstractmethod
 from datetime import UTC, datetime
+from typing import override
 
 import numpy as np
 from PySide6 import QtCore, QtGui
@@ -654,7 +655,8 @@ class CT400ControlPanel(BaseControlPanel):
         self.on_instrument_connected(self.is_instrument_connected)
         self.progress_updated.connect(self.update_progress_bar)
 
-    def _init_subclass_ui(self):
+    @override
+    def _init_subclass_ui(self) -> None:
         """Creates the UI elements specific to the Scan panel."""
         scan_config_group = QGroupBox("Scan-Specific Configuration")
         scan_config_layout = QGridLayout()
@@ -715,6 +717,7 @@ class CT400ControlPanel(BaseControlPanel):
         QTimer.singleShot(0, self.update_shared_settings)
 
     # --- Implementation of Abstract Methods ---
+    @override
     def _get_configurable_widgets(self) -> list[QWidget]:
         return [
             self.initial_wl,
@@ -726,15 +729,19 @@ class CT400ControlPanel(BaseControlPanel):
             self.input_port,
         ]
 
+    @override
     def _get_main_action_button(self) -> QPushButton:
         return self.scan_btn
 
+    @override
     def is_busy(self) -> bool:
         return self.scanning
 
-    def _force_stop(self):
+    @override
+    def _force_stop(self) -> None:
         self._stop_scan(cancelled=True)
 
+    @override
     def _owns_operation_state(self, state: str) -> bool:
         return state == "SCANNING" and self.scanning
 
@@ -756,6 +763,7 @@ class CT400ControlPanel(BaseControlPanel):
         except Exception as e:
             logger.warning(f"Could not update shared settings: {e}")
 
+    @override
     def _get_laser_power_mw(self) -> float:
         value = float(self.laser_power.text())
         if self.power_unit.currentText() == "dBm":
