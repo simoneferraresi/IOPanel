@@ -437,7 +437,7 @@ class MainWindow(QMainWindow):
         # TaskRunner owns the worker and thread for this one-shot operation.
         task = TaskRunner(worker)
         self.ct400_task = task
-        task.thread.finished.connect(lambda task=task: self._ct400_init_task_finished.emit(task))
+        task.worker_thread.finished.connect(lambda task=task: self._ct400_init_task_finished.emit(task))
         self._track_init_task(task)
         task.start()
 
@@ -472,14 +472,14 @@ class MainWindow(QMainWindow):
         # TaskRunner owns the worker and thread for this one-shot operation.
         task = TaskRunner(worker)
         self.piezo_task = task
-        task.thread.finished.connect(lambda task=task: self._piezo_init_task_finished.emit(task))
+        task.worker_thread.finished.connect(lambda task=task: self._piezo_init_task_finished.emit(task))
         self._track_init_task(task)
         task.start()
 
     def _track_init_task(self, task: TaskRunner):
         """Own an initialization task until its thread reaches its final boundary."""
         self._init_tasks.add(task)
-        task.thread.finished.connect(lambda task=task: self._init_task_thread_finished.emit(task))
+        task.worker_thread.finished.connect(lambda task=task: self._init_task_thread_finished.emit(task))
 
     @Slot(object)
     def _on_init_task_thread_finished(self, task):
@@ -834,7 +834,7 @@ class MainWindow(QMainWindow):
         piezo_task = self.piezo_task
         if self._piezo_operations_in_flight:
             logger.info("Skipping piezo discovery while a piezo connection operation is active.")
-        elif piezo_task is not None and piezo_task.thread.isRunning():
+        elif piezo_task is not None and piezo_task.worker_thread.isRunning():
             logger.info("Piezo discovery already running. Skipping.")
         else:
             self._init_piezos_lazy()
@@ -847,7 +847,7 @@ class MainWindow(QMainWindow):
 
         if is_dummy or is_none:
             ct400_task = self.ct400_task
-            if ct400_task is not None and ct400_task.thread.isRunning():
+            if ct400_task is not None and ct400_task.worker_thread.isRunning():
                 logger.info("CT400 init already running. Skipping.")
             else:
                 logger.info("Current CT400 is Dummy/None. Re-scanning for real hardware...")
@@ -1208,7 +1208,7 @@ class MainWindow(QMainWindow):
         self._camera_recovery_tasks[identifier] = task
         worker.task = task
         worker.recovery_finished.connect(self._on_camera_recovery_result)
-        task.thread.finished.connect(
+        task.worker_thread.finished.connect(
             lambda camera_id=identifier, task=task: self._camera_recovery_thread_finished.emit(camera_id, task)
         )
         task.start()

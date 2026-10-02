@@ -11,7 +11,7 @@ from ui import main_window as main_window_module
 
 def _runner_stopped(task):
     try:
-        return not task.thread.isRunning()
+        return not task.worker_thread.isRunning()
     except RuntimeError:
         return True
 
@@ -98,7 +98,7 @@ def _close_window_and_check_cleanup(window, qtbot):
     assert not window.cameras
     if ct400_task is not None:
         try:
-            assert not ct400_task.thread.isRunning()
+            assert not ct400_task.worker_thread.isRunning()
         except RuntimeError:  # Qt has deleted the completed thread wrapper.
             pass
     for task in window._init_tasks:
