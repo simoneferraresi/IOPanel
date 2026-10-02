@@ -1,13 +1,14 @@
 import logging
 import sys
 from pathlib import Path
+from typing import override
 
 from PySide6.QtCore import Signal, Slot
 
 # We need to import from the main project, so adjust path if necessary
 # This assumes 'app.py' is in the parent directory
 from config_model import AppConfig
-from hardware.ct400 import CT400, CT400Error, CT400InitializationError
+from hardware.ct400 import CT400, CT400Error
 from hardware.dummy_ct400 import DummyCT400
 from hardware.interfaces import AbstractCT400
 from logic.task_runner import BaseWorker
@@ -55,8 +56,9 @@ class CT400InitWorker(BaseWorker):
         logger.warning("CT400InitWorker: No CT400 DLL found in search paths.")
         return None
 
+    @override
     @Slot()
-    def run(self):
+    def run(self) -> None:
         """Initializes the CT400 device."""
         try:
             if not self._is_running:
@@ -91,7 +93,7 @@ class CT400InitWorker(BaseWorker):
                 self.status_updated.emit("DISCONNECTED", "CT400: Ready (Disconnected)")
                 self.ct400_initialized.emit(ct400_device)
 
-            except (CT400Error, FileNotFoundError, OSError, CT400InitializationError) as e:
+            except (CT400Error, OSError) as e:
                 msg = f"CT400 Init Failed: {e}. Using dummy device."
                 logger.error(msg, exc_info=True)
                 self.status_updated.emit("UNAVAILABLE", "CT400: Init Failed. Using Dummy.")

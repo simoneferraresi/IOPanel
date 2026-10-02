@@ -147,6 +147,23 @@ def test_recovery_worker_emits_truthful_result_and_finished_once():
     assert exception_finished.count() == 1
 
 
+def test_recovery_worker_emits_and_clears_task_runner_reference():
+    camera = SimulatedCamera(identifier="task-worker", width=8, height=8)
+    camera.recover_once = lambda: True
+    worker = CameraRecoveryWorker(camera, "task-worker")
+    task = TaskRunner(worker, auto_start_run=False)
+    worker.task = task
+    results = QSignalSpy(worker.recovery_finished)
+    finished = QSignalSpy(worker.finished)
+
+    worker.run()
+
+    assert results.count() == 1
+    assert results.at(0) == ["task-worker", True, "", task]
+    assert worker.task is None
+    assert finished.count() == 1
+
+
 def test_panel_serializes_auto_exposure_and_gain_and_suppresses_watchdog(qtbot, monkeypatch):
     monkeypatch.setattr(CameraPanel, "_start_conversion_worker", lambda _panel: None)
     config = CameraConfig(identifier="auto", enabled=True, name="Auto", backend="simulation")

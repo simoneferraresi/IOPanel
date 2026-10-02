@@ -1,4 +1,5 @@
 import logging
+from typing import override
 
 from PySide6.QtCore import QCoreApplication, QThread, Signal, Slot
 
@@ -24,8 +25,9 @@ class CameraInitWorker(BaseWorker):
         self.cam_config = cam_config
         self._is_running = True
 
+    @override
     @Slot()
-    def run(self):
+    def run(self) -> None:
         """Creates and opens a VimbaCam instance."""
         if not self._is_running:
             return
