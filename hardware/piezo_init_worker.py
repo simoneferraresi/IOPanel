@@ -28,12 +28,13 @@ class PiezoInitWorker(BaseWorker):
     @Slot()
     def run(self):
         """Finds and connects to the configured piezo controllers."""
+        piezo_left = None
+        piezo_right = None
         try:
             if not self._is_running:
                 return
 
             logger.info("Worker starting initialization for Piezo controllers...")
-            piezo_left, piezo_right = None, None
             dll_path = Path(self.config.piezo_dll_path)
             if not dll_path.is_file():
                 raise PiezoError(f"Piezo DLL not found at specified path: {dll_path}")
@@ -61,25 +62,26 @@ class PiezoInitWorker(BaseWorker):
             self.piezos_initialized.emit(piezo_left, piezo_right)
 
         except (PiezoError, FileNotFoundError) as e:
-            # This now only catches *critical* errors, like the DLL being missing
+            self._cleanup_partial_controllers(piezo_left, piezo_right)
             logger.error(f"Failed to initialize Piezo library: {e}", exc_info=True)
             self.initialization_failed.emit(str(e))
         except Exception as e:
-            logger.exception(f"Unexpected error in piezo init worker: {e}")
-            self.initialization_failed.emit(f"An unexpected error occurred: {e}")
-        except (PiezoError, FileNotFoundError) as e:
-            logger.error(f"Failed to initialize Piezo controllers: {e}", exc_info=True)
-            self.initialization_failed.emit(str(e))
-            # Ensure partial connections are cleaned up
-            if piezo_left and piezo_left.is_connected():
-                piezo_left.disconnect()
-            if piezo_right and piezo_right.is_connected():
-                piezo_right.disconnect()
-        except Exception as e:
+            self._cleanup_partial_controllers(piezo_left, piezo_right)
             logger.exception(f"Unexpected error in piezo init worker: {e}")
             self.initialization_failed.emit(f"An unexpected error occurred: {e}")
         finally:
             self.finished.emit()
+
+    @staticmethod
+    def _cleanup_partial_controllers(piezo_left, piezo_right):
+        for side, piezo in (("left", piezo_left), ("right", piezo_right)):
+            if piezo is None:
+                continue
+            try:
+                if piezo.is_connected():
+                    piezo.disconnect()
+            except Exception:
+                logger.exception("Failed to clean up partially initialized %s Piezo controller", side)
 
     def stop(self):
         self._is_running = False

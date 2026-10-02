@@ -162,6 +162,87 @@ def test_piezo_unexpected_discovery_failure_emits_failure_and_finished_once(monk
     assert finished.count() == 1
 
 
+def test_piezo_right_constructor_failure_cleans_up_left_controller(monkeypatch, tmp_path):
+    dll_path = tmp_path / "fake.dll"
+    dll_path.touch()
+    config = _config().instruments.model_copy(
+        update={"piezo_dll_path": str(dll_path), "piezo_left_serial": "L", "piezo_right_serial": "R"}
+    )
+    created = []
+
+    class FakePiezo:
+        @staticmethod
+        def find_devices(_path):
+            return ["L", "R"]
+
+        def __init__(self, _path):
+            if created:
+                raise RuntimeError("right controller construction failed")
+            self.connected = True
+            self.disconnected = False
+            created.append(self)
+
+        def is_connected(self):
+            return self.connected
+
+        def disconnect(self):
+            self.disconnected = True
+            self.connected = False
+
+    monkeypatch.setattr(piezo_init_worker, "PiezoController", FakePiezo)
+    worker = piezo_init_worker.PiezoInitWorker(config)
+    results = QSignalSpy(worker.piezos_initialized)
+    failures = QSignalSpy(worker.initialization_failed)
+    finished = QSignalSpy(worker.finished)
+
+    worker.run()
+
+    assert created[0].disconnected is True
+    assert results.count() == 0
+    assert failures.count() == 1
+    assert failures.at(0)[0] == "An unexpected error occurred: right controller construction failed"
+    assert finished.count() == 1
+
+
+def test_piezo_cleanup_failure_preserves_initialization_failure(monkeypatch, tmp_path, caplog):
+    dll_path = tmp_path / "fake.dll"
+    dll_path.touch()
+    config = _config().instruments.model_copy(
+        update={"piezo_dll_path": str(dll_path), "piezo_left_serial": "L", "piezo_right_serial": "R"}
+    )
+    created = []
+
+    class FakePiezo:
+        @staticmethod
+        def find_devices(_path):
+            return ["L", "R"]
+
+        def __init__(self, _path):
+            if created:
+                raise RuntimeError("right controller construction failed")
+            self.connected = True
+            created.append(self)
+
+        def is_connected(self):
+            return self.connected
+
+        def disconnect(self):
+            raise RuntimeError("left controller disconnect failed")
+
+    monkeypatch.setattr(piezo_init_worker, "PiezoController", FakePiezo)
+    worker = piezo_init_worker.PiezoInitWorker(config)
+    failures = QSignalSpy(worker.initialization_failed)
+    finished = QSignalSpy(worker.finished)
+
+    worker.run()
+
+    assert failures.count() == 1
+    assert failures.at(0)[0] == "An unexpected error occurred: right controller construction failed"
+    assert finished.count() == 1
+    assert "Failed to clean up partially initialized left Piezo controller" in caplog.text
+    assert "left controller disconnect failed" in caplog.text
+
+
 def test_piezo_missing_library_emits_failure_and_finished_once():
     worker = piezo_init_worker.PiezoInitWorker(_config().instruments)
     failures = QSignalSpy(worker.initialization_failed)
