@@ -730,6 +730,7 @@ class PlotWidget(QWidget):
 
     _THREAD_WAIT_TIMEOUT_MS = 2000
     _MATLAB_STATUS_TIMEOUT_MS = 2000
+    _STATUS_CLEAR_TIMEOUT_MS = 3000
 
     # Signal to update UI from worker, e.g., re-enable button, show status
     matlab_save_status_update = Signal(str)  # Message for status bar or dialog
@@ -843,6 +844,10 @@ class PlotWidget(QWidget):
 
         self.matlab_status_label = QLabel("")  # For showing "Saving .fig..."
         self.matlab_status_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self._status_clear_timer = QTimer(self)
+        self._status_clear_timer.setSingleShot(True)
+        self._status_clear_timer.setInterval(self._STATUS_CLEAR_TIMEOUT_MS)
+        self._status_clear_timer.timeout.connect(self._clear_matlab_status)
 
         # --- NEW: Screenshot Button ---
         self.screenshot_btn = QPushButton("Export Img")
@@ -958,10 +963,7 @@ class PlotWidget(QWidget):
                 self.matlab_engine_instance = matlab.engine.start_matlab()
                 logger.info("PlotWidget: Shared MATLAB engine started successfully.")
                 self.matlab_status_label.setText("MATLAB Ready.")
-                QTimer.singleShot(
-                    self._MATLAB_STATUS_TIMEOUT_MS,
-                    lambda: self.matlab_status_label.setText(""),
-                )
+                self._status_clear_timer.start(self._MATLAB_STATUS_TIMEOUT_MS)
                 return True
             except Exception as e:
                 logger.error(
@@ -1346,7 +1348,7 @@ class PlotWidget(QWidget):
             self.save_btn.setEnabled(True)
             # Keep status label from MATLAB save if it was the last one, or clear if only sync saves.
             if not self.matlab_status_label.text() or "Saving" not in self.matlab_status_label.text():
-                QTimer.singleShot(3000, lambda: self.matlab_status_label.setText(""))
+                self._status_clear_timer.start(self._STATUS_CLEAR_TIMEOUT_MS)
 
             # Convert Path objects to strings for display
             saved_files_str_list = [str(p) for p in self.saved_files_list]
@@ -1369,12 +1371,17 @@ class PlotWidget(QWidget):
             self.saved_files_list = []
             self.error_list = []
 
+    @Slot()
+    def _clear_matlab_status(self) -> None:
+        self.matlab_status_label.setText("")
+
     def get_matlab_engine(self) -> matlab.engine.MatlabEngine | None:
         with QMutexLocker(self.matlab_engine_lock):  # Protect access
             return self.matlab_engine_instance
 
     def cleanup(self):
         logger.debug("PlotWidget cleanup: Cleaning up resources.")
+        self._status_clear_timer.stop()
         # Stop any ongoing save worker thread
         if self.matlab_save_thread and self.matlab_save_thread.isRunning():
             logger.info("PlotWidget close: Stopping active MATLAB save worker thread.")
