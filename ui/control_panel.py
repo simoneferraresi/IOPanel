@@ -170,7 +170,6 @@ class ScanSettings:
 class ScanWorker(QtCore.QObject):
     _LASER_COMMAND_DELAY_MS = 150
 
-    completed_signal = QtCore.Signal(np.ndarray, np.ndarray, float)
     measurement_ready = QtCore.Signal(object)
     progress_signal = QtCore.Signal(int)
     # The error signal now emits a structured error object
@@ -368,7 +367,6 @@ class ScanWorker(QtCore.QObject):
                 completed_at_utc=datetime.now(UTC),
             )
             self.measurement_ready.emit(measurement)
-            self.completed_signal.emit(wavelengths, powers_scan_data, final_pout)
         except CT400Error as e:
             logger.error(f"ScanWorker: CT400 Error: {e}")
             # Map the generic exception to our structured error type
