@@ -1,5 +1,6 @@
 import logging
 from pathlib import Path
+from typing import override
 
 from PySide6.QtCore import Signal, Slot
 
@@ -25,8 +26,9 @@ class PiezoInitWorker(BaseWorker):
         self.config = config
         self._is_running = True
 
+    @override
     @Slot()
-    def run(self):
+    def run(self) -> None:
         """Finds and connects to the configured piezo controllers."""
         piezo_left = None
         piezo_right = None

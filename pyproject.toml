@@ -90,6 +90,7 @@ include = [
     "hardware/camera_init_worker.py",
     "hardware/ct400_init_worker.py",
     "hardware/camera_recovery_worker.py",
+    "hardware/piezo_init_worker.py",
     "logic/task_runner.py",
 ]
 pythonVersion = "3.12"
