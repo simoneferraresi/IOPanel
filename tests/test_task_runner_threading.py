@@ -38,15 +38,18 @@ def test_worker_run_executes_in_taskrunner_thread(qtbot):
     worker = ThreadProbeWorker()
     entered = QSignalSpy(worker.entered)
     task = TaskRunner(worker)
-    task.thread.setObjectName("task-runner-execution-probe")
-    finished = QSignalSpy(task.thread.finished)
+    task.worker_thread.setObjectName("task-runner-execution-probe")
+    assert isinstance(task.worker_thread, QThread)
+    assert isinstance(task.thread(), QThread)
+    assert task.thread().objectName() != "task-runner-execution-probe"
+    finished = QSignalSpy(task.worker_thread.finished)
 
     task.start()
     qtbot.waitUntil(lambda: entered.count() == 1, timeout=2000)
     current_thread, worker_thread, python_ident, thread_name = entered.at(0)
 
-    assert current_thread == task.thread
-    assert worker_thread == task.thread
+    assert current_thread == task.worker_thread
+    assert worker_thread == task.worker_thread
     assert current_thread == worker_thread
     assert current_thread != gui_thread
     assert python_ident != gui_python_ident
@@ -60,7 +63,7 @@ def test_worker_finished_precedes_task_thread_finished(qtbot):
     entered = QSignalSpy(worker.entered)
     worker_finished = QSignalSpy(worker.finished)
     task = TaskRunner(worker)
-    thread_done = QSignalSpy(task.thread.finished)
+    thread_done = QSignalSpy(task.worker_thread.finished)
 
     task.start()
     qtbot.waitUntil(lambda: entered.count() == 1, timeout=2000)
@@ -85,11 +88,11 @@ def test_immediate_worker_thread_quits_without_gui_event_processing(qtbot):
 
     worker = ImmediateWorker()
     task = TaskRunner(worker)
-    thread_finished = QSignalSpy(task.thread.finished)
+    thread_finished = QSignalSpy(task.worker_thread.finished)
 
     task.start()
     assert run_returned.wait(timeout=2)
-    terminated_without_gui_events = task.thread.wait(2000)
+    terminated_without_gui_events = task.worker_thread.wait(2000)
 
     if not terminated_without_gui_events:
         # Let the normal queued quit/cleanup path complete so the failing
@@ -106,8 +109,8 @@ def test_auto_start_run_false_keeps_worker_as_service(qtbot):
     started = QSignalSpy(worker.entered)
     service_stopped = QSignalSpy(worker.service_stopped)
     task = TaskRunner(worker, auto_start_run=False)
-    thread_started = QSignalSpy(task.thread.started)
-    thread_finished = QSignalSpy(task.thread.finished)
+    thread_started = QSignalSpy(task.worker_thread.started)
+    thread_finished = QSignalSpy(task.worker_thread.finished)
 
     task.start()
     qtbot.waitUntil(lambda: thread_started.count() == 1, timeout=2000)
@@ -119,8 +122,8 @@ def test_auto_start_run_false_keeps_worker_as_service(qtbot):
     QMetaObject.invokeMethod(worker, "stop_service", Qt.ConnectionType.QueuedConnection)
     qtbot.waitUntil(lambda: service_stopped.count() == 1, timeout=2000)
     current, affinity, python_ident = service_stopped.at(0)
-    assert current == task.thread
-    assert affinity == task.thread
+    assert current == task.worker_thread
+    assert affinity == task.worker_thread
     assert python_ident != threading.get_ident()
     qtbot.waitUntil(lambda: thread_finished.count() == 1, timeout=2000)
     assert worker.run_count == 0

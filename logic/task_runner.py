@@ -14,11 +14,11 @@ class BaseWorker(QObject):
     finished = Signal()
     error = Signal(str)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None) -> None:
         super().__init__(parent)
 
     @Slot()
-    def run(self):
+    def run(self) -> None:
         """
         The main entry point for the worker's logic.
         Subclasses should override this if they are 'one-shot' tasks.
@@ -35,7 +35,7 @@ class TaskRunner(QObject):
     # Signal to re-emit errors from the worker to the main thread convenience
     error_occurred = Signal(str)
 
-    def __init__(self, worker: BaseWorker, auto_start_run: bool = True):
+    def __init__(self, worker: BaseWorker, auto_start_run: bool = True) -> None:
         """
         Args:
             worker: An instance of a class inheriting from BaseWorker.
@@ -46,34 +46,34 @@ class TaskRunner(QObject):
         super().__init__()
         self.worker = worker
         self.auto_start_run = auto_start_run
-        self.thread = QThread()
+        self.worker_thread: QThread = QThread()
 
         # 1. Move the worker to the new thread
-        self.worker.moveToThread(self.thread)
+        self.worker.moveToThread(self.worker_thread)
 
         # 2. Connect Lifecycle Signals
         # When the worker says it's finished, quit the thread loop
-        self.worker.finished.connect(self.thread.quit, Qt.ConnectionType.DirectConnection)
+        self.worker.finished.connect(self.worker_thread.quit, Qt.ConnectionType.DirectConnection)
 
         # When the thread loop stops, delete the worker and the thread object
-        self.thread.finished.connect(self.worker.deleteLater)
-        self.thread.finished.connect(self.thread.deleteLater)
+        self.worker_thread.finished.connect(self.worker.deleteLater)
+        self.worker_thread.finished.connect(self.worker_thread.deleteLater)
 
         # 3. Error Forwarding (Optional, but useful)
         self.worker.error.connect(self.error_occurred)
 
-    def start(self):
+    def start(self) -> None:
         """Starts the background thread."""
         logger.debug(f"Starting thread for worker: {self.worker.__class__.__name__}")
-        self.thread.start()
+        self.worker_thread.start()
         if self.auto_start_run:
             QMetaObject.invokeMethod(self.worker, "run", Qt.ConnectionType.QueuedConnection)
 
-    def stop(self):
+    def stop(self) -> None:
         """
         Forcefully asks the thread to stop.
         Note: The worker usually needs its own 'stop()' method to break loops safely.
         """
-        if self.thread.isRunning():
-            self.thread.quit()
-            self.thread.wait()
+        if self.worker_thread.isRunning():
+            self.worker_thread.quit()
+            self.worker_thread.wait()

@@ -27,12 +27,12 @@ def test_close_defers_for_ct400_or_piezo_task_without_stopping_thread(qtbot, mon
         setattr(window, f"{role}_task", task)
         # Preserve the exact legacy lookup name so this probe would exercise
         # the former closeEvent force-stop route on the pre-R04c implementation.
-        setattr(window, f"{role}_init_thread", task.thread)
+        setattr(window, f"{role}_init_thread", task.worker_thread)
         calls = []
-        monkeypatch.setattr(task.thread, "isRunning", lambda: True)
-        monkeypatch.setattr(task.thread, "quit", lambda: calls.append("quit"))
-        monkeypatch.setattr(task.thread, "wait", lambda *_args: calls.append("wait") or False)
-        monkeypatch.setattr(task.thread, "terminate", lambda: calls.append("terminate"))
+        monkeypatch.setattr(task.worker_thread, "isRunning", lambda: True)
+        monkeypatch.setattr(task.worker_thread, "quit", lambda: calls.append("quit"))
+        monkeypatch.setattr(task.worker_thread, "wait", lambda *_args: calls.append("wait") or False)
+        monkeypatch.setattr(task.worker_thread, "terminate", lambda: calls.append("terminate"))
 
         event = QCloseEvent()
         window.closeEvent(event)
@@ -70,13 +70,13 @@ def test_camera_init_defers_cleanup_until_last_thread_finished(qtbot, monkeypatc
     assert len(window._init_tasks) == 3
     assert scheduled == []
 
-    tasks[0].thread.finished.emit()
+    tasks[0].worker_thread.finished.emit()
     assert len(window._init_tasks) == 2
     assert scheduled == []
-    tasks[1].thread.finished.emit()
+    tasks[1].worker_thread.finished.emit()
     assert len(window._init_tasks) == 1
     assert scheduled == []
-    tasks[2].thread.finished.emit()
+    tasks[2].worker_thread.finished.emit()
     assert window._init_tasks == set()
     assert len(scheduled) == 1
     assert scheduled[0][0] == 0
@@ -139,7 +139,7 @@ def test_simulated_camera_result_during_pending_close_is_cleaned(qtbot, monkeypa
     assert cameras_cleaned == []
     assert vimba_cleanups == []
 
-    task.thread.finished.emit()
+    task.worker_thread.finished.emit()
     assert task not in window._init_tasks
     assert len(scheduled) == 1
     assert scheduled[0][1]() is True

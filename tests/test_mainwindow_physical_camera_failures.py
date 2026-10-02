@@ -8,7 +8,7 @@ from ui import main_window as main_window_module
 
 def _runner_stopped(task):
     try:
-        return not task.thread.isRunning()
+        return not task.worker_thread.isRunning()
     except RuntimeError:
         return True
 

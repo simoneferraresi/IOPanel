@@ -37,7 +37,7 @@ def test_ct400_missing_dll_stops_taskrunner_thread(qtbot, monkeypatch):
 
 def _thread_finished(task):
     try:
-        return not task.thread.isRunning()
+        return not task.worker_thread.isRunning()
     except RuntimeError:
         return True
 
@@ -286,7 +286,7 @@ def test_mainwindow_clears_finished_ct400_task_and_refresh_restarts(qtbot, monke
     window._init_ct400_lazy()
     first_task = window.ct400_task
     assert first_task in window._init_tasks
-    thread_destroyed = QSignalSpy(first_task.thread.destroyed)
+    thread_destroyed = QSignalSpy(first_task.worker_thread.destroyed)
     qtbot.waitUntil(lambda: window.ct400_task is None, timeout=3000)
     assert first_task not in window._init_tasks
 
@@ -309,7 +309,7 @@ def test_mainwindow_clears_finished_piezo_task_and_refresh_restarts(qtbot, monke
     window._init_piezos_lazy()
     first_task = window.piezo_task
     assert first_task in window._init_tasks
-    thread_destroyed = QSignalSpy(first_task.thread.destroyed)
+    thread_destroyed = QSignalSpy(first_task.worker_thread.destroyed)
     qtbot.waitUntil(lambda: window.piezo_task is None, timeout=3000)
     assert first_task not in window._init_tasks
 
@@ -353,7 +353,7 @@ def test_worker_finished_does_not_release_task_before_thread_finished(qtbot, mon
     assert finished_spy.count() == 1
     assert task in window._init_tasks
 
-    task.thread.finished.emit()
+    task.worker_thread.finished.emit()
     assert task not in window._init_tasks
 
 
@@ -364,11 +364,11 @@ def test_registry_removes_only_the_thread_that_finished(qtbot, monkeypatch):
     window._track_init_task(first)
     window._track_init_task(second)
 
-    first.thread.finished.emit()
+    first.worker_thread.finished.emit()
     assert first not in window._init_tasks
     assert second in window._init_tasks
 
-    second.thread.finished.emit()
+    second.worker_thread.finished.emit()
     assert not window._init_tasks
 
 
@@ -413,5 +413,5 @@ def test_hardware_initialization_tasks_are_registered_before_start(qtbot, monkey
     assert all(task.worker.__class__.__name__ == "CameraInitWorker" for task in camera_tasks)
 
     for task in list(window._init_tasks):
-        task.thread.finished.emit()
+        task.worker_thread.finished.emit()
     assert not window._init_tasks

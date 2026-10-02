@@ -56,7 +56,7 @@ def test_physical_camera_retained_by_gui_has_application_thread_affinity(qtbot, 
     worker = camera_init_worker.CameraInitWorker(config.identifier, config)
     results = QSignalSpy(worker.camera_initialized)
     task = TaskRunner(worker)
-    task.thread.setObjectName("camera-init-worker-thread")
+    task.worker_thread.setObjectName("camera-init-worker-thread")
     task.start()
 
     qtbot.waitUntil(lambda: results.count() == 1, timeout=2000)
@@ -230,7 +230,7 @@ def test_mainwindow_owns_one_recovery_per_camera_and_defers_close(qtbot, monkeyp
     class FakeTaskRunner:
         def __init__(self, worker):
             self.worker = worker
-            self.thread = FakeThreadSignals()
+            self.worker_thread = FakeThreadSignals()
 
         def start(self):
             started.append(self)
@@ -358,6 +358,6 @@ def test_shutdown_waits_for_recovery_thread_finished_before_camera_and_vimba_cle
 
 def _thread_finished(task):
     try:
-        return not task.thread.isRunning()
+        return not task.worker_thread.isRunning()
     except RuntimeError:
         return True
