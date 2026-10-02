@@ -442,17 +442,15 @@ class PowerFetchWorker(QObject):
                 return
             self._is_busy = True
 
-        if not self.is_worker_running() or QThread.currentThread().isInterruptionRequested():
-            with QMutexLocker(self._busy_lock):
-                self._is_busy = False
-            return
-
-        if not self.ct400:
-            if self.is_worker_running():
-                self.error_occurred.emit("CT400 device is not available in worker.")
-            return
-
         try:
+            if not self.is_worker_running() or QThread.currentThread().isInterruptionRequested():
+                return
+
+            if not self.ct400:
+                if self.is_worker_running():
+                    self.error_occurred.emit("CT400 device is not available in worker.")
+                return
+
             power_data_tuple: PowerData = self.ct400.get_all_powers()
             if self.is_worker_running():
                 self.data_ready.emit(power_data_tuple)
