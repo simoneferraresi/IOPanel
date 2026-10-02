@@ -56,9 +56,8 @@ def test_scan_worker_acquires_dummy_data_and_cleans_up(monkeypatch):
     monkeypatch.setattr(ScanWorker, "_LASER_COMMAND_DELAY_MS", 0)
     device = DummyCT400(scan_duration=0)
     worker = ScanWorker(device, 1500.0, 1501.0, 100, 1.0, LaserInput.LI_3)
-    completed, errors, finished = [], [], []
+    errors, finished = [], []
     measurements = []
-    worker.completed_signal.connect(lambda *data: completed.append(data))
     worker.measurement_ready.connect(measurements.append)
     worker.error_signal.connect(errors.append)
     worker.finished.connect(lambda: finished.append(True))
@@ -66,12 +65,11 @@ def test_scan_worker_acquires_dummy_data_and_cleans_up(monkeypatch):
     worker.do_scan()
 
     assert errors == []
-    assert len(completed) == 1
-    wavelengths, powers, pout = completed[0]
-    np.testing.assert_allclose(wavelengths, np.linspace(1500.0, 1501.0, 11))
-    assert powers.shape == (1, 11)
-    assert pout == -20.0
+    assert len(measurements) == 1
     measurement = measurements[0]
+    np.testing.assert_allclose(measurement.wavelengths_nm, np.linspace(1500.0, 1501.0, 11))
+    assert measurement.detector_data.shape == (1, 11)
+    assert measurement.final_pout == -20.0
     assert measurement.result_kind == CT400ScanResultKind.SUCCESS
     assert measurement.raw_result_code == 0
     assert measurement.detectors == (Detector.DE_1,)
@@ -88,6 +86,34 @@ def test_scan_worker_acquires_dummy_data_and_cleans_up(monkeypatch):
     assert len(device.cmd_laser_calls) == 2
     assert all(_call[1]["laser_input"] == LaserInput.LI_3 for _call in device.cmd_laser_calls)
     assert all(_call[1]["enable"] == Enable.DISABLE for _call in device.cmd_laser_calls)
+
+
+def test_final_power_read_failure_preserves_successful_scan_measurement(monkeypatch, capfd):
+    monkeypatch.setattr(ScanWorker, "_LASER_COMMAND_DELAY_MS", 0)
+    device = DummyCT400(scan_duration=0)
+
+    def fail_final_power_read():
+        raise RuntimeError("final power unavailable")
+
+    monkeypatch.setattr(device, "get_all_powers", fail_final_power_read)
+    worker = ScanWorker(device, 1500.0, 1501.0, 100, 1.0, LaserInput.LI_3)
+    measurements, errors, finished = [], [], []
+    worker.measurement_ready.connect(measurements.append)
+    worker.error_signal.connect(errors.append)
+    worker.finished.connect(lambda: finished.append(True))
+
+    worker.do_scan()
+
+    assert len(measurements) == 1
+    measurement = measurements[0]
+    assert measurement.final_pout is None
+    assert measurement.result_kind == CT400ScanResultKind.SUCCESS
+    assert measurement.raw_result_code == 0
+    np.testing.assert_allclose(measurement.wavelengths_nm, np.linspace(1500.0, 1501.0, 11))
+    assert measurement.detector_data.shape == (1, 11)
+    assert errors == []
+    assert finished == [True]
+    assert "_pythonToCppCopy" not in capfd.readouterr().err
 
 
 def test_scan_worker_preserves_warning_result_with_returned_data(monkeypatch):
@@ -131,14 +157,14 @@ def test_scan_worker_reports_simulated_error_and_still_cleans_up(monkeypatch):
     monkeypatch.setattr(ScanWorker, "_LASER_COMMAND_DELAY_MS", 0)
     device = DummyCT400(scan_duration=0, scan_error="simulated scan failure")
     worker = ScanWorker(device, 1500.0, 1501.0, 100, 1.0, LaserInput.LI_1)
-    completed, errors, finished = [], [], []
-    worker.completed_signal.connect(lambda *data: completed.append(data))
+    measurements, errors, finished = [], [], []
+    worker.measurement_ready.connect(measurements.append)
     worker.error_signal.connect(errors.append)
     worker.finished.connect(lambda: finished.append(True))
 
     worker.do_scan()
 
-    assert completed == []
+    assert measurements == []
     assert len(errors) == 1
     assert errors[0].code == 2
     assert errors[0].message == "simulated scan failure"
@@ -237,14 +263,12 @@ def test_documented_fatal_scan_codes_do_not_retrieve_data(monkeypatch, code):
     monkeypatch.setattr(ScanWorker, "_LASER_COMMAND_DELAY_MS", 0)
     device = DummyCT400(scan_duration=0, scan_error=f"error {code}", scan_result_code=code)
     worker = ScanWorker(device, 1500.0, 1501.0, 100, 1.0, LaserInput.LI_3)
-    completed, errors, measurements = [], [], []
-    worker.completed_signal.connect(lambda *data: completed.append(data))
+    errors, measurements = [], []
     worker.measurement_ready.connect(measurements.append)
     worker.error_signal.connect(errors.append)
 
     worker.do_scan()
 
-    assert completed == []
     assert measurements == []
     assert len(errors) == 1
     assert errors[0].code == code
@@ -260,16 +284,20 @@ def test_documented_warnings_are_reported_and_still_retrieve_data(monkeypatch, c
     monkeypatch.setattr(ScanWorker, "_LASER_COMMAND_DELAY_MS", 0)
     device = DummyCT400(scan_duration=0, scan_error=f"warning {code}", scan_result_code=code)
     worker = ScanWorker(device, 1500.0, 1501.0, 100, 1.0, LaserInput.LI_1)
-    completed, errors, warnings = [], [], []
-    worker.completed_signal.connect(lambda *data: completed.append(data))
+    measurements, errors, warnings = [], [], []
+    worker.measurement_ready.connect(measurements.append)
     worker.error_signal.connect(errors.append)
     worker.warning_signal.connect(lambda *args: warnings.append(args))
 
     worker.do_scan()
 
-    assert len(completed) == 1
+    assert len(measurements) == 1
     assert errors == []
     assert warnings == [(code, f"warning {code}")]
+    measurement = measurements[0]
+    assert measurement.result_kind == CT400ScanResultKind.WARNING
+    assert measurement.raw_result_code == code
+    assert measurement.result_message == f"warning {code}"
 
 
 @pytest.mark.parametrize("code", [6, -1, -10])
@@ -277,14 +305,12 @@ def test_unknown_or_negative_scan_code_is_preserved_and_not_plotted(monkeypatch,
     monkeypatch.setattr(ScanWorker, "_LASER_COMMAND_DELAY_MS", 0)
     device = DummyCT400(scan_duration=0, scan_error=f"raw {code}", scan_result_code=code)
     worker = ScanWorker(device, 1500.0, 1501.0, 100, 1.0, LaserInput.LI_1)
-    completed, errors, measurements = [], [], []
-    worker.completed_signal.connect(lambda *data: completed.append(data))
+    errors, measurements = [], []
     worker.measurement_ready.connect(measurements.append)
     worker.error_signal.connect(errors.append)
 
     worker.do_scan()
 
-    assert completed == []
     assert measurements == []
     assert errors[0].code == code
     assert errors[0].kind == CT400ScanResultKind.UNEXPECTED
@@ -310,9 +336,9 @@ def test_stop_completion_race_uses_waitend_success_result(monkeypatch, qtbot):
     gate = threading.Event()
     device = StopDoesNotInterrupt(wait_gate=gate)
     worker = ScanWorker(device, 1500.0, 1501.0, 100, 1.0, LaserInput.LI_1)
-    errors, completed = [], []
+    errors, measurements = [], []
     worker.error_signal.connect(errors.append)
-    worker.completed_signal.connect(lambda *args: completed.append(args))
+    worker.measurement_ready.connect(measurements.append)
     thread = threading.Thread(target=worker.do_scan)
     thread.start()
     deadline = time.monotonic() + 1
@@ -327,7 +353,7 @@ def test_stop_completion_race_uses_waitend_success_result(monkeypatch, qtbot):
     assert device.stop_scan_calls == 1
     assert device.scan_wait_end_calls == 1
     assert errors == []
-    assert len(completed) == 1
+    assert len(measurements) == 1
     assert device.get_data_points_calls == 1
 
 
