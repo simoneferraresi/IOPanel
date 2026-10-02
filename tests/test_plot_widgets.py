@@ -2,6 +2,8 @@ from datetime import UTC, datetime
 
 import numpy as np
 import pytest
+from PySide6.QtCore import QCoreApplication, QEvent
+from PySide6.QtTest import QSignalSpy
 
 from hardware.ct400_types import CT400ScanResultKind, Detector, LaserInput
 from logic.scan_measurement import ScanAcquisitionSettings, ScanMeasurement
@@ -155,6 +157,42 @@ def test_update_plot_does_not_autorange_empty_or_nonfinite_trace(qtbot):
     x_data, y_data = widget.plot_data_item.getData()
     assert x_data is None or x_data.size == 0
     assert y_data is None or y_data.size == 0
+
+
+@pytest.mark.parametrize("_iteration", range(50))
+def test_status_clear_timer_is_owned_restartable_and_stopped_on_cleanup(qtbot, _iteration):
+    widget = PlotWidget(ScanSettings())
+    status_label = widget.matlab_status_label
+    label_destroyed = QSignalSpy(status_label.destroyed)
+    widget.pending_saves = 0
+    widget.saved_files_list = []
+    widget.error_list = []
+    status_label.setText("scan.csv saved.")
+
+    widget._check_all_saves_done()
+    status_timer = widget._status_clear_timer
+    timeout_count = QSignalSpy(status_timer.timeout)
+
+    assert status_timer.parent() is widget
+    assert status_timer.isSingleShot()
+    assert status_timer.interval() == 3000
+    assert status_timer.isActive()
+
+    qtbot.wait(100)
+    first_remaining_time = status_timer.remainingTime()
+    status_label.setText("mat.csv saved.")
+    widget._check_all_saves_done()
+    assert status_timer.remainingTime() > first_remaining_time
+
+    widget.close()
+    assert not status_timer.isActive()
+    widget.deleteLater()
+    QCoreApplication.sendPostedEvents(widget, QEvent.Type.DeferredDelete)
+    QCoreApplication.processEvents()
+
+    assert label_destroyed.count() == 1
+    qtbot.wait(20)
+    assert timeout_count.count() == 0
 
 
 def test_autorange_keeps_frozen_reference_and_fits_only_live_trace(qtbot):
