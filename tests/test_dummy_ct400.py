@@ -7,7 +7,33 @@ import pytest
 from hardware.ct400_types import CT400ScanResultKind, Detector, Enable, InstrumentError, LaserInput
 from hardware.dummy_ct400 import DummyCT400
 from logic.scan_measurement import ScanAcquisitionSettings
-from ui.control_panel import CT400ControlPanel, QMessageBox, ScanWorker
+from config_model import AppConfig
+from ui.control_panel import CT400ControlPanel, QMessageBox, ScanSettings, ScanWorker
+
+
+def test_scan_start_rejects_missing_ct400_when_connected_flag_is_true(qtbot, monkeypatch, caplog):
+    panel = CT400ControlPanel(ScanSettings(), None, AppConfig())
+    qtbot.addWidget(panel)
+    panel.is_instrument_connected = True
+    panel.ct400 = None
+    warnings = []
+    operation_starts = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: warnings.append(args))
+
+    def fail_if_worker_created(*_args, **_kwargs):
+        raise AssertionError("ScanWorker must not be created without a CT400 device")
+
+    monkeypatch.setattr("ui.control_panel.ScanWorker", fail_if_worker_created)
+    panel.operation_started.connect(lambda: operation_starts.append(True))
+
+    panel._start_scan()
+
+    assert warnings == [(panel, "Not Connected", "CT400 device is not connected.")]
+    assert panel.scanning is False
+    assert panel.scan_worker is None
+    assert panel.scan_thread is None
+    assert operation_starts == []
+    assert "connected flag is true" in caplog.text
 
 
 def test_dummy_scan_data_honors_range_and_resolution_deterministically():

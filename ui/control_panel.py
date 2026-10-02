@@ -765,7 +765,13 @@ class CT400ControlPanel(BaseControlPanel):
     def _start_scan(self):
         if self.ct400_operation_state != "IDLE":
             return
-        if not self.is_instrument_connected:
+        ct400 = self.ct400
+        if self.is_instrument_connected and ct400 is None:
+            logger.error(
+                "Inconsistent CT400 scan panel state: connected flag is true, "
+                "but the device reference is unavailable."
+            )
+        if not self.is_instrument_connected or ct400 is None:
             QMessageBox.warning(self, "Not Connected", "CT400 device is not connected.")
             return
         if self.scanning:
@@ -812,7 +818,7 @@ class CT400ControlPanel(BaseControlPanel):
             # --- REFACTORED THREADING LOGIC ---
             self.scan_thread = QThread(self)
             self.scan_worker = ScanWorker(
-                self.ct400,
+                ct400,
                 start_wl,
                 end_wl,
                 resolution,
