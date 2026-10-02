@@ -22,7 +22,7 @@ from ctypes import (
     create_string_buffer,
 )
 from pathlib import Path
-from typing import Self
+from typing import Self, override
 
 import numpy as np
 
@@ -219,6 +219,7 @@ class CT400(AbstractCT400):
             raise CT400CommunicationError(error_message)
 
     # --- Public API Methods ---
+    @override
     def is_connected(self) -> bool:
         """
         Checks if the CT400 device is connected and responsive.
@@ -264,6 +265,7 @@ class CT400(AbstractCT400):
         self._check_rc(result, "Failed to get the CT400 device type")
         return result
 
+    @override
     def set_laser(
         self,
         laser_input: LaserInput,
@@ -298,6 +300,7 @@ class CT400(AbstractCT400):
         )
         self._check_rc(result, f"Failed to set laser configuration for input {laser_input.name}")
 
+    @override
     def cmd_laser(
         self,
         laser_input: LaserInput,
@@ -318,6 +321,7 @@ class CT400(AbstractCT400):
         )
         self._check_rc(result, f"Failed to send command to laser on input {laser_input.name}")
 
+    @override
     def set_sampling_res(self, resolution_pm: int) -> None:
         """
         Configures the sampling resolution for wavelength scans.
@@ -325,6 +329,7 @@ class CT400(AbstractCT400):
         result = self.dll.CT400_SetSamplingResolution(self.handle, resolution_pm)
         self._check_rc(result, f"Failed to set sample resolution to {resolution_pm} pm")
 
+    @override
     def set_detector_array(self, det2: Enable, det3: Enable, det4: Enable, ext: Enable) -> None:
         """
         Configures which detectors are active during a scan.
@@ -339,6 +344,7 @@ class CT400(AbstractCT400):
         result = self.dll.CT400_SetBNC(self.handle, enable.value, alpha, beta, unit.value)
         self._check_rc(result, "Failed to set external BNC detector configuration")
 
+    @override
     def set_scan(self, laser_power: float, min_wavelength: float, max_wavelength: float) -> None:
         """
         Configures the primary parameters for a wavelength scan.
@@ -347,6 +353,7 @@ class CT400(AbstractCT400):
         result = self.dll.CT400_SetScan(self.handle, laser_power, min_wavelength, max_wavelength)
         self._check_rc(result, "Failed to set scan configuration")
 
+    @override
     def start_scan(self) -> None:
         """
         Starts the pre-configured wavelength scan. This is a non-blocking call.
@@ -356,6 +363,7 @@ class CT400(AbstractCT400):
         self._check_rc(result, "Failed to start scan")
         logger.info("Scan started successfully.")
 
+    @override
     def stop_scan(self) -> None:
         """
         Requests user cancellation through CT400_ScanStop.
@@ -373,6 +381,7 @@ class CT400(AbstractCT400):
                 f"CT400_ScanStop returned unexpected code {result}; cancellation was not confirmed."
             )
 
+    @override
     def scan_wait_end(self) -> ScanWaitResult:
         """
         Blocks until the scan finishes and returns its raw result and tcError.
@@ -402,6 +411,7 @@ class CT400(AbstractCT400):
             logger.error("CT400_ScanWaitEnd returned undocumented negative code %s: %s", result, error_msg)
         return ScanWaitResult(raw_code=result, error_message=error_msg)
 
+    @override
     def get_data_points(self, dets_used: list[Detector]) -> tuple[np.ndarray, np.ndarray]:
         """
         Retrieves the resampled wavelength and power data after a scan has completed.
@@ -433,6 +443,7 @@ class CT400(AbstractCT400):
             det_pows[i, :] = np.ctypeslib.as_array(pow_buffer).copy()
         return wavelengths, det_pows
 
+    @override
     def get_all_powers(self) -> PowerData:
         """
         Reads the instantaneous power values from all configured detectors.
@@ -470,6 +481,9 @@ class CT400(AbstractCT400):
         Path
             The actual file path written (may differ if the DLL modifies it).
         """
+        if self.handle is None:
+            raise CT400CommunicationError("Cannot save the wavelength sync file without an initialized CT400 handle.")
+
         path = Path(path).resolve()
         logger.debug(f"Saving scan wavelength sync file to {path}")
 
@@ -486,6 +500,7 @@ class CT400(AbstractCT400):
 
         return Path(saved_path)
 
+    @override
     def close(self) -> None:
         """
         Closes the native CT400 connection and releases its allocated resources.

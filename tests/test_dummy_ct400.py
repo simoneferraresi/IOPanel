@@ -370,7 +370,7 @@ def test_dummy_rejects_invalid_scan_duration():
 
 def test_dummy_close_stops_active_scan_and_disables_laser():
     device = DummyCT400()
-    device.cmd_laser(enable=Enable.ENABLE)
+    device.cmd_laser(LaserInput.LI_1, Enable.ENABLE, 1550.0, 1.0)
     device.start_scan()
 
     device.close()

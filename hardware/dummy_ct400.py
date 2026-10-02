@@ -2,10 +2,11 @@ import logging
 import math
 import threading
 import time
+from typing import override
 
 import numpy as np
 
-from hardware.ct400_types import Detector, Enable, PowerData, ScanWaitResult
+from hardware.ct400_types import Detector, Enable, LaserInput, LaserSource, PowerData, ScanWaitResult
 from hardware.interfaces import AbstractCT400
 
 logger = logging.getLogger("LabApp.DummyCT400")
@@ -44,40 +45,69 @@ class DummyCT400(AbstractCT400):
         self.get_data_points_calls = 0
         self.cmd_laser_calls = []
 
+    @override
     def is_connected(self) -> bool:
         logger.debug(f"Dummy is_connected called. Returning: {self._is_connected}")
         return self._is_connected
 
-    def set_laser(self, *args, **kwargs) -> None:
-        logger.info("Dummy set_laser called with args: %s, kwargs: %s", args, kwargs)
+    @override
+    def set_laser(
+        self,
+        laser_input: LaserInput,
+        enable: Enable,
+        gpib_address: int,
+        laser_type: LaserSource,
+        min_wavelength: float,
+        max_wavelength: float,
+        speed: int,
+    ) -> None:
+        logger.info(
+            "Dummy set_laser called for input %s with enable=%s, address=%s, type=%s, wavelength range=%s-%s, speed=%s",
+            laser_input,
+            enable,
+            gpib_address,
+            laser_type,
+            min_wavelength,
+            max_wavelength,
+            speed,
+        )
         # In a dummy, we can consider 'set_laser' as connecting.
         self._is_connected = True
 
-    def cmd_laser(self, *args, **kwargs) -> None:
-        logger.info("Dummy cmd_laser called with args: %s, kwargs: %s", args, kwargs)
-        self.cmd_laser_calls.append((args, kwargs))
-        # Check if the command is to disable the laser
-        # This is a simplified check. A more robust dummy would parse kwargs more carefully.
-        if "enable" in kwargs and kwargs["enable"] == Enable.DISABLE:
+    @override
+    def cmd_laser(self, laser_input: LaserInput, enable: Enable, wavelength: float, power: float) -> None:
+        logger.info(
+            "Dummy cmd_laser called for input %s with enable=%s, wavelength=%s, power=%s",
+            laser_input,
+            enable,
+            wavelength,
+            power,
+        )
+        named_args = {
+            "laser_input": laser_input,
+            "enable": enable,
+            "wavelength": wavelength,
+            "power": power,
+        }
+        self.cmd_laser_calls.append(((), named_args))
+        if enable == Enable.DISABLE:
             self._is_connected = False
             self._laser_enabled = False
-        elif "enable" in kwargs and kwargs["enable"] == Enable.ENABLE:
-            self._laser_enabled = True
-        elif len(args) > 1 and args[1] == Enable.DISABLE:
-            self._is_connected = False
-            self._laser_enabled = False
-        elif len(args) > 1 and args[1] == Enable.ENABLE:
+        elif enable == Enable.ENABLE:
             self._laser_enabled = True
 
+    @override
     def set_sampling_res(self, resolution_pm: int) -> None:
         logger.info("Dummy set_sampling_res called with resolution: %s pm", resolution_pm)
         if int(resolution_pm) <= 0:
             raise ValueError("resolution_pm must be positive")
         self._sampling_resolution_pm = int(resolution_pm)
 
-    def set_detector_array(self, *args, **kwargs) -> None:
-        logger.info("Dummy set_detector_array called with args: %s, kwargs: %s", args, kwargs)
+    @override
+    def set_detector_array(self, det2: Enable, det3: Enable, det4: Enable, ext: Enable) -> None:
+        logger.info("Dummy set_detector_array called with det2=%s, det3=%s, det4=%s, ext=%s", det2, det3, det4, ext)
 
+    @override
     def set_scan(self, laser_power: float, min_wavelength: float, max_wavelength: float) -> None:
         logger.info("Dummy set_scan called from %s nm to %s nm at %s mW", min_wavelength, max_wavelength, laser_power)
         min_wavelength = float(min_wavelength)
@@ -87,18 +117,21 @@ class DummyCT400(AbstractCT400):
         self._scan_min_wavelength = min_wavelength
         self._scan_max_wavelength = max_wavelength
 
+    @override
     def start_scan(self) -> None:
         logger.info("Dummy start_scan called. Simulating a scan start.")
         self._stop_requested.clear()
         self._is_scanning = True
         self._scan_start_time = time.monotonic()
 
+    @override
     def stop_scan(self) -> None:
         logger.info("Dummy stop_scan called.")
         self.stop_scan_calls += 1
         if self._is_scanning:
             self._stop_requested.set()
 
+    @override
     def scan_wait_end(self) -> ScanWaitResult:
         """Block until completion or Stop, like the documented wait operation."""
         self.scan_wait_end_calls += 1
@@ -121,6 +154,7 @@ class DummyCT400(AbstractCT400):
         logger.info("Dummy scan_wait_end: Scan finished.")
         return ScanWaitResult(0, "")
 
+    @override
     def get_data_points(self, dets_used: list[Detector]) -> tuple[np.ndarray, np.ndarray]:
         logger.info("Dummy get_data_points called. Generating deterministic simulated data.")
         self.get_data_points_calls += 1
@@ -150,6 +184,7 @@ class DummyCT400(AbstractCT400):
         power_array = np.tile(powers, (num_detectors, 1))
         return wavelengths, power_array
 
+    @override
     def get_all_powers(self) -> PowerData:
         # Stable plausible readings keep simulated acquisition repeatable.
         pout = -20.0
@@ -161,6 +196,7 @@ class DummyCT400(AbstractCT400):
         }
         return PowerData(pout=pout, detectors=detectors)
 
+    @override
     def close(self) -> None:
         logger.info("Dummy CT400 close called.")
         self._is_scanning = False
