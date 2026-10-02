@@ -14,6 +14,32 @@ from ui import main_window as main_window_module
 from ui.camera_widgets import AutoOpWorker, CameraPanel
 
 
+def _qt_thread_stopped(thread):
+    if thread is None:
+        return True
+    try:
+        return not thread.isRunning()
+    except RuntimeError:
+        return True
+
+
+def _ensure_histogram_worker_stops(window, request, monkeypatch):
+    thread = window.histogram_control.power_fetch_thread
+    cleanup = window.histogram_control.cleanup_worker_thread
+
+    def cleanup_once():
+        if not _qt_thread_stopped(thread):
+            cleanup()
+
+    monkeypatch.setattr(window.histogram_control, "cleanup_worker_thread", cleanup_once)
+
+    def cleanup_if_running():
+        cleanup_once()
+
+    request.addfinalizer(cleanup_if_running)
+    return thread
+
+
 def test_placeholder_assignment_watchdog_dispatches_recovery_request(qtbot, monkeypatch):
     monkeypatch.setattr(CameraPanel, "_start_conversion_worker", lambda _panel: None)
     config = CameraConfig(identifier="probe", enabled=True, name="Probe", backend="simulation")
@@ -280,11 +306,12 @@ def test_mainwindow_owns_one_recovery_per_camera_and_defers_close(qtbot, monkeyp
     assert len(scheduled) == 1
 
 
-def test_mainwindow_defers_shutdown_for_active_auto_operation(qtbot, monkeypatch):
+def test_mainwindow_defers_shutdown_for_active_auto_operation(qtbot, monkeypatch, request):
     monkeypatch.setattr(CameraPanel, "_start_conversion_worker", lambda _panel: None)
     monkeypatch.setattr(main_window_module.MainWindow, "_begin_lazy_init", lambda _window: None)
     window = main_window_module.MainWindow(AppConfig(instruments={"ct400_backend": "simulation"}))
     qtbot.addWidget(window)
+    histogram_thread = _ensure_histogram_worker_stops(window, request, monkeypatch)
     config = CameraConfig(identifier="auto-close", enabled=True, name="Auto", backend="simulation")
     panel = window._create_camera_panel(None, config)
     panel.set_camera(SimulatedCamera(identifier="auto-close", width=8, height=8))
@@ -295,8 +322,6 @@ def test_mainwindow_defers_shutdown_for_active_auto_operation(qtbot, monkeypatch
     cleanup_events = []
     monkeypatch.setattr(window, "_cleanup_cameras", lambda: cleanup_events.append("camera"))
     monkeypatch.setattr(window, "_cleanup_vimbasystem", lambda: cleanup_events.append("vimba"))
-    monkeypatch.setattr(window.alignment_tab, "cleanup", lambda: None)
-    monkeypatch.setattr(window.histogram_control, "cleanup_worker_thread", lambda: None)
     scheduled = []
     monkeypatch.setattr(main_window_module.QTimer, "singleShot", lambda _delay, callback: scheduled.append(callback))
 
@@ -310,13 +335,15 @@ def test_mainwindow_defers_shutdown_for_active_auto_operation(qtbot, monkeypatch
     assert cleanup_events == []
     scheduled[0]()
     assert cleanup_events == ["camera", "vimba"]
+    assert _qt_thread_stopped(histogram_thread)
 
 
-def test_shutdown_waits_for_recovery_thread_finished_before_camera_and_vimba_cleanup(qtbot, monkeypatch):
+def test_shutdown_waits_for_recovery_thread_finished_before_camera_and_vimba_cleanup(qtbot, monkeypatch, request):
     monkeypatch.setattr(CameraPanel, "_start_conversion_worker", lambda _panel: None)
     monkeypatch.setattr(main_window_module.MainWindow, "_begin_lazy_init", lambda _window: None)
     window = main_window_module.MainWindow(AppConfig(instruments={"ct400_backend": "simulation"}))
     qtbot.addWidget(window)
+    histogram_thread = _ensure_histogram_worker_stops(window, request, monkeypatch)
     config = CameraConfig(identifier="gated-recovery", enabled=True, name="Gated", backend="simulation")
     camera = SimulatedCamera(identifier=config.identifier, width=8, height=8)
     entered = threading.Event()
@@ -336,8 +363,6 @@ def test_shutdown_waits_for_recovery_thread_finished_before_camera_and_vimba_cle
     scheduled = []
     monkeypatch.setattr(window, "_cleanup_cameras", lambda: cleanup_events.append("camera"))
     monkeypatch.setattr(window, "_cleanup_vimbasystem", lambda: cleanup_events.append("vimba"))
-    monkeypatch.setattr(window.alignment_tab, "cleanup", lambda: None)
-    monkeypatch.setattr(window.histogram_control, "cleanup_worker_thread", lambda: None)
     monkeypatch.setattr(main_window_module.QTimer, "singleShot", lambda _delay, callback: scheduled.append(callback))
 
     window._request_camera_recovery(config.identifier)
@@ -354,6 +379,7 @@ def test_shutdown_waits_for_recovery_thread_finished_before_camera_and_vimba_cle
 
     scheduled[0]()
     assert cleanup_events == ["camera", "vimba"]
+    assert _qt_thread_stopped(histogram_thread)
 
 
 def _thread_finished(task):

@@ -53,8 +53,20 @@ def _set_ready_hardware(window):
 
 
 def _capture_final_cleanup(window, monkeypatch, calls):
-    monkeypatch.setattr(window.alignment_tab, "cleanup", lambda: calls.append("alignment"))
-    monkeypatch.setattr(window.histogram_control, "cleanup_worker_thread", lambda: calls.append("histogram"))
+    real_alignment_cleanup = window.alignment_tab.cleanup
+    real_histogram_cleanup = window.histogram_control.cleanup_worker_thread
+
+    def record_alignment_cleanup():
+        calls.append("alignment")
+        if window.alignment_tab.worker_thread is not None:
+            real_alignment_cleanup()
+
+    def record_histogram_cleanup():
+        calls.append("histogram")
+        real_histogram_cleanup()
+
+    monkeypatch.setattr(window.alignment_tab, "cleanup", record_alignment_cleanup)
+    monkeypatch.setattr(window.histogram_control, "cleanup_worker_thread", record_histogram_cleanup)
     monkeypatch.setattr(window, "_cleanup_cameras", lambda: calls.append("cameras"))
     monkeypatch.setattr(window, "_cleanup_vimbasystem", lambda: calls.append("vimba"))
 
@@ -87,6 +99,32 @@ def _begin_close_with_piezo_operations(window, monkeypatch, sides, ct400_device=
     if ct400_device is not None:
         assert ct400_device.close_calls == 0
     return scheduled, calls
+
+
+def _qt_thread_stopped(thread):
+    if thread is None:
+        return True
+    try:
+        return not thread.isRunning()
+    except RuntimeError:
+        return True
+
+
+def _ensure_histogram_worker_stops(window, request, monkeypatch):
+    thread = window.histogram_control.power_fetch_thread
+    cleanup = window.histogram_control.cleanup_worker_thread
+
+    def cleanup_once():
+        if not _qt_thread_stopped(thread):
+            cleanup()
+
+    monkeypatch.setattr(window.histogram_control, "cleanup_worker_thread", cleanup_once)
+
+    def cleanup_if_running():
+        cleanup_once()
+
+    request.addfinalizer(cleanup_if_running)
+    return thread
 
 
 def test_missing_piezo_menu_actions_start_truthfully_disabled(qtbot, monkeypatch):
@@ -385,8 +423,9 @@ def test_rejected_ct400_close_failure_keeps_current_ownership(qtbot, monkeypatch
     assert "Could not release rejected CT400 resources" in caplog.text
 
 
-def test_close_waits_for_single_piezo_operation_then_runs_normal_cleanup(qtbot, monkeypatch):
+def test_close_waits_for_single_piezo_operation_then_runs_normal_cleanup(qtbot, monkeypatch, request):
     window = _window(qtbot, monkeypatch)
+    histogram_thread = _ensure_histogram_worker_stops(window, request, monkeypatch)
     monkeypatch.setattr(main_window_module, "CT400", FakeNativeCT400)
     physical_ct400 = FakeNativeCT400()
     scheduled, calls = _begin_close_with_piezo_operations(window, monkeypatch, {"left"}, physical_ct400)
@@ -407,10 +446,12 @@ def test_close_waits_for_single_piezo_operation_then_runs_normal_cleanup(qtbot, 
     assert physical_ct400.close_calls == 1
     assert not window._pending_piezo_operation_close
     assert not window.isVisible()
+    assert _qt_thread_stopped(histogram_thread)
 
 
-def test_close_waits_for_all_piezo_operations_and_ignores_stale_completion(qtbot, monkeypatch):
+def test_close_waits_for_all_piezo_operations_and_ignores_stale_completion(qtbot, monkeypatch, request):
     window = _window(qtbot, monkeypatch)
+    histogram_thread = _ensure_histogram_worker_stops(window, request, monkeypatch)
     scheduled, calls = _begin_close_with_piezo_operations(window, monkeypatch, {"left", "right"})
 
     window.piezo_left.connected = True
@@ -438,6 +479,7 @@ def test_close_waits_for_all_piezo_operations_and_ignores_stale_completion(qtbot
     assert calls == ["alignment", "histogram", "cameras", "vimba"]
     assert not window._pending_piezo_operation_close
     assert not window.isVisible()
+    assert _qt_thread_stopped(histogram_thread)
 
 
 def test_pending_piezo_close_blocks_new_piezo_work(qtbot, monkeypatch):
