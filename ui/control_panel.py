@@ -102,8 +102,9 @@ class CT400ConnectionWorker(QRunnable):
         self.is_connect_operation = connect
         self.signals = CT400ConnectionSignals()
 
+    @override
     @Slot()
-    def run(self):
+    def run(self) -> None:
         """Performs the connection or disconnection logic."""
         try:
             if self.is_connect_operation:
@@ -1393,7 +1394,8 @@ class HistogramControlPanel(BaseControlPanel):
                 logger.exception(f"Monitor Panel: Unexpected error updating CT400 detectors: {e}")
                 QMessageBox.warning(self, "Detector Error", f"Error updating detectors on CT400: {e}")
 
-    def closeEvent(self, event: QtGui.QCloseEvent):
+    @override
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         """Handle widget close event to clean up the worker thread."""
         self.cleanup_worker_thread()
         super().closeEvent(event)
