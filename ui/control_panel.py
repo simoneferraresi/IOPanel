@@ -983,7 +983,8 @@ class HistogramControlPanel(BaseControlPanel):
         self.on_instrument_connected(self.is_instrument_connected)
         self.power_fetch_thread.start()
 
-    def _init_subclass_ui(self):
+    @override
+    def _init_subclass_ui(self) -> None:
         """Creates the UI elements specific to the Monitor panel."""
         # This group box replaces the need for the "Measurement Configuration" group
         # as the common settings are already handled by the base class.
@@ -1051,12 +1052,14 @@ class HistogramControlPanel(BaseControlPanel):
         self.timer.timeout.connect(self._request_power_fetch_from_worker)
 
     # --- Overridden and Implemented Abstract Methods ---
-    def set_instrument(self, ct400_device: AbstractCT400 | None):
+    @override
+    def set_instrument(self, ct400_device: AbstractCT400 | None) -> None:
         """Overrides base method to also update the worker's device instance."""
         super().set_instrument(ct400_device)
         if hasattr(self, "power_fetch_worker"):
             self.power_fetch_worker.ct400 = self.ct400
 
+    @override
     def _get_configurable_widgets(self) -> list[QWidget]:
         # Note: self.detector_cbs are handled separately in on_instrument_connected
         return [
@@ -1066,15 +1069,19 @@ class HistogramControlPanel(BaseControlPanel):
             self.input_port,
         ]
 
+    @override
     def _get_main_action_button(self) -> QPushButton:
         return self.monitor_btn
 
+    @override
     def is_busy(self) -> bool:
         return self.monitoring
 
-    def _force_stop(self):
+    @override
+    def _force_stop(self) -> None:
         self._stop_monitoring(instrument_error_or_disconnect=True)
 
+    @override
     def _owns_operation_state(self, state: str) -> bool:
         return state == "MONITORING" and self.monitoring and not self._monitor_stop_pending
 
@@ -1082,7 +1089,8 @@ class HistogramControlPanel(BaseControlPanel):
 
     # We must override on_instrument_connected to handle the detector checkboxes,
     # which have slightly different logic (they are not disabled when busy).
-    def on_instrument_connected(self, is_connected: bool):
+    @override
+    def on_instrument_connected(self, is_connected: bool) -> None:
         # Call the base implementation first to handle common widgets and logic
         super().on_instrument_connected(is_connected)
 
@@ -1090,6 +1098,7 @@ class HistogramControlPanel(BaseControlPanel):
         for cb in self.detector_cbs:
             cb.setEnabled(is_connected and self.ct400_operation_state == "IDLE")
 
+    @override
     def _get_laser_power_mw(self) -> float:
         value = float(self.laser_power.text())
         if self.power_unit.currentText() == "dBm":
