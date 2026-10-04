@@ -971,27 +971,70 @@ class PlotWidget(QWidget):
         """Updates the crosshair position and label text."""
         if self.plot_widget.sceneBoundingRect().contains(pos):
             mouse_point = self.plot_widget.plotItem.vb.mapSceneToView(pos)
-            x, y = mouse_point.x(), mouse_point.y()
+            mouse_x, mouse_y = mouse_point.x(), mouse_point.y()
+            wavelengths = self.current_wavelengths
+            if wavelengths is not None and len(wavelengths) > 0:
+                finite_indices = np.flatnonzero(np.isfinite(wavelengths))
+                if finite_indices.size == 0:
+                    self._hide_crosshair()
+                    return
+                idx = finite_indices[np.abs(wavelengths[finite_indices] - mouse_x).argmin()]
+                x = float(wavelengths[idx])
+            else:
+                idx = None
+                x = mouse_x
 
-            # Snap to data if available (Optional, but nice)
-            if self.current_wavelengths is not None and len(self.current_wavelengths) > 0:
-                idx = (np.abs(self.current_wavelengths - x)).argmin()
-                x = self.current_wavelengths[idx]
-                if self.current_powers is not None:
-                    y = self.current_powers[idx]
+            measurement = self.current_measurement
+            if measurement is not None:
+                if len(wavelengths) == 0 or not measurement.detectors:
+                    self._hide_crosshair()
+                    return
+
+                values = measurement.detector_data[:, idx]
+                label_lines = [f"λ: {x:.3f} nm"]
+                finite_values = []
+                for detector, value in zip(measurement.detectors, values, strict=True):
+                    if np.isfinite(value):
+                        value = float(value)
+                        finite_values.append(value)
+                        label_lines.append(f"Det {detector.value}: {value:.2f} dB")
+                    else:
+                        label_lines.append(f"Det {detector.value}: n/a")
+
+                self.v_line.setPos(x)
+                self.v_line.setVisible(True)
+                if len(measurement.detectors) == 1 and finite_values:
+                    y = finite_values[0]
+                    self.h_line.setPos(y)
+                    self.h_line.setVisible(True)
+                    label_y = y
+                else:
+                    self.h_line.setVisible(False)
+                    label_y = mouse_y
+                self.cursor_label.setText("\n".join(label_lines))
+                self.cursor_label.setPos(x, label_y)
+                self.cursor_label.setVisible(True)
+                return
+
+            y = mouse_y
+            if idx is not None and self.current_powers is not None:
+                y = float(self.current_powers[idx])
 
             self.v_line.setPos(x)
-            self.h_line.setPos(y)
             self.v_line.setVisible(True)
-            self.h_line.setVisible(True)
-
+            self.h_line.setVisible(bool(np.isfinite(y)))
+            if np.isfinite(y):
+                self.h_line.setPos(y)
             self.cursor_label.setText(f"λ: {x:.3f} nm\nP: {y:.2f} dBm")
-            self.cursor_label.setPos(x, y)
+            self.cursor_label.setPos(x, y if np.isfinite(y) else mouse_y)
             self.cursor_label.setVisible(True)
         else:
-            self.v_line.setVisible(False)
-            self.h_line.setVisible(False)
-            self.cursor_label.setVisible(False)
+            self._hide_crosshair()
+
+    def _hide_crosshair(self) -> None:
+        self.v_line.setVisible(False)
+        self.h_line.setVisible(False)
+        self.cursor_label.setVisible(False)
 
     def _ensure_matlab_engine_started(self) -> bool:
         """
@@ -1217,6 +1260,7 @@ class PlotWidget(QWidget):
     @Slot()
     def clear_plot(self):
         """Clears all traces and resets internal data."""
+        self._hide_crosshair()
         # 1. Clear the visual plot items
         self.plot_data_item.setData([], [])
         self.reference_plot_item.setData([], [])
