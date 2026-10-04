@@ -271,6 +271,37 @@ def test_detector_style_and_label_follow_identity_when_row_order_changes(qtbot):
     np.testing.assert_array_equal(_plotted_data(widget.detector_plot_items[Detector.DE_3])[1], [3, 4])
 
 
+def test_matlab_fig_payload_preserves_detector_identity_order_and_colors():
+    import json
+
+    measurement = _detector_measurement(
+        [1510.0, 1520.0], [[30.0, 31.0], [10.0, 11.0]], (Detector.DE_3, Detector.DE_1)
+    )
+
+    payload = json.loads(plot_widgets.build_matlab_fig_payload(measurement))
+
+    assert payload["wavelengths_nm"] == [1510.0, 1520.0]
+    assert payload["traces"] == [
+        {"detector_id": 3, "label": "Det 3", "values": [30.0, 31.0], "color": "#33a02c"},
+        {"detector_id": 1, "label": "Det 1", "values": [10.0, 11.0], "color": "#1f78b4"},
+    ]
+
+
+def test_matlab_fig_payload_omits_inactive_detectors_and_keeps_nonfinite_values():
+    import json
+
+    measurement = _detector_measurement(
+        [1510.0, 1520.0], [[float("nan"), float("inf")]], (Detector.DE_1,)
+    )
+
+    payload = json.loads(plot_widgets.build_matlab_fig_payload(measurement))
+
+    assert len(payload["traces"]) == 1
+    assert payload["traces"][0]["detector_id"] == 1
+    assert np.isnan(payload["traces"][0]["values"][0])
+    assert payload["traces"][0]["values"][1] == float("inf")
+
+
 def test_set_measurement_removes_stale_live_detector_and_legend_entry(qtbot):
     widget = PlotWidget(ScanSettings())
     qtbot.addWidget(widget)
