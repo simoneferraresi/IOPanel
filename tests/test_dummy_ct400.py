@@ -4,6 +4,7 @@ import time
 import numpy as np
 import pytest
 
+from hardware.ct400 import CT400Error
 from hardware.ct400_types import CT400ScanResultKind, Detector, Enable, InstrumentError, LaserInput
 from hardware.dummy_ct400 import DummyCT400
 from logic.scan_measurement import ScanAcquisitionSettings
@@ -209,6 +210,121 @@ def test_scan_worker_uses_frozen_detector_order_for_request_and_measurement(monk
     np.testing.assert_array_equal(measurement.detector_data[0], expected_data[0])
     np.testing.assert_array_equal(measurement.detector_data[1], expected_data[1])
     assert not np.array_equal(measurement.detector_data[0], measurement.detector_data[1])
+
+
+@pytest.mark.parametrize(
+    ("detectors", "expected_flags"),
+    [
+        ((Detector.DE_1,), (Enable.DISABLE, Enable.DISABLE, Enable.DISABLE, Enable.DISABLE)),
+        ((Detector.DE_3, Detector.DE_1), (Enable.DISABLE, Enable.ENABLE, Enable.DISABLE, Enable.DISABLE)),
+        ((Detector.DE_2, Detector.DE_4), (Enable.ENABLE, Enable.DISABLE, Enable.ENABLE, Enable.DISABLE)),
+        ((Detector.DE_5,), (Enable.DISABLE, Enable.DISABLE, Enable.DISABLE, Enable.ENABLE)),
+    ],
+)
+def test_scan_worker_configures_detector_array_before_start_for_frozen_selection(
+    monkeypatch, detectors, expected_flags
+):
+    monkeypatch.setattr(ScanWorker, "_LASER_COMMAND_DELAY_MS", 0)
+    settings = ScanAcquisitionSettings(1500, 1501, 100, "5", "3", "dBm", 1.995, LaserInput.LI_2, detectors)
+    device = DummyCT400(scan_duration=0)
+    events = []
+    original_set_scan = device.set_scan
+    original_set_sampling_res = device.set_sampling_res
+    original_get_data_points = device.get_data_points
+    requests = []
+
+    def capture_set_scan(*args):
+        events.append("set_scan")
+        original_set_scan(*args)
+
+    def capture_sampling(*args):
+        events.append("set_sampling_res")
+        original_set_sampling_res(*args)
+
+    def capture_detector_array(*flags):
+        events.append(("set_detector_array", flags))
+
+    def capture_start():
+        events.append("start_scan")
+        device._is_scanning = True
+
+    def capture_request(requested_detectors):
+        requests.append(list(requested_detectors))
+        return original_get_data_points(requested_detectors)
+
+    monkeypatch.setattr(device, "set_scan", capture_set_scan)
+    monkeypatch.setattr(device, "set_sampling_res", capture_sampling)
+    monkeypatch.setattr(device, "set_detector_array", capture_detector_array)
+    monkeypatch.setattr(device, "start_scan", capture_start)
+    monkeypatch.setattr(device, "get_data_points", capture_request)
+    worker = ScanWorker(device, 1500, 1501, 100, 1.995, LaserInput.LI_2, acquisition_settings=settings)
+    measurements, errors = [], []
+    worker.measurement_ready.connect(measurements.append)
+    worker.error_signal.connect(errors.append)
+
+    worker.do_scan()
+
+    assert events.index("set_sampling_res") < next(
+        index for index, event in enumerate(events) if isinstance(event, tuple) and event[0] == "set_detector_array"
+    )
+    detector_event_index = next(
+        index for index, event in enumerate(events) if isinstance(event, tuple) and event[0] == "set_detector_array"
+    )
+    assert detector_event_index < events.index("start_scan")
+    assert events[detector_event_index] == ("set_detector_array", expected_flags)
+    assert requests == [list(detectors)]
+    assert errors == []
+    assert len(measurements) == 1
+    assert measurements[0].detectors == detectors
+
+
+def test_scan_worker_reapplies_each_scans_frozen_detector_selection(monkeypatch):
+    monkeypatch.setattr(ScanWorker, "_LASER_COMMAND_DELAY_MS", 0)
+    device = DummyCT400(scan_duration=0)
+    detector_array_calls = []
+    monkeypatch.setattr(device, "set_detector_array", lambda *flags: detector_array_calls.append(flags))
+    selections = ((Detector.DE_1,), (Detector.DE_1, Detector.DE_3))
+    measurements = []
+
+    for detectors in selections:
+        settings = ScanAcquisitionSettings(1500, 1501, 100, "5", "3", "dBm", 1.995, LaserInput.LI_2, detectors)
+        worker = ScanWorker(device, 1500, 1501, 100, 1.995, LaserInput.LI_2, acquisition_settings=settings)
+        worker.measurement_ready.connect(measurements.append)
+        worker.do_scan()
+
+    assert detector_array_calls == [
+        (Enable.DISABLE, Enable.DISABLE, Enable.DISABLE, Enable.DISABLE),
+        (Enable.DISABLE, Enable.ENABLE, Enable.DISABLE, Enable.DISABLE),
+    ]
+    assert [measurement.detectors for measurement in measurements] == list(selections)
+
+
+def test_detector_array_configuration_failure_prevents_start_and_cleans_up(monkeypatch):
+    monkeypatch.setattr(ScanWorker, "_LASER_COMMAND_DELAY_MS", 0)
+    device = DummyCT400(scan_duration=0)
+    start_calls = []
+
+    def fail_detector_configuration(*_flags):
+        raise CT400Error("fake detector configuration failure")
+
+    monkeypatch.setattr(device, "set_detector_array", fail_detector_configuration)
+    monkeypatch.setattr(device, "start_scan", lambda: start_calls.append(True))
+    worker = ScanWorker(device, 1500, 1501, 100, 1.0, LaserInput.LI_1)
+    measurements, errors, finished = [], [], []
+    worker.measurement_ready.connect(measurements.append)
+    worker.error_signal.connect(errors.append)
+    worker.finished.connect(lambda: finished.append(True))
+
+    worker.do_scan()
+
+    assert start_calls == []
+    assert measurements == []
+    assert len(errors) == 1
+    assert errors[0].message == "fake detector configuration failure"
+    assert finished == [True]
+    assert len(device.cmd_laser_calls) == 2
+    assert device.cmd_laser_calls[-1][1]["enable"] == Enable.DISABLE
+    assert not device._laser_enabled
 
 
 def test_selected_input_cleanup_occurs_once_after_completed_scan(monkeypatch):

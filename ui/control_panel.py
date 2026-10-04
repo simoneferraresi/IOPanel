@@ -286,6 +286,19 @@ class ScanWorker(QtCore.QObject):
                 self._report_cancelled()
                 return
 
+            # CT400_PG_1.4v1.5: DE1 is always enabled; SetDetectorArray controls
+            # DE2–DE4 and the external BNC-C source represented by DE5.
+            detector_set = frozenset(self.acquisition_settings.detectors)
+            self.ct400.set_detector_array(
+                Enable.ENABLE if Detector.DE_2 in detector_set else Enable.DISABLE,
+                Enable.ENABLE if Detector.DE_3 in detector_set else Enable.DISABLE,
+                Enable.ENABLE if Detector.DE_4 in detector_set else Enable.DISABLE,
+                Enable.ENABLE if Detector.DE_5 in detector_set else Enable.DISABLE,
+            )
+            if self._is_cancel_requested():
+                self._report_cancelled()
+                return
+
             self.ct400.start_scan()
             with self._state_lock:
                 self._started = True

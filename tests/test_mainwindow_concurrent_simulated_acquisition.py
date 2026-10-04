@@ -277,7 +277,9 @@ def test_scan_owns_ct400_and_blocks_monitor_and_detector_writes(qtbot, monkeypat
         # Programmatic checkbox changes still emit the callback; its ownership
         # guard must prevent an independent native detector write.
         monitor.detector_cbs[0].setChecked(not monitor.detector_cbs[0].isChecked())
-        assert detector_writes == []
+        # Scan setup explicitly applies the GUI's DE1-only selection once;
+        # monitor ownership prevents any additional detector-array write.
+        assert detector_writes == [(Enable.DISABLE, Enable.DISABLE, Enable.DISABLE, Enable.DISABLE)]
 
         scan_thread = scan.scan_thread
         gate.set()
