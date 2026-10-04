@@ -43,11 +43,16 @@ def test_dummy_scan_data_honors_range_and_resolution_deterministically():
 
     wavelengths, powers = device.get_data_points([Detector.DE_1, Detector.DE_2])
     repeat_wavelengths, repeat_powers = device.get_data_points([Detector.DE_1, Detector.DE_2])
+    reversed_wavelengths, reversed_powers = device.get_data_points([Detector.DE_2, Detector.DE_1])
 
     np.testing.assert_allclose(wavelengths, np.linspace(1500.0, 1501.0, 11))
     np.testing.assert_array_equal(wavelengths, repeat_wavelengths)
+    np.testing.assert_array_equal(wavelengths, reversed_wavelengths)
     np.testing.assert_array_equal(powers, repeat_powers)
     assert powers.shape == (2, 11)
+    assert not np.array_equal(powers[0], powers[1])
+    np.testing.assert_array_equal(reversed_powers[0], powers[1])
+    np.testing.assert_array_equal(reversed_powers[1], powers[0])
     assert device.get_all_powers() == device.get_all_powers()
 
 
@@ -146,15 +151,17 @@ def test_scan_worker_preserves_warning_result_with_returned_data(monkeypatch):
     monkeypatch.setattr(ScanWorker, "_LASER_COMMAND_DELAY_MS", 0)
     device = DummyCT400(scan_duration=0, scan_error="documented warning", scan_result_code=100)
     settings = ScanAcquisitionSettings(1500, 1501, 100, "5", "3", "dBm", 1.995, LaserInput.LI_2,
-                                       (Detector.DE_1,))
+                                       (Detector.DE_3, Detector.DE_1))
     worker = ScanWorker(device, 1500, 1501, 100, 1.995, LaserInput.LI_2, acquisition_settings=settings)
-    measurements, warnings = [], []
+    measurements, errors, warnings = [], [], []
     worker.measurement_ready.connect(measurements.append)
+    worker.error_signal.connect(errors.append)
     worker.warning_signal.connect(lambda code, msg: warnings.append((code, msg)))
 
     worker.do_scan()
 
     assert warnings == [(100, "documented warning")]
+    assert errors == []
     measurement = measurements[0]
     assert measurement.result_kind == CT400ScanResultKind.WARNING
     assert measurement.raw_result_code == 100
@@ -162,7 +169,46 @@ def test_scan_worker_preserves_warning_result_with_returned_data(monkeypatch):
     assert measurement.settings.entered_laser_power == "3"
     assert measurement.settings.entered_laser_power_unit == "dBm"
     assert measurement.settings.laser_power_mw == 1.995
-    assert measurement.detector_data.shape[0] == 1
+    assert measurement.settings.detectors == (Detector.DE_3, Detector.DE_1)
+    assert measurement.detectors == (Detector.DE_3, Detector.DE_1)
+    assert measurement.detector_data.shape == (2, 11)
+
+
+def test_scan_worker_uses_frozen_detector_order_for_request_and_measurement(monkeypatch):
+    monkeypatch.setattr(ScanWorker, "_LASER_COMMAND_DELAY_MS", 0)
+    detectors = (Detector.DE_3, Detector.DE_1)
+    settings = ScanAcquisitionSettings(1500, 1501, 100, "5", "3", "dBm", 1.995, LaserInput.LI_2, detectors)
+    device = DummyCT400(scan_duration=0)
+    original_get_data_points = device.get_data_points
+    requests = []
+
+    def capture_request(requested_detectors):
+        requests.append(list(requested_detectors))
+        return original_get_data_points(requested_detectors)
+
+    monkeypatch.setattr(device, "get_data_points", capture_request)
+    worker = ScanWorker(device, 1500, 1501, 100, 1.995, LaserInput.LI_2, acquisition_settings=settings)
+    measurements, errors = [], []
+    worker.measurement_ready.connect(measurements.append)
+    worker.error_signal.connect(errors.append)
+
+    worker.do_scan()
+
+    assert requests == [[Detector.DE_3, Detector.DE_1]]
+    assert errors == []
+    measurement = measurements[0]
+    assert measurement.settings.detectors == detectors
+    assert measurement.detectors == detectors
+    assert measurement.detector_data.shape == (2, len(measurement.wavelengths_nm))
+
+    expected_device = DummyCT400(scan_duration=0)
+    expected_device.set_scan(1.995, 1500, 1501)
+    expected_device.set_sampling_res(100)
+    expected_wavelengths, expected_data = expected_device.get_data_points(list(detectors))
+    np.testing.assert_array_equal(measurement.wavelengths_nm, expected_wavelengths)
+    np.testing.assert_array_equal(measurement.detector_data[0], expected_data[0])
+    np.testing.assert_array_equal(measurement.detector_data[1], expected_data[1])
+    assert not np.array_equal(measurement.detector_data[0], measurement.detector_data[1])
 
 
 def test_selected_input_cleanup_occurs_once_after_completed_scan(monkeypatch):
