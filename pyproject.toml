@@ -92,6 +92,7 @@ include = [
     "hardware/camera_recovery_worker.py",
     "hardware/piezo_init_worker.py",
     "logic/task_runner.py",
+    "ui/control_panel.py",
 ]
 pythonVersion = "3.12"
 pythonPlatform = "Windows"
