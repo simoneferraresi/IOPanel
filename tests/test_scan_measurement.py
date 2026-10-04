@@ -113,6 +113,17 @@ def test_detector_row_count_must_match_detector_tuple(detector_data):
         _measurement(settings, np.array([1.0, 2.0]), detector_data)
 
 
+def test_detector_row_count_rejects_zero_rows_for_nonempty_detector_tuple():
+    settings = _settings((Detector.DE_1,))
+
+    with pytest.raises(ValueError, match=r"shape \(1, 3\)"):
+        _measurement(
+            settings,
+            np.array([1.0, 2.0, 3.0]),
+            np.empty((0, 3)),
+        )
+
+
 @pytest.mark.parametrize("detector_data", [np.zeros((1, 2)), np.zeros((1, 4))])
 def test_detector_column_count_must_match_wavelength_count(detector_data):
     settings = _settings()
