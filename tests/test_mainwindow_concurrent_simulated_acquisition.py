@@ -155,7 +155,7 @@ def _laser_call_enable(call):
     return kwargs.get("enable", args[1] if len(args) > 1 else None)
 
 
-def _start_application(qtbot, monkeypatch, tmp_path, scan_error=None):
+def _start_application(qtbot, monkeypatch, tmp_path, scan_error=None, *, include_camera=True):
     dialog_messages = []
     monkeypatch.setattr(
         control_panel_module.QMessageBox,
@@ -168,21 +168,21 @@ def _start_application(qtbot, monkeypatch, tmp_path, scan_error=None):
         lambda *_args: dialog_messages.append(_args[-1]),
     )
     config_path = tmp_path / "concurrent-simulated-acquisition.ini"
-    config_path.write_text(
-        """[App]
-name = Concurrent acquisition integration test
-
-[Instruments]
-ct400_backend = simulation
-
-[Camera:Top]
+    camera_config = """[Camera:Top]
 identifier = simulated-top
 enabled = true
 name = Top camera
 backend = simulation
 simulation_width = 16
 simulation_height = 12
-""",
+""" if include_camera else ""
+    config_path.write_text(
+        """[App]
+name = Concurrent acquisition integration test
+
+[Instruments]
+ct400_backend = simulation
+""" + camera_config,
         encoding="utf-8",
     )
     config = AppConfig.from_ini_dict(app.load_raw_config_from_ini(config_path))
@@ -214,20 +214,22 @@ simulation_height = 12
     window = main_window_module.MainWindow(config)
     qtbot.addWidget(window)
     window.show()
-    qtbot.waitUntil(lambda: len(window.cameras) == 1, timeout=4000)
     qtbot.waitUntil(lambda: isinstance(window.ct400_device, DummyCT400), timeout=4000)
     qtbot.waitUntil(lambda: window.control_panel.scan_btn.isEnabled(), timeout=2000)
-    camera = window.cameras[0]
-    assert isinstance(camera, SimulatedCamera)
     assert not vimba_start_attempts
 
     panel = window.control_panel
     panel.initial_wl.setText("1550.0")
     panel.final_wl.setText("1550.004")
     panel.resolution.setText("1")
-    frame_spy = QSignalSpy(camera.new_frame)
-    qtbot.waitUntil(lambda: frame_spy.count() >= 2, timeout=2000)
-    qtbot.waitUntil(lambda: window.camera_panels[camera.identifier]._latest_pixmap is not None, timeout=2000)
+    frame_spy = None
+    if include_camera:
+        qtbot.waitUntil(lambda: len(window.cameras) == 1, timeout=4000)
+        camera = window.cameras[0]
+        assert isinstance(camera, SimulatedCamera)
+        frame_spy = QSignalSpy(camera.new_frame)
+        qtbot.waitUntil(lambda: frame_spy.count() >= 2, timeout=2000)
+        qtbot.waitUntil(lambda: window.camera_panels[camera.identifier]._latest_pixmap is not None, timeout=2000)
     return window, progression_gate, frame_spy, dialog_messages
 
 
@@ -294,7 +296,9 @@ def test_scan_owns_ct400_and_blocks_monitor_and_detector_writes(qtbot, monkeypat
 
 
 def test_monitor_owns_ct400_until_selected_input_cleanup_finishes(qtbot, monkeypatch, tmp_path):
-    window, _gate, _frame_spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path)
+    window, _gate, _frame_spy, _dialogs = _start_application(
+        qtbot, monkeypatch, tmp_path, include_camera=False
+    )
     monitor = window.histogram_control
     scan = window.control_panel
     device = window.ct400_device
@@ -363,7 +367,9 @@ def test_scan_ownership_blocks_alignment_start(qtbot, monkeypatch, tmp_path):
 
 
 def test_monitoring_ownership_blocks_alignment_and_keeps_monitor_stop(qtbot, monkeypatch, tmp_path):
-    window, _gate, _frame_spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path)
+    window, _gate, _frame_spy, _dialogs = _start_application(
+        qtbot, monkeypatch, tmp_path, include_camera=False
+    )
     alignment = _prepare_alignment_panel(window)
     monitor = window.histogram_control
     starts = QSignalSpy(alignment.operation_started)
@@ -389,7 +395,9 @@ def test_monitoring_ownership_blocks_alignment_and_keeps_monitor_stop(qtbot, mon
 
 @pytest.mark.parametrize("mode", ["fine", "spiral", "mapping"])
 def test_alignment_modes_own_ct400_until_post_cleanup(qtbot, monkeypatch, tmp_path, mode):
-    window, _gate, _frame_spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path)
+    window, _gate, _frame_spy, _dialogs = _start_application(
+        qtbot, monkeypatch, tmp_path, include_camera=False
+    )
     alignment = _prepare_alignment_panel(window)
     release = threading.Event()
     started = threading.Event()
@@ -440,7 +448,9 @@ def test_alignment_modes_own_ct400_until_post_cleanup(qtbot, monkeypatch, tmp_pa
 
 
 def test_single_fine_alignment_click_starts_one_owned_operation(qtbot, monkeypatch, tmp_path):
-    window, _gate, _frame_spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path)
+    window, _gate, _frame_spy, _dialogs = _start_application(
+        qtbot, monkeypatch, tmp_path, include_camera=False
+    )
     alignment = _prepare_alignment_panel(window)
     release = threading.Event()
     started = threading.Event()
@@ -477,7 +487,9 @@ def test_single_fine_alignment_click_starts_one_owned_operation(qtbot, monkeypat
 
 def test_alignment_error_disables_selected_input_before_releasing_owner(qtbot, monkeypatch, tmp_path):
     monkeypatch.setattr(alignment_panel_module.QMessageBox, "critical", lambda *_args: None)
-    window, _gate, _frame_spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path)
+    window, _gate, _frame_spy, _dialogs = _start_application(
+        qtbot, monkeypatch, tmp_path, include_camera=False
+    )
     alignment = _prepare_alignment_panel(window)
     release = threading.Event()
     started = threading.Event()
@@ -502,7 +514,9 @@ def test_alignment_error_disables_selected_input_before_releasing_owner(qtbot, m
 
 
 def test_close_during_alignment_waits_for_cleanup_before_ct400_close(qtbot, monkeypatch, tmp_path):
-    window, _gate, _frame_spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path)
+    window, _gate, _frame_spy, _dialogs = _start_application(
+        qtbot, monkeypatch, tmp_path, include_camera=False
+    )
     events = []
     device = _fake_physical_ct400(events)
     window.ct400_device = device
@@ -752,7 +766,9 @@ def test_cancel_and_close_stop_scan_without_stopping_camera_early(qtbot, monkeyp
 def test_shutdown_releases_initialized_ct400_and_only_disables_when_connected(
     qtbot, monkeypatch, tmp_path, connected
 ):
-    window, _gate, _frame_spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path)
+    window, _gate, _frame_spy, _dialogs = _start_application(
+        qtbot, monkeypatch, tmp_path, include_camera=False
+    )
     events = []
     device = _fake_physical_ct400(events)
     window.ct400_device = device
@@ -814,7 +830,9 @@ def test_shutdown_releases_initialized_ct400_and_only_disables_when_connected(
 
 
 def test_shutdown_without_ct400_is_harmless(qtbot, monkeypatch, tmp_path):
-    window, _gate, _frame_spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path)
+    window, _gate, _frame_spy, _dialogs = _start_application(
+        qtbot, monkeypatch, tmp_path, include_camera=False
+    )
     window.ct400_device = None
 
     window.close()
@@ -826,7 +844,9 @@ def test_failed_disconnect_is_not_treated_as_confirmed_and_shutdown_retries_disa
     qtbot, monkeypatch, tmp_path
 ):
     warnings = []
-    window, _gate, _frame_spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path)
+    window, _gate, _frame_spy, _dialogs = _start_application(
+        qtbot, monkeypatch, tmp_path, include_camera=False
+    )
     monkeypatch.setattr(
         main_window_module.QMessageBox,
         "warning",
@@ -857,7 +877,9 @@ def test_failed_disconnect_is_not_treated_as_confirmed_and_shutdown_retries_disa
 
 
 def test_monitor_stop_and_active_cleanup_disable_its_selected_input(qtbot, monkeypatch, tmp_path):
-    window, _gate, _frame_spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path)
+    window, _gate, _frame_spy, _dialogs = _start_application(
+        qtbot, monkeypatch, tmp_path, include_camera=False
+    )
     panel = window.histogram_control
     device = window.ct400_device
     panel.ct400 = device
@@ -896,7 +918,11 @@ def test_monitor_stop_and_active_cleanup_disable_its_selected_input(qtbot, monke
 def test_close_waits_for_active_ct400_connection_operation(
     qtbot, monkeypatch, tmp_path, connect, failure
 ):
-    window, _gate, _frame_spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path)
+    window, _gate, _frame_spy, _dialogs = _start_application(
+        qtbot, monkeypatch, tmp_path, include_camera=False
+    )
+    assert window.cameras == []
+    assert window.camera_panels == {}
     events = []
     release = threading.Event()
     operation_started = threading.Event()
@@ -990,7 +1016,9 @@ def test_close_waits_for_active_ct400_connection_operation(
 def test_ct400_operation_completion_restores_controls_from_confirmed_state(
     qtbot, monkeypatch, tmp_path, connect, failure, configured, controls_enabled
 ):
-    window, _gate, _frame_spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path)
+    window, _gate, _frame_spy, _dialogs = _start_application(
+        qtbot, monkeypatch, tmp_path, include_camera=False
+    )
     events = []
     release = threading.Event()
     operation_started = threading.Event()
