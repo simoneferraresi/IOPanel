@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from hardware.ct400_types import Detector
 from logic.scan_measurement import ScanMeasurement
 
 try:
@@ -731,6 +732,13 @@ class PlotWidget(QWidget):
     _THREAD_WAIT_TIMEOUT_MS = 2000
     _MATLAB_STATUS_TIMEOUT_MS = 2000
     _STATUS_CLEAR_TIMEOUT_MS = 3000
+    _DETECTOR_COLORS = {
+        Detector.DE_1: "#1f78b4",
+        Detector.DE_2: "#e31a1c",
+        Detector.DE_3: "#33a02c",
+        Detector.DE_4: "#ff7f00",
+        Detector.DE_5: "#6a3d9a",
+    }
 
     # Signal to update UI from worker, e.g., re-enable button, show status
     matlab_save_status_update = Signal(str)  # Message for status bar or dialog
@@ -748,6 +756,9 @@ class PlotWidget(QWidget):
         self.current_powers: np.ndarray | None = None
         self.current_output_power: float | None = None
         self.current_measurement: ScanMeasurement | None = None
+        self.detector_plot_items: dict[Detector, pg.PlotDataItem] = {}
+        self.reference_detector_plot_items: dict[Detector, pg.PlotDataItem] = {}
+        self.detector_legend: pg.LegendItem | None = None
 
         # --- Worker Thread Setup for MATLAB Saving ---
         # We'll create the thread and worker on-demand when saving to .fig
@@ -982,6 +993,10 @@ class PlotWidget(QWidget):
         # Array-only updates are useful for previews and older callers, but are
         # not exportable as a completed acquisition without its snapshot.
         self.current_measurement = None
+        self._clear_detector_live_items()
+        if self.detector_legend is not None:
+            self.detector_legend.clear()
+            self.detector_legend.setVisible(False)
         try:
             x_data_np = x_data
             y_data_np = y_data
@@ -1064,21 +1079,76 @@ class PlotWidget(QWidget):
             self.freeze_btn.setEnabled(False)
             return False
 
+    def _clear_detector_live_items(self) -> None:
+        for item in self.detector_plot_items.values():
+            item.setData([], [])
+            item.setVisible(False)
+
+    def _detector_item(self, detector: Detector) -> pg.PlotDataItem:
+        item = self.detector_plot_items.get(detector)
+        if item is None:
+            item = self.plot_widget.plot(
+                pen=pg.mkPen(self._DETECTOR_COLORS[detector], width=2.0),
+                skipFiniteCheck=True,
+            )
+            item.setZValue(10)
+            self.detector_plot_items[detector] = item
+        return item
+
+    def _reference_detector_item(self, detector: Detector) -> pg.PlotDataItem:
+        item = self.reference_detector_plot_items.get(detector)
+        if item is None:
+            item = self.plot_widget.plot(
+                pen=pg.mkPen(self._DETECTOR_COLORS[detector], width=1.25, style=Qt.PenStyle.DashLine),
+                skipFiniteCheck=True,
+            )
+            item.setZValue(0)
+            self.reference_detector_plot_items[detector] = item
+        return item
+
+    def _ensure_detector_legend(self) -> pg.LegendItem:
+        if self.detector_legend is None:
+            self.detector_legend = self.plot_widget.addLegend()
+        self.detector_legend.clear()
+        self.detector_legend.setVisible(True)
+        return self.detector_legend
+
     def set_measurement(self, measurement: ScanMeasurement) -> bool:
-        """Display and retain one completed acquisition for subsequent export."""
-        self.current_measurement = None
-        self.save_btn.setEnabled(False)
-        detector_data = measurement.detector_data
-        if detector_data.ndim == 1:
-            trace = detector_data
-        elif detector_data.ndim == 2 and detector_data.shape[0] > 0:
-            trace = detector_data[0]
-        else:
-            raise ValueError(f"Unexpected detector data shape: {detector_data.shape}")
-        if not self.update_plot(measurement.wavelengths_nm, trace, measurement.final_pout):
-            return False
+        """Display every detector row and retain the completed acquisition."""
         self.current_measurement = measurement
+        self.current_wavelengths = measurement.wavelengths_nm
+        self.current_powers = measurement.detector_data[0] if measurement.detectors else np.array([])
+        self.current_output_power = measurement.final_pout
+        self.plot_data_item.setData([], [])
+        self._clear_detector_live_items()
+        self.save_btn.setEnabled(False)
+
+        legend = self._ensure_detector_legend()
+        finite_live_items: list[pg.PlotDataItem] = []
+        wavelengths = measurement.wavelengths_nm
+        for row_index, detector in enumerate(measurement.detectors):
+            row = measurement.detector_data[row_index]
+            finite_mask = np.isfinite(wavelengths) & np.isfinite(row)
+            item = self._detector_item(detector)
+            item.setData(wavelengths[finite_mask], row[finite_mask])
+            item.setVisible(bool(np.any(finite_mask)))
+            legend.addItem(item, f"Det {detector.value}")
+            if np.any(finite_mask):
+                finite_live_items.append(item)
+
+        if finite_live_items:
+            self.plot_widget.plotItem.vb.autoRange(items=finite_live_items)
+
+        if len(wavelengths) > 0:
+            title_text = f"Wavelength Scan ({wavelengths[0]:.1f} - {wavelengths[-1]:.1f} nm)"
+            if any(not np.all(np.isfinite(row)) for row in measurement.detector_data):
+                title_text += " (Non-finite data filtered for display)"
+            self.plot_widget.setTitle(title_text, color="black", size="11pt")
+        else:
+            self.plot_widget.setTitle("Wavelength Scan", color="black", size="11pt")
+
         self.save_btn.setEnabled(True)
+        self.freeze_btn.setEnabled(bool(measurement.detectors))
         return True
 
     @Slot()
@@ -1087,6 +1157,15 @@ class PlotWidget(QWidget):
         # 1. Clear the visual plot items
         self.plot_data_item.setData([], [])
         self.reference_plot_item.setData([], [])
+        for item in self.detector_plot_items.values():
+            item.setData([], [])
+            item.setVisible(False)
+        for item in self.reference_detector_plot_items.values():
+            item.setData([], [])
+            item.setVisible(False)
+        if self.detector_legend is not None:
+            self.detector_legend.clear()
+            self.detector_legend.setVisible(False)
 
         # 2. Clear internal data storage
         self.current_wavelengths = None
@@ -1098,23 +1177,40 @@ class PlotWidget(QWidget):
         self.plot_widget.setTitle("Wavelength Scan (Cleared)", color="black", size="11pt")
         self.save_btn.setEnabled(False)
         self.freeze_btn.setEnabled(False)
+        self.freeze_btn.setText("Freeze Trace")
 
         logger.info("Plot cleared.")
 
     @Slot()
     def freeze_current_trace(self):
-        """Copies the current live data to the reference plot item."""
+        """Copies the current live preview or detector set as one reference snapshot."""
         if self.current_wavelengths is None or self.current_powers is None:
             return
 
-        # Copy the data to the reference item
-        self.reference_plot_item.setData(self.current_wavelengths, self.current_powers)
+        measurement = self.current_measurement
+        if measurement is None:
+            self._clear_detector_reference_items()
+            self.reference_plot_item.setData(self.current_wavelengths, self.current_powers)
+        else:
+            self.reference_plot_item.setData([], [])
+            self._clear_detector_reference_items()
+            for row_index, detector in enumerate(measurement.detectors):
+                row = measurement.detector_data[row_index]
+                finite_mask = np.isfinite(measurement.wavelengths_nm) & np.isfinite(row)
+                item = self._reference_detector_item(detector)
+                item.setData(measurement.wavelengths_nm[finite_mask], row[finite_mask])
+                item.setVisible(bool(np.any(finite_mask)))
 
         # Visual feedback (Optional but nice)
         logger.info("Current trace frozen as reference.")
 
         # Optional: Change button text to indicate a reference is set?
         self.freeze_btn.setText("Update Trace")
+
+    def _clear_detector_reference_items(self) -> None:
+        for item in self.reference_detector_plot_items.values():
+            item.setData([], [])
+            item.setVisible(False)
 
     @Slot()
     def save_scan_data(self):

@@ -619,7 +619,7 @@ def test_mainwindow_scan_updates_real_plot_while_camera_frames_continue(qtbot, m
         np.testing.assert_allclose(window.plot_widget.current_powers, expected_powers)
         assert window.plot_widget.current_output_power == -20.0
         assert "SIMULATED CT400 DATA" in window.plot_widget.plot_widget.getPlotItem().titleLabel.text
-        plotted_x, plotted_y = window.plot_widget.plot_data_item.getData()
+        plotted_x, plotted_y = window.plot_widget.detector_plot_items[Detector.DE_1].getData()
         np.testing.assert_allclose(plotted_x, expected_wavelengths)
         np.testing.assert_allclose(plotted_y, window.plot_widget.current_powers)
         qtbot.waitUntil(lambda: frame_spy.count() > frames_during_scan, timeout=1500)
