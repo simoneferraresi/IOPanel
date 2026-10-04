@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
 )
 
 from hardware.ct400_types import Detector
+from logic.scan_export import build_scan_export_v2
 from logic.scan_measurement import ScanMeasurement
 
 try:
@@ -1219,37 +1220,32 @@ class PlotWidget(QWidget):
             QMessageBox.warning(self, "No Data", "No scan data available to save.")
             return
 
+        if Detector.DE_5 in measurement.detectors:
+            QMessageBox.warning(
+                self,
+                "External Detector Export Not Supported",
+                "Exporting external/BNC detector data is not yet supported because its unit and SetBNC "
+                "configuration are not preserved in the measurement snapshot.",
+            )
+            return
+        if not measurement.detectors:
+            QMessageBox.warning(self, "No Detector Data", "Cannot export a scan with no wavelength-resolved detector data.")
+            return
+
+        try:
+            export_payload = build_scan_export_v2(measurement)
+        except ValueError as error:
+            QMessageBox.warning(self, "Scan Export Not Supported", str(error))
+            return
+
         # Disable button during save to prevent multiple clicks
         self.save_btn.setEnabled(False)  # Disable button early
         self.matlab_status_label.setText("")  # Clear previous status
 
-        # Retrieve data (already stored in self.current_wavelengths etc.)
+        # The pure schema builder is bound only to the completed measurement snapshot.
         wavelengths = measurement.wavelengths_nm
-        powers = measurement.detector_data[0] if measurement.detector_data.ndim == 2 else measurement.detector_data
         pout = measurement.final_pout
         logger.info(f"Saving scan data. Points: {len(wavelengths)}. Pout: {pout}")
-
-        if pout is not None:
-            data_to_save = np.column_stack((wavelengths, np.full_like(wavelengths, pout), powers))
-            column_headers = "WL_[nm], Pout_[dBm], Power_Det1_[dB]"
-        else:
-            data_to_save = np.column_stack((wavelengths, powers))
-            column_headers = "WL_[nm], Power_Det1_[dB]"
-        try:
-            settings = measurement.settings
-            resolution = settings.requested_resolution_pm
-            motor_speed = settings.requested_speed_nm_s
-            laser_power = settings.entered_laser_power
-            power_unit = settings.entered_laser_power_unit
-            input_port = settings.laser_input.name
-            extra_comments = f"# Resolution(pm): {resolution}\n# Speed(nm/s): {motor_speed}\n# LaserPower: {laser_power} {power_unit}\n"
-            extra_comments += f"# Input: {input_port}\n"
-            if pout is not None:
-                extra_comments += f"# Pout(dBm): {pout:.3f}\n"
-            header_text = extra_comments + "# " + column_headers
-        except Exception as e:
-            logger.warning(f"Metadata error: {e}")
-            header_text = "# " + column_headers
 
         default_filename = f"scan_{wavelengths[0]:.0f}nm_{wavelengths[-1]:.0f}nm"
 
@@ -1311,9 +1307,9 @@ class PlotWidget(QWidget):
             csv_path = targets["CSV"]
             np.savetxt(
                 str(csv_path.resolve()),
-                data_to_save,
+                export_payload.csv_data,
                 delimiter=",",
-                header=header_text,
+                header=export_payload.csv_header,
                 comments="",
                 fmt="%.6f",
             )
@@ -1328,18 +1324,7 @@ class PlotWidget(QWidget):
         # --- Save MAT (Synchronous) ---
         try:
             mat_path = targets["MAT"]
-            # Legacy speed_nms is the frozen UI request, not a hardware readback.
-            mat_data = {
-                "wl_nm": wavelengths,
-                "pow_dBm": powers,
-                "res_pm": resolution,
-                "speed_nms": motor_speed,
-                "lp_set": laser_power,
-                "lp_unit": power_unit,
-            }
-            if pout is not None:
-                mat_data["pout_dBm"] = pout
-            sio.savemat(str(mat_path.resolve()), mat_data, do_compression=True)
+            sio.savemat(str(mat_path.resolve()), export_payload.mat_data, do_compression=True)
             self.saved_files_list.append(mat_path)
             logger.info(f"Saved MAT: {mat_path}")
         except Exception as e:
@@ -1391,7 +1376,8 @@ class PlotWidget(QWidget):
                 if pout is not None:
                     title_str_matlab += f" (Pout: {pout:.2f} dBm)"
                 wavelengths_json = json.dumps(wavelengths.tolist())
-                powers_json = json.dumps(powers.tolist())
+                # FIG remains the legacy first-acquired-detector visualization.
+                powers_json = json.dumps(measurement.detector_data[0].tolist())
                 pout_for_arg = pout if pout is not None else float("nan")
 
                 QMetaObject.invokeMethod(
