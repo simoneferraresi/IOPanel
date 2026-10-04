@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 import numpy as np
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent
+from PySide6.QtCore import QCoreApplication, QEvent, QPointF
 from PySide6.QtTest import QSignalSpy
 
 from hardware.ct400_types import CT400ScanResultKind, Detector, LaserInput
@@ -231,6 +231,118 @@ def _plotted_data(item):
     if x_data is None or y_data is None:
         return np.array([]), np.array([])
     return x_data, y_data
+
+
+def _move_plot_cursor(widget, x, y):
+    widget.show()
+    QCoreApplication.processEvents()
+    view_box = widget.plot_widget.plotItem.vb
+    (x_min, x_max), (y_min, y_max) = view_box.viewRange()
+    x = min(max(x, x_min), x_max)
+    y = min(max(y, y_min), y_max)
+    widget._on_mouse_moved(view_box.mapViewToScene(QPointF(x, y)))
+
+
+def test_completed_multidetector_crosshair_reports_identity_in_acquisition_order(qtbot):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    measurement = _detector_measurement(
+        [1550.0, 1550.237, 1550.5], [[-31.07, -32.0, -33.0], [-18.42, -19.0, -20.0]],
+        (Detector.DE_3, Detector.DE_1),
+    )
+    widget.set_measurement(measurement)
+
+    _move_plot_cursor(widget, 1550.24, -25.0)
+
+    assert widget.v_line.isVisible()
+    assert widget.v_line.value() == pytest.approx(1550.237)
+    assert not widget.h_line.isVisible()
+    label = widget.cursor_label.toPlainText()
+    assert label.splitlines() == ["λ: 1550.237 nm", "Det 3: -32.00 dB", "Det 1: -19.00 dB"]
+
+
+def test_completed_single_detector_crosshair_snaps_horizontal_line_and_uses_db(qtbot):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    widget.set_measurement(_detector_measurement([1550.0, 1550.5], [[-18.42, -20.0]], (Detector.DE_1,)))
+
+    _move_plot_cursor(widget, 1550.1, -10.0)
+
+    assert widget.v_line.value() == pytest.approx(1550.0)
+    assert widget.h_line.isVisible()
+    assert widget.h_line.value() == pytest.approx(-18.42)
+    assert widget.cursor_label.toPlainText() == "λ: 1550.000 nm\nDet 1: -18.42 dB"
+
+
+def test_generic_preview_crosshair_keeps_single_trace_readout(qtbot):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    widget.update_plot(np.array([1550.0, 1550.5]), np.array([-18.42, -20.0]))
+
+    _move_plot_cursor(widget, 1550.1, -10.0)
+
+    assert widget.v_line.value() == pytest.approx(1550.0)
+    assert widget.h_line.isVisible()
+    assert widget.h_line.value() == pytest.approx(-18.42)
+    assert widget.cursor_label.toPlainText() == "λ: 1550.000 nm\nP: -18.42 dBm"
+
+
+@pytest.mark.parametrize("bad_value", [float("nan"), float("inf"), -float("inf")])
+def test_multidetector_crosshair_marks_nonfinite_detector_n_a(qtbot, bad_value):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    widget.set_measurement(_detector_measurement([1550.0], [[-18.42], [bad_value]], (Detector.DE_1, Detector.DE_3)))
+
+    _move_plot_cursor(widget, 1550.0, -10.0)
+
+    assert not widget.h_line.isVisible()
+    assert widget.cursor_label.toPlainText().splitlines() == [
+        "λ: 1550.000 nm", "Det 1: -18.42 dB", "Det 3: n/a"
+    ]
+
+
+def test_crosshair_switches_between_measurement_and_generic_preview(qtbot):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    widget.set_measurement(
+        _detector_measurement([1550.0, 1550.5], [[-18.0, -19.0], [-30.0, -31.0]], (Detector.DE_1, Detector.DE_3))
+    )
+    _move_plot_cursor(widget, 1550.0, -10.0)
+    assert "Det 3:" in widget.cursor_label.toPlainText()
+
+    widget.update_plot(np.array([1549.0, 1551.0]), np.array([-5.0, -6.0]))
+    _move_plot_cursor(widget, 1550.8, -1.0)
+    assert widget.cursor_label.toPlainText() == "λ: 1551.000 nm\nP: -6.00 dBm"
+    assert widget.h_line.value() == pytest.approx(-6.0)
+
+    widget.set_measurement(
+        _detector_measurement([1550.0, 1550.5], [[-12.0, -13.0], [-22.0, -23.0]], (Detector.DE_1, Detector.DE_3))
+    )
+    _move_plot_cursor(widget, 1550.0, -10.0)
+    assert "Det 3:" in widget.cursor_label.toPlainText()
+
+
+def test_clear_plot_hides_crosshair_and_empty_or_nonfinite_wavelengths_are_safe(qtbot):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    widget.set_measurement(_detector_measurement([1550.0], [[-18.0]], (Detector.DE_1,)))
+    _move_plot_cursor(widget, 1550.0, -10.0)
+    widget.clear_plot()
+    assert not widget.v_line.isVisible()
+    assert not widget.h_line.isVisible()
+    assert not widget.cursor_label.isVisible()
+
+    widget.set_measurement(_detector_measurement([], np.empty((1, 0)), (Detector.DE_1,)))
+    _move_plot_cursor(widget, 1550.0, -10.0)
+    assert not widget.v_line.isVisible()
+    assert not widget.h_line.isVisible()
+    assert not widget.cursor_label.isVisible()
+
+    widget.set_measurement(_detector_measurement([float("nan")], [[-18.0]], (Detector.DE_1,)))
+    _move_plot_cursor(widget, 1550.0, -10.0)
+    assert not widget.v_line.isVisible()
+    assert not widget.h_line.isVisible()
+    assert not widget.cursor_label.isVisible()
 
 
 def test_set_measurement_plots_detector_rows_by_identity_and_keeps_first_row_compatibility(qtbot):
