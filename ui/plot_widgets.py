@@ -404,11 +404,12 @@ class MatlabSaveWorker(QObject):
                     return
                 eng_to_use.hold("on", nargout=0)
                 for label, values, rgb in traces:
+                    rgb_mat = matlab.double(rgb)
                     eng_to_use.plot(
                         wavelengths_mat,
                         matlab.double(values),
                         "Color",
-                        rgb,
+                        rgb_mat,
                         "DisplayName",
                         label,
                         nargout=0,
@@ -419,7 +420,7 @@ class MatlabSaveWorker(QObject):
                 eng_to_use.title(title_str, nargout=0)
                 eng_to_use.grid("on", nargout=0)
                 eng_to_use.legend(nargout=0)
-                eng_to_use.savefig(fig_filename, nargout=0)
+                eng_to_use.savefig(h_fig, fig_filename, nargout=0)
             finally:
                 if h_fig is not None:
                     try:

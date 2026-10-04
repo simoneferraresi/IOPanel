@@ -54,12 +54,21 @@ class _FakeMatlabEngine:
         self._record("quit")
 
 
+class _MatlabArraySentinel:
+    def __init__(self, values):
+        self.values = list(values)
+
+
+def _matlab_values(value):
+    return getattr(value, "values", None)
+
+
 def _setup_worker(monkeypatch, engine):
     monkeypatch.setattr(plot_widgets, "MATLAB_ENGINE_AVAILABLE", True)
     monkeypatch.setattr(
         plot_widgets,
         "matlab",
-        SimpleNamespace(double=lambda values: list(values), engine=SimpleNamespace()),
+        SimpleNamespace(double=_MatlabArraySentinel, engine=SimpleNamespace()),
         raising=False,
     )
     widget = PlotWidget(ScanSettings())
@@ -92,11 +101,16 @@ def test_worker_renders_all_acquired_traces_with_identity_and_closes_only_owned_
 
     assert result == ["fig", True, "unused.fig"]
     plots = [call for call in engine.calls if call[0] == "plot"]
-    assert [call[1][1] for call in plots] == [[-30.0, -31.0], [-10.0, -11.0]]
+    assert [_matlab_values(call[1][0]) for call in plots] == [[1510.0, 1520.0], [1510.0, 1520.0]]
+    assert [_matlab_values(call[1][1]) for call in plots] == [[-30.0, -31.0], [-10.0, -11.0]]
     assert [call[1][5] for call in plots] == ["Det 3", "Det 1"]
-    assert plots[0][1][3] == [51 / 255, 160 / 255, 44 / 255]
+    rgb_mat = plots[0][1][3]
+    assert not isinstance(rgb_mat, list)
+    assert _matlab_values(rgb_mat) == [51 / 255, 160 / 255, 44 / 255]
     assert any(call[0] == "legend" for call in engine.calls)
-    assert [call[1] for call in engine.calls if call[0] == "savefig"] == [("unused.fig",)]
+    savefig_calls = [call for call in engine.calls if call[0] == "savefig"]
+    assert len(savefig_calls) == 1
+    assert savefig_calls[0][1] == ("worker-figure", "unused.fig")
     assert [call[1] for call in engine.calls if call[0] == "ylabel"] == [("Transfer function (dB)",)]
     assert [call[1] for call in engine.calls if call[0] == "close"] == [("worker-figure",)]
     assert not any(call[0] == "close" and call[1] == ("all",) for call in engine.calls)
@@ -111,6 +125,8 @@ def test_worker_keeps_single_detector_fig_supported(qapp, monkeypatch):
     assert result[1] is True
     plots = [call for call in engine.calls if call[0] == "plot"]
     assert len(plots) == 1
+    assert _matlab_values(plots[0][1][0]) == [1510.0, 1520.0]
+    assert _matlab_values(plots[0][1][1]) == [-5.0, -6.0]
     assert plots[0][1][5] == "Det 2"
     assert not any(call[0] == "quit" for call in engine.calls)
 
@@ -134,7 +150,7 @@ def test_worker_passes_nan_and_infinities_through_to_matlab(qapp, monkeypatch):
 
     result = _call(worker, widget, payload)
 
-    values = [call[1][1] for call in engine.calls if call[0] == "plot"][0]
+    values = _matlab_values([call[1][1] for call in engine.calls if call[0] == "plot"][0])
     assert result[1] is True
     assert values[0] != values[0]
     assert values[1] == float("inf")
@@ -172,3 +188,4 @@ def test_worker_closes_owned_figure_after_matlab_operation_failure(qapp, monkeyp
     assert result[0:2] == ["fig", False]
     assert "savefig failed" in result[2]
     assert [call[1] for call in engine.calls if call[0] == "close"] == [("worker-figure",)]
+    assert not any(call[0] == "quit" for call in engine.calls)
