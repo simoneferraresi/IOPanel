@@ -215,13 +215,14 @@ def test_autorange_keeps_frozen_reference_and_fits_only_live_trace(qtbot):
     assert x_range[0] > reference_x.max()
 
 
-def _detector_measurement(wavelengths, detector_data, detectors):
+def _detector_measurement(wavelengths, detector_data, detectors, *, final_pout=None, completed_at_utc=None):
     settings = ScanAcquisitionSettings(
         1510.0, 1520.0, 25, "7", "3", "dBm", 1.9952623149688795, LaserInput.LI_2, tuple(detectors)
     )
     return ScanMeasurement(
-        settings, np.asarray(wavelengths), np.asarray(detector_data), tuple(detectors), None,
-        CT400ScanResultKind.SUCCESS, 0, "", "hardware.dummy_ct400.DummyCT400", True, datetime.now(UTC),
+        settings, np.asarray(wavelengths), np.asarray(detector_data), tuple(detectors), final_pout,
+        CT400ScanResultKind.SUCCESS, 0, "", "hardware.dummy_ct400.DummyCT400", True,
+        completed_at_utc or datetime.now(UTC),
     )
 
 
@@ -442,6 +443,114 @@ def test_export_metadata_comes_from_completed_measurement_after_ui_edits(qtbot, 
     assert "# Speed(nm/s): 7" in csv_text
     assert "# LaserPower: 3 dBm" in csv_text
     assert "# Input: LI_2" in csv_text
+    assert "# SchemaVersion: 2" in csv_text
+    assert "# ActiveDetectorCount: 1" in csv_text
+    assert "# ActiveDetectors: DE_1" in csv_text
+    assert "# OpticalDetectorMask(DE1-DE4): 1,0,0,0" in csv_text
+
+
+def test_multidetector_csv_and_mat_export_schema_v2(qtbot, monkeypatch, tmp_path):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    measurement = _detector_measurement(
+        [1510.0, 1515.0, 1520.0],
+        [[30.0, 31.0, 32.0], [10.0, 11.0, 12.0]],
+        (Detector.DE_3, Detector.DE_1),
+        final_pout=-20.0,
+        completed_at_utc=datetime(2026, 9, 29, 12, 34, 56, tzinfo=UTC),
+    )
+    widget.set_measurement(measurement)
+    csv_path = tmp_path / "multi.detector.v2.csv"
+    _stub_save_dialog(monkeypatch, csv_path)
+    monkeypatch.setattr(plot_widgets.QMessageBox, "information", lambda *_args: None)
+
+    widget.save_scan_data()
+
+    lines = csv_path.read_text(encoding="utf-8").splitlines()
+    expected_header = (
+        "# WL_[nm], Transfer_function_Det_1_[dB], Transfer_function_Det_2_[dB], "
+        "Transfer_function_Det_3_[dB], Transfer_function_Det_4_[dB]"
+    )
+    assert next(line for line in lines if line.startswith("# WL_[nm]")) == expected_header
+    assert "# SchemaVersion: 2" in lines
+    assert "# ActiveDetectorCount: 2" in lines
+    assert "# ActiveDetectors: DE_3,DE_1" in lines
+    assert "# OpticalDetectorMask(DE1-DE4): 1,0,1,0" in lines
+    assert "# CompletedAtUTC: 2026-09-29T12:34:56Z" in lines
+    assert sum(line.startswith("# Pout(dBm):") for line in lines) == 1
+    assert not any("Pout_[dBm]" in line for line in lines)
+    assert not any("Power_Det1_[dB]" in line or "Power_Det_1_[dB]" in line for line in lines)
+    exported = np.loadtxt(csv_path, delimiter=",", comments="#")
+    np.testing.assert_array_equal(exported[:, 0], [1510.0, 1515.0, 1520.0])
+    np.testing.assert_array_equal(exported[:, 1], [10.0, 11.0, 12.0])
+    np.testing.assert_array_equal(exported[:, 2], [0.0, 0.0, 0.0])
+    np.testing.assert_array_equal(exported[:, 3], [30.0, 31.0, 32.0])
+    np.testing.assert_array_equal(exported[:, 4], [0.0, 0.0, 0.0])
+
+    import scipy.io as sio
+
+    loaded = sio.loadmat(tmp_path / "multi.detector.v2.mat")
+    assert int(loaded["schema_version"].item()) == 2
+    np.testing.assert_array_equal(loaded["wl_nm"].ravel(), [1510.0, 1515.0, 1520.0])
+    np.testing.assert_array_equal(loaded["transfer_function_det_1_dB"].ravel(), [10.0, 11.0, 12.0])
+    np.testing.assert_array_equal(loaded["transfer_function_det_2_dB"].ravel(), [0.0, 0.0, 0.0])
+    np.testing.assert_array_equal(loaded["transfer_function_det_3_dB"].ravel(), [30.0, 31.0, 32.0])
+    np.testing.assert_array_equal(loaded["transfer_function_det_4_dB"].ravel(), [0.0, 0.0, 0.0])
+    assert int(loaded["active_detector_count"].item()) == 2
+    np.testing.assert_array_equal(loaded["active_detector_ids"].ravel(), [3, 1])
+    np.testing.assert_array_equal(loaded["active_detector_mask"].ravel(), [1, 0, 1, 0])
+    assert loaded["completed_at_utc"].item() == "2026-09-29T12:34:56Z"
+    assert int(loaded["res_pm"].item()) == 25
+    assert loaded["speed_nms"].item() == "7"
+    assert loaded["lp_set"].item() == "3"
+    assert loaded["lp_unit"].item() == "dBm"
+    assert loaded["laser_input"].item() == "LI_2"
+    assert loaded["backend"].item() == "hardware.dummy_ct400.DummyCT400"
+    assert bool(loaded["simulated"].item())
+    assert loaded["result_kind"].item() == "SUCCESS"
+    assert int(loaded["raw_result_code"].item()) == 0
+    assert loaded["pout_dBm"].item() == -20.0
+    assert "pow_dBm" not in loaded
+
+
+def test_de5_export_warns_before_dialog_and_keeps_save_enabled(qtbot, monkeypatch, tmp_path):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    widget.set_measurement(_detector_measurement([1510.0, 1520.0], [[1.0, 2.0]], (Detector.DE_5,)))
+    warnings = []
+    monkeypatch.setattr(plot_widgets.QMessageBox, "warning", lambda *args: warnings.append(args[-1]))
+    monkeypatch.setattr(
+        plot_widgets.QFileDialog,
+        "getSaveFileName",
+        lambda *_args: pytest.fail("DE5 refusal must happen before opening the save dialog"),
+    )
+    monkeypatch.setattr(plot_widgets, "MATLAB_ENGINE_AVAILABLE", True)
+    monkeypatch.setattr(widget, "_ensure_matlab_engine_started", lambda: pytest.fail("FIG must not be queued"))
+
+    widget.save_scan_data()
+
+    assert warnings and "external/BNC" in warnings[0]
+    assert "unit and SetBNC configuration" in warnings[0]
+    assert list(tmp_path.iterdir()) == []
+    assert widget.save_btn.isEnabled()
+
+
+def test_empty_detector_export_is_rejected_without_opening_dialog(qtbot, monkeypatch):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    widget.set_measurement(_detector_measurement([1510.0, 1520.0], np.empty((0, 2)), ()))
+    warnings = []
+    monkeypatch.setattr(plot_widgets.QMessageBox, "warning", lambda *args: warnings.append(args[-1]))
+    monkeypatch.setattr(
+        plot_widgets.QFileDialog,
+        "getSaveFileName",
+        lambda *_args: pytest.fail("empty detector data must be rejected before opening the save dialog"),
+    )
+
+    widget.save_scan_data()
+
+    assert warnings and "no wavelength-resolved detector data" in warnings[0]
+    assert widget.save_btn.isEnabled()
 
 
 def test_measurement_owns_read_only_array_copies():
@@ -499,7 +608,7 @@ def test_export_accepted_overwrite_writes_dotted_csv_and_mat(qtbot, monkeypatch,
 
     widget.save_scan_data()
 
-    assert csv_path.read_text(encoding="utf-8").startswith("# Resolution")
+    assert "# Resolution(pm): 25" in csv_path.read_text(encoding="utf-8")
     assert mat_path.read_bytes().startswith(b"MATLAB 5.0 MAT-file")
     assert widget.save_btn.isEnabled()
 
