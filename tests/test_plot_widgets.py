@@ -233,6 +233,43 @@ def _plotted_data(item):
     return x_data, y_data
 
 
+def _left_axis_label(widget):
+    return widget.plot_widget.getAxis("left").labelText
+
+
+def test_scan_y_axis_label_tracks_measurement_preview_and_clear_modes(qtbot):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    measurement = _detector_measurement([1550.0, 1551.0], [[-18.0, -19.0]], (Detector.DE_1,))
+
+    assert _left_axis_label(widget) == "Power (dB)"
+
+    widget.set_measurement(measurement)
+    assert _left_axis_label(widget) == "Transfer function (dB)"
+
+    assert widget.update_plot(np.array([1550.0, 1551.0]), np.array([-18.0, -19.0]))
+    assert _left_axis_label(widget) == "Power (dB)"
+
+    widget.set_measurement(measurement)
+    assert _left_axis_label(widget) == "Transfer function (dB)"
+
+    widget.clear_plot()
+    assert _left_axis_label(widget) == "Power (dB)"
+
+
+def test_invalid_generic_preview_resets_measurement_axis_semantics(qtbot):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    widget.set_measurement(_detector_measurement([1550.0, 1551.0], [[-18.0, -19.0]], (Detector.DE_1,)))
+    assert _left_axis_label(widget) == "Transfer function (dB)"
+
+    result = widget.update_plot(np.array([1550.0, 1551.0]), np.array([-18.0]))
+
+    assert not result
+    assert widget.current_measurement is None
+    assert _left_axis_label(widget) == "Power (dB)"
+
+
 def _move_plot_cursor(widget, x, y):
     widget.show()
     QCoreApplication.processEvents()
