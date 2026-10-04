@@ -327,28 +327,14 @@ class ScanWorker(QtCore.QObject):
             self.progress_signal.emit(100)
 
             logger.info("ScanWorker: Retrieving data points...")
-            detectors_to_get = [Detector.DE_1]
-            wavelengths, powers_scan_data = self.ct400.get_data_points(detectors_to_get)
-            logger.info(f"ScanWorker: Data retrieved. WL: {len(wavelengths)}, Power Shape: {powers_scan_data.shape}")
-            log_tail_count = min(100, len(wavelengths))
-            if log_tail_count > 0:
-                logger.info(f"  ScanWorker Wavelengths (last {log_tail_count}):\n{wavelengths[-log_tail_count:]}")
-                if (
-                    powers_scan_data.ndim == 2
-                    and powers_scan_data.shape[0] > 0
-                    and powers_scan_data.shape[1] >= log_tail_count
-                ):
-                    logger.info(
-                        f"  ScanWorker Powers (Det 0, last {log_tail_count}):\n{powers_scan_data[0, -log_tail_count:]}"
-                    )
-                elif powers_scan_data.ndim == 1 and len(powers_scan_data) >= log_tail_count:
-                    logger.info(
-                        f"  ScanWorker Powers (1D, last {log_tail_count}):\n{powers_scan_data[-log_tail_count:]}"
-                    )
-                elif powers_scan_data.size > 0:
-                    logger.info(
-                        f"  ScanWorker Powers (Det 0, all points as less than {log_tail_count}):\n{powers_scan_data[0, :] if powers_scan_data.ndim == 2 else powers_scan_data[:]}"
-                    )
+            detectors_to_get = self.acquisition_settings.detectors
+            wavelengths, powers_scan_data = self.ct400.get_data_points(list(detectors_to_get))
+            logger.info(
+                "ScanWorker: Retrieved data for detectors=%s; wavelengths=%d; matrix_shape=%s",
+                [detector.name for detector in detectors_to_get],
+                len(wavelengths),
+                powers_scan_data.shape,
+            )
             final_pout = None
             try:
                 final_power_reading = self.ct400.get_all_powers()
@@ -359,7 +345,7 @@ class ScanWorker(QtCore.QObject):
                 settings=self.acquisition_settings,
                 wavelengths_nm=wavelengths,
                 detector_data=powers_scan_data,
-                detectors=(Detector.DE_1,),
+                detectors=self.acquisition_settings.detectors,
                 final_pout=final_pout,
                 result_kind=kind,
                 raw_result_code=raw_code,

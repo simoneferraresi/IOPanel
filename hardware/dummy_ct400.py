@@ -179,9 +179,12 @@ class DummyCT400(AbstractCT400):
         peak_width = (self._scan_max_wavelength - self._scan_min_wavelength) / 6
         powers = -10 * np.exp(-((wavelengths - peak_center) ** 2) / (2 * peak_width**2)) - 30
 
-        # Return in the same format as the real function
-        num_detectors = len(dets_used)
-        power_array = np.tile(powers, (num_detectors, 1))
+        # Stable enum-based offsets distinguish channels without modeling
+        # physical CT400 calibration or channel support.
+        power_array = np.empty((len(dets_used), len(wavelengths)), dtype=float)
+        for row, detector in enumerate(dets_used):
+            detector_offset = (detector.value - Detector.DE_1.value) * 0.5
+            power_array[row, :] = powers + detector_offset
         return wavelengths, power_array
 
     @override
