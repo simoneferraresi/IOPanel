@@ -471,7 +471,12 @@ class PowerFetchWorker(QObject):
         self.stop_completed.emit()
 
 
-class QABCMeta(type(QWidget), ABCMeta):
+# QWidget uses Shiboken.ObjectType at runtime. Combining QWidget with Python
+# ABC requires both that runtime metaclass and ABCMeta; runtime tests validate
+# the composition, but Pyright cannot linearize dynamic type(QWidget). The
+# __call__ guard restores abstract-instantiation enforcement absent in the
+# validated Shiboken runtime.
+class QABCMeta(type(QWidget), ABCMeta):  # pyright: ignore[reportGeneralTypeIssues]
     """
     A custom metaclass to resolve the conflict between Qt's C++-backed
     object model (via the QWidget metaclass) and Python's abstract base
