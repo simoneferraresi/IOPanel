@@ -215,6 +215,179 @@ def test_autorange_keeps_frozen_reference_and_fits_only_live_trace(qtbot):
     assert x_range[0] > reference_x.max()
 
 
+def _detector_measurement(wavelengths, detector_data, detectors):
+    settings = ScanAcquisitionSettings(
+        1510.0, 1520.0, 25, "7", "3", "dBm", 1.9952623149688795, LaserInput.LI_2, tuple(detectors)
+    )
+    return ScanMeasurement(
+        settings, np.asarray(wavelengths), np.asarray(detector_data), tuple(detectors), None,
+        CT400ScanResultKind.SUCCESS, 0, "", "hardware.dummy_ct400.DummyCT400", True, datetime.now(UTC),
+    )
+
+
+def _plotted_data(item):
+    x_data, y_data = item.getData()
+    if x_data is None or y_data is None:
+        return np.array([]), np.array([])
+    return x_data, y_data
+
+
+def test_set_measurement_plots_detector_rows_by_identity_and_keeps_first_row_compatibility(qtbot):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    wavelengths = np.array([1510.0, 1515.0, 1520.0])
+    powers = np.array([[-3.0, -4.0, -5.0], [-30.0, -40.0, -50.0]])
+    measurement = _detector_measurement(wavelengths, powers, (Detector.DE_3, Detector.DE_1))
+
+    assert widget.set_measurement(measurement)
+
+    assert set(widget.detector_plot_items) >= {Detector.DE_1, Detector.DE_3}
+    for detector, row in zip(measurement.detectors, measurement.detector_data, strict=True):
+        item = widget.detector_plot_items[detector]
+        assert item.isVisible()
+        np.testing.assert_array_equal(_plotted_data(item)[0], wavelengths)
+        np.testing.assert_array_equal(_plotted_data(item)[1], row)
+    assert [label.text for _sample, label in widget.detector_legend.items] == ["Det 3", "Det 1"]
+    np.testing.assert_array_equal(widget.current_powers, powers[0])
+    assert widget.current_measurement is measurement
+    assert widget.current_wavelengths is measurement.wavelengths_nm
+    assert widget.current_output_power is None
+    assert widget.save_btn.isEnabled()
+    assert widget.freeze_btn.isEnabled()
+
+
+def test_detector_style_and_label_follow_identity_when_row_order_changes(qtbot):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    wavelengths = np.array([1.0, 2.0])
+    widget.set_measurement(_detector_measurement(wavelengths, [[3, 4], [1, 2]], (Detector.DE_3, Detector.DE_1)))
+    styles = {detector: item.opts["pen"].color().name() for detector, item in widget.detector_plot_items.items()}
+    widget.set_measurement(_detector_measurement(wavelengths, [[1, 2], [3, 4]], (Detector.DE_1, Detector.DE_3)))
+
+    assert {detector: item.opts["pen"].color().name() for detector, item in widget.detector_plot_items.items()} == styles
+    assert [label.text for _sample, label in widget.detector_legend.items] == ["Det 1", "Det 3"]
+    np.testing.assert_array_equal(_plotted_data(widget.detector_plot_items[Detector.DE_1])[1], [1, 2])
+    np.testing.assert_array_equal(_plotted_data(widget.detector_plot_items[Detector.DE_3])[1], [3, 4])
+
+
+def test_set_measurement_removes_stale_live_detector_and_legend_entry(qtbot):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    wavelengths = np.array([1.0, 2.0])
+    widget.set_measurement(
+        _detector_measurement(wavelengths, [[1, 2], [3, 4], [5, 6]], (Detector.DE_1, Detector.DE_2, Detector.DE_3))
+    )
+    widget.set_measurement(_detector_measurement(wavelengths, [[7, 8], [9, 10]], (Detector.DE_1, Detector.DE_3)))
+
+    assert not widget.detector_plot_items[Detector.DE_2].isVisible()
+    np.testing.assert_array_equal(_plotted_data(widget.detector_plot_items[Detector.DE_2])[0], [])
+    assert [label.text for _sample, label in widget.detector_legend.items] == ["Det 1", "Det 3"]
+
+
+def test_set_measurement_filters_nonfinite_points_independently_per_detector(qtbot):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    wavelengths = np.array([1.0, 2.0, 3.0, np.inf])
+    powers = np.array([[10.0, 11.0, 12.0, 13.0], [20.0, np.nan, 22.0, 23.0], [np.nan, np.inf, np.nan, 0.0]])
+    measurement = _detector_measurement(
+        wavelengths, powers, (Detector.DE_1, Detector.DE_2, Detector.DE_3)
+    )
+
+    assert widget.set_measurement(measurement)
+
+    np.testing.assert_array_equal(_plotted_data(widget.detector_plot_items[Detector.DE_1])[0], [1, 2, 3])
+    np.testing.assert_array_equal(_plotted_data(widget.detector_plot_items[Detector.DE_1])[1], [10, 11, 12])
+    np.testing.assert_array_equal(_plotted_data(widget.detector_plot_items[Detector.DE_2])[0], [1, 3])
+    np.testing.assert_array_equal(_plotted_data(widget.detector_plot_items[Detector.DE_2])[1], [20, 22])
+    assert not widget.detector_plot_items[Detector.DE_3].isVisible()
+    np.testing.assert_array_equal(measurement.detector_data, powers)
+    assert widget.current_measurement is measurement
+
+
+def test_multi_detector_autorange_uses_all_live_rows_and_excludes_frozen_snapshot(qtbot):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    reference_x = np.array([100.0, 200.0])
+    widget.set_measurement(
+        _detector_measurement(reference_x, [[-100.0, 0.0], [-80.0, -10.0]], (Detector.DE_1, Detector.DE_2))
+    )
+    widget.freeze_current_trace()
+    live_x = np.array([1510.0, 1520.0])
+    live = np.array([[-30.0, -20.0], [5.0, 15.0]])
+    widget.set_measurement(_detector_measurement(live_x, live, (Detector.DE_1, Detector.DE_2)))
+
+    x_range, y_range = _view_range(widget)
+    assert x_range[0] <= live_x.min() and x_range[1] >= live_x.max()
+    assert y_range[0] <= live.min() and y_range[1] >= live.max()
+    assert x_range[0] > reference_x.max()
+    for detector, row in zip((Detector.DE_1, Detector.DE_2), [[-100.0, 0.0], [-80.0, -10.0]], strict=True):
+        np.testing.assert_array_equal(_plotted_data(widget.reference_detector_plot_items[detector])[1], row)
+
+
+def test_set_measurement_does_not_autorange_when_all_detector_rows_are_nonfinite(qtbot):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    initial_range = _view_range(widget)
+    measurement = _detector_measurement(
+        [1.0, 2.0], [[np.nan, np.inf], [-np.inf, np.nan]], (Detector.DE_1, Detector.DE_2)
+    )
+
+    assert widget.set_measurement(measurement)
+
+    assert _view_range(widget) == initial_range
+    assert all(not item.isVisible() for item in widget.detector_plot_items.values())
+
+
+def test_freeze_snapshots_all_detectors_and_re_freeze_replaces_snapshot(qtbot):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    wavelengths = np.array([1510.0, 1520.0])
+    first = _detector_measurement(wavelengths, [[1, 2], [3, 4]], (Detector.DE_1, Detector.DE_3))
+    widget.set_measurement(first)
+    widget.freeze_current_trace()
+    np.testing.assert_array_equal(_plotted_data(widget.reference_detector_plot_items[Detector.DE_1])[1], [1, 2])
+    np.testing.assert_array_equal(_plotted_data(widget.reference_detector_plot_items[Detector.DE_3])[1], [3, 4])
+    assert (
+        widget.reference_detector_plot_items[Detector.DE_1].opts["pen"].color().name()
+        == widget.detector_plot_items[Detector.DE_1].opts["pen"].color().name()
+    )
+    assert widget.reference_detector_plot_items[Detector.DE_1].opts["pen"].widthF() < widget.detector_plot_items[
+        Detector.DE_1
+    ].opts["pen"].widthF()
+
+    second = _detector_measurement(wavelengths, [[11, 12], [13, 14]], (Detector.DE_1, Detector.DE_3))
+    widget.set_measurement(second)
+    np.testing.assert_array_equal(_plotted_data(widget.reference_detector_plot_items[Detector.DE_1])[1], [1, 2])
+    widget.freeze_current_trace()
+
+    np.testing.assert_array_equal(_plotted_data(widget.reference_detector_plot_items[Detector.DE_1])[1], [11, 12])
+    np.testing.assert_array_equal(_plotted_data(widget.reference_detector_plot_items[Detector.DE_3])[1], [13, 14])
+    assert set(widget.reference_detector_plot_items) == {Detector.DE_1, Detector.DE_3}
+
+
+def test_clear_plot_clears_detector_items_legend_and_measurement_state(qtbot):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    measurement = _detector_measurement([1.0, 2.0], [[3, 4], [5, 6]], (Detector.DE_1, Detector.DE_3))
+    widget.set_measurement(measurement)
+    widget.freeze_current_trace()
+
+    widget.clear_plot()
+
+    for item in (*widget.detector_plot_items.values(), *widget.reference_detector_plot_items.values()):
+        assert not item.isVisible()
+        x_data, y_data = _plotted_data(item)
+        assert x_data.size == 0 and y_data.size == 0
+    assert widget.detector_legend is not None and not widget.detector_legend.isVisible()
+    assert widget.detector_legend.items == []
+    assert widget.current_wavelengths is None
+    assert widget.current_powers is None
+    assert widget.current_output_power is None
+    assert widget.current_measurement is None
+    assert not widget.save_btn.isEnabled()
+    assert not widget.freeze_btn.isEnabled()
+
+
 @pytest.mark.parametrize(
     ("selected", "expected_stem"),
     [
