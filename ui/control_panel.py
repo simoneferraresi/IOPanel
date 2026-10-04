@@ -667,6 +667,7 @@ class CT400ControlPanel(BaseControlPanel):
         self.scanning = False
         self.scan_worker: ScanWorker | None = None
         self.scan_thread: QThread | None = None
+        self.scan_detector_cbs: dict[Detector, QCheckBox] = {}
 
         # Call base class __init__ which sets up common UI and properties
         super().__init__(ct400_device, config, parent)
@@ -712,6 +713,20 @@ class CT400ControlPanel(BaseControlPanel):
         scan_config_group.setLayout(scan_config_layout)
         self.main_layout.addWidget(scan_config_group)
 
+        detector_group = QGroupBox("Scan Detectors")
+        detector_layout = QHBoxLayout()
+        for detector in (Detector.DE_1, Detector.DE_2, Detector.DE_3, Detector.DE_4):
+            checkbox = QCheckBox(f"Det {detector.value}")
+            checkbox.setObjectName(f"scanDetector{detector.value}CheckBox")
+            checkbox.setChecked(detector is Detector.DE_1)
+            self.scan_detector_cbs[detector] = checkbox
+            if detector is Detector.DE_1:
+                checkbox.setToolTip("Detector 1 is always enabled by the CT400.")
+                checkbox.setEnabled(False)
+            detector_layout.addWidget(checkbox)
+        detector_group.setLayout(detector_layout)
+        self.main_layout.addWidget(detector_group)
+
         control_group = QGroupBox("Operation")
         control_layout = QVBoxLayout()
         self.scan_btn = QPushButton("Start Scan")
@@ -752,7 +767,18 @@ class CT400ControlPanel(BaseControlPanel):
             self.laser_power,
             self.power_unit,
             self.input_port,
+            self.scan_detector_cbs[Detector.DE_2],
+            self.scan_detector_cbs[Detector.DE_3],
+            self.scan_detector_cbs[Detector.DE_4],
         ]
+
+    def _selected_scan_detectors(self) -> tuple[Detector, ...]:
+        """Return this panel's mandatory DE1 and selected optical scan detectors."""
+        return tuple(
+            detector
+            for detector in (Detector.DE_1, Detector.DE_2, Detector.DE_3, Detector.DE_4)
+            if detector is Detector.DE_1 or self.scan_detector_cbs[detector].isChecked()
+        )
 
     @override
     def _get_main_action_button(self) -> QPushButton:
@@ -824,6 +850,7 @@ class CT400ControlPanel(BaseControlPanel):
             if start_wl >= end_wl or resolution <= 0:
                 raise ValueError("Invalid scan parameters.")
 
+            selected_detectors = self._selected_scan_detectors()
             acquisition_settings = ScanAcquisitionSettings(
                 requested_start_wavelength_nm=start_wl,
                 requested_end_wavelength_nm=end_wl,
@@ -833,7 +860,7 @@ class CT400ControlPanel(BaseControlPanel):
                 entered_laser_power_unit=self.power_unit.currentText(),
                 laser_power_mw=laser_power_mw,
                 laser_input=input_port_enum,
-                detectors=(Detector.DE_1,),
+                detectors=selected_detectors,
             )
 
             self.scanning = True
