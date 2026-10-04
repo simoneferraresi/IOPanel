@@ -481,7 +481,27 @@ class QABCMeta(type(QWidget), ABCMeta):
     the use of @abstractmethod within Qt widgets.
     """
 
-    pass
+    @override
+    def __call__(cls, *args, **kwargs):
+        abstract_methods = getattr(cls, "__abstractmethods__", None)
+        if abstract_methods is None:
+            # Shiboken's metaclass may not expose ABCMeta's computed set.
+            # Resolve the effective attributes in MRO order as a fallback.
+            abstract_methods = set()
+            seen = set()
+            for base in cls.__mro__:
+                for name, value in vars(base).items():
+                    if name in seen:
+                        continue
+                    seen.add(name)
+                    if getattr(value, "__isabstractmethod__", False):
+                        abstract_methods.add(name)
+
+        if abstract_methods:
+            names = ", ".join(sorted(abstract_methods))
+            raise TypeError(f"Can't instantiate abstract class {cls.__name__} with abstract methods {names}")
+
+        return super().__call__(*args, **kwargs)
 
 
 class BaseControlPanel(QWidget, ABC, metaclass=QABCMeta):
