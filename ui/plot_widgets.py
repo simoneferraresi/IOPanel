@@ -57,6 +57,14 @@ except Exception as e:
 
 logger = logging.getLogger("LabApp.plot_widgets")
 
+_DETECTOR_COLOR_BY_ID = {
+    Detector.DE_1: "#1f78b4",
+    Detector.DE_2: "#e31a1c",
+    Detector.DE_3: "#33a02c",
+    Detector.DE_4: "#ff7f00",
+    Detector.DE_5: "#6a3d9a",
+}
+
 
 def derive_scan_export_targets(selected_path: str | Path, include_fig: bool = False) -> dict[str, Path]:
     """Return the CSV/MAT bundle (and optional FIG) for a selected export path."""
@@ -66,6 +74,27 @@ def derive_scan_export_targets(selected_path: str | Path, include_fig: bool = Fa
     if include_fig:
         targets["FIG"] = stem.with_name(stem.name + ".fig")
     return targets
+
+
+def build_matlab_fig_payload(measurement: ScanMeasurement) -> str:
+    """Serialize acquired detector rows with their identity for the MATLAB worker."""
+    traces = []
+    for row, detector in enumerate(measurement.detectors):
+        if detector not in (Detector.DE_1, Detector.DE_2, Detector.DE_3, Detector.DE_4):
+            raise ValueError(f"MATLAB FIG export does not support {detector.name}.")
+        traces.append(
+            {
+                "detector_id": int(detector),
+                "label": f"Det {int(detector)}",
+                "values": measurement.detector_data[row].tolist(),
+                "color": _DETECTOR_COLOR_BY_ID[detector],
+            }
+        )
+    return json.dumps({"wavelengths_nm": measurement.wavelengths_nm.tolist(), "traces": traces})
+
+
+def _is_numeric_list(values: list[object]) -> bool:
+    return all(isinstance(value, int | float) and not isinstance(value, bool) for value in values)
 
 
 class ColorBarWidget(QWidget):
@@ -262,19 +291,15 @@ class MatlabSaveWorker(QObject):
         self._is_running = True
         self.matlab_eng_local_for_quit: matlab.engine.MatlabEngine | None = None
 
-    # Slot signature changes: last arg is QWidget (or a more specific QObject if PlotWidget is registered)
-    @Slot(str, str, str, str, str, str, str, float, "QWidget*")  # Pass PlotWidget as QWidget*
+    @Slot(str, str, str, str, str, "QWidget*")
     def save_matlab_fig(
         self,
-        wavelengths_json_str: str,
-        powers_json_str: str,
+        payload_json_str: str,
         fig_filename: str,
         title_str: str,
         xlabel_str: str,
         ylabel_str: str,
-        grid_on_str: str,
-        pout_value: float,
-        plot_widget_ptr: QWidget | None,  # Technically PlotWidget
+        plot_widget_ptr: QWidget | None,
     ):
         if not self._is_running:
             logger.info("MatlabSaveWorker: Save FIG cancelled (worker not running).")
@@ -286,16 +311,46 @@ class MatlabSaveWorker(QObject):
             self.finished_saving.emit("fig", False, "MATLAB Engine not available.")
             return
 
-        wavelengths_list = []
-        powers_list = []
+        wavelengths_list: list[int | float] = []
+        traces: list[tuple[str, list[int | float], list[float]]] = []
         try:
-            wavelengths_list = json.loads(wavelengths_json_str)
-            powers_list = json.loads(powers_json_str)
-            if not isinstance(wavelengths_list, list) or not all(isinstance(x, int | float) for x in wavelengths_list):
-                raise ValueError("Decoded wavelengths is not a list of numbers.")
-            if not isinstance(powers_list, list) or not all(isinstance(x, int | float) for x in powers_list):
-                raise ValueError("Decoded powers is not a list of numbers.")
-        except (json.JSONDecodeError, ValueError) as e:
+            payload = json.loads(payload_json_str)
+            if not isinstance(payload, dict):
+                raise ValueError("Payload must be an object.")
+            wavelengths = payload.get("wavelengths_nm")
+            raw_traces = payload.get("traces")
+            if not isinstance(wavelengths, list) or not wavelengths or not _is_numeric_list(wavelengths):
+                raise ValueError("wavelengths_nm must be a non-empty numeric list.")
+            if not isinstance(raw_traces, list) or not raw_traces:
+                raise ValueError("traces must be a non-empty list.")
+            detector_ids: set[int] = set()
+            for index, raw_trace in enumerate(raw_traces):
+                if not isinstance(raw_trace, dict):
+                    raise ValueError(f"Trace {index} must be an object.")
+                detector_id = raw_trace.get("detector_id")
+                label = raw_trace.get("label")
+                values = raw_trace.get("values")
+                color = raw_trace.get("color")
+                if isinstance(detector_id, bool) or not isinstance(detector_id, int) or detector_id not in range(1, 5):
+                    raise ValueError(f"Trace {index} detector_id must identify DE1-DE4.")
+                if detector_id in detector_ids:
+                    raise ValueError(f"Duplicate detector_id {detector_id}.")
+                detector_ids.add(detector_id)
+                if not isinstance(label, str) or not label:
+                    raise ValueError(f"Trace {index} label must be a non-empty string.")
+                if not isinstance(values, list) or not _is_numeric_list(values):
+                    raise ValueError(f"Trace {index} values must be a numeric list.")
+                if len(values) != len(wavelengths):
+                    raise ValueError(f"Trace {index} values length must match wavelengths_nm.")
+                if not isinstance(color, str) or len(color) != 7 or not color.startswith("#"):
+                    raise ValueError(f"Trace {index} color must be a #RRGGBB value.")
+                try:
+                    rgb = [int(color[offset : offset + 2], 16) / 255 for offset in (1, 3, 5)]
+                except ValueError as error:
+                    raise ValueError(f"Trace {index} color must be a #RRGGBB value.") from error
+                traces.append((label, values, rgb))
+            wavelengths_list = wavelengths
+        except (json.JSONDecodeError, ValueError, TypeError) as e:
             error_msg = f"FIG: Error decoding or validating JSON data: {e}"
             logger.error(error_msg)
             self.finished_saving.emit("fig", False, error_msg)
@@ -340,28 +395,38 @@ class MatlabSaveWorker(QObject):
                 raise RuntimeError("MATLAB engine could not be obtained.")
 
             wavelengths_mat = matlab.double(wavelengths_list)
-            powers_mat = matlab.double(powers_list)
 
-            h_fig = eng_to_use.figure(nargout=0)
-            eng_to_use.plot(wavelengths_mat, powers_mat, nargout=0)
-            eng_to_use.xlabel(xlabel_str, nargout=0)
-            eng_to_use.ylabel(ylabel_str, nargout=0)
-            eng_to_use.title(title_str, nargout=0)
-            eng_to_use.grid(grid_on_str, nargout=0)
-            eng_to_use.savefig(fig_filename, nargout=0)
-
+            h_fig = None
             try:
-                logger.debug(f"MatlabSaveWorker: Attempting to close current MATLAB figure (handle: {h_fig})...")
-                # Option 1: Close the specific figure using its handle
-                eng_to_use.close("all", nargout=0)
-                # Option 2: Close the "current" figure (gcf might change if other ops happen)
-                # current_fig_handle = eng_to_use.gcf(nargout=1)
-                # eng_to_use.close(current_fig_handle, nargout=0)
-                # Option 3: Close all figures (broader)
-                # eng_to_use.close('all', nargout=0)
-                logger.info("MatlabSaveWorker: MATLAB figure closed.")
-            except Exception as e_close:
-                logger.warning(f"MatlabSaveWorker: Could not close MATLAB figure: {e_close}")
+                h_fig = eng_to_use.figure(nargout=1)
+                if not self._is_running:
+                    self.finished_saving.emit("fig", False, "Save cancelled by user.")
+                    return
+                eng_to_use.hold("on", nargout=0)
+                for label, values, rgb in traces:
+                    eng_to_use.plot(
+                        wavelengths_mat,
+                        matlab.double(values),
+                        "Color",
+                        rgb,
+                        "DisplayName",
+                        label,
+                        nargout=0,
+                    )
+                eng_to_use.hold("off", nargout=0)
+                eng_to_use.xlabel(xlabel_str, nargout=0)
+                eng_to_use.ylabel(ylabel_str, nargout=0)
+                eng_to_use.title(title_str, nargout=0)
+                eng_to_use.grid("on", nargout=0)
+                eng_to_use.legend(nargout=0)
+                eng_to_use.savefig(fig_filename, nargout=0)
+            finally:
+                if h_fig is not None:
+                    try:
+                        eng_to_use.close(h_fig, nargout=0)
+                        logger.info("MatlabSaveWorker: MATLAB figure closed.")
+                    except Exception as e_close:
+                        logger.warning(f"MatlabSaveWorker: Could not close MATLAB figure: {e_close}")
 
             logger.info(f"MatlabSaveWorker: Saved plot to FIG: {fig_filename}")
             self.finished_saving.emit("fig", True, fig_filename)
@@ -735,13 +800,7 @@ class PlotWidget(QWidget):
     _THREAD_WAIT_TIMEOUT_MS = 2000
     _MATLAB_STATUS_TIMEOUT_MS = 2000
     _STATUS_CLEAR_TIMEOUT_MS = 3000
-    _DETECTOR_COLORS = {
-        Detector.DE_1: "#1f78b4",
-        Detector.DE_2: "#e31a1c",
-        Detector.DE_3: "#33a02c",
-        Detector.DE_4: "#ff7f00",
-        Detector.DE_5: "#6a3d9a",
-    }
+    _DETECTOR_COLORS = _DETECTOR_COLOR_BY_ID
 
     # Signal to update UI from worker, e.g., re-enable button, show status
     matlab_save_status_update = Signal(str)  # Message for status bar or dialog
@@ -1392,23 +1451,17 @@ class PlotWidget(QWidget):
                 title_str_matlab = f"Scan {wavelengths[0]:.1f} - {wavelengths[-1]:.1f} nm"
                 if pout is not None:
                     title_str_matlab += f" (Pout: {pout:.2f} dBm)"
-                wavelengths_json = json.dumps(wavelengths.tolist())
-                # FIG remains the legacy first-acquired-detector visualization.
-                powers_json = json.dumps(measurement.detector_data[0].tolist())
-                pout_for_arg = pout if pout is not None else float("nan")
+                fig_payload = build_matlab_fig_payload(measurement)
 
                 QMetaObject.invokeMethod(
                     self.matlab_save_worker,
                     "save_matlab_fig",
                     Qt.ConnectionType.QueuedConnection,
-                    Q_ARG(str, wavelengths_json),
-                    Q_ARG(str, powers_json),
+                    Q_ARG(str, fig_payload),
                     Q_ARG(str, str(fig_path.resolve())),
                     Q_ARG(str, title_str_matlab),
                     Q_ARG(str, "Wavelength (nm)"),
-                    Q_ARG(str, "Power (dB)"),
-                    Q_ARG(str, "on"),
-                    Q_ARG(float, pout_for_arg),
+                    Q_ARG(str, "Transfer function (dB)"),
                     Q_ARG(QWidget, self),
                 )
 
