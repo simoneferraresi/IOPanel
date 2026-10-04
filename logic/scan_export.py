@@ -1,5 +1,6 @@
-"""Pure schema-v2 transformations for completed scan measurements."""
+"""Pure schema-v2 export transformations for measurements and save-time annotations."""
 
+import json
 from dataclasses import dataclass
 from datetime import UTC
 
@@ -26,15 +27,15 @@ CSV_COLUMNS = (
 
 @dataclass(frozen=True)
 class ScanExportPayload:
-    """CSV matrix/header and MATLAB dictionary derived only from a measurement."""
+    """Schema-v2 outputs from an immutable measurement and save-time annotation."""
 
     csv_data: np.ndarray
     csv_header: str
     mat_data: dict[str, object]
 
 
-def build_scan_export_v2(measurement: ScanMeasurement) -> ScanExportPayload:
-    """Build fixed DE1–DE4 schema-v2 outputs from an immutable scan snapshot."""
+def build_scan_export_v2(measurement: ScanMeasurement, *, comment: str = "") -> ScanExportPayload:
+    """Build schema-v2 outputs from a scan snapshot and an explicit save-time comment."""
     if Detector.DE_5 in measurement.detectors:
         raise ValueError(
             "External/BNC detector export is not yet supported because its unit and SetBNC configuration "
@@ -72,6 +73,8 @@ def build_scan_export_v2(measurement: ScanMeasurement) -> ScanExportPayload:
     ]
     if measurement.final_pout is not None:
         metadata.append(f"# Pout(dBm): {measurement.final_pout:.3f}")
+    normalized_comment = comment.replace("\r\n", "\n").replace("\r", "\n")
+    metadata.append(f"# Comment: {json.dumps(normalized_comment, ensure_ascii=False)}")
     csv_header = "\n".join((*metadata, "# " + ", ".join(CSV_COLUMNS)))
 
     mat_data: dict[str, object] = {
@@ -94,6 +97,7 @@ def build_scan_export_v2(measurement: ScanMeasurement) -> ScanExportPayload:
         "simulated": measurement.simulated,
         "result_kind": measurement.result_kind.name,
         "raw_result_code": measurement.raw_result_code,
+        "comment": normalized_comment,
     }
     if measurement.final_pout is not None:
         mat_data["pout_dBm"] = measurement.final_pout

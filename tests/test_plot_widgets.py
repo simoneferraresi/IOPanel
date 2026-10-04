@@ -520,6 +520,11 @@ def test_de5_export_warns_before_dialog_and_keeps_save_enabled(qtbot, monkeypatc
     warnings = []
     monkeypatch.setattr(plot_widgets.QMessageBox, "warning", lambda *args: warnings.append(args[-1]))
     monkeypatch.setattr(
+        plot_widgets.QInputDialog,
+        "getMultiLineText",
+        lambda *_args: pytest.fail("DE5 refusal must happen before the comment prompt"),
+    )
+    monkeypatch.setattr(
         plot_widgets.QFileDialog,
         "getSaveFileName",
         lambda *_args: pytest.fail("DE5 refusal must happen before opening the save dialog"),
@@ -541,6 +546,11 @@ def test_empty_detector_export_is_rejected_without_opening_dialog(qtbot, monkeyp
     widget.set_measurement(_detector_measurement([1510.0, 1520.0], np.empty((0, 2)), ()))
     warnings = []
     monkeypatch.setattr(plot_widgets.QMessageBox, "warning", lambda *args: warnings.append(args[-1]))
+    monkeypatch.setattr(
+        plot_widgets.QInputDialog,
+        "getMultiLineText",
+        lambda *_args: pytest.fail("empty detector data must be rejected before the comment prompt"),
+    )
     monkeypatch.setattr(
         plot_widgets.QFileDialog,
         "getSaveFileName",
@@ -570,6 +580,7 @@ def test_measurement_owns_read_only_array_copies():
 
 def _stub_save_dialog(monkeypatch, path):
     monkeypatch.setattr(plot_widgets.QFileDialog, "getSaveFileName", lambda *_args: (str(path), "CSV File (*.csv)"))
+    monkeypatch.setattr(plot_widgets.QInputDialog, "getMultiLineText", lambda *_args: ("", True))
 
 
 @pytest.mark.parametrize("conflicting", ["csv", "mat", "both"])
@@ -586,6 +597,11 @@ def test_export_declined_overwrite_preserves_existing_bundle(qtbot, monkeypatch,
         initial[mat_path] = b"original mat"
     _stub_save_dialog(monkeypatch, csv_path)
     monkeypatch.setattr(plot_widgets.QMessageBox, "question", lambda *_args: plot_widgets.QMessageBox.StandardButton.No)
+    monkeypatch.setattr(
+        plot_widgets.QInputDialog,
+        "getMultiLineText",
+        lambda *_args: pytest.fail("declined overwrite must happen before the comment prompt"),
+    )
     monkeypatch.setattr(plot_widgets.QMessageBox, "information", lambda *_args: pytest.fail("unexpected success dialog"))
 
     widget.save_scan_data()
@@ -628,3 +644,95 @@ def test_export_reports_partial_write_failure(qtbot, monkeypatch, tmp_path):
     assert not csv_path.exists()
     assert mat_path.exists()
     assert warnings and "CSV: disk full" in warnings[0]
+
+
+def test_comment_prompt_is_blank_each_time_and_exports_to_csv_and_mat(qtbot, monkeypatch, tmp_path):
+    widget = _prepare_export_widget(qtbot)
+    paths = iter((tmp_path / "first.csv", tmp_path / "second.csv"))
+    monkeypatch.setattr(
+        plot_widgets.QFileDialog,
+        "getSaveFileName",
+        lambda *_args: (str(next(paths)), "CSV File (*.csv)"),
+    )
+    comments = iter(("first note", 'Second, "annotated"\r\npass → stable #2'))
+    prompts = []
+
+    def prompt(*args):
+        prompts.append(args)
+        return next(comments), True
+
+    monkeypatch.setattr(plot_widgets.QInputDialog, "getMultiLineText", prompt)
+    monkeypatch.setattr(plot_widgets.QMessageBox, "information", lambda *_args: None)
+
+    widget.save_scan_data()
+    widget.save_scan_data()
+
+    assert len(prompts) == 2
+    assert all(args[1:3] == ("Experiment Comment", "Optional comment for this scan export:") for args in prompts)
+    assert all(args[3] == "" for args in prompts)
+    assert "# Comment: \"first note\"" in (tmp_path / "first.csv").read_text(encoding="utf-8")
+
+    import json
+    import scipy.io as sio
+
+    first_mat = sio.loadmat(tmp_path / "first.mat")["comment"]
+    assert "".join(np.asarray(first_mat).astype(str).ravel().tolist()) == "first note"
+    second_csv = (tmp_path / "second.csv").read_text(encoding="utf-8")
+    encoded = next(line.removeprefix("# Comment: ") for line in second_csv.splitlines() if line.startswith("# Comment: "))
+    normalized = 'Second, "annotated"\npass → stable #2'
+    assert json.loads(encoded) == normalized
+    loaded = sio.loadmat(tmp_path / "second.mat")["comment"]
+    assert "".join(np.asarray(loaded).astype(str).ravel().tolist()) == normalized
+    assert widget.save_btn.isEnabled()
+
+
+def test_comment_cancel_preserves_existing_bundle_and_does_not_queue_fig(qtbot, monkeypatch, tmp_path):
+    widget = _prepare_export_widget(qtbot)
+    paths = derive_scan_export_targets(tmp_path / "cancel.csv", include_fig=True)
+    initial = {}
+    for path in paths.values():
+        path.write_bytes((path.suffix + " original").encode())
+        initial[path] = path.read_bytes()
+    _stub_save_dialog(monkeypatch, tmp_path / "cancel.csv")
+    monkeypatch.setattr(plot_widgets.QMessageBox, "question", lambda *_args: plot_widgets.QMessageBox.StandardButton.Yes)
+    monkeypatch.setattr(plot_widgets, "MATLAB_ENGINE_AVAILABLE", True)
+    monkeypatch.setattr(plot_widgets.QInputDialog, "getMultiLineText", lambda *_args: ("discard me", False))
+    monkeypatch.setattr(widget, "_ensure_matlab_engine_started", lambda: pytest.fail("cancelled comment must not queue FIG"))
+
+    widget.save_scan_data()
+
+    assert {path: path.read_bytes() for path in initial} == initial
+    assert widget.save_btn.isEnabled()
+
+
+def test_filename_cancel_does_not_prompt_for_comment(qtbot, monkeypatch, tmp_path):
+    widget = _prepare_export_widget(qtbot)
+    monkeypatch.setattr(plot_widgets.QFileDialog, "getSaveFileName", lambda *_args: ("", ""))
+    monkeypatch.setattr(
+        plot_widgets.QInputDialog,
+        "getMultiLineText",
+        lambda *_args: pytest.fail("filename cancellation must happen before the comment prompt"),
+    )
+
+    widget.save_scan_data()
+
+    assert list(tmp_path.iterdir()) == []
+    assert widget.save_btn.isEnabled()
+
+
+def test_comment_acceptance_precedes_payload_build_and_builder_failure_writes_nothing(qtbot, monkeypatch, tmp_path):
+    widget = _prepare_export_widget(qtbot)
+    path = tmp_path / "builder-fails.csv"
+    _stub_save_dialog(monkeypatch, path)
+    events = []
+    monkeypatch.setattr(plot_widgets.QInputDialog, "getMultiLineText", lambda *_args: events.append("comment") or ("note", True))
+    monkeypatch.setattr(plot_widgets, "build_scan_export_v2", lambda *_args, **_kwargs: events.append("build") or (_ for _ in ()).throw(ValueError("bad payload")))
+    monkeypatch.setattr(plot_widgets.QMessageBox, "warning", lambda *_args: None)
+    monkeypatch.setattr(widget, "_ensure_matlab_engine_started", lambda: pytest.fail("payload failure must precede FIG queue"))
+    monkeypatch.setattr(plot_widgets, "MATLAB_ENGINE_AVAILABLE", True)
+
+    widget.save_scan_data()
+
+    assert events == ["comment", "build"]
+    assert not path.exists() and not path.with_suffix(".mat").exists() and not path.with_suffix(".fig").exists()
+    assert widget.save_btn.isEnabled()

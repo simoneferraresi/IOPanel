@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta, timezone
+import json
 
 import numpy as np
 import pytest
@@ -92,6 +93,73 @@ def test_schema_v2_contains_version_active_metadata_and_scalar_pout():
     assert "Pout_[dBm]" not in payload.csv_header
     assert "Power_Det1_[dB]" not in payload.csv_header
     assert "Power_Det_1_[dB]" not in payload.csv_header
+
+
+@pytest.mark.parametrize(
+    ("comment", "expected"),
+    [
+        ("Device thermally stabilized before scan.", "Device thermally stabilized before scan."),
+        (
+            'First pass, TE mode.\r\nChanged "polarization" #2.\rSecond pass:\nstable → yes',
+            'First pass, TE mode.\nChanged "polarization" #2.\nSecond pass:\nstable → yes',
+        ),
+        ("", ""),
+        ("café 測定 🧪", "café 測定 🧪"),
+    ],
+)
+def test_schema_v2_comment_csv_and_mat_round_trip(tmp_path, comment, expected):
+    import scipy.io as sio
+
+    payload = build_scan_export_v2(
+        _measurement((Detector.DE_1,), [[10, 11, 12]]),
+        comment=comment,
+    )
+
+    comment_lines = [line for line in payload.csv_header.splitlines() if line.startswith("# Comment: ")]
+    assert len(comment_lines) == 1
+    encoded = comment_lines[0].removeprefix("# Comment: ")
+    assert json.loads(encoded) == expected
+    assert payload.mat_data["comment"] == expected
+    assert SCAN_EXPORT_SCHEMA_VERSION == 2
+    assert payload.mat_data["schema_version"] == 2
+
+    mat_path = tmp_path / "comment.mat"
+    sio.savemat(mat_path, payload.mat_data, do_compression=True)
+    loaded = sio.loadmat(mat_path)["comment"]
+    assert "".join(np.asarray(loaded).astype(str).ravel().tolist()) == expected
+
+
+def test_export_comment_does_not_mutate_measurement():
+    measurement = _measurement((Detector.DE_1,), [[10, 11, 12]])
+    settings = measurement.settings
+    wavelengths = measurement.wavelengths_nm.copy()
+    detector_data = measurement.detector_data.copy()
+    acquisition_values = (
+        measurement.detectors,
+        measurement.final_pout,
+        measurement.result_kind,
+        measurement.raw_result_code,
+        measurement.result_message,
+        measurement.backend,
+        measurement.simulated,
+        measurement.completed_at_utc,
+    )
+
+    build_scan_export_v2(measurement, comment="saved with notes")
+
+    assert measurement.settings is settings
+    np.testing.assert_array_equal(measurement.wavelengths_nm, wavelengths)
+    np.testing.assert_array_equal(measurement.detector_data, detector_data)
+    assert (
+        measurement.detectors,
+        measurement.final_pout,
+        measurement.result_kind,
+        measurement.raw_result_code,
+        measurement.result_message,
+        measurement.backend,
+        measurement.simulated,
+        measurement.completed_at_utc,
+    ) == acquisition_values
 
 
 @pytest.mark.parametrize(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import logging
 import time
@@ -26,6 +27,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMessageBox,
     QPushButton,
@@ -1232,17 +1234,11 @@ class PlotWidget(QWidget):
             QMessageBox.warning(self, "No Detector Data", "Cannot export a scan with no wavelength-resolved detector data.")
             return
 
-        try:
-            export_payload = build_scan_export_v2(measurement)
-        except ValueError as error:
-            QMessageBox.warning(self, "Scan Export Not Supported", str(error))
-            return
-
         # Disable button during save to prevent multiple clicks
         self.save_btn.setEnabled(False)  # Disable button early
         self.matlab_status_label.setText("")  # Clear previous status
 
-        # The pure schema builder is bound only to the completed measurement snapshot.
+        # Acquisition data stays bound to the completed measurement snapshot.
         wavelengths = measurement.wavelengths_nm
         pout = measurement.final_pout
         logger.info(f"Saving scan data. Points: {len(wavelengths)}. Pout: {pout}")
@@ -1293,6 +1289,24 @@ class PlotWidget(QWidget):
                 self.save_btn.setEnabled(True)
                 return
 
+        comment, accepted = QInputDialog.getMultiLineText(
+            self,
+            "Experiment Comment",
+            "Optional comment for this scan export:",
+            "",
+        )
+        if not accepted:
+            logger.info("Scan export cancelled in experiment comment dialog.")
+            self.save_btn.setEnabled(True)
+            return
+
+        try:
+            export_payload = build_scan_export_v2(measurement, comment=comment)
+        except (TypeError, ValueError) as error:
+            QMessageBox.warning(self, "Scan Export Not Supported", str(error))
+            self.save_btn.setEnabled(True)
+            return
+
         # --- NEW: Update the memory ---
         # Extract the directory from the file selected by the user
         self.last_save_dir = Path(selected_path_with_ext).parent
@@ -1305,14 +1319,17 @@ class PlotWidget(QWidget):
         # --- Save CSV (Synchronous) ---
         try:
             csv_path = targets["CSV"]
+            csv_buffer = io.StringIO()
             np.savetxt(
-                str(csv_path.resolve()),
+                csv_buffer,
                 export_payload.csv_data,
                 delimiter=",",
                 header=export_payload.csv_header,
                 comments="",
                 fmt="%.6f",
             )
+            with csv_path.resolve().open("w", encoding="utf-8", newline="") as csv_file:
+                csv_file.write(csv_buffer.getvalue())
             self.saved_files_list.append(csv_path)
             logger.info(f"Saved CSV: {csv_path}")
         except Exception as e:
