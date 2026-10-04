@@ -57,6 +57,9 @@ except Exception as e:
 
 logger = logging.getLogger("LabApp.plot_widgets")
 
+_GENERIC_SCAN_Y_LABEL = "Power (dB)"
+_MEASUREMENT_SCAN_Y_LABEL = "Transfer function (dB)"
+
 _DETECTOR_COLOR_BY_ID = {
     Detector.DE_1: "#1f78b4",
     Detector.DE_2: "#e31a1c",
@@ -887,7 +890,7 @@ class PlotWidget(QWidget):
         tick_font = QFont("Segoe UI", 11)
         label_style = {"color": "black", "font-size": "12pt"}
 
-        self.plot_widget.setLabel("left", "Power (dB)", **label_style)
+        self.plot_widget.setLabel("left", _GENERIC_SCAN_Y_LABEL, **label_style)
         self.plot_widget.getAxis("left").setTickFont(tick_font)
         self.plot_widget.setLabel("bottom", "Wavelength (nm)", **label_style)
         self.plot_widget.getAxis("bottom").setTickFont(tick_font)
@@ -1098,6 +1101,7 @@ class PlotWidget(QWidget):
     def update_plot(self, x_data: np.ndarray, y_data: np.ndarray, output_power: float | None = None) -> bool:
         # Array-only updates are useful for previews and older callers, but are
         # not exportable as a completed acquisition without its snapshot.
+        self.plot_widget.setLabel("left", _GENERIC_SCAN_Y_LABEL)
         self.current_measurement = None
         self._clear_detector_live_items()
         if self.detector_legend is not None:
@@ -1221,6 +1225,7 @@ class PlotWidget(QWidget):
 
     def set_measurement(self, measurement: ScanMeasurement) -> bool:
         """Display every detector row and retain the completed acquisition."""
+        self.plot_widget.setLabel("left", _MEASUREMENT_SCAN_Y_LABEL)
         self.current_measurement = measurement
         self.current_wavelengths = measurement.wavelengths_nm
         self.current_powers = measurement.detector_data[0] if measurement.detectors else np.array([])
@@ -1261,6 +1266,7 @@ class PlotWidget(QWidget):
     def clear_plot(self):
         """Clears all traces and resets internal data."""
         self._hide_crosshair()
+        self.plot_widget.setLabel("left", _GENERIC_SCAN_Y_LABEL)
         # 1. Clear the visual plot items
         self.plot_data_item.setData([], [])
         self.reference_plot_item.setData([], [])
