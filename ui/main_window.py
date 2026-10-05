@@ -215,6 +215,21 @@ class MainWindow(QMainWindow):
 
         # --- UI and deferred initialization ---
         self._init_ui()
+        self._restore_ui_preferences()
+        self._load_defaults_from_config()
+        self._connect_signals()
+        self._ct400_init_task_finished.connect(self._on_ct400_init_task_finished)
+        self._piezo_init_task_finished.connect(self._on_piezo_init_task_finished)
+        self._init_task_thread_finished.connect(self._on_init_task_thread_finished)
+        self._camera_recovery_thread_finished.connect(self._on_camera_recovery_thread_finished)
+
+        # Start slow hardware initializations after the main event loop has started.
+        # This ensures the GUI is responsive immediately upon launch.
+        QTimer.singleShot(100, self._begin_lazy_init)
+        logger.info("MainWindow __init__ complete. Hardware initialization deferred.")
+
+    def _restore_ui_preferences(self) -> None:
+        """Apply stored presentation preferences after all UI widgets exist."""
         saved_geometry = self.settings.geometry()
         if saved_geometry is not None:
             self.restoreGeometry(saved_geometry)
@@ -227,17 +242,6 @@ class MainWindow(QMainWindow):
         saved_detectors = set(self.settings.scan_detectors())
         for detector, checkbox in self.control_panel.scan_detector_cbs.items():
             checkbox.setChecked(detector.value in saved_detectors)
-        self._load_defaults_from_config()
-        self._connect_signals()
-        self._ct400_init_task_finished.connect(self._on_ct400_init_task_finished)
-        self._piezo_init_task_finished.connect(self._on_piezo_init_task_finished)
-        self._init_task_thread_finished.connect(self._on_init_task_thread_finished)
-        self._camera_recovery_thread_finished.connect(self._on_camera_recovery_thread_finished)
-
-        # Start slow hardware initializations after the main event loop has started.
-        # This ensures the GUI is responsive immediately upon launch.
-        QTimer.singleShot(100, self._begin_lazy_init)
-        logger.info("MainWindow __init__ complete. Hardware initialization deferred.")
 
     piezo_connection_succeeded = Signal(str)
     piezo_connection_failed = Signal(str, str)
