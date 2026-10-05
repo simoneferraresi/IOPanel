@@ -24,6 +24,7 @@ def test_mainwindow_restores_and_saves_preferences_without_hardware_operations(t
     settings.set_active_tab(2)
     settings.set_scan_detectors([1, 3, 4])
     settings.set_camera_controls_visible("CAM-A", True)
+    settings.set_camera_controls_visible("CAM-B", False)
     camera_directory = tmp_path / "camera-a"
     camera_directory.mkdir()
     settings.set_camera_screenshot_directory("CAM-A", camera_directory)
@@ -66,7 +67,10 @@ def test_mainwindow_restores_and_saves_preferences_without_hardware_operations(t
             _selected_scan_detectors=lambda: [Detector.DE_1, Detector.DE_3, Detector.DE_4],
         ),
         control_container=SimpleNamespace(isVisible=lambda: True),
-        camera_panels={"CAM-A": SimpleNamespace(get_controls_visible=lambda: True)},
+        camera_panels={
+            "CAM-A": SimpleNamespace(get_controls_visible=lambda: True),
+            "CAM-B": SimpleNamespace(get_controls_visible=lambda: False),
+        },
         restored_geometry=None,
         restoreGeometry=lambda geometry: setattr(window, "restored_geometry", geometry),
         isFullScreen=lambda: False,
@@ -85,6 +89,7 @@ def test_mainwindow_restores_and_saves_preferences_without_hardware_operations(t
     assert settings.splitter_sizes(2) == [600, 400]
     assert settings.scan_detectors() == [1, 3, 4]
     assert settings.camera_controls_visible("CAM-A") is True
+    assert settings.camera_controls_visible("CAM-B") is False
     assert settings.camera_screenshot_directory("CAM-A") == camera_directory.resolve()
 
 
@@ -134,7 +139,7 @@ def test_mainwindow_restore_preferences_falls_back_for_invalid_tab_and_splitter(
     assert [checkbox.checked for checkbox in checkboxes.values()] == [True, False, True, False]
 
 
-def test_camera_panel_starts_with_persisted_visibility_and_screenshot_directory(tmp_path):
+def test_camera_panel_uses_persisted_screenshot_directory(qtbot, tmp_path):
     settings = make_settings(tmp_path / "camera.ini")
     screenshot_directory = tmp_path / "camera-screenshots"
     screenshot_directory.mkdir()
@@ -147,7 +152,49 @@ def test_camera_panel_starts_with_persisted_visibility_and_screenshot_directory(
         CameraConfig(identifier="camera-1", name="Camera A", backend="simulation"),
         settings=settings,
     )
+    qtbot.addWidget(panel)
 
     assert settings.camera_controls_visible("camera-1") is True
     assert panel.get_controls_visible() is False
     assert panel.last_save_dir == screenshot_directory.resolve()
+
+
+def test_create_camera_panel_applies_saved_visibility_with_lightweight_double(
+    tmp_path, monkeypatch
+):
+    settings = make_settings(tmp_path / "panel-restore.ini")
+    settings.set_camera_controls_visible("CAM-A", True)
+
+    class FakeCameraPanel:
+        def __init__(self, camera, title, *, config, parent, settings):
+            self.camera = camera
+            self.title = title
+            self.config = config
+            self.parent = parent
+            self.settings = settings
+            self.visibility = None
+            self.video_label = SimpleNamespace(setText=lambda _text: None)
+            self.maximize_requested = SimpleNamespace(connect=lambda slot: setattr(self, "maximize_slot", slot))
+
+        def set_controls_visibility(self, visible):
+            self.visibility = visible
+
+    monkeypatch.setattr(main_window_module, "CameraPanel", FakeCameraPanel)
+    owner = SimpleNamespace(
+        camera_container=object(),
+        settings=settings,
+        toggle_cinema_mode=lambda: None,
+    )
+
+    configured = main_window_module.MainWindow._create_camera_panel(
+        owner, None, CameraConfig(identifier="CAM-A", name="Camera A", backend="simulation")
+    )
+    defaulted = main_window_module.MainWindow._create_camera_panel(
+        owner, None, CameraConfig(identifier="CAM-B", name="Camera B", backend="simulation")
+    )
+
+    assert configured.settings is settings
+    assert configured.config.identifier == "CAM-A"
+    assert configured.visibility is True
+    assert defaulted.config.identifier == "CAM-B"
+    assert defaulted.visibility is False

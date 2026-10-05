@@ -1498,6 +1498,10 @@ class MainWindow(QMainWindow):
 
         self.statusBar().showMessage("Shutting down...", 0)
 
+        # Capture the final harmless UI snapshot before camera cleanup clears
+        # the panel registry used to read camera control visibility.
+        self._save_ui_preferences()
+
         # Cleanup long-running panel workers
         if hasattr(self, "alignment_tab") and self.alignment_tab:
             self.alignment_tab.cleanup()
@@ -1546,7 +1550,6 @@ class MainWindow(QMainWindow):
         # 4. Shut down the main Vimba system API
         self._cleanup_vimbasystem()
 
-        self._save_ui_preferences()
         logger.info("Shutdown complete.")
         self._pending_init_close = False
         self._pending_camera_lifecycle_close = False
