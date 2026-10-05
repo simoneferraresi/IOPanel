@@ -334,6 +334,50 @@ def test_frozen_detector_cursor_uses_independent_nearest_wavelength_and_detector
     ]
 
 
+@pytest.mark.parametrize("live_wavelength", [1549.5, 1551.0])
+def test_frozen_cursor_reports_out_of_range_without_clamping_to_endpoint(qtbot, live_wavelength):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    reference = _detector_measurement(
+        [-float("inf"), 1550.0, 1550.2, 1550.4, float("nan"), float("inf")],
+        [[-100.0, -10.0, -11.0, -12.0, -200.0, -300.0]],
+        (Detector.DE_3,),
+    )
+    live = _detector_measurement([live_wavelength], [[-18.42]], (Detector.DE_1,))
+    widget.set_measurement(reference)
+    widget.freeze_current_trace()
+    widget.set_measurement(live)
+
+    _move_plot_cursor(widget, live_wavelength, -10.0)
+
+    label_lines = widget.cursor_label.toPlainText().splitlines()
+    assert label_lines[0] == f"\u03bb: {live_wavelength:.3f} nm"
+    assert label_lines[1:] == ["Live:", "Det 1: -18.42 dB", "Reference: out of range"]
+    assert "Det 3:" not in widget.cursor_label.toPlainText()
+
+
+@pytest.mark.parametrize("boundary", [1550.0, 1550.4])
+def test_frozen_cursor_treats_reference_range_boundaries_as_in_range(qtbot, boundary):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    reference = _detector_measurement(
+        [1550.0, 1550.2, 1550.4],
+        [[-10.0, -11.0, -12.0]],
+        (Detector.DE_3,),
+    )
+    live = _detector_measurement([boundary], [[-18.42]], (Detector.DE_1,))
+    widget.set_measurement(reference)
+    widget.freeze_current_trace()
+    widget.set_measurement(live)
+
+    _move_plot_cursor(widget, boundary, -10.0)
+
+    assert widget.cursor_label.toPlainText().splitlines()[-2:] == [
+        f"Reference @ {boundary:.3f} nm:",
+        "Det 3: -10.00 dB" if boundary == 1550.0 else "Det 3: -12.00 dB",
+    ]
+
+
 def test_frozen_cursor_preserves_live_single_detector_horizontal_line(qtbot):
     widget = PlotWidget(ScanSettings())
     qtbot.addWidget(widget)

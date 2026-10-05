@@ -1013,20 +1013,24 @@ class PlotWidget(QWidget):
                     if reference_indices.size == 0:
                         label_lines.append("Reference: n/a")
                     else:
-                        reference_idx = reference_indices[
-                            np.abs(reference.wavelengths_nm[reference_indices] - x).argmin()
-                        ]
-                        reference_x = float(reference.wavelengths_nm[reference_idx])
-                        label_lines.append(f"Reference @ {reference_x:.3f} nm:")
-                        for detector, value in zip(
-                            reference.detectors,
-                            reference.detector_data[:, reference_idx],
-                            strict=True,
-                        ):
-                            if np.isfinite(value):
-                                label_lines.append(f"Det {detector.value}: {float(value):.2f} dB")
-                            else:
-                                label_lines.append(f"Det {detector.value}: n/a")
+                        finite_reference_wavelengths = reference.wavelengths_nm[reference_indices]
+                        if x < finite_reference_wavelengths.min() or x > finite_reference_wavelengths.max():
+                            label_lines.append("Reference: out of range")
+                        else:
+                            reference_idx = reference_indices[
+                                np.abs(finite_reference_wavelengths - x).argmin()
+                            ]
+                            reference_x = float(reference.wavelengths_nm[reference_idx])
+                            label_lines.append(f"Reference @ {reference_x:.3f} nm:")
+                            for detector, value in zip(
+                                reference.detectors,
+                                reference.detector_data[:, reference_idx],
+                                strict=True,
+                            ):
+                                if np.isfinite(value):
+                                    label_lines.append(f"Det {detector.value}: {float(value):.2f} dB")
+                                else:
+                                    label_lines.append(f"Det {detector.value}: n/a")
 
                 self.v_line.setPos(x)
                 self.v_line.setVisible(True)
