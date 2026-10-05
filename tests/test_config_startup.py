@@ -15,6 +15,30 @@ def test_loader_returns_parsed_ini_dictionary(tmp_path):
     assert app.load_raw_config_from_ini(config_path) == {"Instruments": {"ct400_backend": "simulation"}}
 
 
+def test_qsettings_identity_is_stable_and_not_the_configured_window_title():
+    class MetadataCapture:
+        organization = None
+        application = None
+
+        def setOrganizationName(self, value):
+            self.organization = value
+
+        def setApplicationName(self, value):
+            self.application = value
+
+        def setApplicationVersion(self, _value):
+            pass
+
+        def setStyle(self, _value):
+            pass
+
+    capture = MetadataCapture()
+    app.configure_qt_application(capture, "Editable config title")
+
+    assert capture.organization == "IOPLab"
+    assert capture.application == "IOPanel"
+
+
 def test_loader_raises_for_missing_file(tmp_path):
     config_path = tmp_path / "missing.ini"
 

@@ -24,6 +24,7 @@ from pydantic import ValidationError
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from config_model import AppConfig, ConfigSemanticError
+from app_settings import AppSettings
 from ui.main_window import MainWindow
 
 # Application Metadata
@@ -39,7 +40,8 @@ class ConfigLoadError(Exception):
 
 def configure_qt_application(app: QApplication, app_name: str = APP_NAME) -> None:
     """Set application metadata and use Qt's native Fusion widget style."""
-    app.setApplicationName(app_name)
+    app.setOrganizationName("IOPLab")
+    app.setApplicationName("IOPanel")
     app.setApplicationVersion(APP_VERSION)
     app.setStyle("Fusion")
 
@@ -270,7 +272,7 @@ def main() -> int:
         app = QApplication(sys.argv)
         configure_qt_application(app, app_config.app_name)
 
-        window = MainWindow(config=app_config)
+        window = MainWindow(config=app_config, settings=AppSettings())
         window.show()
 
         def on_shutdown():

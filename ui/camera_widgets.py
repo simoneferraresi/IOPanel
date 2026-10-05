@@ -19,6 +19,7 @@ background workers needed for performance.
 import logging
 import math
 import time
+from pathlib import Path
 from typing import Literal
 
 import cv2
@@ -40,6 +41,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app_settings import AppSettings
 from config_model import CameraConfig
 from hardware.camera import VimbaCam
 from ui.constants import (
@@ -457,6 +459,7 @@ class CameraPanel(QFrame):
         title: str,
         config: CameraConfig,
         parent: QWidget | None = None,
+        settings: AppSettings | None = None,
     ):
         """Initializes the CameraPanel.
 
@@ -514,11 +517,13 @@ class CameraPanel(QFrame):
             self.title_label.setObjectName("simulatedCameraTitle")
             self.main_layout.addWidget(self.title_label)
 
-        # --- NEW: Remember last screenshot directory ---
-        from pathlib import Path  # Ensure Path is imported at top of file
-
-        self.last_save_dir = Path.cwd()
-        # -----------------------------------------------
+        self.settings = settings
+        self.camera_identifier = config.identifier
+        self.last_save_dir = (
+            settings.camera_screenshot_directory(self.camera_identifier)
+            if settings is not None
+            else Path.cwd()
+        )
 
         self._init_ui()
         self.main_layout.addWidget(self.controls_container)
@@ -848,9 +853,9 @@ class CameraPanel(QFrame):
             return
 
         # --- NEW: Update the memory ---
-        from pathlib import Path
-
         self.last_save_dir = Path(file_path).parent
+        if self.settings is not None:
+            self.settings.set_camera_screenshot_directory(self.camera_identifier, self.last_save_dir)
         # ------------------------------
 
         # 4. Save the file if user didn't cancel

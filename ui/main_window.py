@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app_settings import AppSettings
 from config_model import AppConfig, CameraConfig
 from hardware.ct400_init_worker import CT400InitWorker
 from hardware.dummy_ct400 import DummyCT400
@@ -162,7 +163,7 @@ class MainWindow(QMainWindow):
     _init_task_thread_finished = Signal(object)
     _camera_recovery_thread_finished = Signal(str, object)
 
-    def __init__(self, config: AppConfig, parent=None):
+    def __init__(self, config: AppConfig, parent=None, settings: AppSettings | None = None):
         """Initializes the MainWindow.
 
         Sets up the main UI components and defers the slow hardware
@@ -174,6 +175,7 @@ class MainWindow(QMainWindow):
         """
         super().__init__(parent)
         self.config = config
+        self.settings = settings if settings is not None else AppSettings()
         logger.info("Initializing MainWindow...")
         # --- Member variable initialization ---
         self.cameras: list[VimbaCam] = []
@@ -213,6 +215,18 @@ class MainWindow(QMainWindow):
 
         # --- UI and deferred initialization ---
         self._init_ui()
+        saved_geometry = self.settings.geometry()
+        if saved_geometry is not None:
+            self.restoreGeometry(saved_geometry)
+        saved_sizes = self.settings.splitter_sizes(self.main_splitter.count())
+        if saved_sizes is not None:
+            self.main_splitter.setSizes(saved_sizes)
+        self.tab_widget.setCurrentIndex(
+            self.settings.active_tab(self.tab_widget.count(), self.tab_widget.currentIndex())
+        )
+        saved_detectors = set(self.settings.scan_detectors())
+        for detector, checkbox in self.control_panel.scan_detector_cbs.items():
+            checkbox.setChecked(detector.value in saved_detectors)
         self._load_defaults_from_config()
         self._connect_signals()
         self._ct400_init_task_finished.connect(self._on_ct400_init_task_finished)
@@ -605,6 +619,7 @@ class MainWindow(QMainWindow):
         main_layout.setContentsMargins(5, 5, 5, 5)
         main_layout.setSpacing(5)
         splitter = QSplitter(Qt.Orientation.Vertical)
+        self.main_splitter = splitter
         splitter.setHandleWidth(6)
         splitter.setChildrenCollapsible(False)
         self.camera_container = QWidget()
@@ -628,7 +643,7 @@ class MainWindow(QMainWindow):
         self.first_tab = QWidget()
         first_tab_layout = QHBoxLayout(self.first_tab)
         self.control_panel = CT400ControlPanel(self.shared_scan_settings, None, self.config)
-        self.plot_widget = PlotWidget(self.shared_scan_settings)
+        self.plot_widget = PlotWidget(self.shared_scan_settings, settings=self.settings)
         first_tab_layout.addWidget(self.control_panel, stretch=0)
         first_tab_layout.addWidget(self.plot_widget, stretch=1)
         self.tab_widget.addTab(self.first_tab, "Wavelength Scan")
@@ -1170,7 +1185,9 @@ class MainWindow(QMainWindow):
             title,
             config=cam_config,
             parent=self.camera_container,
+            settings=self.settings,
         )
+        panel.set_controls_visibility(self.settings.camera_controls_visible(cam_config.identifier))
         if not cam_instance:
             panel.video_label.setText(MSG_CAMERA_CONNECTING.format(cam_config.name))
 
@@ -1308,6 +1325,7 @@ class MainWindow(QMainWindow):
         if camera_identifier in self.camera_panels:
             panel = self.camera_panels[camera_identifier]
             panel.set_controls_visibility(checked)
+            self.settings.set_camera_controls_visible(camera_identifier, checked)
             action.setText(f"{'Hide' if checked else 'Show'} {panel._panel_title} Controls")
         else:
             logger.warning(f"Camera panel not found for identifier: {camera_identifier} during toggle.")
@@ -1524,11 +1542,26 @@ class MainWindow(QMainWindow):
         # 4. Shut down the main Vimba system API
         self._cleanup_vimbasystem()
 
+        self._save_ui_preferences()
         logger.info("Shutdown complete.")
         self._pending_init_close = False
         self._pending_camera_lifecycle_close = False
         self._pending_piezo_operation_close = False
         event.accept()
+
+    def _save_ui_preferences(self) -> None:
+        """Save only presentation state and the selected scan detector IDs."""
+        if not self.isFullScreen():
+            self.settings.set_geometry(self.saveGeometry())
+        if self.control_container.isVisible():
+            self.settings.set_splitter_sizes(self.main_splitter.sizes())
+        self.settings.set_active_tab(self.tab_widget.currentIndex())
+        self.settings.set_scan_detectors(
+            [detector.value for detector in self.control_panel._selected_scan_detectors()]
+        )
+        for camera_id, panel in self.camera_panels.items():
+            self.settings.set_camera_controls_visible(camera_id, panel.get_controls_visible())
+        self.settings.sync()
 
     @Slot()
     def _resume_close_after_scan(self):
