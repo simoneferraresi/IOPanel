@@ -55,8 +55,12 @@ from ui.constants import (
     ID_SCAN_BUTTON,
     MONITOR_TIMER_INTERVAL_MS,
     MSG_SCAN_CANCELLED,
-    MSG_SCAN_FINISHED,
+    MSG_SCAN_COMPLETED,
+    MSG_SCAN_COMPLETED_WITH_WARNING,
+    MSG_SCAN_FAILED,
     MSG_SCAN_READY,
+    MSG_SCAN_SCANNING,
+    MSG_SCAN_STOPPING,
     PROP_MONITORING,
     PROP_SCANNING,
 )
@@ -673,6 +677,7 @@ class CT400ControlPanel(BaseControlPanel):
         self._scan_elapsed_timer = QTimer(self)
         self._scan_elapsed_timer.setInterval(1000)
         self._scan_elapsed_timer.timeout.connect(self._update_scan_elapsed)
+        self._scan_warning_received = False
 
         self.setObjectName(ID_CT400_SCAN_PANEL)
 
@@ -737,6 +742,9 @@ class CT400ControlPanel(BaseControlPanel):
         self.scan_btn.setMinimumHeight(35)
         self.scan_btn.setMinimumWidth(130)
         control_layout.addWidget(self.scan_btn)
+
+        self.scan_status_label = QLabel(MSG_SCAN_READY)
+        control_layout.addWidget(self.scan_status_label)
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
@@ -871,6 +879,8 @@ class CT400ControlPanel(BaseControlPanel):
             self.scanning = True
             self.operation_started.emit()
             operation_claimed = True
+            self._scan_warning_received = False
+            self.scan_status_label.setText(MSG_SCAN_SCANNING)
             self._start_scan_activity_ui()
             self.scan_btn.setText("Stop Scan")
             self.scan_btn.setIcon(QtGui.QIcon(":/icons/stop.svg"))
@@ -912,11 +922,14 @@ class CT400ControlPanel(BaseControlPanel):
             QMessageBox.critical(self, "Invalid Input", f"Invalid scan parameter: {ve}")
             logger.warning(f"Scan start validation failed: {ve}")
             if operation_claimed:
+                self.scan_status_label.setText(MSG_SCAN_FAILED)
                 self._reset_scan_ui()
                 self.operation_finished.emit()
         except Exception as e:
             QMessageBox.critical(self, "Scan Start Error", f"Could not start scan: {e}")
             logger.error(f"Error starting scan: {e}", exc_info=True)
+            if operation_claimed:
+                self.scan_status_label.setText(MSG_SCAN_FAILED)
             self._reset_scan_ui()
             if operation_claimed:
                 self.operation_finished.emit()
@@ -929,6 +942,7 @@ class CT400ControlPanel(BaseControlPanel):
                 self.scan_btn.setText("Stopping Scan…")
                 self.scan_btn.setEnabled(False)
                 self.scan_btn.setToolTip("Waiting for CT400_ScanWaitEnd to confirm the stop request.")
+                self.scan_status_label.setText(MSG_SCAN_STOPPING)
             self.scan_worker.stop()
 
     @Slot(InstrumentError)  # <-- NEW SIGNATURE
@@ -948,6 +962,7 @@ class CT400ControlPanel(BaseControlPanel):
 
     @Slot(int, str)
     def _handle_scan_warning(self, code: int, message: str):
+        self._scan_warning_received = True
         warning = f"CT400 scan warning {code}: {message or 'completed with a documented warning.'}"
         logger.warning(warning)
         self.scan_warning.emit(warning)
@@ -992,9 +1007,17 @@ class CT400ControlPanel(BaseControlPanel):
     @Slot()
     def _scan_thread_finished(self):
         logger.info("ScanPanel: Scan thread finished.")
-        status_msg = MSG_SCAN_FINISHED
-        if self.scan_worker and self.scan_worker.final_kind == CT400ScanResultKind.USER_CANCELLED:
-            status_msg = MSG_SCAN_CANCELLED
+        final_kind = self.scan_worker.final_kind if self.scan_worker else None
+        if final_kind == CT400ScanResultKind.USER_CANCELLED:
+            self.scan_status_label.setText(MSG_SCAN_CANCELLED)
+        elif final_kind == CT400ScanResultKind.FATAL_ERROR or final_kind == CT400ScanResultKind.UNEXPECTED:
+            self.scan_status_label.setText(MSG_SCAN_FAILED)
+        elif self._scan_warning_received or final_kind == CT400ScanResultKind.WARNING:
+            self.scan_status_label.setText(MSG_SCAN_COMPLETED_WITH_WARNING)
+        elif final_kind == CT400ScanResultKind.SUCCESS:
+            self.scan_status_label.setText(MSG_SCAN_COMPLETED)
+        else:
+            self.scan_status_label.setText(MSG_SCAN_FAILED)
 
         # Now that the thread is finished, we can safely delete the worker and thread objects.
         if self.scan_worker:
@@ -1004,10 +1027,10 @@ class CT400ControlPanel(BaseControlPanel):
             self.scan_thread.deleteLater()
             self.scan_thread = None
 
-        self._reset_scan_ui(status_msg=status_msg)
+        self._reset_scan_ui()
         self.operation_finished.emit()
 
-    def _reset_scan_ui(self, status_msg: str = MSG_SCAN_READY):
+    def _reset_scan_ui(self):
         self._stop_scan_activity_ui()
         self.scanning = False
         self.scan_btn.setText("Start Scan")
@@ -1018,7 +1041,7 @@ class CT400ControlPanel(BaseControlPanel):
         self.scan_btn.style().polish(self.scan_btn)
         # Let the base class handle widget enabling/disabling
         self.on_instrument_connected(self.is_instrument_connected)
-        logger.info(f"Scan panel UI reset. Status: {status_msg}")
+        logger.info(f"Scan panel UI reset. Status: {self.scan_status_label.text()}")
 
 
 ###############################################################################
