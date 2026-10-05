@@ -10,8 +10,6 @@ from hardware.ct400_types import Detector
 from logic.task_runner import TaskRunner
 from ui import main_window as main_window_module
 from ui.camera_widgets import CameraPanel
-from ui.control_panel import ScanSettings
-from ui.plot_widgets import PlotWidget
 
 
 def make_settings(path: Path) -> AppSettings:
@@ -39,6 +37,12 @@ def test_mainwindow_restores_preferences_without_hardware_operations(qtbot, tmp_
     camera_b = tmp_path / "camera-b"
     camera_a.mkdir()
     camera_b.mkdir()
+    scan = tmp_path / "scan"
+    plot = tmp_path / "plot"
+    scan.mkdir()
+    plot.mkdir()
+    settings.set_scan_export_directory(scan)
+    settings.set_plot_image_directory(plot)
     settings.set_camera_controls_visible("CAM-A", True)
     settings.set_camera_screenshot_directory("CAM-A", camera_a)
     settings.set_camera_screenshot_directory("CAM-B", camera_b)
@@ -65,6 +69,8 @@ def test_mainwindow_restores_preferences_without_hardware_operations(qtbot, tmp_
     assert panel_b.get_controls_visible() is False
     assert panel_a.last_save_dir == camera_a.resolve()
     assert panel_b.last_save_dir == camera_b.resolve()
+    assert first.plot_widget.last_scan_save_dir == scan.resolve()
+    assert first.plot_widget.last_plot_image_dir == plot.resolve()
     first.tab_widget.setCurrentIndex(1)
     first.main_splitter.setSizes([500, 500])
     first.resize(1320, 920)
@@ -124,34 +130,3 @@ def test_mainwindow_restore_preferences_falls_back_for_invalid_tab_and_splitter(
     assert splitter.restored_sizes is None
     assert tabs.currentIndex() == 0
     assert [checkbox.checked for checkbox in checkboxes.values()] == [True, False, True, False]
-
-
-def test_output_widgets_start_in_independent_persisted_directories(qtbot, tmp_path):
-    settings = make_settings(tmp_path / "outputs.ini")
-    scan = tmp_path / "scan"
-    plot = tmp_path / "plot"
-    camera = tmp_path / "camera"
-    for directory in (scan, plot, camera):
-        directory.mkdir()
-    settings.set_scan_export_directory(scan)
-    settings.set_plot_image_directory(plot)
-    camera_b = tmp_path / "camera-b"
-    camera_b.mkdir()
-    settings.set_camera_screenshot_directory("camera-1", camera)
-    settings.set_camera_screenshot_directory("camera-2", camera_b)
-    settings.set_camera_controls_visible("camera-1", True)
-
-    plot_widget = PlotWidget(ScanSettings(), settings=settings)
-    qtbot.addWidget(plot_widget)
-    camera_panel = CameraPanel(
-        None,
-        "Camera A",
-        CameraConfig(identifier="camera-1", name="Camera A", backend="simulation"),
-        settings=settings,
-    )
-    qtbot.addWidget(camera_panel)
-
-    assert plot_widget.last_scan_save_dir == scan.resolve()
-    assert plot_widget.last_plot_image_dir == plot.resolve()
-    assert camera_panel.last_save_dir == camera.resolve()
-    assert settings.camera_screenshot_directory("camera-2") == camera_b.resolve()
