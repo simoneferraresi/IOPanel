@@ -1398,7 +1398,8 @@ class MainWindow(QMainWindow):
             return
         try:
             trace_widget.set_completed_recording(recording)
-            trace_widget.show()
+            if not trace_widget._user_hidden:
+                trace_widget.show()
         except Exception:
             logger.exception("Error finalizing Power Monitor recording trace")
 

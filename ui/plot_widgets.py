@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -160,6 +161,7 @@ class PowerMonitorTraceWidget(QWidget):
         self.settings: PowerMonitorAcquisitionSettings | None = None
         self.current_recording: PowerMonitorRecording | None = None
         self.recording_active = False
+        self._user_hidden = False
         self.elapsed_values: list[float] = []
         self.detector_values: dict[Detector, list[float]] = {}
         self.curve_items: dict[Detector, pg.PlotDataItem] = {}
@@ -174,6 +176,14 @@ class PowerMonitorTraceWidget(QWidget):
         self.save_recording_button.setEnabled(False)
         self.save_recording_button.clicked.connect(self.save_recording)
         status_row.addWidget(self.save_recording_button)
+        self.close_trace_button = QToolButton()
+        self.close_trace_button.setText("×")
+        self.close_trace_button.setToolTip("Close Power Monitor trace")
+        self.close_trace_button.setObjectName("powerMonitorTraceCloseButton")
+        self.close_trace_button.setAutoRaise(True)
+        self.close_trace_button.setFixedSize(24, 24)
+        self.close_trace_button.clicked.connect(self._hide_by_user)
+        status_row.addWidget(self.close_trace_button)
         layout.addLayout(status_row)
         self.plot_widget = pg.PlotWidget(background="w")
         self.plot_widget.setLabel("bottom", "Elapsed time (s)")
@@ -184,6 +194,11 @@ class PowerMonitorTraceWidget(QWidget):
         self._set_status("")
 
     def start_recording(self, settings: PowerMonitorAcquisitionSettings) -> None:
+        self._user_hidden = False
+        self._reset_trace(settings)
+        self.show()
+
+    def _reset_trace(self, settings: PowerMonitorAcquisitionSettings) -> None:
         self.current_recording = None
         self.save_recording_button.setEnabled(False)
         self.settings = settings
@@ -217,7 +232,7 @@ class PowerMonitorTraceWidget(QWidget):
         self._set_status("No detector channels selected" if not sample.detectors else "")
 
     def set_completed_recording(self, recording: PowerMonitorRecording) -> None:
-        self.start_recording(recording.settings)
+        self._reset_trace(recording.settings)
         self.recording_active = False
         self.current_recording = recording
         self.save_recording_button.setEnabled(len(recording.elapsed_s) > 0)
@@ -245,6 +260,10 @@ class PowerMonitorTraceWidget(QWidget):
         self.legend = None
         self.plot_widget.clear()
         self._set_status("")
+        self.hide()
+
+    def _hide_by_user(self) -> None:
+        self._user_hidden = True
         self.hide()
 
     def save_recording(self) -> None:

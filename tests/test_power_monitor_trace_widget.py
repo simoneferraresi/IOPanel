@@ -1,11 +1,12 @@
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import ClassVar
 
 import numpy as np
 import pytest
 from PySide6.QtCore import QSettings
-from PySide6.QtWidgets import QDialog, QMessageBox
+from PySide6.QtWidgets import QDialog, QMessageBox, QToolButton
 
 from app_settings import AppSettings
 from hardware.ct400_types import Detector, LaserInput
@@ -16,6 +17,7 @@ from logic.power_monitor_recording import (
     PowerMonitorRecordingStopReason,
 )
 from ui import plot_widgets
+from ui.main_window import MainWindow
 from ui.plot_widgets import PowerMonitorTraceWidget
 from ui.power_monitor_export_dialog import PowerMonitorExportRequest
 
@@ -80,6 +82,103 @@ def test_trace_uses_exact_detector_palette_for_all_optical_channels(qtbot, tmp_p
         "#7570b3",
         "#e7298a",
     ]
+    widget.close()
+
+
+def test_close_button_hides_only_and_samples_continue(qtbot, tmp_path):
+    widget = PowerMonitorTraceWidget(_app_settings(tmp_path))
+    qtbot.addWidget(widget)
+    widget.show()
+    widget.start_recording(_settings())
+    first = PowerMonitorRecordingSample(0.25, 8.0, _settings().detectors, (1.0, 3.0))
+    widget.append_sample(first)
+
+    button = widget.close_trace_button
+    assert isinstance(button, QToolButton)
+    assert button.text() == "×"
+    assert button.toolTip() == "Close Power Monitor trace"
+    assert button.width() <= 32 and button.height() <= 32
+    button.click()
+
+    assert widget.isHidden()
+    assert widget._user_hidden
+    assert widget.recording_active
+    assert widget.settings == _settings()
+    assert widget.elapsed_values == [0.25]
+    assert widget.detector_values == {Detector.DE_1: [1.0], Detector.DE_3: [3.0]}
+    assert widget.current_recording is None
+    assert not widget.save_recording_button.isEnabled()
+    np.testing.assert_array_equal(widget.curve_items[Detector.DE_1].getData()[0], [0.25])
+
+    widget.append_sample(PowerMonitorRecordingSample(0.75, 7.0, _settings().detectors, (2.0, 4.0)))
+    assert widget.isHidden()
+    assert widget.elapsed_values == [0.25, 0.75]
+    assert widget.detector_values[Detector.DE_1] == [1.0, 2.0]
+    np.testing.assert_array_equal(widget.curve_items[Detector.DE_1].getData()[0], [0.25, 0.75])
+    widget.close()
+
+
+def test_completion_preserves_manual_hide_then_next_start_reopens(qtbot, tmp_path):
+    widget = PowerMonitorTraceWidget(_app_settings(tmp_path))
+    qtbot.addWidget(widget)
+    widget.start_recording(_settings())
+    widget.append_sample(PowerMonitorRecordingSample(0.25, 8.0, _settings().detectors, (1.0, 3.0)))
+    widget.close_trace_button.click()
+    recording = _recording(_settings(), [0.25, 0.7], [[5.0, np.nan], [6.0, 7.0]])
+
+    widget.set_completed_recording(recording)
+
+    assert widget.isHidden()
+    assert widget._user_hidden
+    assert widget.current_recording is recording
+    assert not widget.recording_active
+    assert widget.save_recording_button.isEnabled()
+    np.testing.assert_array_equal(widget.elapsed_values, recording.elapsed_s)
+    assert np.isnan(widget.detector_values[Detector.DE_1][1])
+    assert widget.detector_values[Detector.DE_3] == [6.0, 7.0]
+
+    widget.start_recording(_settings((Detector.DE_2,)))
+    assert not widget._user_hidden
+    assert not widget.isHidden()
+    assert widget.current_recording is None
+    assert not widget.save_recording_button.isEnabled()
+    assert widget.elapsed_values == []
+    assert widget.detector_values == {Detector.DE_2: []}
+    widget.close()
+
+
+@pytest.mark.parametrize("manually_hidden", [False, True])
+def test_mainwindow_completion_respects_manual_trace_visibility(qtbot, tmp_path, manually_hidden):
+    widget = PowerMonitorTraceWidget(_app_settings(tmp_path))
+    qtbot.addWidget(widget)
+    widget.show()
+    if manually_hidden:
+        widget.close_trace_button.click()
+    window_stub = SimpleNamespace(power_monitor_trace_widget=widget)
+
+    MainWindow._handle_power_monitor_recording_completed(
+        window_stub,
+        _recording(_settings(), [0.25], [[1.0], [3.0]]),
+    )
+
+    assert widget.isHidden() is manually_hidden
+    assert widget.current_recording is not None
+
+
+def test_close_after_completion_preserves_recording_and_save_state(qtbot, tmp_path):
+    widget = PowerMonitorTraceWidget(_app_settings(tmp_path))
+    qtbot.addWidget(widget)
+    recording = _recording(_settings(), [0.25], [[1.0], [3.0]])
+    widget.set_completed_recording(recording)
+    assert widget.save_recording_button.isEnabled()
+
+    widget.close_trace_button.click()
+
+    assert widget.isHidden()
+    assert widget._user_hidden
+    assert widget.current_recording is recording
+    assert widget.save_recording_button.isEnabled()
+    assert widget.elapsed_values == [0.25]
     widget.close()
 
 
