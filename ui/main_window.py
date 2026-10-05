@@ -1584,9 +1584,6 @@ class MainWindow(QMainWindow):
             self.control_panel.scan_data_ready.connect(self._handle_scan_data)
             self.control_panel.operation_started.connect(self._handle_ct400_scan_started)
             self.control_panel.operation_finished.connect(self._handle_ct400_scan_finished)
-            self.control_panel.progress_updated.connect(
-                lambda value: self.statusBar().showMessage(f"Scan Progress: {value}%", 1000 if value < 100 else 0)
-            )
             self.control_panel.scan_warning.connect(lambda message: self.statusBar().showMessage(message, 10000))
         else:
             logger.warning("CT400 Control Panel not initialized, skipping signal connection.")
