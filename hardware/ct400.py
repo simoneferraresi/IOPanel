@@ -48,19 +48,13 @@ logger = logging.getLogger("LabApp.CT400")
 class CT400Error(Exception):
     """Base exception class for all CT400-related errors."""
 
-    pass
-
 
 class CT400InitializationError(CT400Error):
     """Raised for errors during CT400 initialization or DLL loading."""
 
-    pass
-
 
 class CT400CommunicationError(CT400Error):
     """Raised for errors during communication with the CT400 device after successful initialization."""
-
-    pass
 
 
 class CT400(AbstractCT400):
@@ -404,7 +398,7 @@ class CT400(AbstractCT400):
         try:
             # The value attribute is a bytes object, decode it.
             error_msg = error_buf.value.decode("utf-8", errors="ignore").strip("\x00")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  # Preserve fallback for malformed native error buffers.
             logger.error(f"Failed to decode error buffer from CT400_ScanWaitEnd: {e}")
             error_msg = "Could not decode error message from device."
         if result < 0:

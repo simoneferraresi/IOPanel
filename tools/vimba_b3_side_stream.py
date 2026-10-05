@@ -7,15 +7,15 @@ session. This script never changes camera features or saves image data.
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager
 import sys
 import threading
 import time
+from contextlib import contextmanager
 from importlib.metadata import version
+from itertools import pairwise
 
 import numpy as np
 from vmbpy import FrameStatus, VmbSystem
-
 
 APPROVED_CAMERA_ID = "DEV_000F315BA8F9"
 TARGET_COMPLETE_FRAMES = 10
@@ -30,7 +30,7 @@ def read_feature(camera, candidates: tuple[str, ...]):
     for name in candidates:
         try:
             feature = camera.get_feature_by_name(name)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001  # Diagnostic probe captures vendor API failures across SDK versions.
             errors.append(f"{name}: {type(exc).__name__}: {exc}")
             continue
         try:
@@ -38,7 +38,7 @@ def read_feature(camera, candidates: tuple[str, ...]):
                 errors.append(f"{name}: not readable")
                 continue
             return name, feature.get(), None
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001  # Diagnostic probe captures vendor API failures across SDK versions.
             errors.append(f"{name}: {type(exc).__name__}: {exc}")
     return None, None, "; ".join(errors) or "feature unavailable"
 
@@ -57,9 +57,7 @@ def managed_context(resource, result: dict, closed_key: str, label: str):
         try:
             resource.__exit__(*sys.exc_info())
         except Exception as exc:
-            result["cleanup_errors"].append(
-                f"{label} context exit: {type(exc).__name__}: {exc}"
-            )
+            result["cleanup_errors"].append(f"{label} context exit: {type(exc).__name__}: {exc}")
             raise
         else:
             result[closed_key] = True
@@ -120,7 +118,7 @@ def main() -> int:
                     sample = flat[::stride][:64]
                     if sample.size:
                         image_mean = float(np.mean(sample, dtype=np.float64))
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001  # Diagnostic probe captures vendor API failures across SDK versions.
                     intensity_error = f"{type(exc).__name__}: {exc}"
 
                 record = {
@@ -142,28 +140,22 @@ def main() -> int:
                 with callback_lock:
                     if len(result["other_frames"]) < 10:
                         result["other_frames"].append(display_value(status))
-        except Exception as exc:
-            result["callback_errors"].append(
-                f"frame callback: {type(exc).__name__}: {exc}"
-            )
+        except Exception as exc:  # noqa: BLE001  # Diagnostic probe captures vendor API failures across SDK versions.
+            result["callback_errors"].append(f"frame callback: {type(exc).__name__}: {exc}")
             callback_failed = True
         finally:
             # VmbPy 1.0.5 documents queue_frame() as the final operation on a
             # callback frame. Do not inspect or retain the frame after this.
             try:
                 camera.queue_frame(frame)
-            except Exception as exc:
-                result["callback_errors"].append(
-                    f"frame requeue: {type(exc).__name__}: {exc}"
-                )
+            except Exception as exc:  # noqa: BLE001  # Diagnostic probe captures vendor API failures across SDK versions.
+                result["callback_errors"].append(f"frame requeue: {type(exc).__name__}: {exc}")
                 callback_failed = True
             if reached_target or callback_failed:
                 done.set()
 
     try:
-        with managed_context(
-            VmbSystem.get_instance(), result, "system_context_closed", "VmbSystem"
-        ) as vmb:
+        with managed_context(VmbSystem.get_instance(), result, "system_context_closed", "VmbSystem") as vmb:
             print(f"Vimba runtime: {vmb.get_version()}")
             print(f"Waiting {DISCOVERY_WAIT_SECONDS:g}s for camera discovery...")
             time.sleep(DISCOVERY_WAIT_SECONDS)
@@ -203,8 +195,7 @@ def main() -> int:
                     trigger = result["settings"]["TriggerMode"]["value"]
                     if mode is None or trigger is None:
                         result["stop_reason"] = (
-                            "Could not verify AcquisitionMode and TriggerMode; "
-                            "streaming was not started."
+                            "Could not verify AcquisitionMode and TriggerMode; streaming was not started."
                         )
                     elif mode.casefold() != "continuous" or trigger.casefold() != "off":
                         result["stop_reason"] = (
@@ -230,17 +221,15 @@ def main() -> int:
                             try:
                                 camera.stop_streaming()
                                 result["stream_stopped"] = True
-                            except Exception as exc:
-                                result["cleanup_errors"].append(
-                                    f"stop_streaming: {type(exc).__name__}: {exc}"
-                                )
+                            except Exception as exc:  # noqa: BLE001  # Diagnostic probe captures vendor API failures across SDK versions.
+                                result["cleanup_errors"].append(f"stop_streaming: {type(exc).__name__}: {exc}")
                     else:
                         print(result["stop_reason"])
 
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001  # Diagnostic probe captures vendor API failures across SDK versions.
                 result["fatal_error"] = f"{type(exc).__name__}: {exc}"
                 print(f"Camera test error: {result['fatal_error']}", file=sys.stderr)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001  # Diagnostic probe captures vendor API failures across SDK versions.
         result["fatal_error"] = f"{type(exc).__name__}: {exc}"
         print(f"VmbSystem/cleanup error: {result['fatal_error']}", file=sys.stderr)
 
@@ -250,13 +239,11 @@ def main() -> int:
         print(f"Frame {index}: {frame}")
     arrival_times = [frame["arrival_seconds"] for frame in frames]
     distinct_arrivals = len(arrival_times) == len(set(arrival_times)) and all(
-        earlier < later for earlier, later in zip(arrival_times, arrival_times[1:])
+        earlier < later for earlier, later in pairwise(arrival_times)
     )
     frame_ids = [frame["frame_id"] for frame in frames if frame["frame_id"] is not None]
     distinct_frame_ids = len(frame_ids) == len(set(frame_ids))
-    within_deadline = all(
-        frame["arrival_seconds"] <= MAX_ACQUISITION_SECONDS for frame in frames
-    )
+    within_deadline = all(frame["arrival_seconds"] <= MAX_ACQUISITION_SECONDS for frame in frames)
     print(f"Distinct increasing arrival times: {distinct_arrivals}")
     print(f"Distinct SDK frame IDs when available: {distinct_frame_ids}")
     print(f"All recorded frames arrived within {MAX_ACQUISITION_SECONDS}s: {within_deadline}")

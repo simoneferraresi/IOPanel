@@ -50,7 +50,7 @@ except ImportError:
         "MATLAB Engine for Python not found. Saving to .fig format will be disabled."
     )
     MATLAB_ENGINE_AVAILABLE = False
-except Exception as e:
+except Exception as e:  # noqa: BLE001  # Preserve optional MATLAB and export fallbacks.
     logging.getLogger("LabApp.gui_panels").error(
         f"Error importing MATLAB Engine: {e}. Saving to .fig format will be disabled."
     )
@@ -330,7 +330,7 @@ class MatlabSaveWorker(QObject):
         try:
             payload = json.loads(payload_json_str)
             if not isinstance(payload, dict):
-                raise ValueError("Payload must be an object.")
+                raise ValueError("Payload must be an object.")  # noqa: TRY004 — invalid JSON payload keeps ValueError API
             wavelengths = payload.get("wavelengths_nm")
             raw_traces = payload.get("traces")
             if not isinstance(wavelengths, list) or not wavelengths or not _is_numeric_list(wavelengths):
@@ -340,7 +340,7 @@ class MatlabSaveWorker(QObject):
             detector_ids: set[int] = set()
             for index, raw_trace in enumerate(raw_traces):
                 if not isinstance(raw_trace, dict):
-                    raise ValueError(f"Trace {index} must be an object.")
+                    raise ValueError(f"Trace {index} must be an object.")  # noqa: TRY004 — invalid JSON payload keeps ValueError API
                 detector_id = raw_trace.get("detector_id")
                 label = raw_trace.get("label")
                 values = raw_trace.get("values")
@@ -440,7 +440,7 @@ class MatlabSaveWorker(QObject):
                     try:
                         eng_to_use.close(h_fig, nargout=0)
                         logger.info("MatlabSaveWorker: MATLAB figure closed.")
-                    except Exception as e_close:
+                    except Exception as e_close:  # noqa: BLE001  # Preserve optional MATLAB and export fallbacks.
                         logger.warning(f"MatlabSaveWorker: Could not close MATLAB figure: {e_close}")
 
             logger.info(f"MatlabSaveWorker: Saved plot to FIG: {fig_filename}")
@@ -452,7 +452,7 @@ class MatlabSaveWorker(QObject):
             self.finished_saving.emit("fig", False, error_msg)
         except Exception as e:
             error_msg = f"FIG: MATLAB export failed: {e}"
-            logger.error(error_msg, exc_info=True)
+            logger.exception(error_msg)
             self.finished_saving.emit("fig", False, error_msg)
         finally:
             if self.matlab_eng_local_for_quit:
@@ -460,7 +460,7 @@ class MatlabSaveWorker(QObject):
                     logger.info("MatlabSaveWorker: Quitting locally started MATLAB engine...")
                     self.matlab_eng_local_for_quit.quit()
                     logger.info("MatlabSaveWorker: Locally started MATLAB engine quit.")
-                except Exception as e_quit:
+                except Exception as e_quit:  # noqa: BLE001  # Preserve optional MATLAB and export fallbacks.
                     logger.error(f"MatlabSaveWorker: Error quitting locally started MATLAB engine: {e_quit}")
                 finally:
                     self.matlab_eng_local_for_quit = None
@@ -697,8 +697,8 @@ class HistogramWidget(QtWidgets.QWidget):
             self._update_visual_elements()
             self._update_y_axis_scale()
 
-        except Exception as e:
-            logger.exception(f"HistogramWidget: Error processing histogram update: {e}")
+        except Exception:
+            logger.exception("HistogramWidget: Error processing histogram update")
 
     def _update_values(self, new_values_from_processing: np.ndarray):
         self.current_values = np.array(new_values_from_processing, copy=True)
@@ -800,8 +800,8 @@ class HistogramWidget(QtWidgets.QWidget):
 
             self.plot_widget.setYRange(y_min_view, y_max_view, padding=0)
 
-        except Exception as e:
-            logger.exception(f"Error updating y-axis scale: {e}")
+        except Exception:
+            logger.exception("Error updating y-axis scale")
 
 
 # =============================================================================
@@ -820,9 +820,7 @@ class PlotWidget(QWidget):
     # Signal to update UI from worker, e.g., re-enable button, show status
     matlab_save_status_update = Signal(str)  # Message for status bar or dialog
 
-    def __init__(
-        self, shared_settings, parent: QWidget | None = None, settings: AppSettings | None = None
-    ):
+    def __init__(self, shared_settings, parent: QWidget | None = None, settings: AppSettings | None = None):
         super().__init__(parent)
         if not isinstance(shared_settings, ScanSettings):
             logger.warning("PlotWidget needs a valid ScanSettings object for metadata.")
@@ -985,7 +983,7 @@ class PlotWidget(QWidget):
                 if self.settings is not None:
                     self.settings.set_plot_image_directory(self.last_plot_image_dir)
                 logger.info(f"Plot image saved to: {file_path}")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001  # Preserve optional MATLAB and export fallbacks.
                 logger.error(f"Failed to export image: {e}")
                 QMessageBox.warning(self, "Export Error", f"Could not save image:\n{e}")
 
@@ -1035,9 +1033,7 @@ class PlotWidget(QWidget):
                         if x < finite_reference_wavelengths.min() or x > finite_reference_wavelengths.max():
                             label_lines.append("Reference: out of range")
                         else:
-                            reference_idx = reference_indices[
-                                np.abs(finite_reference_wavelengths - x).argmin()
-                            ]
+                            reference_idx = reference_indices[np.abs(finite_reference_wavelengths - x).argmin()]
                             reference_x = float(reference.wavelengths_nm[reference_idx])
                             label_lines.append(f"Reference @ {reference_x:.3f} nm:")
                             for detector, value in zip(
@@ -1097,15 +1093,14 @@ class PlotWidget(QWidget):
                     self.matlab_engine_instance.eval("1;", nargout=0)
                     logger.info("Shared MATLAB engine is alive.")
                     return True
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001  # Preserve optional MATLAB and export fallbacks.
                     logger.warning(f"Shared MATLAB engine seems unresponsive ({e}). Attempting to restart.")
                     try:
                         self.matlab_engine_instance.quit()
-                    except Exception as quit_e:
+                    except Exception as quit_e:  # noqa: BLE001  # Preserve optional MATLAB and export fallbacks.
                         # It's good practice to log that the quit itself failed.
                         logger.error(f"Failed to cleanly quit the unresponsive MATLAB engine: {quit_e}")
                         # The 'pass' is still appropriate here because the goal is to continue cleanup.
-                        pass
                     self.matlab_engine_instance = None
 
             if not MATLAB_ENGINE_AVAILABLE:
@@ -1132,9 +1127,8 @@ class PlotWidget(QWidget):
                 self._status_clear_timer.start(self._MATLAB_STATUS_TIMEOUT_MS)
                 return True
             except Exception as e:
-                logger.error(
-                    f"PlotWidget: Failed to start shared MATLAB engine: {e}",
-                    exc_info=True,
+                logger.exception(
+                    "PlotWidget: Failed to start shared MATLAB engine",
                 )
                 self.matlab_engine_instance = None
                 self.matlab_status_label.setText("MATLAB Start Failed!")
@@ -1228,8 +1222,8 @@ class PlotWidget(QWidget):
             self.save_btn.setEnabled(self.current_measurement is not None)
             self.freeze_btn.setEnabled(True)
             return True
-        except Exception as e:
-            logger.error(f"Error updating plot: {e}", exc_info=True)
+        except Exception:
+            logger.exception("Error updating plot")
             self.plot_widget.setTitle("Error Updating Plot", color="red", size="11pt")
             self.save_btn.setEnabled(False)
             self.freeze_btn.setEnabled(False)
@@ -1389,7 +1383,9 @@ class PlotWidget(QWidget):
             )
             return
         if not measurement.detectors:
-            QMessageBox.warning(self, "No Detector Data", "Cannot export a scan with no wavelength-resolved detector data.")
+            QMessageBox.warning(
+                self, "No Detector Data", "Cannot export a scan with no wavelength-resolved detector data."
+            )
             return
 
         self.save_btn.setEnabled(False)
@@ -1399,9 +1395,7 @@ class PlotWidget(QWidget):
         logger.info(f"Saving scan data. Points: {len(wavelengths)}. Pout: {pout}")
         default_filename = f"scan_{wavelengths[0]:.0f}nm_{wavelengths[-1]:.0f}nm"
         formats = self.settings.scan_export_formats() if self.settings is not None else (True, True, False)
-        dialog = ScanExportDialog(
-            self.last_scan_save_dir, default_filename, formats, MATLAB_ENGINE_AVAILABLE, self
-        )
+        dialog = ScanExportDialog(self.last_scan_save_dir, default_filename, formats, MATLAB_ENGINE_AVAILABLE, self)
         if dialog.exec() != dialog.DialogCode.Accepted:
             logger.info("Save Scan dialog cancelled by user.")
             self.save_btn.setEnabled(True)
@@ -1426,9 +1420,7 @@ class PlotWidget(QWidget):
         self.last_scan_save_dir = request.directory
         if self.settings is not None:
             self.settings.set_scan_export_directory(request.directory)
-            self.settings.set_scan_export_formats(
-                csv=request.csv, mat=request.mat, fig=request.fig_preference
-            )
+            self.settings.set_scan_export_formats(csv=request.csv, mat=request.mat, fig=request.fig_preference)
             self.settings.sync()
 
         conflicts = [path for path in targets.values() if path.exists()]
@@ -1437,8 +1429,7 @@ class PlotWidget(QWidget):
             answer = QMessageBox.question(
                 self,
                 "Overwrite Existing Files?",
-                "The following export targets already exist:\n"
-                f"{conflict_list}\n\nOverwrite all listed files?",
+                f"The following export targets already exist:\n{conflict_list}\n\nOverwrite all listed files?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )
@@ -1476,7 +1467,7 @@ class PlotWidget(QWidget):
                 logger.info(f"Saved CSV: {csv_path}")
             except Exception as e:
                 self.error_list.append(f"CSV: {e}")
-                logger.error(f"CSV save failed: {e}", exc_info=True)
+                logger.exception("CSV save failed")
 
         if request.mat:
             try:
@@ -1488,7 +1479,7 @@ class PlotWidget(QWidget):
                 logger.info(f"Saved MAT: {mat_path}")
             except Exception as e:
                 self.error_list.append(f"MAT: {e}")
-                logger.error(f"MAT save failed: {e}", exc_info=True)
+                logger.exception("MAT save failed")
 
         if request.fig:
             if not MATLAB_ENGINE_AVAILABLE:
@@ -1616,10 +1607,9 @@ class PlotWidget(QWidget):
                         self.matlab_engine_instance.quit()
                         self.matlab_engine_instance = None
                         logger.info("PlotWidget: Shared MATLAB engine quit successfully.")
-            except Exception as e:
-                logger.error(
-                    f"PlotWidget: Error quitting shared MATLAB engine: {e}",
-                    exc_info=True,
+            except Exception:
+                logger.exception(
+                    "PlotWidget: Error quitting shared MATLAB engine",
                 )
 
     def closeEvent(self, event: QtGui.QCloseEvent):

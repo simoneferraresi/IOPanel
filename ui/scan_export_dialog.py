@@ -55,9 +55,7 @@ class ScanExportDialog(QDialog):
         self.csv_checkbox = QCheckBox("CSV")
         self.mat_checkbox = QCheckBox("MAT")
         self.fig_checkbox = QCheckBox("FIG")
-        for checkbox, checked in zip(
-            (self.csv_checkbox, self.mat_checkbox, self.fig_checkbox), formats, strict=True
-        ):
+        for checkbox, checked in zip((self.csv_checkbox, self.mat_checkbox, self.fig_checkbox), formats, strict=True):
             checkbox.setChecked(checked)
         self.fig_checkbox.setEnabled(matlab_available)
         if not matlab_available:
@@ -116,8 +114,11 @@ class ScanExportDialog(QDialog):
             return None
         if not base_name or "/" in base_name or "\\" in base_name:
             return None
-        if not (self.csv_checkbox.isChecked() or self.mat_checkbox.isChecked() or
-                (self.fig_checkbox.isEnabled() and self.fig_checkbox.isChecked())):
+        if not (
+            self.csv_checkbox.isChecked()
+            or self.mat_checkbox.isChecked()
+            or (self.fig_checkbox.isEnabled() and self.fig_checkbox.isChecked())
+        ):
             return None
         return directory, base_name
 
@@ -130,8 +131,11 @@ class ScanExportDialog(QDialog):
             message = "Enter a base filename."
         elif "/" in base_name or "\\" in base_name:
             message = "Base filename cannot contain path separators."
-        elif not (self.csv_checkbox.isChecked() or self.mat_checkbox.isChecked() or
-                  (self.fig_checkbox.isEnabled() and self.fig_checkbox.isChecked())):
+        elif not (
+            self.csv_checkbox.isChecked()
+            or self.mat_checkbox.isChecked()
+            or (self.fig_checkbox.isEnabled() and self.fig_checkbox.isChecked())
+        ):
             message = "Select at least one export format."
         else:
             message = ""

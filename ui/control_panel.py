@@ -5,7 +5,6 @@ from abc import ABC, ABCMeta, abstractmethod
 from datetime import UTC, datetime
 from typing import override
 
-import numpy as np
 from PySide6 import QtCore, QtGui
 from PySide6.QtCore import (
     QMetaObject,
@@ -36,7 +35,6 @@ from PySide6.QtWidgets import (
 
 from config_model import AppConfig
 from hardware.ct400 import CT400Error
-from hardware.dummy_ct400 import DummyCT400
 from hardware.ct400_types import (
     CT400ScanResultKind,
     Detector,
@@ -46,6 +44,7 @@ from hardware.ct400_types import (
     LaserSource,
     PowerData,
 )
+from hardware.dummy_ct400 import DummyCT400
 from hardware.interfaces import AbstractCT400
 from logic.scan_measurement import ScanAcquisitionSettings, ScanMeasurement
 from ui.constants import (
@@ -150,7 +149,7 @@ class CT400ConnectionWorker(QRunnable):
 
         except (CT400Error, ValueError, KeyError, Exception) as e:
             error_msg = f"Operation Failed: {e}"
-            logger.error(f"ConnectionWorker: {error_msg}", exc_info=True)
+            logger.exception(f"ConnectionWorker: {error_msg}")
             if self.is_connect_operation:
                 self.signals.connection_failed.emit(error_msg)
             else:
@@ -249,7 +248,7 @@ class ScanWorker(QtCore.QObject):
             self._stop_requested = True
         try:
             self.ct400.stop_scan()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  # Preserve CT400 worker recovery and cleanup behavior.
             message = f"CT400_ScanStop failed; scan remains active until ScanWaitEnd returns: {e}"
             logger.error(message)
             self.stop_failed_signal.emit(message)
@@ -321,20 +320,24 @@ class ScanWorker(QtCore.QObject):
                 self._report_cancelled(raw_code, error_msg or "Scan was cancelled by the user.")
                 return
             if kind == CT400ScanResultKind.FATAL_ERROR:
-                self.error_signal.emit(InstrumentError(
-                    code=raw_code,
-                    message=error_msg or f"CT400 scan failed with documented error code {raw_code}.",
-                    source=self.__class__.__name__,
-                    kind=kind,
-                ))
+                self.error_signal.emit(
+                    InstrumentError(
+                        code=raw_code,
+                        message=error_msg or f"CT400 scan failed with documented error code {raw_code}.",
+                        source=self.__class__.__name__,
+                        kind=kind,
+                    )
+                )
                 return
             if kind == CT400ScanResultKind.UNEXPECTED:
-                self.error_signal.emit(InstrumentError(
-                    code=raw_code,
-                    message=error_msg or f"Unexpected CT400_ScanWaitEnd return code {raw_code}.",
-                    source=self.__class__.__name__,
-                    kind=kind,
-                ))
+                self.error_signal.emit(
+                    InstrumentError(
+                        code=raw_code,
+                        message=error_msg or f"Unexpected CT400_ScanWaitEnd return code {raw_code}.",
+                        source=self.__class__.__name__,
+                        kind=kind,
+                    )
+                )
                 return
 
             if kind == CT400ScanResultKind.WARNING:
@@ -354,7 +357,7 @@ class ScanWorker(QtCore.QObject):
             try:
                 final_power_reading = self.ct400.get_all_powers()
                 final_pout = getattr(final_power_reading, "pout", None)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001  # Preserve CT400 worker recovery and cleanup behavior.
                 logger.warning(f"ScanWorker: Could not get final Pout: {e}")
             measurement = ScanMeasurement(
                 settings=self.acquisition_settings,
@@ -373,12 +376,10 @@ class ScanWorker(QtCore.QObject):
         except CT400Error as e:
             logger.error(f"ScanWorker: CT400 Error: {e}")
             # Map the generic exception to our structured error type
-            err = InstrumentError(
-                code=None, message=str(e), source=self.__class__.__name__
-            )
+            err = InstrumentError(code=None, message=str(e), source=self.__class__.__name__)
             self.error_signal.emit(err)
         except Exception as e:
-            logger.exception(f"ScanWorker: Unexpected error: {e}")
+            logger.exception("ScanWorker: Unexpected error")
             err = InstrumentError(
                 code=None,
                 message=f"An unexpected error occurred: {e}",
@@ -393,7 +394,7 @@ class ScanWorker(QtCore.QObject):
                     wavelength=float(self.disable_wl),
                     power=float(self.disable_power),
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001  # Preserve CT400 worker recovery and cleanup behavior.
                 logger.error(f"ScanWorker: Error during cleanup in finally block: {e}")
             with self._state_lock:
                 self._finished = True
@@ -458,7 +459,7 @@ class PowerFetchWorker(QObject):
         except CT400Error as e:
             if self.is_worker_running():
                 self.error_occurred.emit(f"CT400 Error: {e}")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  # Preserve CT400 worker recovery and cleanup behavior.
             if self.is_worker_running():
                 self.error_occurred.emit(f"Unexpected error: {e}")
         finally:
@@ -590,15 +591,15 @@ class BaseControlPanel(QWidget, ABC, metaclass=QABCMeta):
         self.is_instrument_connected = is_connected
 
         # Enable configuration inputs only if connected AND not busy.
-        enable_config_inputs = (
-            is_connected and not self.is_busy() and self.ct400_operation_state == "IDLE"
-        )
+        enable_config_inputs = is_connected and not self.is_busy() and self.ct400_operation_state == "IDLE"
 
         for widget in self._get_configurable_widgets():
             widget.setEnabled(enable_config_inputs)
 
         owns_operation = self._owns_operation_state(self.ct400_operation_state)
-        self._get_main_action_button().setEnabled(is_connected and (self.ct400_operation_state == "IDLE" or owns_operation))
+        self._get_main_action_button().setEnabled(
+            is_connected and (self.ct400_operation_state == "IDLE" or owns_operation)
+        )
 
         # If the instrument disconnects while the panel is busy, force a stop.
         if not is_connected and self.is_busy():
@@ -824,7 +825,7 @@ class CT400ControlPanel(BaseControlPanel):
             self.shared_settings.motor_speed = self.motor_speed.text()
             self.shared_settings.laser_power = self.laser_power.text()
             self.shared_settings.power_unit = self.power_unit.currentText()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  # Preserve CT400 worker recovery and cleanup behavior.
             logger.warning(f"Could not update shared settings: {e}")
 
     @override
@@ -840,8 +841,7 @@ class CT400ControlPanel(BaseControlPanel):
         ct400 = self.ct400
         if self.is_instrument_connected and ct400 is None:
             logger.error(
-                "Inconsistent CT400 scan panel state: connected flag is true, "
-                "but the device reference is unavailable."
+                "Inconsistent CT400 scan panel state: connected flag is true, but the device reference is unavailable."
             )
         if not self.is_instrument_connected or ct400 is None:
             QMessageBox.warning(self, "Not Connected", "CT400 device is not connected.")
@@ -927,7 +927,7 @@ class CT400ControlPanel(BaseControlPanel):
                 self.operation_finished.emit()
         except Exception as e:
             QMessageBox.critical(self, "Scan Start Error", f"Could not start scan: {e}")
-            logger.error(f"Error starting scan: {e}", exc_info=True)
+            logger.exception("Error starting scan")
             if operation_claimed:
                 self.scan_status_label.setText(MSG_SCAN_FAILED)
             self._reset_scan_ui()
@@ -1215,9 +1215,7 @@ class HistogramControlPanel(BaseControlPanel):
             return False
         ct400 = self.ct400
         if self.is_instrument_connected and ct400 is None:
-            logger.error(
-                "Monitor Panel: Inconsistent connected state; CT400 device reference is unavailable."
-            )
+            logger.error("Monitor Panel: Inconsistent connected state; CT400 device reference is unavailable.")
         if not self.is_instrument_connected or ct400 is None:
             logger.error("Monitor Panel: Cannot apply settings, instrument not connected.")
             return False
@@ -1252,7 +1250,7 @@ class HistogramControlPanel(BaseControlPanel):
             return False
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Unexpected error applying settings: {e}")
-            logger.error(f"Monitor Panel: Error applying settings: {e}", exc_info=True)
+            logger.exception("Monitor Panel: Error applying settings")
             return False
 
     def _start_monitoring(self):
@@ -1260,9 +1258,7 @@ class HistogramControlPanel(BaseControlPanel):
             return
         ct400 = self.ct400
         if self.is_instrument_connected and ct400 is None:
-            logger.error(
-                "Monitor Panel: Inconsistent connected state; CT400 device reference is unavailable."
-            )
+            logger.error("Monitor Panel: Inconsistent connected state; CT400 device reference is unavailable.")
         if not self.is_instrument_connected or ct400 is None:
             QMessageBox.warning(self, "Not Connected", "CT400 device is not connected.")
             return
@@ -1368,11 +1364,9 @@ class HistogramControlPanel(BaseControlPanel):
                     f"{getattr(input_port_enum, 'name', 'unknown')}:\n\n{e}",
                 )
             except Exception as e_unexp:
-                logger.error(
-                    "Monitor Panel: Laser disable could not be confirmed for input %s: %s",
+                logger.exception(
+                    "Monitor Panel: Laser disable could not be confirmed for input %s",
                     getattr(input_port_enum, "name", "unknown"),
-                    e_unexp,
-                    exc_info=True,
                 )
                 QMessageBox.warning(
                     self,
@@ -1438,8 +1432,8 @@ class HistogramControlPanel(BaseControlPanel):
             }
             logger.debug(f"Monitor Panel (Main Thread): Emitting processed power data for UI: {emit_data}")
             self.power_data_ready.emit(emit_data)
-        except Exception as e:
-            logger.exception(f"Monitor Panel (Main Thread): Error processing worker data: {e}")
+        except Exception:
+            logger.exception("Monitor Panel (Main Thread): Error processing worker data")
 
     @Slot(str)
     def _handle_worker_error(self, error_msg: str):
@@ -1488,7 +1482,7 @@ class HistogramControlPanel(BaseControlPanel):
                     f"Failed to update detector selection on CT400: {e}",
                 )
             except Exception as e:
-                logger.exception(f"Monitor Panel: Unexpected error updating CT400 detectors: {e}")
+                logger.exception("Monitor Panel: Unexpected error updating CT400 detectors")
                 QMessageBox.warning(self, "Detector Error", f"Error updating detectors on CT400: {e}")
 
     @override

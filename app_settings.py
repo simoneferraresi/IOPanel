@@ -138,9 +138,10 @@ class AppSettings:
 
     def scan_export_formats(self) -> tuple[bool, bool, bool]:
         """Return the preferred CSV, MAT, and FIG export selections."""
-        values = tuple(self._read(f"Export/formats/{name}", default) for name, default in (
-            ("csv", True), ("mat", True), ("fig", False)
-        ))
+        values = tuple(
+            self._read(f"Export/formats/{name}", default)
+            for name, default in (("csv", True), ("mat", True), ("fig", False))
+        )
         defaults = (True, True, False)
         return (
             values[0] if isinstance(values[0], bool) else defaults[0],

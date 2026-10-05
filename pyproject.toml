@@ -53,6 +53,9 @@ dev = [
 typecheck = [
     "pyright[nodejs]==1.1.414",
 ]
+lint = [
+    "ruff==0.16.10",
+]
 
 [project.urls]
 Homepage = "https://github.com/simoneferraresi/IOPanel"
@@ -68,10 +71,6 @@ target-version = ['py312']
 # Set the lowest Python version you support.
 target-version = "py312"
 line-length = 120
-
-# A selection of good default rules.
-# E/W -> pycodestyle, F -> Pyflakes, I -> isort (import sorting), UP -> pyupgrade
-select = ["E", "F", "W", "I", "UP"]
 
 # Exclude the auto-generated resources_rc.py file from linting.
 exclude = [

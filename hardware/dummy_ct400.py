@@ -173,7 +173,7 @@ class DummyCT400(AbstractCT400):
         )
         if abs(interval_count - nearest_interval_count) <= interval_tolerance:
             interval_count = nearest_interval_count
-        num_intervals = int(math.floor(interval_count))
+        num_intervals = math.floor(interval_count)
         wavelengths = self._scan_min_wavelength + np.arange(num_intervals + 1) * step_nm
         peak_center = (self._scan_min_wavelength + self._scan_max_wavelength) / 2
         peak_width = (self._scan_max_wavelength - self._scan_min_wavelength) / 6

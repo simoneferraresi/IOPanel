@@ -13,7 +13,6 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import QFile, QIODevice
 
-
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 RESOURCE_COLLECTION = REPOSITORY_ROOT / "resources" / "resources.qrc"
 

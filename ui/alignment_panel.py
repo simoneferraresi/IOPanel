@@ -355,18 +355,14 @@ class AlignmentPanel(QWidget):
         self.power_group.setEnabled(self._hardware_ready)
         alignment_owned = self._ct400_operation_state == "ALIGNMENT" and self._active_mode is not None
         self.stop_operation_button.setEnabled(alignment_owned and not self._stop_requested)
-        self.stop_operation_button.setText(
-            f"Stop {self._active_mode.title()}" if alignment_owned else "Stop Alignment"
-        )
+        self.stop_operation_button.setText(f"Stop {self._active_mode.title()}" if alignment_owned else "Stop Alignment")
 
     def _can_start_operation(self) -> bool:
         if not self._hardware_ready or self._ct400_operation_state != "IDLE" or self._active_mode is not None:
             return False
         try:
             return (
-                self.alignment_worker is not None
-                and self.worker_thread is not None
-                and self.worker_thread.isRunning()
+                self.alignment_worker is not None and self.worker_thread is not None and self.worker_thread.isRunning()
             )
         except RuntimeError:
             return False

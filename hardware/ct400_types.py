@@ -100,9 +100,7 @@ class CT400ScanResultKind(Enum):
     UNEXPECTED = auto()
 
 
-_CT400_WARNING_CODES = frozenset(
-    (*range(100, 105), 106, *range(108, 116), *range(117, 125), 999)
-)
+_CT400_WARNING_CODES = frozenset((*range(100, 105), 106, *range(108, 116), *range(117, 125), 999))
 
 
 @dataclass(frozen=True)

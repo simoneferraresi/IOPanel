@@ -188,8 +188,7 @@ class AlignmentWorker(QObject):
 
         # Read initial power
         power = self._read_power(samples_per_point)
-        if power > max_power:
-            max_power = power
+        max_power = max(max_power, power)
 
         # Spiral parameters
         radius = 0.0
@@ -532,5 +531,3 @@ class AlignmentWorker(QObject):
 
 class InterruptedError(Exception):
     """Custom exception for user-cancellations."""
-
-    pass

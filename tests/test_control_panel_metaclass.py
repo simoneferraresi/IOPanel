@@ -15,9 +15,7 @@ from ui.control_panel import (
 def test_abstract_control_panel_is_recognized_and_keeps_abstract_members():
     assert inspect.isabstract(BaseControlPanel)
     abstract_methods = {
-        name
-        for name, value in vars(BaseControlPanel).items()
-        if getattr(value, "__isabstractmethod__", False)
+        name for name, value in vars(BaseControlPanel).items() if getattr(value, "__isabstractmethod__", False)
     }
     assert abstract_methods == {
         "_force_stop",
@@ -46,8 +44,7 @@ def test_abstract_base_control_panel_cannot_be_instantiated():
 def test_incomplete_subclass_cannot_be_instantiated():
     class IncompleteControlPanel(BaseControlPanel):
         @abstractmethod
-        def _init_subclass_ui(self):
-            ...
+        def _init_subclass_ui(self): ...
 
     assert inspect.isabstract(IncompleteControlPanel)
     with pytest.raises(TypeError, match="IncompleteControlPanel") as exc_info:

@@ -57,9 +57,9 @@ def test_close_defers_for_ct400_or_piezo_task_without_stopping_thread(qtbot, mon
         setattr(window, f"{role}_init_thread", task.worker_thread)
         calls = []
         monkeypatch.setattr(task.worker_thread, "isRunning", lambda: True)
-        monkeypatch.setattr(task.worker_thread, "quit", lambda: calls.append("quit"))
-        monkeypatch.setattr(task.worker_thread, "wait", lambda *_args: calls.append("wait") or False)
-        monkeypatch.setattr(task.worker_thread, "terminate", lambda: calls.append("terminate"))
+        monkeypatch.setattr(task.worker_thread, "quit", lambda calls=calls: calls.append("quit"))
+        monkeypatch.setattr(task.worker_thread, "wait", lambda *_args, calls=calls: calls.append("wait") or False)
+        monkeypatch.setattr(task.worker_thread, "terminate", lambda calls=calls: calls.append("terminate"))
 
         event = QCloseEvent()
         window.closeEvent(event)
@@ -145,6 +145,7 @@ def test_simulated_camera_result_during_pending_close_is_cleaned(qtbot, monkeypa
     vimba_cleanups = []
     scheduled = []
     original_camera_cleanup = window._cleanup_cameras
+
     def record_camera_cleanup():
         cameras_cleaned.append(len(window.cameras))
         original_camera_cleanup()

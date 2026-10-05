@@ -221,8 +221,16 @@ def _detector_measurement(wavelengths, detector_data, detectors, *, final_pout=N
         1510.0, 1520.0, 25, "7", "3", "dBm", 1.9952623149688795, LaserInput.LI_2, tuple(detectors)
     )
     return ScanMeasurement(
-        settings, np.asarray(wavelengths), np.asarray(detector_data), tuple(detectors), final_pout,
-        CT400ScanResultKind.SUCCESS, 0, "", "hardware.dummy_ct400.DummyCT400", True,
+        settings,
+        np.asarray(wavelengths),
+        np.asarray(detector_data),
+        tuple(detectors),
+        final_pout,
+        CT400ScanResultKind.SUCCESS,
+        0,
+        "",
+        "hardware.dummy_ct400.DummyCT400",
+        True,
         completed_at_utc or datetime.now(UTC),
     )
 
@@ -285,7 +293,8 @@ def test_completed_multidetector_crosshair_reports_identity_in_acquisition_order
     widget = PlotWidget(ScanSettings())
     qtbot.addWidget(widget)
     measurement = _detector_measurement(
-        [1550.0, 1550.237, 1550.5], [[-31.07, -32.0, -33.0], [-18.42, -19.0, -20.0]],
+        [1550.0, 1550.237, 1550.5],
+        [[-31.07, -32.0, -33.0], [-18.42, -19.0, -20.0]],
         (Detector.DE_3, Detector.DE_1),
     )
     widget.set_measurement(measurement)
@@ -478,9 +487,7 @@ def test_multidetector_crosshair_marks_nonfinite_detector_n_a(qtbot, bad_value):
     _move_plot_cursor(widget, 1550.0, -10.0)
 
     assert not widget.h_line.isVisible()
-    assert widget.cursor_label.toPlainText().splitlines() == [
-        "λ: 1550.000 nm", "Det 1: -18.42 dB", "Det 3: n/a"
-    ]
+    assert widget.cursor_label.toPlainText().splitlines() == ["λ: 1550.000 nm", "Det 1: -18.42 dB", "Det 3: n/a"]
 
 
 def test_crosshair_switches_between_measurement_and_generic_preview(qtbot):
@@ -559,7 +566,9 @@ def test_detector_style_and_label_follow_identity_when_row_order_changes(qtbot):
     styles = {detector: item.opts["pen"].color().name() for detector, item in widget.detector_plot_items.items()}
     widget.set_measurement(_detector_measurement(wavelengths, [[1, 2], [3, 4]], (Detector.DE_1, Detector.DE_3)))
 
-    assert {detector: item.opts["pen"].color().name() for detector, item in widget.detector_plot_items.items()} == styles
+    assert {
+        detector: item.opts["pen"].color().name() for detector, item in widget.detector_plot_items.items()
+    } == styles
     assert [label.text for _sample, label in widget.detector_legend.items] == ["Det 1", "Det 3"]
     np.testing.assert_array_equal(_plotted_data(widget.detector_plot_items[Detector.DE_1])[1], [1, 2])
     np.testing.assert_array_equal(_plotted_data(widget.detector_plot_items[Detector.DE_3])[1], [3, 4])
@@ -568,9 +577,7 @@ def test_detector_style_and_label_follow_identity_when_row_order_changes(qtbot):
 def test_matlab_fig_payload_preserves_detector_identity_order_and_colors():
     import json
 
-    measurement = _detector_measurement(
-        [1510.0, 1520.0], [[30.0, 31.0], [10.0, 11.0]], (Detector.DE_3, Detector.DE_1)
-    )
+    measurement = _detector_measurement([1510.0, 1520.0], [[30.0, 31.0], [10.0, 11.0]], (Detector.DE_3, Detector.DE_1))
 
     payload = json.loads(plot_widgets.build_matlab_fig_payload(measurement))
 
@@ -584,9 +591,7 @@ def test_matlab_fig_payload_preserves_detector_identity_order_and_colors():
 def test_matlab_fig_payload_omits_inactive_detectors_and_keeps_nonfinite_values():
     import json
 
-    measurement = _detector_measurement(
-        [1510.0, 1520.0], [[float("nan"), float("inf")]], (Detector.DE_1,)
-    )
+    measurement = _detector_measurement([1510.0, 1520.0], [[float("nan"), float("inf")]], (Detector.DE_1,))
 
     payload = json.loads(plot_widgets.build_matlab_fig_payload(measurement))
 
@@ -615,9 +620,7 @@ def test_set_measurement_filters_nonfinite_points_independently_per_detector(qtb
     qtbot.addWidget(widget)
     wavelengths = np.array([1.0, 2.0, 3.0, np.inf])
     powers = np.array([[10.0, 11.0, 12.0, 13.0], [20.0, np.nan, 22.0, 23.0], [np.nan, np.inf, np.nan, 0.0]])
-    measurement = _detector_measurement(
-        wavelengths, powers, (Detector.DE_1, Detector.DE_2, Detector.DE_3)
-    )
+    measurement = _detector_measurement(wavelengths, powers, (Detector.DE_1, Detector.DE_2, Detector.DE_3))
 
     assert widget.set_measurement(measurement)
 
@@ -678,9 +681,10 @@ def test_freeze_snapshots_all_detectors_and_re_freeze_replaces_snapshot(qtbot):
         widget.reference_detector_plot_items[Detector.DE_1].opts["pen"].color().name()
         == widget.detector_plot_items[Detector.DE_1].opts["pen"].color().name()
     )
-    assert widget.reference_detector_plot_items[Detector.DE_1].opts["pen"].widthF() < widget.detector_plot_items[
-        Detector.DE_1
-    ].opts["pen"].widthF()
+    assert (
+        widget.reference_detector_plot_items[Detector.DE_1].opts["pen"].widthF()
+        < widget.detector_plot_items[Detector.DE_1].opts["pen"].widthF()
+    )
 
     second = _detector_measurement(wavelengths, [[11, 12], [13, 14]], (Detector.DE_1, Detector.DE_3))
     widget.set_measurement(second)
@@ -742,34 +746,52 @@ def test_derive_scan_export_targets_selects_only_requested_formats(selected, for
 
 
 def test_derive_scan_export_targets_does_not_strip_unrelated_extensions():
-    targets = derive_scan_export_targets(
-        "foo.txt", include_csv=True, include_mat=False, include_fig=False
-    )
+    targets = derive_scan_export_targets("foo.txt", include_csv=True, include_mat=False, include_fig=False)
     assert targets == {"CSV": Path("foo.txt.csv")}
 
 
 def _prepare_export_widget(qtbot, settings=None):
     widget = PlotWidget(ScanSettings(), settings=settings)
     qtbot.addWidget(widget)
-    settings = ScanAcquisitionSettings(1510.0, 1520.0, 25, "7", "3", "dBm", 1.9952623149688795,
-                                       LaserInput.LI_2, (Detector.DE_1,))
-    measurement = ScanMeasurement(settings, np.array([1510.0, 1520.0]), np.array([[-20.0, -21.0]]),
-                                  (Detector.DE_1,), None, CT400ScanResultKind.SUCCESS, 0, "",
-                                  "hardware.dummy_ct400.DummyCT400", True, datetime.now(UTC))
+    settings = ScanAcquisitionSettings(
+        1510.0, 1520.0, 25, "7", "3", "dBm", 1.9952623149688795, LaserInput.LI_2, (Detector.DE_1,)
+    )
+    measurement = ScanMeasurement(
+        settings,
+        np.array([1510.0, 1520.0]),
+        np.array([[-20.0, -21.0]]),
+        (Detector.DE_1,),
+        None,
+        CT400ScanResultKind.SUCCESS,
+        0,
+        "",
+        "hardware.dummy_ct400.DummyCT400",
+        True,
+        datetime.now(UTC),
+    )
     widget.set_measurement(measurement)
     return widget
 
 
-def _stub_save_dialog(monkeypatch, directory, base_name="scan", *, formats=(True, True, False), accepted=True, comment=""):
+def _stub_save_dialog(
+    monkeypatch, directory, base_name="scan", *, formats=(True, True, False), accepted=True, comment=""
+):
     from PySide6.QtWidgets import QDialog
+
     from ui.scan_export_dialog import ScanExportRequest
 
     class Dialog:
         DialogCode = QDialog.DialogCode
+
         def __init__(self, *_args):
-            self.export_request = ScanExportRequest(
-                Path(directory), base_name, formats[0], formats[1], formats[2] and _args[3], formats[2], comment
-            ) if accepted else None
+            self.export_request = (
+                ScanExportRequest(
+                    Path(directory), base_name, formats[0], formats[1], formats[2] and _args[3], formats[2], comment
+                )
+                if accepted
+                else None
+            )
+
         def exec(self):
             return self.DialogCode.Accepted if accepted else self.DialogCode.Rejected
 
@@ -792,15 +814,17 @@ def test_csv_mat_formats_never_start_matlab_and_write_both(qtbot, monkeypatch, t
     assert not (tmp_path / "scan.fig").exists()
 
 
-@pytest.mark.parametrize(("formats", "expected"), [
-    ((True, False, False), {"scan.csv"}), ((False, True, False), {"scan.mat"})
-])
+@pytest.mark.parametrize(
+    ("formats", "expected"), [((True, False, False), {"scan.csv"}), ((False, True, False), {"scan.mat"})]
+)
 def test_csv_or_mat_only_writes_selected_file(qtbot, monkeypatch, tmp_path, formats, expected):
     widget = _prepare_export_widget(qtbot)
     _stub_save_dialog(monkeypatch, tmp_path, formats=formats)
     _silence_export_messages(monkeypatch)
     monkeypatch.setattr(plot_widgets, "MATLAB_ENGINE_AVAILABLE", True)
-    monkeypatch.setattr(widget, "_ensure_matlab_engine_started", lambda: pytest.fail("non-FIG save must not start MATLAB"))
+    monkeypatch.setattr(
+        widget, "_ensure_matlab_engine_started", lambda: pytest.fail("non-FIG save must not start MATLAB")
+    )
     widget.save_scan_data()
     assert {path.name for path in tmp_path.iterdir()} == expected
     assert widget.save_btn.isEnabled()
@@ -828,23 +852,42 @@ def test_all_formats_writes_csv_mat_and_queues_selected_fig(qtbot, monkeypatch, 
     monkeypatch.setattr(plot_widgets, "MATLAB_ENGINE_AVAILABLE", True)
     monkeypatch.setattr(widget, "_ensure_matlab_engine_started", lambda: True)
     invoked = {}
+
     class Signal:
-        def connect(self, _slot): pass
+        def connect(self, _slot):
+            pass
+
     class Thread:
         started = Signal()
         finished = Signal()
-        def __init__(self, *_args): pass
-        def start(self): pass
-        def isRunning(self): return False
-        def deleteLater(self): pass
+
+        def __init__(self, *_args):
+            pass
+
+        def start(self):
+            pass
+
+        def isRunning(self):
+            return False
+
+        def deleteLater(self):
+            pass
+
     class Worker:
         finished_saving = Signal()
-        def moveToThread(self, _thread): pass
-        def deleteLater(self): pass
+
+        def moveToThread(self, _thread):
+            pass
+
+        def deleteLater(self):
+            pass
+
     monkeypatch.setattr(plot_widgets, "QThread", Thread)
     monkeypatch.setattr(plot_widgets, "MatlabSaveWorker", Worker)
     monkeypatch.setattr(plot_widgets, "Q_ARG", lambda _type, value: value)
-    monkeypatch.setattr(plot_widgets.QMetaObject, "invokeMethod", lambda _worker, _method, _connection, *args: invoked.update(args=args))
+    monkeypatch.setattr(
+        plot_widgets.QMetaObject, "invokeMethod", lambda _worker, _method, _connection, *args: invoked.update(args=args)
+    )
     widget.save_scan_data()
     assert {path.name for path in tmp_path.iterdir()} == {"scan.csv", "scan.mat"}
     assert str(tmp_path / "scan.fig") in [arg for arg in invoked["args"] if isinstance(arg, str)]
@@ -857,7 +900,11 @@ def test_overwrite_decline_writes_nothing_and_lists_only_selected_conflict(qtbot
     conflict.write_bytes(b"original")
     _stub_save_dialog(monkeypatch, tmp_path, formats=(True, True, False))
     questions = []
-    monkeypatch.setattr(plot_widgets.QMessageBox, "question", lambda *args: questions.append(args[2]) or plot_widgets.QMessageBox.StandardButton.No)
+    monkeypatch.setattr(
+        plot_widgets.QMessageBox,
+        "question",
+        lambda *args: questions.append(args[2]) or plot_widgets.QMessageBox.StandardButton.No,
+    )
     widget.save_scan_data()
     assert conflict.read_bytes() == b"original"
     assert not (tmp_path / "scan.csv").exists()
@@ -867,7 +914,9 @@ def test_overwrite_decline_writes_nothing_and_lists_only_selected_conflict(qtbot
 
 def test_comment_and_settings_are_recorded_for_accepted_request(qtbot, monkeypatch, tmp_path):
     from PySide6.QtCore import QSettings
+
     from app_settings import AppSettings
+
     settings = AppSettings(QSettings(str(tmp_path / "prefs.ini"), QSettings.Format.IniFormat))
     output = tmp_path / "out"
     output.mkdir()
@@ -880,13 +929,16 @@ def test_comment_and_settings_are_recorded_for_accepted_request(qtbot, monkeypat
     assert settings.scan_export_formats() == (True, True, False)
     assert r'# Comment: "first\nsecond"' in (output / "event.csv").read_text(encoding="utf-8")
     import scipy.io as sio
+
     mat_comment = sio.loadmat(output / "event.mat")["comment"]
     assert "".join(np.asarray(mat_comment).astype(str).ravel().tolist()) == "first\nsecond"
 
 
 def test_dialog_cancel_does_not_write_or_persist(qtbot, monkeypatch, tmp_path):
     from PySide6.QtCore import QSettings
+
     from app_settings import AppSettings
+
     settings = AppSettings(QSettings(str(tmp_path / "prefs.ini"), QSettings.Format.IniFormat))
     widget = _prepare_export_widget(qtbot, settings)
     _stub_save_dialog(monkeypatch, tmp_path, accepted=False)
@@ -896,13 +948,16 @@ def test_dialog_cancel_does_not_write_or_persist(qtbot, monkeypatch, tmp_path):
     assert settings._settings.value("Paths/scan_export") is None
     assert widget.save_btn.isEnabled()
 
+
 def test_multidetector_csv_mat_preserve_schema_v2_identity(qtbot, monkeypatch, tmp_path):
     import scipy.io as sio
 
     widget = _prepare_export_widget(qtbot)
     measurement = _detector_measurement(
-        [1510.0, 1515.0, 1520.0], [[30.0, 31.0, 32.0], [10.0, 11.0, 12.0]],
-        (Detector.DE_3, Detector.DE_1), final_pout=-20.0,
+        [1510.0, 1515.0, 1520.0],
+        [[30.0, 31.0, 32.0], [10.0, 11.0, 12.0]],
+        (Detector.DE_3, Detector.DE_1),
+        final_pout=-20.0,
         completed_at_utc=datetime(2026, 9, 29, 12, 34, 56, tzinfo=UTC),
     )
     widget.set_measurement(measurement)
@@ -929,10 +984,14 @@ def test_multidetector_csv_mat_preserve_schema_v2_identity(qtbot, monkeypatch, t
 def test_partial_export_failure_keeps_successful_format(qtbot, monkeypatch, tmp_path):
     widget = _prepare_export_widget(qtbot)
     _stub_save_dialog(monkeypatch, tmp_path, formats=(True, True, False))
-    monkeypatch.setattr(plot_widgets.np, "savetxt", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk full")))
+    monkeypatch.setattr(
+        plot_widgets.np, "savetxt", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk full"))
+    )
     warnings = []
     monkeypatch.setattr(plot_widgets.QMessageBox, "warning", lambda *args: warnings.append(args[-1]))
-    monkeypatch.setattr(plot_widgets.QMessageBox, "information", lambda *_args: pytest.fail("partial save is not full success"))
+    monkeypatch.setattr(
+        plot_widgets.QMessageBox, "information", lambda *_args: pytest.fail("partial save is not full success")
+    )
 
     widget.save_scan_data()
 
@@ -947,7 +1006,9 @@ def test_payload_validation_error_writes_nothing_and_restores_button(qtbot, monk
     _stub_save_dialog(monkeypatch, tmp_path, formats=(True, False, False))
     warnings = []
     monkeypatch.setattr(plot_widgets.QMessageBox, "warning", lambda *args: warnings.append(args[-1]))
-    monkeypatch.setattr(plot_widgets, "build_scan_export_v2", lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("bad payload")))
+    monkeypatch.setattr(
+        plot_widgets, "build_scan_export_v2", lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("bad payload"))
+    )
 
     widget.save_scan_data()
 
@@ -955,8 +1016,10 @@ def test_payload_validation_error_writes_nothing_and_restores_button(qtbot, monk
     assert warnings and "bad payload" in warnings[0]
     assert widget.save_btn.isEnabled()
 
+
 def test_unavailable_matlab_preserves_saved_fig_preference(qtbot, monkeypatch, tmp_path):
     from PySide6.QtCore import QSettings
+
     from app_settings import AppSettings
 
     settings = AppSettings(QSettings(str(tmp_path / "prefs.ini"), QSettings.Format.IniFormat))
@@ -967,7 +1030,9 @@ def test_unavailable_matlab_preserves_saved_fig_preference(qtbot, monkeypatch, t
     _stub_save_dialog(monkeypatch, output, formats=(True, True, True))
     _silence_export_messages(monkeypatch)
     monkeypatch.setattr(plot_widgets, "MATLAB_ENGINE_AVAILABLE", False)
-    monkeypatch.setattr(widget, "_ensure_matlab_engine_started", lambda: pytest.fail("unavailable FIG cannot start MATLAB"))
+    monkeypatch.setattr(
+        widget, "_ensure_matlab_engine_started", lambda: pytest.fail("unavailable FIG cannot start MATLAB")
+    )
 
     widget.save_scan_data()
 

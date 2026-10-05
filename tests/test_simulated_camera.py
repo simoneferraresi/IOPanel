@@ -1,6 +1,6 @@
 import numpy as np
-from PySide6.QtWidgets import QApplication
 from PySide6.QtTest import QSignalSpy
+from PySide6.QtWidgets import QApplication
 
 from config_model import CameraConfig
 from hardware import camera

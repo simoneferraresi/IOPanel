@@ -14,7 +14,6 @@ from importlib.metadata import version
 
 from vmbpy import VmbSystem
 
-
 CAMERAS = {
     "Top": {
         "id": "DEV_000F315B9CE1",
@@ -75,7 +74,7 @@ def read_feature(camera, candidates):
                 failures.append(f"{name}: not readable")
                 continue
             return display_value(feature.get()), None
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001  # Diagnostic probe captures vendor API failures across SDK versions.
             failures.append(f"{name}: {type(exc).__name__}: {exc}")
     return None, "; ".join(failures) or "feature unavailable"
 
@@ -110,9 +109,7 @@ def main() -> int:
                 try:
                     camera = vmb.get_camera_by_id(camera_id)
                     if camera.get_id() != camera_id:
-                        raise RuntimeError(
-                            f"Expected {camera_id}, SDK returned {camera.get_id()}"
-                        )
+                        raise RuntimeError(f"Expected {camera_id}, SDK returned {camera.get_id()}")
                     print(f"\n{camera_name} ({camera_id})")
                     with camera:
                         for label, candidates in FEATURES.items():
@@ -137,17 +134,13 @@ def main() -> int:
                                 "baseline=NOT RECORDED; supported range="
                                 f"{gamma_range!r}; writable={gamma_writable}"
                             )
-                        except Exception as exc:
-                            errors.append(
-                                f"{camera_name} Gamma: {type(exc).__name__}: {exc}"
-                            )
+                        except Exception as exc:  # noqa: BLE001  # Diagnostic probe captures vendor API failures across SDK versions.
+                            errors.append(f"{camera_name} Gamma: {type(exc).__name__}: {exc}")
                             print(f"ERROR: {errors[-1]}", file=sys.stderr)
-                except Exception as exc:
-                    errors.append(
-                        f"{camera_name} ({camera_id}): {type(exc).__name__}: {exc}"
-                    )
+                except Exception as exc:  # noqa: BLE001  # Diagnostic probe captures vendor API failures across SDK versions.
+                    errors.append(f"{camera_name} ({camera_id}): {type(exc).__name__}: {exc}")
                     print(f"ERROR: {errors[-1]}", file=sys.stderr)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001  # Diagnostic probe captures vendor API failures across SDK versions.
         errors.append(f"VmbSystem/cleanup: {type(exc).__name__}: {exc}")
         print(f"ERROR: {errors[-1]}", file=sys.stderr)
 

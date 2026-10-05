@@ -120,7 +120,7 @@ class CameraDiscoveryDialog(QDialog):
             self.table.horizontalHeader().setStretchLastSection(True)
 
         except Exception as e:
-            logger.error(f"Error during camera discovery: {e}", exc_info=True)
+            logger.exception("Error during camera discovery")
             QMessageBox.critical(self, "Discovery Error", f"An error occurred while discovering cameras:\n{e}")
         finally:
             self.refresh_button.setEnabled(True)
