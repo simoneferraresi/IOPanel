@@ -5,6 +5,7 @@ from abc import ABC, ABCMeta, abstractmethod
 from datetime import UTC, datetime
 from typing import override
 
+import numpy as np
 from PySide6 import QtCore, QtGui
 from PySide6.QtCore import (
     QMetaObject,
@@ -46,6 +47,11 @@ from hardware.ct400_types import (
 )
 from hardware.dummy_ct400 import DummyCT400
 from hardware.interfaces import AbstractCT400
+from logic.power_monitor_recording import (
+    PowerMonitorAcquisitionSettings,
+    PowerMonitorRecording,
+    PowerMonitorRecordingStopReason,
+)
 from logic.scan_measurement import ScanAcquisitionSettings, ScanMeasurement
 from ui.constants import (
     ID_CT400_MONITOR_PANEL,
@@ -1052,6 +1058,7 @@ class HistogramControlPanel(BaseControlPanel):
     power_data_ready = QtCore.Signal(dict)
     operation_started = QtCore.Signal()
     operation_finished = QtCore.Signal()
+    recording_completed = QtCore.Signal(object)
 
     def __init__(
         self,
@@ -1063,6 +1070,14 @@ class HistogramControlPanel(BaseControlPanel):
         self.monitoring = False
         self._monitor_stop_pending = False
         self._monitor_starting = False
+        self._recording_active = False
+        self._recording_started_monotonic: float | None = None
+        self._recording_started_at_utc: datetime | None = None
+        self._recording_settings: PowerMonitorAcquisitionSettings | None = None
+        self._recording_elapsed: list[float] = []
+        self._recording_pout: list[float] = []
+        self._recording_detector_values: list[list[float]] = []
+        self.last_recording: PowerMonitorRecording | None = None
         self.power_fetch_thread = QThread(self)
         self.power_fetch_worker = PowerFetchWorker(ct400_device)
         self.timer = QTimer(self)
@@ -1120,6 +1135,14 @@ class HistogramControlPanel(BaseControlPanel):
         self.monitor_btn.setMinimumHeight(100)
         self.monitor_btn.setMinimumWidth(150)
         operation_layout.addWidget(self.monitor_btn)
+        self.record_btn = QPushButton("Record")
+        self.record_btn.setObjectName("powerMonitorRecordButton")
+        self.record_btn.setEnabled(False)
+        operation_layout.addWidget(self.record_btn)
+        self.recording_elapsed_label = QLabel("Recording: 00:00")
+        self.recording_elapsed_label.setObjectName("powerMonitorRecordingElapsedLabel")
+        self.recording_elapsed_label.hide()
+        operation_layout.addWidget(self.recording_elapsed_label)
         operation_group.setLayout(operation_layout)
 
         # Use a horizontal layout to place detectors and operation side-by-side
@@ -1131,6 +1154,7 @@ class HistogramControlPanel(BaseControlPanel):
         self.main_layout.addStretch(1)
 
         self.monitor_btn.clicked.connect(self._toggle_monitoring)
+        self.record_btn.clicked.connect(self._toggle_recording)
         for cb in self.detector_cbs:
             cb.stateChanged.connect(self._detector_selection_changed)
 
@@ -1284,11 +1308,20 @@ class HistogramControlPanel(BaseControlPanel):
         self.monitor_btn.style().polish(self.monitor_btn)
         self.on_instrument_connected(True)
         self.timer.start()
+        self._update_recording_button()
         logger.debug(f"Monitor Panel: Timer started (Interval: {self.timer.interval()}ms) to trigger worker.")
 
     def _stop_monitoring(self, instrument_error_or_disconnect=False):
         if (not self.monitoring and not instrument_error_or_disconnect) or self._monitor_stop_pending:
             return
+
+        if self._recording_active:
+            reason = (
+                PowerMonitorRecordingStopReason.MONITORING_ERROR
+                if instrument_error_or_disconnect
+                else PowerMonitorRecordingStopReason.MONITORING_STOPPED
+            )
+            self._finalize_recording_safely(reason)
 
         logger.info(
             f"Monitor Panel: Stopping power monitoring. Forced by error/disconnect: {instrument_error_or_disconnect}"
@@ -1310,6 +1343,7 @@ class HistogramControlPanel(BaseControlPanel):
         else:
             self.monitor_btn.setText("Stopping Monitoring…")
             self.monitor_btn.setEnabled(False)
+        self._update_recording_button()
 
     @Slot()
     def _finish_monitor_stop(self):
@@ -1403,6 +1437,11 @@ class HistogramControlPanel(BaseControlPanel):
         logger.debug(
             f"Monitor Panel (Main Thread): Received power data from worker: Pout={power_data_tuple.pout}, Detectors={power_data_tuple.detectors}"
         )
+        if self._recording_active:
+            try:
+                self._capture_recording_sample(power_data_tuple)
+            except Exception:  # BLE001: recording is optional and must not interrupt live monitor delivery.
+                logger.exception("Monitor Panel: Recording sample rejected; live monitoring will continue.")
         try:
             detector_string_map = {
                 Detector.DE_1: "Det 1",
@@ -1434,6 +1473,132 @@ class HistogramControlPanel(BaseControlPanel):
             self.power_data_ready.emit(emit_data)
         except Exception:
             logger.exception("Monitor Panel (Main Thread): Error processing worker data")
+
+    def _toggle_recording(self) -> None:
+        if self._recording_active:
+            self._finalize_recording_safely(PowerMonitorRecordingStopReason.USER_STOPPED)
+        else:
+            self._start_recording()
+
+    def _start_recording(self) -> None:
+        if not self.monitoring or self._monitor_stop_pending or self._recording_active:
+            return
+        input_port = self.input_port.currentData()
+        if not isinstance(input_port, LaserInput):
+            logger.error("Monitor Panel: Cannot record with an invalid laser input.")
+            return
+        try:
+            settings = PowerMonitorAcquisitionSettings(
+                wavelength_nm=float(self.wavelength_input.text()),
+                entered_laser_power=self.laser_power.text(),
+                entered_laser_power_unit=self.power_unit.currentText(),
+                laser_power_mw=self._get_laser_power_mw(),
+                laser_input=input_port,
+                detectors=tuple(
+                    detector
+                    for detector, checkbox in zip(
+                        (Detector.DE_1, Detector.DE_2, Detector.DE_3, Detector.DE_4),
+                        self.detector_cbs,
+                        strict=True,
+                    )
+                    if checkbox.isChecked()
+                ),
+                requested_poll_interval_ms=self.timer.interval(),
+            )
+        except (TypeError, ValueError) as error:
+            logger.error("Monitor Panel: Cannot snapshot recording settings: %s", error)
+            return
+        self._recording_settings = settings
+        self._recording_started_monotonic = time.monotonic()
+        self._recording_started_at_utc = datetime.now(UTC)
+        self._recording_elapsed = []
+        self._recording_pout = []
+        self._recording_detector_values = [[] for _ in settings.detectors]
+        self._recording_active = True
+        self.recording_elapsed_label.setText("Recording: 00:00")
+        self.recording_elapsed_label.show()
+        self._update_recording_button()
+
+    def _capture_recording_sample(self, power_data: PowerData) -> None:
+        settings = self._recording_settings
+        started = self._recording_started_monotonic
+        if not self._recording_active or settings is None or started is None:
+            return
+        elapsed = max(0.0, time.monotonic() - started)
+        pout = float(power_data.pout)
+        detector_values = [float(power_data.detectors.get(detector, float("nan"))) for detector in settings.detectors]
+        # Convert the complete sample first so any failed conversion leaves every buffer unchanged.
+        self._recording_elapsed.append(elapsed)
+        self._recording_pout.append(pout)
+        for values, value in zip(self._recording_detector_values, detector_values, strict=True):
+            values.append(value)
+        total_seconds = int(elapsed)
+        minutes, seconds = divmod(total_seconds, 60)
+        self.recording_elapsed_label.setText(f"Recording: {minutes:02d}:{seconds:02d}")
+
+    def _finalize_recording(self, reason: PowerMonitorRecordingStopReason) -> None:
+        if not self._recording_active:
+            return
+        started = self._recording_started_monotonic
+        started_utc = self._recording_started_at_utc
+        settings = self._recording_settings
+        if started is None or started_utc is None or settings is None:
+            logger.error("Monitor Panel: Active recording state is incomplete; clearing it safely.")
+            self._clear_recording_state()
+            return
+        final_monotonic = time.monotonic()
+        completed_at_utc = datetime.now(UTC)
+        elapsed = np.asarray(self._recording_elapsed, dtype=float)
+        detector_data = np.asarray(self._recording_detector_values, dtype=float).reshape(
+            (len(settings.detectors), len(elapsed))
+        )
+        ct400 = self.ct400
+        if ct400 is None:
+            backend = "unknown"
+            simulated = False
+        else:
+            backend = f"{type(ct400).__module__}.{type(ct400).__qualname__}"
+            simulated = isinstance(ct400, DummyCT400)
+        recording = PowerMonitorRecording(
+            settings=settings,
+            elapsed_s=elapsed,
+            pout_data=np.asarray(self._recording_pout, dtype=float),
+            detector_data=detector_data,
+            detectors=settings.detectors,
+            started_at_utc=started_utc,
+            completed_at_utc=completed_at_utc,
+            duration_s=max(0.0, final_monotonic - started),
+            backend=backend,
+            simulated=simulated,
+            stop_reason=reason,
+        )
+        self.last_recording = recording
+        self._clear_recording_state()
+        self.recording_completed.emit(recording)
+
+    def _finalize_recording_safely(self, reason: PowerMonitorRecordingStopReason) -> None:
+        try:
+            self._finalize_recording(reason)
+        except Exception:  # BLE001: recording failures must not alter monitor stop or manual-stop behavior.
+            logger.exception("Monitor Panel: Recording finalization failed; discarding the active capture.")
+            self._clear_recording_state()
+
+    def _clear_recording_state(self) -> None:
+        self._recording_active = False
+        self._recording_started_monotonic = None
+        self._recording_started_at_utc = None
+        self._recording_settings = None
+        self._recording_elapsed = []
+        self._recording_pout = []
+        self._recording_detector_values = []
+        self.recording_elapsed_label.hide()
+        self.recording_elapsed_label.setText("Recording: 00:00")
+        self._update_recording_button()
+
+    def _update_recording_button(self) -> None:
+        available = self.monitoring and not self._monitor_stop_pending
+        self.record_btn.setEnabled(available)
+        self.record_btn.setText("Stop Recording" if self._recording_active else "Record")
 
     @Slot(str)
     def _handle_worker_error(self, error_msg: str):
