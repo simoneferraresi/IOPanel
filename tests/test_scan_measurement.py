@@ -177,5 +177,5 @@ def test_naive_completion_timestamp_is_rejected():
             settings,
             np.array([1.0]),
             np.array([[-1.0]]),
-            completed_at_utc=datetime(2026, 1, 1),
+            completed_at_utc=datetime(2026, 1, 1),  # noqa: DTZ001 — This test verifies naive timestamps are rejected.
         )

@@ -88,8 +88,10 @@ def test_mainwindow_keeps_simulated_camera_when_physical_initialization_fails(qt
         monkeypatch,
         tmp_path,
         [
-            "[Camera:Simulated camera]\nidentifier = simulated-top\nenabled = true\nname = Simulated top\n"
-            "backend = simulation\nsimulation_width = 16\nsimulation_height = 12",
+            (
+                "[Camera:Simulated camera]\nidentifier = simulated-top\nenabled = true\nname = Simulated top\n"
+                "backend = simulation\nsimulation_width = 16\nsimulation_height = 12"
+            ),
             "[Camera:Physical camera]\nidentifier = physical-camera-2\nenabled = true\nname = Physical camera",
         ],
     )

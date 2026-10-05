@@ -95,7 +95,7 @@ class CT400InitWorker(BaseWorker):
 
             except (CT400Error, OSError) as e:
                 msg = f"CT400 Init Failed: {e}. Using dummy device."
-                logger.error(msg, exc_info=True)
+                logger.exception(msg)
                 self.status_updated.emit("UNAVAILABLE", "CT400: Init Failed. Using Dummy.")
                 ct400_device = DummyCT400()
                 self.ct400_initialized.emit(ct400_device)

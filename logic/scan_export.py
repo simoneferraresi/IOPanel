@@ -45,7 +45,10 @@ def build_scan_export_v2(measurement: ScanMeasurement, *, comment: str = "") -> 
         raise ValueError("Cannot export a scan with no wavelength-resolved detector data.")
 
     wavelengths = measurement.wavelengths_nm
-    optical_data = {detector: np.zeros(wavelengths.shape, dtype=measurement.detector_data.dtype) for detector in OPTICAL_EXPORT_DETECTORS}
+    optical_data = {
+        detector: np.zeros(wavelengths.shape, dtype=measurement.detector_data.dtype)
+        for detector in OPTICAL_EXPORT_DETECTORS
+    }
     for row_index, detector in enumerate(measurement.detectors):
         optical_data[detector] = measurement.detector_data[row_index]
 
@@ -53,7 +56,9 @@ def build_scan_export_v2(measurement: ScanMeasurement, *, comment: str = "") -> 
     settings = measurement.settings
     active_names = ",".join(detector.name for detector in measurement.detectors)
     active_ids = np.asarray([int(detector) for detector in measurement.detectors], dtype=np.int64)
-    active_mask = np.asarray([int(detector in measurement.detectors) for detector in OPTICAL_EXPORT_DETECTORS], dtype=np.int8)
+    active_mask = np.asarray(
+        [int(detector in measurement.detectors) for detector in OPTICAL_EXPORT_DETECTORS], dtype=np.int8
+    )
     completed_at_utc = measurement.completed_at_utc.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
     metadata = [

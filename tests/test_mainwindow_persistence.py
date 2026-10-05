@@ -159,9 +159,7 @@ def test_camera_panel_uses_persisted_screenshot_directory(qtbot, tmp_path):
     assert panel.last_save_dir == screenshot_directory.resolve()
 
 
-def test_create_camera_panel_applies_saved_visibility_with_lightweight_double(
-    tmp_path, monkeypatch
-):
+def test_create_camera_panel_applies_saved_visibility_with_lightweight_double(tmp_path, monkeypatch):
     settings = make_settings(tmp_path / "panel-restore.ini")
     settings.set_camera_controls_visible("CAM-A", True)
 

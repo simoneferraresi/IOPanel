@@ -415,7 +415,7 @@ class AutoOpWorker(QRunnable):
                 )
         except Exception as e:
             error_msg = f"Error during {self.op_type} for {self.camera.camera_name}: {e}"
-            logger.error(error_msg, exc_info=True)
+            logger.exception(error_msg)
             QMetaObject.invokeMethod(
                 self.panel_callback,
                 "handle_auto_error",
@@ -520,9 +520,7 @@ class CameraPanel(QFrame):
         self.settings = settings
         self.camera_identifier = config.identifier
         self.last_save_dir = (
-            settings.camera_screenshot_directory(self.camera_identifier)
-            if settings is not None
-            else Path.cwd()
+            settings.camera_screenshot_directory(self.camera_identifier) if settings is not None else Path.cwd()
         )
 
         self._init_ui()
@@ -873,8 +871,8 @@ class CameraPanel(QFrame):
                     logger.error(f"Qt reported failure saving screenshot to {file_path}")
                     self._flash_button_feedback(self.screenshot_btn, success=False)
 
-            except Exception as e:
-                logger.error(f"Exception saving screenshot: {e}", exc_info=True)
+            except Exception:
+                logger.exception("Exception saving screenshot")
                 self._flash_button_feedback(self.screenshot_btn, success=False)
 
     def _flash_button_feedback(self, button: QPushButton, success: bool):
@@ -1023,8 +1021,8 @@ class CameraPanel(QFrame):
                 self.video_label.setAspectRatio(pixmap.width(), pixmap.height())
 
             self.set_frame_pixmap(pixmap)
-        except Exception as e:
-            logger.exception(f"Panel {self._panel_title}: Unhandled error displaying converted image: {e}")
+        except Exception:
+            logger.exception(f"Panel {self._panel_title}: Unhandled error displaying converted image")
             self.set_frame_pixmap(None)
 
     def mouseDoubleClickEvent(self, event: QtGui.QMouseEvent):

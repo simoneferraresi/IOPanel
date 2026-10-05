@@ -2,8 +2,8 @@ import importlib.util
 
 import app
 from config_model import CameraConfig
-from ui.camera_widgets import CameraPanel
 from ui.alignment_panel import ALIGNMENT_ACTION_BUTTON_STYLE
+from ui.camera_widgets import CameraPanel
 from ui.control_panel import MONITOR_BUTTON_STYLE, SCAN_BUTTON_STYLE
 
 
@@ -42,11 +42,11 @@ def test_simulated_camera_panel_shows_simulation_title(qapp):
 
 
 def test_semantic_action_button_styles_are_local_and_state_specific():
-    assert 'QPushButton#scanButton { background-color: #2e7d32' in SCAN_BUTTON_STYLE
+    assert "QPushButton#scanButton { background-color: #2e7d32" in SCAN_BUTTON_STYLE
     assert 'QPushButton#scanButton[scanning="true"] { background-color: #c62828' in SCAN_BUTTON_STYLE
     assert "QPushButton#scanButton:disabled" in SCAN_BUTTON_STYLE
 
-    assert 'QPushButton#monitorButton { background-color: #1976d2' in MONITOR_BUTTON_STYLE
+    assert "QPushButton#monitorButton { background-color: #1976d2" in MONITOR_BUTTON_STYLE
     assert 'QPushButton#monitorButton[monitoring="true"] { background-color: #c62828' in MONITOR_BUTTON_STYLE
     assert "QPushButton#monitorButton:disabled" in MONITOR_BUTTON_STYLE
 

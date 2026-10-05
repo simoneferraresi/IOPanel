@@ -225,19 +225,19 @@ class VimbaCam(QObject):
                         info["name"] = cam.get_name()
                         cameras_info.append(info)
                         logger.debug(f"  Found Cam {i}: ID={info['id']}, Serial={info.get('serial')}")
-                    except Exception as e:
+                    except Exception as e:  # noqa: BLE001  # Preserve VmbPy metadata and enumeration fallbacks.
                         # If querying fails, try to get at least the ID for a better log message
                         cam_id_for_log = f"at index {i}"
                         try:
                             cam_id_for_log = cam.get_id()
-                        except Exception:
+                        except Exception:  # noqa: BLE001, S110 — retain the camera index if get_id also fails.
                             # If even getting the ID fails, we stick with the index.
                             pass
                         logger.warning(f"Could not fully query camera '{cam_id_for_log}': {e}")
 
         except VmbSystemError as e:
             logger.error(f"Vimba system error while listing cameras: {e}")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  # Preserve VmbPy metadata and enumeration fallbacks.
             logger.error(f"An unexpected error occurred while listing cameras: {e}")
         return cameras_info
 
@@ -268,8 +268,8 @@ class VimbaCam(QObject):
                 # Emit signals for the GUI
                 self.new_frame.emit(processed_image)
                 self.fps_updated.emit(self.frame_monitor.update())
-        except Exception as e:
-            logger.exception(f"Handler {self.camera_name}: Unhandled error in frame processing: {e}")
+        except Exception:
+            logger.exception(f"Handler {self.camera_name}: Unhandled error in frame processing")
         finally:
             # CRITICAL: Always re-queue the frame.
             try:
@@ -311,7 +311,7 @@ class VimbaCam(QObject):
             self.close()
             return False
         except Exception as e:
-            logger.exception(f"Unexpected error during camera open sequence: {e}")
+            logger.exception("Unexpected error during camera open sequence")
             self.error.emit(f"Unexpected open error: {e}")
             self.close()
             return False
@@ -379,8 +379,8 @@ class VimbaCam(QObject):
             if entered_camera is not None:
                 try:
                     entered_camera.__exit__(None, None, None)
-                except Exception as cleanup_error:
-                    logger.exception(f"Failed to release partially opened camera {self.camera_name}: {cleanup_error}")
+                except Exception:
+                    logger.exception(f"Failed to release partially opened camera {self.camera_name}")
             self.device = None
             self.is_streaming = False
             self.is_mono = None
@@ -558,7 +558,7 @@ class VimbaCam(QObject):
             return False
         except Exception as e:
             error_msg = f"Unexpected error setting {feature_name}: {e}"
-            logger.error(error_msg, exc_info=True)
+            logger.exception(error_msg)
             self.error.emit(error_msg)
             return False
 

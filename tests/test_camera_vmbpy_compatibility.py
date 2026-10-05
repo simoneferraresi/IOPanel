@@ -7,7 +7,6 @@ import sys
 import textwrap
 from pathlib import Path
 
-
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -18,6 +17,7 @@ def _run_isolated_import(script: str) -> None:
         capture_output=True,
         text=True,
         timeout=30,
+        check=False,
     )
     assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
 

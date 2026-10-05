@@ -2,7 +2,7 @@ from hardware import camera
 
 
 def test_application_camera_modules_import_without_vimba_binding():
-    import ui.discovery_dialog  # noqa: F401
+    import ui.discovery_dialog
     import ui.main_window  # noqa: F401
 
 

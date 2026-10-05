@@ -197,7 +197,7 @@ class AppConfig(BaseModel):
 
             # If not, check if it matches a field's alias
             found_field = False
-            for field_name, field_info in cls.model_fields.items():
+            for field_info in cls.model_fields.values():
                 if field_info.alias and field_info.alias == section_lower:
                     init_data[field_info.alias] = section_data
                     found_field = True

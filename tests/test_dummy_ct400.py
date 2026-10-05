@@ -4,11 +4,11 @@ import time
 import numpy as np
 import pytest
 
+from config_model import AppConfig
 from hardware.ct400 import CT400Error
 from hardware.ct400_types import CT400ScanResultKind, Detector, Enable, InstrumentError, LaserInput
 from hardware.dummy_ct400 import DummyCT400
 from logic.scan_measurement import ScanAcquisitionSettings
-from config_model import AppConfig
 from ui.control_panel import CT400ControlPanel, QMessageBox, ScanSettings, ScanWorker
 
 
@@ -151,8 +151,9 @@ def test_final_power_read_failure_preserves_successful_scan_measurement(monkeypa
 def test_scan_worker_preserves_warning_result_with_returned_data(monkeypatch):
     monkeypatch.setattr(ScanWorker, "_LASER_COMMAND_DELAY_MS", 0)
     device = DummyCT400(scan_duration=0, scan_error="documented warning", scan_result_code=100)
-    settings = ScanAcquisitionSettings(1500, 1501, 100, "5", "3", "dBm", 1.995, LaserInput.LI_2,
-                                       (Detector.DE_3, Detector.DE_1))
+    settings = ScanAcquisitionSettings(
+        1500, 1501, 100, "5", "3", "dBm", 1.995, LaserInput.LI_2, (Detector.DE_3, Detector.DE_1)
+    )
     worker = ScanWorker(device, 1500, 1501, 100, 1.995, LaserInput.LI_2, acquisition_settings=settings)
     measurements, errors, warnings = [], [], []
     worker.measurement_ready.connect(measurements.append)
@@ -408,6 +409,7 @@ def test_early_cancellation_sets_final_kind_and_cleans_up_once(monkeypatch, canc
     if cancel_stage == "before_start":
         worker.stop()
     else:
+
         def cancel_during_setup(*_args):
             events.append("set_scan")
             worker.stop()

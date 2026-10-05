@@ -23,8 +23,8 @@ from pathlib import Path
 from pydantic import ValidationError
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from config_model import AppConfig, ConfigSemanticError
 from app_settings import AppSettings
+from config_model import AppConfig, ConfigSemanticError
 from ui.main_window import MainWindow
 
 # Application Metadata
@@ -224,7 +224,7 @@ def main() -> int:
         raw_config_dict = load_raw_config_from_ini(args.config)
     except ConfigLoadError as e:
         error_msg = f"Configuration file '{args.config}' could not be loaded.\n\n{e}"
-        logging.critical(error_msg)
+        logging.critical(error_msg)  # noqa: LOG015 — bootstrap logging runs before the app logger is configured.
         _ = QApplication.instance() or QApplication(sys.argv)
         QMessageBox.critical(None, "Configuration Load Error", error_msg)
         return 1
@@ -234,14 +234,14 @@ def main() -> int:
         app_config = AppConfig.from_ini_dict(raw_config_dict)
     except ConfigSemanticError as e:
         error_msg = f"Configuration file '{args.config}' has an invalid structure.\n\n{e}"
-        logging.critical(error_msg)
+        logging.critical(error_msg)  # noqa: LOG015 — bootstrap logging runs before the app logger is configured.
         _ = QApplication.instance() or QApplication(sys.argv)
         QMessageBox.critical(None, "Configuration Error", error_msg)
         return 1
     except ValidationError as e:
         # Pydantic gives beautiful, human-readable errors.
         error_msg = f"Configuration file '{args.config}' is invalid.\n\nErrors:\n{e}"
-        logging.critical(error_msg)
+        logging.critical(error_msg)  # noqa: LOG015 — bootstrap logging runs before the app logger is configured.
         # Show a message box, creating a temporary QApplication if needed.
         _ = QApplication.instance() or QApplication(sys.argv)
         QMessageBox.critical(None, "Configuration Error", error_msg)
@@ -287,7 +287,7 @@ def main() -> int:
         logger.info("Application started successfully. Entering event loop.")
 
         return app.exec()
-    except Exception:
+    except Exception:  # noqa: BLE001  # Preserve the application error-to-exit-code fallback.
         # The global exception hook will log this exception.
         # We return 1 to indicate an error to the operating system.
         return 1

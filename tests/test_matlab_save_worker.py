@@ -150,7 +150,7 @@ def test_worker_passes_nan_and_infinities_through_to_matlab(qapp, monkeypatch):
 
     result = _call(worker, widget, payload)
 
-    values = _matlab_values([call[1][1] for call in engine.calls if call[0] == "plot"][0])
+    values = _matlab_values(next(call[1][1] for call in engine.calls if call[0] == "plot"))
     assert result[1] is True
     assert values[0] != values[0]
     assert values[1] == float("inf")

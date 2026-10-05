@@ -66,8 +66,8 @@ class CameraInitWorker(BaseWorker):
                 logger.error(f"Worker failed to open camera: {self.cam_config.name}")
                 cam_instance.close()  # Ensure cleanup
                 self.camera_initialized.emit(self.identifier, None, self.cam_config)
-        except Exception as e:
-            logger.exception(f"Exception in camera init worker for {self.cam_config.name}: {e}")
+        except Exception:
+            logger.exception(f"Exception in camera init worker for {self.cam_config.name}")
             if cam_instance:
                 cam_instance.close()
             self.camera_initialized.emit(self.identifier, None, self.cam_config)

@@ -65,11 +65,11 @@ class PiezoInitWorker(BaseWorker):
 
         except (PiezoError, FileNotFoundError) as e:
             self._cleanup_partial_controllers(piezo_left, piezo_right)
-            logger.error(f"Failed to initialize Piezo library: {e}", exc_info=True)
+            logger.exception("Failed to initialize Piezo library")
             self.initialization_failed.emit(str(e))
         except Exception as e:
             self._cleanup_partial_controllers(piezo_left, piezo_right)
-            logger.exception(f"Unexpected error in piezo init worker: {e}")
+            logger.exception("Unexpected error in piezo init worker")
             self.initialization_failed.emit(f"An unexpected error occurred: {e}")
         finally:
             self.finished.emit()

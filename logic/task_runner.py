@@ -23,7 +23,6 @@ class BaseWorker(QObject):
         The main entry point for the worker's logic.
         Subclasses should override this if they are 'one-shot' tasks.
         """
-        pass
 
 
 class TaskRunner(QObject):
