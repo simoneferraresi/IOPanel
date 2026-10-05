@@ -37,6 +37,11 @@ from PySide6.QtWidgets import (
 
 from app_settings import AppSettings
 from hardware.ct400_types import Detector
+from logic.power_monitor_recording import (
+    PowerMonitorAcquisitionSettings,
+    PowerMonitorRecording,
+    PowerMonitorRecordingSample,
+)
 from logic.scan_export import build_scan_export_v2
 from logic.scan_measurement import ScanMeasurement
 from ui.scan_export_dialog import ScanExportDialog
@@ -109,6 +114,93 @@ def build_matlab_fig_payload(measurement: ScanMeasurement) -> str:
 
 def _is_numeric_list(values: list[object]) -> bool:
     return all(isinstance(value, int | float) and not isinstance(value, bool) for value in values)
+
+
+class PowerMonitorTraceWidget(QWidget):
+    """Live selected-detector trace driven only by accepted M1 recording samples."""
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.settings: PowerMonitorAcquisitionSettings | None = None
+        self.recording_active = False
+        self.elapsed_values: list[float] = []
+        self.detector_values: dict[Detector, list[float]] = {}
+        self.curve_items: dict[Detector, pg.PlotDataItem] = {}
+        self.legend: pg.LegendItem | None = None
+
+        layout = QVBoxLayout(self)
+        self.status_label = QLabel()
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.status_label)
+        self.plot_widget = pg.PlotWidget(background="w")
+        self.plot_widget.setLabel("bottom", "Elapsed time (s)")
+        self.plot_widget.setLabel("left", "Detector value (unit unverified)")
+        self.plot_widget.setTitle("Power Monitor Recording")
+        self.plot_widget.showGrid(x=True, y=True, alpha=0.25)
+        layout.addWidget(self.plot_widget, stretch=1)
+        self._set_status("")
+
+    def start_recording(self, settings: PowerMonitorAcquisitionSettings) -> None:
+        self.settings = settings
+        self.recording_active = True
+        self.elapsed_values = []
+        self.detector_values = {detector: [] for detector in settings.detectors}
+        self.plot_widget.clear()
+        self.legend = self.plot_widget.addLegend()
+        self.curve_items = {}
+        for detector in settings.detectors:
+            curve = self.plot_widget.plot(
+                [],
+                [],
+                pen=pg.mkPen(_DETECTOR_COLOR_BY_ID[detector], width=2),
+                name=f"Det {detector.value}",
+                connect="finite",
+            )
+            self.curve_items[detector] = curve
+        self._set_status("No detector channels selected" if not settings.detectors else "Waiting for recorded samples")
+
+    def append_sample(self, sample: PowerMonitorRecordingSample) -> None:
+        if self.settings is None:
+            return
+        if sample.detectors != self.settings.detectors:
+            raise ValueError("recording sample detector identities must match the active trace settings")
+        self.elapsed_values.append(sample.elapsed_s)
+        for detector, value in zip(sample.detectors, sample.detector_values, strict=True):
+            self.detector_values[detector].append(value)
+        for detector, curve in self.curve_items.items():
+            curve.setData(self.elapsed_values, self.detector_values[detector], connect="finite")
+        self._set_status("No detector channels selected" if not sample.detectors else "")
+
+    def set_completed_recording(self, recording: PowerMonitorRecording) -> None:
+        self.start_recording(recording.settings)
+        self.recording_active = False
+        self.elapsed_values = recording.elapsed_s.tolist()
+        self.detector_values = {
+            detector: recording.detector_data[row].tolist() for row, detector in enumerate(recording.detectors)
+        }
+        for detector, curve in self.curve_items.items():
+            curve.setData(self.elapsed_values, self.detector_values[detector], connect="finite")
+        if not recording.detectors:
+            self._set_status("No detector channels selected")
+        elif not len(recording.elapsed_s):
+            self._set_status("No samples captured")
+        else:
+            self._set_status("")
+
+    def discard_recording(self) -> None:
+        self.settings = None
+        self.recording_active = False
+        self.elapsed_values = []
+        self.detector_values = {}
+        self.curve_items = {}
+        self.legend = None
+        self.plot_widget.clear()
+        self._set_status("")
+        self.hide()
+
+    def _set_status(self, message: str) -> None:
+        self.status_label.setText(message)
+        self.status_label.setVisible(bool(message))
 
 
 class ColorBarWidget(QWidget):

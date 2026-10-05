@@ -50,6 +50,7 @@ from hardware.interfaces import AbstractCT400
 from logic.power_monitor_recording import (
     PowerMonitorAcquisitionSettings,
     PowerMonitorRecording,
+    PowerMonitorRecordingSample,
     PowerMonitorRecordingStopReason,
 )
 from logic.scan_measurement import ScanAcquisitionSettings, ScanMeasurement
@@ -1058,7 +1059,10 @@ class HistogramControlPanel(BaseControlPanel):
     power_data_ready = QtCore.Signal(dict)
     operation_started = QtCore.Signal()
     operation_finished = QtCore.Signal()
+    recording_started = QtCore.Signal(object)
+    recording_sample_captured = QtCore.Signal(object)
     recording_completed = QtCore.Signal(object)
+    recording_discarded = QtCore.Signal()
 
     def __init__(
         self,
@@ -1439,9 +1443,15 @@ class HistogramControlPanel(BaseControlPanel):
         )
         if self._recording_active:
             try:
-                self._capture_recording_sample(power_data_tuple)
+                sample = self._capture_recording_sample(power_data_tuple)
             except Exception:  # BLE001: recording is optional and must not interrupt live monitor delivery.
                 logger.exception("Monitor Panel: Recording sample rejected; live monitoring will continue.")
+            else:
+                if sample is not None:
+                    try:
+                        self.recording_sample_captured.emit(sample)
+                    except Exception:  # BLE001: sample visualization must not alter recording or live monitoring.
+                        logger.exception("Monitor Panel: Recording sample observer failed.")
         try:
             detector_string_map = {
                 Detector.DE_1: "Det 1",
@@ -1518,15 +1528,25 @@ class HistogramControlPanel(BaseControlPanel):
         self.recording_elapsed_label.setText("Recording: 00:00")
         self.recording_elapsed_label.show()
         self._update_recording_button()
+        try:
+            self.recording_started.emit(settings)
+        except Exception:  # BLE001: visualization observers are subordinate to recording capture.
+            logger.exception("Monitor Panel: Recording-start observer failed.")
 
-    def _capture_recording_sample(self, power_data: PowerData) -> None:
+    def _capture_recording_sample(self, power_data: PowerData) -> PowerMonitorRecordingSample | None:
         settings = self._recording_settings
         started = self._recording_started_monotonic
         if not self._recording_active or settings is None or started is None:
-            return
+            return None
         elapsed = max(0.0, time.monotonic() - started)
         pout = float(power_data.pout)
         detector_values = [float(power_data.detectors.get(detector, float("nan"))) for detector in settings.detectors]
+        sample = PowerMonitorRecordingSample(
+            elapsed_s=elapsed,
+            pout=pout,
+            detectors=settings.detectors,
+            detector_values=tuple(detector_values),
+        )
         # Convert the complete sample first so any failed conversion leaves every buffer unchanged.
         self._recording_elapsed.append(elapsed)
         self._recording_pout.append(pout)
@@ -1535,6 +1555,7 @@ class HistogramControlPanel(BaseControlPanel):
         total_seconds = int(elapsed)
         minutes, seconds = divmod(total_seconds, 60)
         self.recording_elapsed_label.setText(f"Recording: {minutes:02d}:{seconds:02d}")
+        return sample
 
     def _finalize_recording(self, reason: PowerMonitorRecordingStopReason) -> None:
         if not self._recording_active:
@@ -1574,7 +1595,10 @@ class HistogramControlPanel(BaseControlPanel):
         )
         self.last_recording = recording
         self._clear_recording_state()
-        self.recording_completed.emit(recording)
+        try:
+            self.recording_completed.emit(recording)
+        except Exception:  # BLE001: completion observers must not interfere with monitor lifecycle.
+            logger.exception("Monitor Panel: Recording-completed observer failed.")
 
     def _finalize_recording_safely(self, reason: PowerMonitorRecordingStopReason) -> None:
         try:
@@ -1582,6 +1606,10 @@ class HistogramControlPanel(BaseControlPanel):
         except Exception:  # BLE001: recording failures must not alter monitor stop or manual-stop behavior.
             logger.exception("Monitor Panel: Recording finalization failed; discarding the active capture.")
             self._clear_recording_state()
+            try:
+                self.recording_discarded.emit()
+            except Exception:  # BLE001: discard observers must not interfere with monitor lifecycle.
+                logger.exception("Monitor Panel: Recording-discarded observer failed.")
 
     def _clear_recording_state(self) -> None:
         self._recording_active = False

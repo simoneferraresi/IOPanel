@@ -7,6 +7,7 @@ from hardware.ct400_types import Detector, LaserInput
 from logic.power_monitor_recording import (
     PowerMonitorAcquisitionSettings,
     PowerMonitorRecording,
+    PowerMonitorRecordingSample,
     PowerMonitorRecordingStopReason,
 )
 
@@ -106,3 +107,34 @@ def test_recording_rejects_naive_or_reversed_utc_timestamps():
         _recording(started_at_utc=started.replace(tzinfo=None))
     with pytest.raises(ValueError, match="precede"):
         _recording(started_at_utc=started, completed_at_utc=started - timedelta(seconds=1))
+
+
+def test_recording_sample_preserves_irregular_time_detector_order_and_nonfinite_values():
+    sample = PowerMonitorRecordingSample(
+        elapsed_s=0.63,
+        pout=float("inf"),
+        detectors=(Detector.DE_3, Detector.DE_1),
+        detector_values=(float("nan"), float("-inf")),
+    )
+    assert sample.elapsed_s == 0.63
+    assert sample.detectors == (Detector.DE_3, Detector.DE_1)
+    assert np.isnan(sample.detector_values[0])
+    assert sample.detector_values[1] == float("-inf")
+    assert sample.pout == float("inf")
+
+
+def test_recording_sample_rejects_value_length_mismatch():
+    with pytest.raises(ValueError, match="length must match"):
+        PowerMonitorRecordingSample(0.25, 1.0, (Detector.DE_1, Detector.DE_2), (2.0,))
+
+
+@pytest.mark.parametrize("detectors", [(Detector.POUT,), (Detector.DE_5,), (Detector.DE_1, Detector.DE_1), ("DE1",)])
+def test_recording_sample_rejects_invalid_detector_rows(detectors):
+    with pytest.raises((TypeError, ValueError)):
+        PowerMonitorRecordingSample(0.25, 1.0, detectors, (1.0,) * len(detectors))
+
+
+@pytest.mark.parametrize("elapsed_s", [-0.1, np.nan, np.inf, -np.inf])
+def test_recording_sample_rejects_invalid_elapsed_time(elapsed_s):
+    with pytest.raises(ValueError, match="elapsed_s"):
+        PowerMonitorRecordingSample(elapsed_s, 1.0, (), ())

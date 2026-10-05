@@ -68,6 +68,11 @@ from hardware.ct400 import CT400
 from hardware.ct400_types import Enable, LaserInput
 from hardware.interfaces import AbstractCT400
 from hardware.simulated_camera import SimulatedCamera
+from logic.power_monitor_recording import (
+    PowerMonitorAcquisitionSettings,
+    PowerMonitorRecording,
+    PowerMonitorRecordingSample,
+)
 from ui.camera_widgets import CameraPanel
 from ui.constants import (
     ID_CT400_STATUS_LABEL,
@@ -82,7 +87,7 @@ from ui.control_panel import (
     HistogramControlPanel,
     ScanSettings,
 )
-from ui.plot_widgets import HistogramWidget, PlotWidget
+from ui.plot_widgets import HistogramWidget, PlotWidget, PowerMonitorTraceWidget
 
 logger = logging.getLogger("LabApp.main_window")
 
@@ -204,6 +209,7 @@ class MainWindow(QMainWindow):
         self._pending_camera_lifecycle_close: bool = False
         self._pending_piezo_operation_close: bool = False
         self._piezo_operations_in_flight: set[str] = set()
+        self.power_monitor_trace_widget: PowerMonitorTraceWidget | None = None
         self._ct400_error_reset_timer = QTimer(self)
         self._ct400_error_reset_timer.setSingleShot(True)
         self._ct400_error_reset_timer.timeout.connect(self._reset_ct400_error_visuals)
@@ -657,8 +663,12 @@ class MainWindow(QMainWindow):
         self.histogram_control = HistogramControlPanel(None, self.config)
         hist_detector_keys = [cb.text() for cb in self.histogram_control.detector_cbs]
         self.histogram_widget = HistogramWidget(self.histogram_control, hist_detector_keys)
+        self.histogram_plot_container = QWidget()
+        self.histogram_plot_layout = QVBoxLayout(self.histogram_plot_container)
+        self.histogram_plot_layout.setContentsMargins(0, 0, 0, 0)
+        self.histogram_plot_layout.addWidget(self.histogram_widget, stretch=1)
         second_tab_layout.addWidget(self.histogram_control, stretch=0)
-        second_tab_layout.addWidget(self.histogram_widget, stretch=1)
+        second_tab_layout.addWidget(self.histogram_plot_container, stretch=1)
         self.tab_widget.addTab(self.second_tab, "Power Monitor")
 
         self.alignment_tab = AlignmentPanel(None, None, None, self)
@@ -1358,6 +1368,50 @@ class MainWindow(QMainWindow):
         else:
             logger.warning("Histogram widget not available or does not have schedule_update method.")
 
+    @Slot(object)
+    def _handle_power_monitor_recording_started(self, settings: PowerMonitorAcquisitionSettings) -> None:
+        try:
+            trace_widget = self.power_monitor_trace_widget
+            if trace_widget is None:
+                trace_widget = PowerMonitorTraceWidget(self.histogram_plot_container)
+                self.histogram_plot_layout.addWidget(trace_widget, stretch=1)
+                self.power_monitor_trace_widget = trace_widget
+            trace_widget.start_recording(settings)
+            trace_widget.show()
+        except Exception:
+            logger.exception("Error starting Power Monitor recording trace")
+
+    @Slot(object)
+    def _handle_power_monitor_recording_sample(self, sample: PowerMonitorRecordingSample) -> None:
+        trace_widget = self.power_monitor_trace_widget
+        if trace_widget is None:
+            return
+        try:
+            trace_widget.append_sample(sample)
+        except Exception:
+            logger.exception("Error updating Power Monitor recording trace")
+
+    @Slot(object)
+    def _handle_power_monitor_recording_completed(self, recording: PowerMonitorRecording) -> None:
+        trace_widget = self.power_monitor_trace_widget
+        if trace_widget is None:
+            return
+        try:
+            trace_widget.set_completed_recording(recording)
+            trace_widget.show()
+        except Exception:
+            logger.exception("Error finalizing Power Monitor recording trace")
+
+    @Slot()
+    def _handle_power_monitor_recording_discarded(self) -> None:
+        trace_widget = self.power_monitor_trace_widget
+        if trace_widget is None:
+            return
+        try:
+            trace_widget.discard_recording()
+        except Exception:
+            logger.exception("Error clearing discarded Power Monitor recording trace")
+
     def _cleanup_cameras(self):
         logger.info(f"Closing {len(self.cameras)} camera(s)...")
 
@@ -1586,6 +1640,10 @@ class MainWindow(QMainWindow):
         if hasattr(self, "histogram_control") and self.histogram_control:
             logger.debug("Connecting histogram_control signals")
             self.histogram_control.power_data_ready.connect(self.handle_power_data)
+            self.histogram_control.recording_started.connect(self._handle_power_monitor_recording_started)
+            self.histogram_control.recording_sample_captured.connect(self._handle_power_monitor_recording_sample)
+            self.histogram_control.recording_completed.connect(self._handle_power_monitor_recording_completed)
+            self.histogram_control.recording_discarded.connect(self._handle_power_monitor_recording_discarded)
             self.histogram_control.operation_started.connect(self._handle_ct400_monitor_started)
             self.histogram_control.operation_finished.connect(self._handle_ct400_monitor_finished)
         else:
