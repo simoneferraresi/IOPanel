@@ -1,5 +1,6 @@
 import logging
 import threading
+import time
 from abc import ABC, ABCMeta, abstractmethod
 from datetime import UTC, datetime
 from typing import override
@@ -173,7 +174,6 @@ class ScanWorker(QtCore.QObject):
     _LASER_COMMAND_DELAY_MS = 150
 
     measurement_ready = QtCore.Signal(object)
-    progress_signal = QtCore.Signal(int)
     # The error signal now emits a structured error object
     error_signal = QtCore.Signal(InstrumentError)
     warning_signal = QtCore.Signal(int, str)
@@ -337,8 +337,6 @@ class ScanWorker(QtCore.QObject):
                 self.warning_signal.emit(raw_code, error_msg)
             else:
                 logger.info("ScanWorker: Scan completed successfully.")
-            self.progress_signal.emit(100)
-
             logger.info("ScanWorker: Retrieving data points...")
             detectors_to_get = self.acquisition_settings.detectors
             wavelengths, powers_scan_data = self.ct400.get_data_points(list(detectors_to_get))
@@ -651,7 +649,6 @@ class BaseControlPanel(QWidget, ABC, metaclass=QABCMeta):
 class CT400ControlPanel(BaseControlPanel):
     scan_data_ready = QtCore.Signal(object)
     scan_warning = QtCore.Signal(str)
-    progress_updated = QtCore.Signal(int)
     operation_started = QtCore.Signal()
     operation_finished = QtCore.Signal()
 
@@ -672,6 +669,11 @@ class CT400ControlPanel(BaseControlPanel):
         # Call base class __init__ which sets up common UI and properties
         super().__init__(ct400_device, config, parent)
 
+        self._scan_started_at: float | None = None
+        self._scan_elapsed_timer = QTimer(self)
+        self._scan_elapsed_timer.setInterval(1000)
+        self._scan_elapsed_timer.timeout.connect(self._update_scan_elapsed)
+
         self.setObjectName(ID_CT400_SCAN_PANEL)
 
         # Initialize subclass-specific UI
@@ -679,7 +681,6 @@ class CT400ControlPanel(BaseControlPanel):
 
         self._connect_settings_signals()
         self.on_instrument_connected(self.is_instrument_connected)
-        self.progress_updated.connect(self.update_progress_bar)
 
     @override
     def _init_subclass_ui(self) -> None:
@@ -739,9 +740,13 @@ class CT400ControlPanel(BaseControlPanel):
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
-        self.progress_bar.setTextVisible(True)
-        self.progress_bar.setFormat("%p%")
-        control_layout.addWidget(self.progress_bar)
+        self.progress_bar.setTextVisible(False)
+        activity_layout = QHBoxLayout()
+        activity_layout.addWidget(self.progress_bar, 1)
+        self.scan_elapsed_label = QLabel("Elapsed: 00:00")
+        self.scan_elapsed_label.setVisible(False)
+        activity_layout.addWidget(self.scan_elapsed_label)
+        control_layout.addLayout(activity_layout)
 
         control_group.setLayout(control_layout)
         self.main_layout.addWidget(control_group)
@@ -866,15 +871,13 @@ class CT400ControlPanel(BaseControlPanel):
             self.scanning = True
             self.operation_started.emit()
             operation_claimed = True
+            self._start_scan_activity_ui()
             self.scan_btn.setText("Stop Scan")
             self.scan_btn.setIcon(QtGui.QIcon(":/icons/stop.svg"))
             self.scan_btn.setProperty(PROP_SCANNING, True)
             self.scan_btn.style().unpolish(self.scan_btn)
             self.scan_btn.style().polish(self.scan_btn)
             self.on_instrument_connected(True)
-            self.progress_bar.setValue(0)
-            self.progress_bar.setVisible(True)
-
             # --- REFACTORED THREADING LOGIC ---
             self.scan_thread = QThread(self)
             self.scan_worker = ScanWorker(
@@ -892,7 +895,6 @@ class CT400ControlPanel(BaseControlPanel):
 
             # Connect signals
             self.scan_thread.started.connect(self.scan_worker.do_scan)
-            self.scan_worker.progress_signal.connect(self.progress_updated)
             self.scan_worker.measurement_ready.connect(self._handle_scan_completed)
             self.scan_worker.error_signal.connect(self._handle_scan_error)
             self.scan_worker.warning_signal.connect(self._handle_scan_warning)
@@ -954,10 +956,32 @@ class CT400ControlPanel(BaseControlPanel):
     def _handle_stop_failed(self, message: str):
         QMessageBox.critical(self, "CT400 Stop Failed", message)
 
-    @Slot(int)
-    def update_progress_bar(self, value: int):
-        if self.progress_bar.isVisible():
-            self.progress_bar.setValue(value)
+    def _start_scan_activity_ui(self) -> None:
+        self._scan_started_at = time.monotonic()
+        self.progress_bar.setRange(0, 0)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setVisible(True)
+        self.scan_elapsed_label.setText("Elapsed: 00:00")
+        self.scan_elapsed_label.setVisible(True)
+        self._update_scan_elapsed()
+        self._scan_elapsed_timer.start()
+
+    @Slot()
+    def _update_scan_elapsed(self) -> None:
+        if self._scan_started_at is None:
+            return
+        elapsed_seconds = max(0, int(time.monotonic() - self._scan_started_at))
+        minutes, seconds = divmod(elapsed_seconds, 60)
+        self.scan_elapsed_label.setText(f"Elapsed: {minutes:02d}:{seconds:02d}")
+
+    def _stop_scan_activity_ui(self) -> None:
+        self._scan_elapsed_timer.stop()
+        self._scan_started_at = None
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setVisible(False)
+        self.scan_elapsed_label.setText("Elapsed: 00:00")
+        self.scan_elapsed_label.setVisible(False)
 
     @Slot(object)
     def _handle_scan_completed(self, measurement: ScanMeasurement):
@@ -984,6 +1008,7 @@ class CT400ControlPanel(BaseControlPanel):
         self.operation_finished.emit()
 
     def _reset_scan_ui(self, status_msg: str = MSG_SCAN_READY):
+        self._stop_scan_activity_ui()
         self.scanning = False
         self.scan_btn.setText("Start Scan")
         self.scan_btn.setToolTip("")
@@ -991,8 +1016,6 @@ class CT400ControlPanel(BaseControlPanel):
         self.scan_btn.setProperty(PROP_SCANNING, False)
         self.scan_btn.style().unpolish(self.scan_btn)
         self.scan_btn.style().polish(self.scan_btn)
-        self.progress_bar.setVisible(False)
-        self.progress_bar.setValue(0)
         # Let the base class handle widget enabling/disabling
         self.on_instrument_connected(self.is_instrument_connected)
         logger.info(f"Scan panel UI reset. Status: {status_msg}")
