@@ -27,7 +27,6 @@ from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QMessageBox,
     QPushButton,
@@ -40,6 +39,7 @@ from app_settings import AppSettings
 from hardware.ct400_types import Detector
 from logic.scan_export import build_scan_export_v2
 from logic.scan_measurement import ScanMeasurement
+from ui.scan_export_dialog import ScanExportDialog
 
 try:
     import matlab.engine
@@ -70,11 +70,21 @@ _DETECTOR_COLOR_BY_ID = {
 }
 
 
-def derive_scan_export_targets(selected_path: str | Path, include_fig: bool = False) -> dict[str, Path]:
-    """Return the CSV/MAT bundle (and optional FIG) for a selected export path."""
+def derive_scan_export_targets(
+    selected_path: str | Path,
+    *,
+    include_csv: bool,
+    include_mat: bool,
+    include_fig: bool,
+) -> dict[str, Path]:
+    """Return only explicitly selected targets for a logical base filename."""
     path = Path(selected_path)
     stem = path.with_suffix("") if path.suffix.lower() in {".csv", ".mat", ".fig"} else path
-    targets = {"CSV": stem.with_name(stem.name + ".csv"), "MAT": stem.with_name(stem.name + ".mat")}
+    targets: dict[str, Path] = {}
+    if include_csv:
+        targets["CSV"] = stem.with_name(stem.name + ".csv")
+    if include_mat:
+        targets["MAT"] = stem.with_name(stem.name + ".mat")
     if include_fig:
         targets["FIG"] = stem.with_name(stem.name + ".fig")
     return targets
@@ -1370,7 +1380,6 @@ class PlotWidget(QWidget):
         if measurement is None or self.current_wavelengths is None or self.current_powers is None:
             QMessageBox.warning(self, "No Data", "No scan data available to save.")
             return
-
         if Detector.DE_5 in measurement.detectors:
             QMessageBox.warning(
                 self,
@@ -1383,45 +1392,45 @@ class PlotWidget(QWidget):
             QMessageBox.warning(self, "No Detector Data", "Cannot export a scan with no wavelength-resolved detector data.")
             return
 
-        # Disable button during save to prevent multiple clicks
-        self.save_btn.setEnabled(False)  # Disable button early
-        self.matlab_status_label.setText("")  # Clear previous status
-
-        # Acquisition data stays bound to the completed measurement snapshot.
+        self.save_btn.setEnabled(False)
+        self.matlab_status_label.setText("")
         wavelengths = measurement.wavelengths_nm
         pout = measurement.final_pout
         logger.info(f"Saving scan data. Points: {len(wavelengths)}. Pout: {pout}")
-
         default_filename = f"scan_{wavelengths[0]:.0f}nm_{wavelengths[-1]:.0f}nm"
-
-        # --- NEW: Construct initial path with memory ---
-        initial_path = self.last_scan_save_dir / default_filename
-
-        # Added .fig to default filters if MATLAB is available
-        file_filters_list = [
-            "CSV File (*.csv)",
-            "MAT File (*.mat)",
-        ]
-        if MATLAB_ENGINE_AVAILABLE:
-            file_filters_list.append("FIG File (*.fig)")
-        file_filters_list.append("All Files (*)")
-        file_filters = ";;".join(file_filters_list)
-
-        selected_path_with_ext, selected_filter = QFileDialog.getSaveFileName(
-            self,
-            "Save Scan Results As (Specify Base Name)",
-            str(initial_path),  # <--- Pass the full path (dir + filename) as a string
-            file_filters,
+        formats = self.settings.scan_export_formats() if self.settings is not None else (True, True, False)
+        dialog = ScanExportDialog(
+            self.last_scan_save_dir, default_filename, formats, MATLAB_ENGINE_AVAILABLE, self
         )
-
-        if not selected_path_with_ext:
-            logger.info("Save cancelled by user.")
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            logger.info("Save Scan dialog cancelled by user.")
+            self.save_btn.setEnabled(True)
+            return
+        request = dialog.export_request
+        if request is None or not (request.csv or request.mat or request.fig):
             self.save_btn.setEnabled(True)
             return
 
-        # Resolve the full bundle once and ask about every existing target before
-        # writing any of them. A FIG is included whenever this build supports it.
-        targets = derive_scan_export_targets(selected_path_with_ext, include_fig=MATLAB_ENGINE_AVAILABLE)
+        targets = derive_scan_export_targets(
+            request.directory / request.base_name,
+            include_csv=request.csv,
+            include_mat=request.mat,
+            include_fig=request.fig,
+        )
+        if not targets:
+            self.save_btn.setEnabled(True)
+            return
+
+        # Accepted valid requests become the next preferences, even if the
+        # operator later declines an overwrite prompt.
+        self.last_scan_save_dir = request.directory
+        if self.settings is not None:
+            self.settings.set_scan_export_directory(request.directory)
+            self.settings.set_scan_export_formats(
+                csv=request.csv, mat=request.mat, fig=request.fig_preference
+            )
+            self.settings.sync()
+
         conflicts = [path for path in targets.values() if path.exists()]
         if conflicts:
             conflict_list = "\n".join(str(path) for path in conflicts)
@@ -1438,113 +1447,75 @@ class PlotWidget(QWidget):
                 self.save_btn.setEnabled(True)
                 return
 
-        comment, accepted = QInputDialog.getMultiLineText(
-            self,
-            "Experiment Comment",
-            "Optional comment for this scan export:",
-            "",
-        )
-        if not accepted:
-            logger.info("Scan export cancelled in experiment comment dialog.")
-            self.save_btn.setEnabled(True)
-            return
-
         try:
-            export_payload = build_scan_export_v2(measurement, comment=comment)
+            export_payload = build_scan_export_v2(measurement, comment=request.comment)
         except (TypeError, ValueError) as error:
             QMessageBox.warning(self, "Scan Export Not Supported", str(error))
             self.save_btn.setEnabled(True)
             return
 
-        # --- NEW: Update the memory ---
-        # Extract the directory from the file selected by the user
-        self.last_scan_save_dir = Path(selected_path_with_ext).parent
-        if self.settings is not None:
-            self.settings.set_scan_export_directory(self.last_scan_save_dir)
-        # ------------------------------
-
         self.saved_files_list: list[Path] = []
         self.error_list: list[str] = []
-        self.pending_saves = 0  # Counter for async operations
+        self.pending_saves = 0
 
-        # --- Save CSV (Synchronous) ---
-        try:
-            csv_path = targets["CSV"]
-            csv_buffer = io.StringIO()
-            np.savetxt(
-                csv_buffer,
-                export_payload.csv_data,
-                delimiter=",",
-                header=export_payload.csv_header,
-                comments="",
-                fmt="%.6f",
-            )
-            with csv_path.resolve().open("w", encoding="utf-8", newline="") as csv_file:
-                csv_file.write(csv_buffer.getvalue())
-            self.saved_files_list.append(csv_path)
-            logger.info(f"Saved CSV: {csv_path}")
-        except Exception as e:
-            self.error_list.append(f"CSV: {e}")
-            logger.error(f"CSV save failed: {e}", exc_info=True)
+        if request.csv:
+            try:
+                csv_path = targets["CSV"]
+                csv_buffer = io.StringIO()
+                np.savetxt(
+                    csv_buffer,
+                    export_payload.csv_data,
+                    delimiter=",",
+                    header=export_payload.csv_header,
+                    comments="",
+                    fmt="%.6f",
+                )
+                with csv_path.resolve().open("w", encoding="utf-8", newline="") as csv_file:
+                    csv_file.write(csv_buffer.getvalue())
+                self.saved_files_list.append(csv_path)
+                logger.info(f"Saved CSV: {csv_path}")
+            except Exception as e:
+                self.error_list.append(f"CSV: {e}")
+                logger.error(f"CSV save failed: {e}", exc_info=True)
 
-        import scipy.io as sio
+        if request.mat:
+            try:
+                import scipy.io as sio
 
-        # --- Save MAT (Synchronous) ---
-        try:
-            mat_path = targets["MAT"]
-            sio.savemat(str(mat_path.resolve()), export_payload.mat_data, do_compression=True)
-            self.saved_files_list.append(mat_path)
-            logger.info(f"Saved MAT: {mat_path}")
-        except Exception as e:
-            self.error_list.append(f"MAT: {e}")
-            logger.error(f"MAT save failed: {e}", exc_info=True)
+                mat_path = targets["MAT"]
+                sio.savemat(str(mat_path.resolve()), export_payload.mat_data, do_compression=True)
+                self.saved_files_list.append(mat_path)
+                logger.info(f"Saved MAT: {mat_path}")
+            except Exception as e:
+                self.error_list.append(f"MAT: {e}")
+                logger.error(f"MAT save failed: {e}", exc_info=True)
 
-        # --- Save FIG ---
-        if MATLAB_ENGINE_AVAILABLE:
-            if not self._ensure_matlab_engine_started():
-                # ... (handle engine start failure) ...
-                if not any("FIG:" in err for err in self.error_list):
-                    self.error_list.append("FIG: Save skipped (MATLAB Engine failed to start/unavailable).")
+        if request.fig:
+            if not MATLAB_ENGINE_AVAILABLE:
+                self.error_list.append("FIG: MATLAB Engine support is not available.")
+            elif not self._ensure_matlab_engine_started():
+                self.error_list.append("FIG: Save skipped (MATLAB Engine failed to start/unavailable).")
             else:
                 self.pending_saves += 1
                 fig_path = targets["FIG"]
                 self.matlab_status_label.setText(f"Queueing {fig_path.name} save...")
-
-                # --- Manage previous thread/worker instance ---
-                # If a thread object exists, we assume it's from a previous operation.
-                # We can't safely interact with it if deleteLater might have been called.
-                # The connections made previously (finished -> deleteLater) should handle its cleanup.
-                # We just need to ensure we are creating NEW ones for this operation.
-                # Setting them to None here helps make it clear we are done with the old Python vars.
                 if self.matlab_save_thread is not None:
-                    # We don't need to explicitly quit/wait here if finished->deleteLater is robust.
-                    # The main issue is accessing a potentially deleted C++ object.
-                    # By creating new ones, we avoid this.
-                    logger.debug("Previous matlab_save_thread detected. Assuming it will self-clean via deleteLater.")
-                # ---
-
-                self.matlab_save_thread = QThread(self)  # QThread can have a parent
-                self.matlab_save_worker = MatlabSaveWorker()  # NO PARENT before moveToThread
+                    logger.debug("Previous matlab_save_thread detected; its finished signals own cleanup.")
+                self.matlab_save_thread = QThread(self)
+                self.matlab_save_worker = MatlabSaveWorker()
                 self.matlab_save_worker.moveToThread(self.matlab_save_thread)
-
-                # Connect signals for the NEW worker and thread
                 self.matlab_save_worker.finished_saving.connect(self._handle_matlab_save_finished)
                 self.matlab_save_thread.started.connect(
                     lambda: logger.info("MATLAB save worker thread started for FIG.")
                 )
-                # Ensure proper cleanup when the thread finishes
                 self.matlab_save_thread.finished.connect(self.matlab_save_thread.deleteLater)
                 self.matlab_save_thread.finished.connect(self.matlab_save_worker.deleteLater)
-                # Optional: Disconnect old signals if you were reusing worker/thread objects,
-                # but since we are creating new ones, this is not strictly necessary.
-
                 self.matlab_save_thread.start()
 
                 title_str_matlab = f"Scan {wavelengths[0]:.1f} - {wavelengths[-1]:.1f} nm"
                 if pout is not None:
                     title_str_matlab += f" (Pout: {pout:.2f} dBm)"
                 fig_payload = build_matlab_fig_payload(measurement)
-
                 QMetaObject.invokeMethod(
                     self.matlab_save_worker,
                     "save_matlab_fig",
@@ -1557,11 +1528,6 @@ class PlotWidget(QWidget):
                     Q_ARG(QWidget, self),
                 )
 
-        else:  # MATLAB_ENGINE_AVAILABLE is False (compile-time check)
-            logger.info("Skipping .fig save: MATLAB Engine support not compiled in or available.")
-            # No error_list addition here, it's a known unavailability
-
-        # If no asynchronous saves were started, finalize now.
         if self.pending_saves == 0:
             self._check_all_saves_done()
 
