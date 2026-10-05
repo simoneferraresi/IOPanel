@@ -822,6 +822,7 @@ class PlotWidget(QWidget):
         self.current_powers: np.ndarray | None = None
         self.current_output_power: float | None = None
         self.current_measurement: ScanMeasurement | None = None
+        self.reference_measurement: ScanMeasurement | None = None
         self.detector_plot_items: dict[Detector, pg.PlotDataItem] = {}
         self.reference_detector_plot_items: dict[Detector, pg.PlotDataItem] = {}
         self.detector_legend: pg.LegendItem | None = None
@@ -989,12 +990,15 @@ class PlotWidget(QWidget):
 
             measurement = self.current_measurement
             if measurement is not None:
-                if len(wavelengths) == 0 or not measurement.detectors:
+                if wavelengths is None or len(wavelengths) == 0 or idx is None or not measurement.detectors:
                     self._hide_crosshair()
                     return
 
                 values = measurement.detector_data[:, idx]
                 label_lines = [f"λ: {x:.3f} nm"]
+                reference = self.reference_measurement
+                if reference is not None:
+                    label_lines.append("Live:")
                 finite_values = []
                 for detector, value in zip(measurement.detectors, values, strict=True):
                     if np.isfinite(value):
@@ -1003,6 +1007,26 @@ class PlotWidget(QWidget):
                         label_lines.append(f"Det {detector.value}: {value:.2f} dB")
                     else:
                         label_lines.append(f"Det {detector.value}: n/a")
+
+                if reference is not None:
+                    reference_indices = np.flatnonzero(np.isfinite(reference.wavelengths_nm))
+                    if reference_indices.size == 0:
+                        label_lines.append("Reference: n/a")
+                    else:
+                        reference_idx = reference_indices[
+                            np.abs(reference.wavelengths_nm[reference_indices] - x).argmin()
+                        ]
+                        reference_x = float(reference.wavelengths_nm[reference_idx])
+                        label_lines.append(f"Reference @ {reference_x:.3f} nm:")
+                        for detector, value in zip(
+                            reference.detectors,
+                            reference.detector_data[:, reference_idx],
+                            strict=True,
+                        ):
+                            if np.isfinite(value):
+                                label_lines.append(f"Det {detector.value}: {float(value):.2f} dB")
+                            else:
+                                label_lines.append(f"Det {detector.value}: n/a")
 
                 self.v_line.setPos(x)
                 self.v_line.setVisible(True)
@@ -1285,6 +1309,7 @@ class PlotWidget(QWidget):
         self.current_powers = None
         self.current_output_power = None
         self.current_measurement = None
+        self.reference_measurement = None
 
         # 3. Reset UI state
         self.plot_widget.setTitle("Wavelength Scan (Cleared)", color="black", size="11pt")
@@ -1302,9 +1327,11 @@ class PlotWidget(QWidget):
 
         measurement = self.current_measurement
         if measurement is None:
+            self.reference_measurement = None
             self._clear_detector_reference_items()
             self.reference_plot_item.setData(self.current_wavelengths, self.current_powers)
         else:
+            self.reference_measurement = measurement
             self.reference_plot_item.setData([], [])
             self._clear_detector_reference_items()
             for row_index, detector in enumerate(measurement.detectors):

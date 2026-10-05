@@ -298,6 +298,91 @@ def test_completed_multidetector_crosshair_reports_identity_in_acquisition_order
     assert label.splitlines() == ["λ: 1550.237 nm", "Det 3: -32.00 dB", "Det 1: -19.00 dB"]
 
 
+def test_frozen_detector_cursor_uses_independent_nearest_wavelength_and_detector_order(qtbot):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    reference = _detector_measurement(
+        [1550.000, 1550.235, 1550.490],
+        [[-10.0, -11.0, -12.0], [-20.0, -21.0, -22.0], [-30.0, -31.0, -32.0]],
+        (Detector.DE_2, Detector.DE_4, Detector.DE_1),
+    )
+    live = _detector_measurement(
+        [1550.000, 1550.237, 1550.500],
+        [[-40.0, -41.0, -42.0], [-50.0, -51.0, -52.0]],
+        (Detector.DE_3, Detector.DE_1),
+    )
+    widget.set_measurement(reference)
+    widget.freeze_current_trace()
+    assert widget.reference_measurement is reference
+    widget.set_measurement(live)
+    assert widget.current_measurement is live
+    assert widget.reference_measurement is reference
+
+    _move_plot_cursor(widget, 1550.237, -25.0)
+
+    assert widget.v_line.value() == pytest.approx(1550.237)
+    assert not widget.h_line.isVisible()
+    assert widget.cursor_label.toPlainText().splitlines() == [
+        "\u03bb: 1550.237 nm",
+        "Live:",
+        "Det 3: -41.00 dB",
+        "Det 1: -51.00 dB",
+        "Reference @ 1550.235 nm:",
+        "Det 2: -11.00 dB",
+        "Det 4: -21.00 dB",
+        "Det 1: -31.00 dB",
+    ]
+
+
+def test_frozen_cursor_preserves_live_single_detector_horizontal_line(qtbot):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    reference = _detector_measurement([1550.0], [[-35.0]], (Detector.DE_3,))
+    live = _detector_measurement([1550.0], [[-18.42]], (Detector.DE_1,))
+    widget.set_measurement(reference)
+    widget.freeze_current_trace()
+    widget.set_measurement(live)
+
+    _move_plot_cursor(widget, 1550.0, -10.0)
+
+    assert widget.h_line.isVisible()
+    assert widget.h_line.value() == pytest.approx(-18.42)
+    assert widget.cursor_label.toPlainText().splitlines()[-2:] == [
+        "Reference @ 1550.000 nm:",
+        "Det 3: -35.00 dB",
+    ]
+
+
+@pytest.mark.parametrize("bad_value", [float("nan"), float("inf"), -float("inf")])
+def test_frozen_cursor_marks_nonfinite_reference_detector_value_n_a(qtbot, bad_value):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    reference = _detector_measurement([1550.0], [[bad_value]], (Detector.DE_3,))
+    widget.set_measurement(reference)
+    widget.freeze_current_trace()
+    widget.set_measurement(_detector_measurement([1550.0], [[-18.42]], (Detector.DE_1,)))
+
+    _move_plot_cursor(widget, 1550.0, -10.0)
+
+    assert widget.h_line.isVisible()
+    assert widget.h_line.value() == pytest.approx(-18.42)
+    assert widget.cursor_label.toPlainText().splitlines()[-1] == "Det 3: n/a"
+
+
+def test_frozen_cursor_reports_unavailable_when_reference_has_no_finite_wavelength(qtbot):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    reference = _detector_measurement([float("nan"), float("inf")], [[-30.0, -31.0]], (Detector.DE_3,))
+    widget.set_measurement(reference)
+    widget.freeze_current_trace()
+    widget.set_measurement(_detector_measurement([1550.0], [[-18.42]], (Detector.DE_1,)))
+
+    _move_plot_cursor(widget, 1550.0, -10.0)
+
+    assert "Det 1: -18.42 dB" in widget.cursor_label.toPlainText()
+    assert widget.cursor_label.toPlainText().splitlines()[-1] == "Reference: n/a"
+
+
 def test_completed_single_detector_crosshair_snaps_horizontal_line_and_uses_db(qtbot):
     widget = PlotWidget(ScanSettings())
     qtbot.addWidget(widget)
@@ -322,6 +407,21 @@ def test_generic_preview_crosshair_keeps_single_trace_readout(qtbot):
     assert widget.h_line.isVisible()
     assert widget.h_line.value() == pytest.approx(-18.42)
     assert widget.cursor_label.toPlainText() == "λ: 1550.000 nm\nP: -18.42 dBm"
+
+
+def test_generic_preview_freeze_keeps_generic_cursor_and_has_no_measurement_reference(qtbot):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    wavelengths = np.array([1550.0, 1550.5])
+    powers = np.array([-18.42, -20.0])
+    widget.update_plot(wavelengths, powers)
+    widget.freeze_current_trace()
+
+    assert widget.reference_measurement is None
+    np.testing.assert_array_equal(widget.reference_plot_item.getData()[0], wavelengths)
+    np.testing.assert_array_equal(widget.reference_plot_item.getData()[1], powers)
+    _move_plot_cursor(widget, 1550.1, -10.0)
+    assert widget.cursor_label.toPlainText().splitlines() == ["\u03bb: 1550.000 nm", "P: -18.42 dBm"]
 
 
 @pytest.mark.parametrize("bad_value", [float("nan"), float("inf"), -float("inf")])
@@ -526,6 +626,7 @@ def test_freeze_snapshots_all_detectors_and_re_freeze_replaces_snapshot(qtbot):
     first = _detector_measurement(wavelengths, [[1, 2], [3, 4]], (Detector.DE_1, Detector.DE_3))
     widget.set_measurement(first)
     widget.freeze_current_trace()
+    assert widget.reference_measurement is first
     np.testing.assert_array_equal(_plotted_data(widget.reference_detector_plot_items[Detector.DE_1])[1], [1, 2])
     np.testing.assert_array_equal(_plotted_data(widget.reference_detector_plot_items[Detector.DE_3])[1], [3, 4])
     assert (
@@ -538,8 +639,11 @@ def test_freeze_snapshots_all_detectors_and_re_freeze_replaces_snapshot(qtbot):
 
     second = _detector_measurement(wavelengths, [[11, 12], [13, 14]], (Detector.DE_1, Detector.DE_3))
     widget.set_measurement(second)
+    assert widget.current_measurement is second
+    assert widget.reference_measurement is first
     np.testing.assert_array_equal(_plotted_data(widget.reference_detector_plot_items[Detector.DE_1])[1], [1, 2])
     widget.freeze_current_trace()
+    assert widget.reference_measurement is second
 
     np.testing.assert_array_equal(_plotted_data(widget.reference_detector_plot_items[Detector.DE_1])[1], [11, 12])
     np.testing.assert_array_equal(_plotted_data(widget.reference_detector_plot_items[Detector.DE_3])[1], [13, 14])
@@ -565,6 +669,7 @@ def test_clear_plot_clears_detector_items_legend_and_measurement_state(qtbot):
     assert widget.current_powers is None
     assert widget.current_output_power is None
     assert widget.current_measurement is None
+    assert widget.reference_measurement is None
     assert not widget.save_btn.isEnabled()
     assert not widget.freeze_btn.isEnabled()
 
