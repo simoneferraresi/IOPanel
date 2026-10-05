@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app_settings import AppSettings
 from hardware.ct400_types import Detector
 from logic.scan_export import build_scan_export_v2
 from logic.scan_measurement import ScanMeasurement
@@ -809,7 +810,9 @@ class PlotWidget(QWidget):
     # Signal to update UI from worker, e.g., re-enable button, show status
     matlab_save_status_update = Signal(str)  # Message for status bar or dialog
 
-    def __init__(self, shared_settings, parent: QWidget | None = None):
+    def __init__(
+        self, shared_settings, parent: QWidget | None = None, settings: AppSettings | None = None
+    ):
         super().__init__(parent)
         if not isinstance(shared_settings, ScanSettings):
             logger.warning("PlotWidget needs a valid ScanSettings object for metadata.")
@@ -839,7 +842,9 @@ class PlotWidget(QWidget):
 
         # --- NEW: Remember last save directory ---
         # Start with the current working directory
-        self.last_save_dir = Path.cwd()
+        self.settings = settings
+        self.last_scan_save_dir = settings.scan_export_directory() if settings is not None else Path.cwd()
+        self.last_plot_image_dir = settings.plot_image_directory() if settings is not None else Path.cwd()
 
         # --- UI Setup ---
         layout = QVBoxLayout(self)
@@ -948,7 +953,7 @@ class PlotWidget(QWidget):
     def export_plot_image(self):
         # 1. Define filename
         # Use last_save_dir logic
-        default_name = self.last_save_dir / "plot_capture.png"
+        default_name = self.last_plot_image_dir / "plot_capture.png"
 
         file_path, _ = QFileDialog.getSaveFileName(
             self, "Save Plot Image", str(default_name), "PNG Image (*.png);;JPG Image (*.jpg)"
@@ -966,6 +971,9 @@ class PlotWidget(QWidget):
                 # (PyQtGraph usually handles this based on current view settings)
 
                 exporter.export(file_path)
+                self.last_plot_image_dir = Path(file_path).parent
+                if self.settings is not None:
+                    self.settings.set_plot_image_directory(self.last_plot_image_dir)
                 logger.info(f"Plot image saved to: {file_path}")
             except Exception as e:
                 logger.error(f"Failed to export image: {e}")
@@ -1387,7 +1395,7 @@ class PlotWidget(QWidget):
         default_filename = f"scan_{wavelengths[0]:.0f}nm_{wavelengths[-1]:.0f}nm"
 
         # --- NEW: Construct initial path with memory ---
-        initial_path = self.last_save_dir / default_filename
+        initial_path = self.last_scan_save_dir / default_filename
 
         # Added .fig to default filters if MATLAB is available
         file_filters_list = [
@@ -1450,7 +1458,9 @@ class PlotWidget(QWidget):
 
         # --- NEW: Update the memory ---
         # Extract the directory from the file selected by the user
-        self.last_save_dir = Path(selected_path_with_ext).parent
+        self.last_scan_save_dir = Path(selected_path_with_ext).parent
+        if self.settings is not None:
+            self.settings.set_scan_export_directory(self.last_scan_save_dir)
         # ------------------------------
 
         self.saved_files_list: list[Path] = []

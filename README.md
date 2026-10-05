@@ -216,6 +216,13 @@ IOPanel/
 
 ---
 
+# Per-user UI preferences
+
+IOPanel stores harmless interface preferences and recent output folders through Qt `QSettings`. This includes the main
+window layout, selected scan detectors, camera control visibility, and the last-used scan, plot-image, and per-camera
+screenshot folders. `config.ini` remains the source for hardware configuration and startup defaults. IOPanel never
+restores hardware state from saved preferences or sends hardware commands while loading them.
+
 ## License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
