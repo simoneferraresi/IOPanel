@@ -1,3 +1,5 @@
+from typing import cast
+
 import numpy as np
 
 from config_model import AppConfig
@@ -26,7 +28,6 @@ def test_record_button_initial_state(qtbot):
     assert panel.record_btn.text() == "Record"
     assert panel.recording_elapsed_label.isHidden()
     assert panel.last_recording is None
-    panel.cleanup_worker_thread()
 
 
 def test_recording_captures_irregular_samples_and_manual_stop_keeps_monitoring(qtbot, monkeypatch):
@@ -70,7 +71,6 @@ def test_recording_captures_irregular_samples_and_manual_stop_keeps_monitoring(q
     assert reads == []
     panel.timer.stop()
     panel.monitoring = False
-    panel.cleanup_worker_thread()
 
 
 def test_monitor_stop_auto_finalizes_and_keeps_zero_sample_recording(qtbot, monkeypatch):
@@ -89,7 +89,6 @@ def test_monitor_stop_auto_finalizes_and_keeps_zero_sample_recording(qtbot, monk
     assert emitted[0].pout_data.shape == (0,)
     assert emitted[0].detector_data.shape == (2, 0)
     assert not panel._recording_active
-    panel.cleanup_worker_thread()
 
 
 def test_monitor_error_auto_finalizes_captured_samples(qtbot, monkeypatch):
@@ -107,4 +106,93 @@ def test_monitor_error_auto_finalizes_captured_samples(qtbot, monkeypatch):
     assert len(emitted) == 1
     assert emitted[0].stop_reason is PowerMonitorRecordingStopReason.MONITORING_ERROR
     np.testing.assert_array_equal(emitted[0].pout_data, [1.0])
-    panel.cleanup_worker_thread()
+
+
+def test_malformed_recording_sample_does_not_break_live_display_or_partially_append(qtbot, monkeypatch):
+    panel, _ = _panel(qtbot)
+    times = iter([30.0, 30.25, 30.5, 30.8])
+    monkeypatch.setattr("ui.control_panel.time.monotonic", lambda: next(times))
+    displayed = []
+    panel.power_data_ready.connect(displayed.append)
+    panel.monitoring = True
+    panel.timer.start()
+    panel._update_recording_button()
+    panel._start_recording()
+
+    malformed = PowerData(
+        3.0,
+        cast(dict[Detector, float], {Detector.DE_1: "not numeric", Detector.DE_3: 9.0}),
+    )
+    panel._handle_worker_data_ready(malformed)
+
+    assert displayed[-1]["pout"] == 3.0
+    assert displayed[-1]["detectors"]["Det 1"] == "not numeric"
+    assert panel.monitoring
+    assert panel._recording_active
+    assert panel._recording_elapsed == []
+    assert panel._recording_pout == []
+    assert panel._recording_detector_values == [[], []]
+
+    panel._handle_worker_data_ready(PowerData(4.0, {Detector.DE_1: 5.0, Detector.DE_3: 6.0}))
+    assert len(panel._recording_elapsed) == 1
+    assert panel._recording_pout == [4.0]
+    assert panel._recording_detector_values == [[5.0], [6.0]]
+    panel._toggle_recording()
+    panel.timer.stop()
+    panel.monitoring = False
+
+
+def test_monitor_stop_continues_when_recording_finalization_fails(qtbot, monkeypatch):
+    panel, _ = _panel(qtbot)
+
+    def fail_recording_construction(**_kwargs):
+        raise RuntimeError("controlled recording construction failure")
+
+    monkeypatch.setattr("ui.control_panel.PowerMonitorRecording", fail_recording_construction)
+    emitted = []
+    operation_finished = []
+    panel.recording_completed.connect(emitted.append)
+    panel.operation_finished.connect(lambda: operation_finished.append(True))
+    panel.monitoring = True
+    panel.timer.start()
+    panel._update_recording_button()
+    panel._start_recording()
+
+    panel._stop_monitoring()
+
+    assert not panel.monitoring
+    assert not panel.timer.isActive()
+    assert not panel._recording_active
+    assert panel._recording_settings is None
+    assert emitted == []
+    qtbot.waitUntil(lambda: not panel._monitor_stop_pending, timeout=3000)
+    assert operation_finished == [True]
+    assert panel.record_btn.text() == "Record"
+    assert not panel.record_btn.isEnabled()
+
+
+def test_manual_recording_stop_clears_state_when_finalization_fails(qtbot, monkeypatch):
+    panel, _ = _panel(qtbot)
+
+    def fail_recording_construction(**_kwargs):
+        raise RuntimeError("controlled recording construction failure")
+
+    monkeypatch.setattr("ui.control_panel.PowerMonitorRecording", fail_recording_construction)
+    emitted = []
+    panel.recording_completed.connect(emitted.append)
+    panel.monitoring = True
+    panel.timer.start()
+    panel._update_recording_button()
+    panel._start_recording()
+
+    panel._toggle_recording()
+
+    assert panel.monitoring
+    assert panel.timer.isActive()
+    assert not panel._recording_active
+    assert panel._recording_settings is None
+    assert emitted == []
+    assert panel.record_btn.isEnabled()
+    assert panel.record_btn.text() == "Record"
+    panel.timer.stop()
+    panel.monitoring = False

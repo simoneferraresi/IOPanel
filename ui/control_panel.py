@@ -1321,7 +1321,7 @@ class HistogramControlPanel(BaseControlPanel):
                 if instrument_error_or_disconnect
                 else PowerMonitorRecordingStopReason.MONITORING_STOPPED
             )
-            self._finalize_recording(reason)
+            self._finalize_recording_safely(reason)
 
         logger.info(
             f"Monitor Panel: Stopping power monitoring. Forced by error/disconnect: {instrument_error_or_disconnect}"
@@ -1438,7 +1438,10 @@ class HistogramControlPanel(BaseControlPanel):
             f"Monitor Panel (Main Thread): Received power data from worker: Pout={power_data_tuple.pout}, Detectors={power_data_tuple.detectors}"
         )
         if self._recording_active:
-            self._capture_recording_sample(power_data_tuple)
+            try:
+                self._capture_recording_sample(power_data_tuple)
+            except Exception:  # BLE001: recording is optional and must not interrupt live monitor delivery.
+                logger.exception("Monitor Panel: Recording sample rejected; live monitoring will continue.")
         try:
             detector_string_map = {
                 Detector.DE_1: "Det 1",
@@ -1473,7 +1476,7 @@ class HistogramControlPanel(BaseControlPanel):
 
     def _toggle_recording(self) -> None:
         if self._recording_active:
-            self._finalize_recording(PowerMonitorRecordingStopReason.USER_STOPPED)
+            self._finalize_recording_safely(PowerMonitorRecordingStopReason.USER_STOPPED)
         else:
             self._start_recording()
 
@@ -1522,10 +1525,13 @@ class HistogramControlPanel(BaseControlPanel):
         if not self._recording_active or settings is None or started is None:
             return
         elapsed = max(0.0, time.monotonic() - started)
+        pout = float(power_data.pout)
+        detector_values = [float(power_data.detectors.get(detector, float("nan"))) for detector in settings.detectors]
+        # Convert the complete sample first so any failed conversion leaves every buffer unchanged.
         self._recording_elapsed.append(elapsed)
-        self._recording_pout.append(float(power_data.pout))
-        for detector, values in zip(settings.detectors, self._recording_detector_values, strict=True):
-            values.append(float(power_data.detectors.get(detector, float("nan"))))
+        self._recording_pout.append(pout)
+        for values, value in zip(self._recording_detector_values, detector_values, strict=True):
+            values.append(value)
         total_seconds = int(elapsed)
         minutes, seconds = divmod(total_seconds, 60)
         self.recording_elapsed_label.setText(f"Recording: {minutes:02d}:{seconds:02d}")
@@ -1569,6 +1575,13 @@ class HistogramControlPanel(BaseControlPanel):
         self.last_recording = recording
         self._clear_recording_state()
         self.recording_completed.emit(recording)
+
+    def _finalize_recording_safely(self, reason: PowerMonitorRecordingStopReason) -> None:
+        try:
+            self._finalize_recording(reason)
+        except Exception:  # BLE001: recording failures must not alter monitor stop or manual-stop behavior.
+            logger.exception("Monitor Panel: Recording finalization failed; discarding the active capture.")
+            self._clear_recording_state()
 
     def _clear_recording_state(self) -> None:
         self._recording_active = False
