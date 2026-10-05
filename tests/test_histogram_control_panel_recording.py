@@ -46,7 +46,11 @@ def test_recording_captures_irregular_samples_and_manual_stop_keeps_monitoring(q
     monkeypatch.setattr("ui.control_panel.time.monotonic", lambda: next(times))
     emitted = []
     displayed = []
+    started = []
+    samples = []
     panel.recording_completed.connect(emitted.append)
+    panel.recording_started.connect(started.append)
+    panel.recording_sample_captured.connect(samples.append)
     panel.power_data_ready.connect(displayed.append)
     panel.monitoring = True
     panel.timer.start()
@@ -59,8 +63,14 @@ def test_recording_captures_irregular_samples_and_manual_stop_keeps_monitoring(q
     assert panel.record_btn.text() == "Stop Recording"
     assert not panel.recording_elapsed_label.isHidden()
     assert panel._recording_settings.detectors == (Detector.DE_1, Detector.DE_3)
+    assert started == [panel._recording_settings]
     panel._handle_worker_data_ready(PowerData(10.0, {Detector.DE_1: 11.0, Detector.DE_3: 13.0}))
     panel._handle_worker_data_ready(PowerData(20.0, {Detector.DE_1: 21.0}))
+    assert len(samples) == 2
+    assert samples[0].elapsed_s == 0.25
+    assert samples[0].detectors == (Detector.DE_1, Detector.DE_3)
+    assert samples[0].detector_values == (11.0, 13.0)
+    assert np.isnan(samples[1].detector_values[1])
     assert displayed[-1] == {
         "pout": 20.0,
         "detectors": {"Det 1": 21.0, "Det 2": 0.0, "Det 3": 0.0, "Det 4": 0.0},
@@ -93,7 +103,10 @@ def test_monitor_stop_auto_finalizes_and_keeps_zero_sample_recording(qtbot, monk
     panel.timer.start()
     panel._update_recording_button()
     panel._start_recording()
+    samples = []
+    panel.recording_sample_captured.connect(samples.append)
     panel._stop_monitoring()
+    assert samples == []
     assert len(emitted) == 1
     assert emitted[0].stop_reason is PowerMonitorRecordingStopReason.MONITORING_STOPPED
     assert emitted[0].elapsed_s.shape == (0,)
@@ -126,7 +139,9 @@ def test_malformed_recording_sample_does_not_break_live_display_or_partially_app
     times = iter([30.0, 30.25, 30.5, 30.8])
     monkeypatch.setattr("ui.control_panel.time.monotonic", lambda: next(times))
     displayed = []
+    samples = []
     panel.power_data_ready.connect(displayed.append)
+    panel.recording_sample_captured.connect(samples.append)
     panel.monitoring = True
     panel.timer.start()
     panel._update_recording_button()
@@ -145,11 +160,13 @@ def test_malformed_recording_sample_does_not_break_live_display_or_partially_app
     assert panel._recording_elapsed == []
     assert panel._recording_pout == []
     assert panel._recording_detector_values == [[], []]
+    assert samples == []
 
     panel._handle_worker_data_ready(PowerData(4.0, {Detector.DE_1: 5.0, Detector.DE_3: 6.0}))
     assert len(panel._recording_elapsed) == 1
     assert panel._recording_pout == [4.0]
     assert panel._recording_detector_values == [[5.0], [6.0]]
+    assert len(samples) == 1
     panel._toggle_recording()
     panel.timer.stop()
     panel.monitoring = False
@@ -164,8 +181,10 @@ def test_monitor_stop_continues_when_recording_finalization_fails(qtbot, monkeyp
 
     monkeypatch.setattr("ui.control_panel.PowerMonitorRecording", fail_recording_construction)
     emitted = []
+    discarded = []
     operation_finished = []
     panel.recording_completed.connect(emitted.append)
+    panel.recording_discarded.connect(lambda: discarded.append(True))
     panel.operation_finished.connect(lambda: operation_finished.append(True))
     panel.monitoring = True
     panel.timer.start()
@@ -179,6 +198,7 @@ def test_monitor_stop_continues_when_recording_finalization_fails(qtbot, monkeyp
     assert not panel._recording_active
     assert panel._recording_settings is None
     assert emitted == []
+    assert discarded == [True]
     qtbot.waitUntil(lambda: not panel._monitor_stop_pending, timeout=3000)
     assert operation_finished == [True]
     assert panel.record_btn.text() == "Record"

@@ -35,6 +35,29 @@ class PowerMonitorRecordingStopReason(Enum):
 
 
 @dataclass(frozen=True)
+class PowerMonitorRecordingSample:
+    """One successfully captured monitor sample, including its unplotted Pout value."""
+
+    elapsed_s: float
+    pout: float
+    detectors: tuple[Detector, ...]
+    detector_values: tuple[float, ...]
+
+    def __post_init__(self) -> None:
+        elapsed = float(self.elapsed_s)
+        if not np.isfinite(elapsed) or elapsed < 0:
+            raise ValueError("elapsed_s must be finite and non-negative")
+        detectors = _normalize_detectors(self.detectors)
+        detector_values = tuple(float(value) for value in self.detector_values)
+        if len(detector_values) != len(detectors):
+            raise ValueError("detector_values length must match detectors")
+        object.__setattr__(self, "elapsed_s", elapsed)
+        object.__setattr__(self, "pout", float(self.pout))
+        object.__setattr__(self, "detectors", detectors)
+        object.__setattr__(self, "detector_values", detector_values)
+
+
+@dataclass(frozen=True)
 class PowerMonitorRecording:
     settings: PowerMonitorAcquisitionSettings
     elapsed_s: np.ndarray
