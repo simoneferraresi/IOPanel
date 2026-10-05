@@ -136,6 +136,23 @@ class AppSettings:
     def set_scan_export_directory(self, directory: Path | str) -> None:
         self.set_directory("Paths/scan_export", directory)
 
+    def scan_export_formats(self) -> tuple[bool, bool, bool]:
+        """Return the preferred CSV, MAT, and FIG export selections."""
+        values = tuple(self._read(f"Export/formats/{name}", default) for name, default in (
+            ("csv", True), ("mat", True), ("fig", False)
+        ))
+        defaults = (True, True, False)
+        return (
+            values[0] if isinstance(values[0], bool) else defaults[0],
+            values[1] if isinstance(values[1], bool) else defaults[1],
+            values[2] if isinstance(values[2], bool) else defaults[2],
+        )
+
+    def set_scan_export_formats(self, *, csv: bool, mat: bool, fig: bool) -> None:
+        """Persist format preferences without changing schema-v1 identity."""
+        for name, value in (("csv", csv), ("mat", mat), ("fig", fig)):
+            self._write(f"Export/formats/{name}", bool(value))
+
     def plot_image_directory(self) -> Path:
         return self.directory("Paths/plot_image")
 
