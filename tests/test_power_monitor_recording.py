@@ -46,6 +46,8 @@ def test_recording_copies_arrays_preserves_detector_order_and_is_read_only():
     detector_data[0, 0] = 99
 
     assert recording.detectors == (Detector.DE_1, Detector.DE_3)
+    assert recording.detector_unit == "dBm"
+    assert recording.pout_unit == "dBm"
     assert recording.detector_data.shape == (2, 2)
     np.testing.assert_array_equal(recording.elapsed_s, [0.25, 0.63])
     np.testing.assert_array_equal(recording.pout_data, [1.0, 2.0])
@@ -107,6 +109,15 @@ def test_recording_rejects_naive_or_reversed_utc_timestamps():
         _recording(started_at_utc=started.replace(tzinfo=None))
     with pytest.raises(ValueError, match="precede"):
         _recording(started_at_utc=started, completed_at_utc=started - timedelta(seconds=1))
+
+
+def test_recording_formalizes_authoritative_instantaneous_power_units():
+    recording = _recording()
+    assert recording.detector_unit == "dBm"
+    assert recording.pout_unit == "dBm"
+
+    with pytest.raises(ValueError, match="must use dBm"):
+        _recording(detector_unit=None)
 
 
 def test_recording_sample_preserves_irregular_time_detector_order_and_nonfinite_values():

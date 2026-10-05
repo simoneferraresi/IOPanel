@@ -11,7 +11,7 @@ from logic.scan_measurement import ScanAcquisitionSettings, ScanMeasurement
 from ui import plot_widgets
 from ui.alignment_panel import AlignmentPanel
 from ui.control_panel import ScanSettings
-from ui.plot_widgets import PlotWidget, derive_scan_export_targets
+from ui.plot_widgets import HistogramWidget, PlotWidget, derive_scan_export_targets
 
 
 class _CapturedSurface:
@@ -129,6 +129,34 @@ def test_plot3d_flat_surface_preserves_orientation(qtbot, monkeypatch, z):
 
 def _view_range(widget):
     return widget.plot_widget.plotItem.vb.viewRange()
+
+
+def test_power_monitor_histogram_uses_detector_border_fill_and_text_palette(qtbot):
+    widget = HistogramWidget(None, ["Det 1", "Det 2", "Det 3", "Det 4"])
+    qtbot.addWidget(widget)
+
+    expected_border = ["#1b9e77", "#d95f02", "#7570b3", "#e7298a"]
+    expected_fill = ["#76c4ad", "#e89f67", "#aca9d1", "#f07eb8"]
+    expected_max_text = ["#082f23", "#411c00", "#232135", "#450c29"]
+    assert [pen.color().name() for pen in widget.bars.opts["pens"]] == expected_border
+    assert [brush.color().name() for brush in widget.bars.opts["brushes"]] == expected_fill
+    assert [item.color.name() for item in widget.max_texts] == expected_max_text
+    assert [item.color.name() for item in widget.current_texts] == ["#555555"] * 4
+    assert widget.max_pen.style().name == "DashLine"
+    widget.close()
+
+
+def test_power_monitor_histogram_colors_follow_detector_identity_when_labels_reordered(qtbot):
+    widget = HistogramWidget(None, ["Det 4", "Det 2", "Det 1", "Det 3"])
+    qtbot.addWidget(widget)
+    assert [pen.color().name() for pen in widget.bars.opts["pens"]] == [
+        "#e7298a",
+        "#d95f02",
+        "#1b9e77",
+        "#7570b3",
+    ]
+    assert [item.color.name() for item in widget.max_texts] == ["#450c29", "#411c00", "#082f23", "#232135"]
+    widget.close()
 
 
 def test_update_plot_autoranges_to_new_finite_trace(qtbot):

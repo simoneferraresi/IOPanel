@@ -1373,7 +1373,7 @@ class MainWindow(QMainWindow):
         try:
             trace_widget = self.power_monitor_trace_widget
             if trace_widget is None:
-                trace_widget = PowerMonitorTraceWidget(self.histogram_plot_container)
+                trace_widget = PowerMonitorTraceWidget(settings=self.settings, parent=self.histogram_plot_container)
                 self.histogram_plot_layout.addWidget(trace_widget, stretch=1)
                 self.power_monitor_trace_widget = trace_widget
             trace_widget.start_recording(settings)

@@ -80,6 +80,8 @@ def test_recording_captures_irregular_samples_and_manual_stop_keeps_monitoring(q
     recording = panel.last_recording
     assert recording is emitted[0]
     assert recording.stop_reason is PowerMonitorRecordingStopReason.USER_STOPPED
+    assert recording.detector_unit == "dBm"
+    assert recording.pout_unit == "dBm"
     np.testing.assert_allclose(recording.elapsed_s, [0.25, 0.63])
     np.testing.assert_allclose(recording.pout_data, [10.0, 20.0])
     assert recording.detector_data[1, 1] != recording.detector_data[1, 1]

@@ -1592,6 +1592,8 @@ class HistogramControlPanel(BaseControlPanel):
             backend=backend,
             simulated=simulated,
             stop_reason=reason,
+            detector_unit="dBm",
+            pout_unit="dBm",
         )
         self.last_recording = recording
         self._clear_recording_state()
