@@ -21,6 +21,15 @@ def _panel(qtbot):
     return panel, device
 
 
+def _shutdown_panel(qtbot, panel):
+    if panel._monitor_stop_pending:
+        qtbot.waitUntil(lambda: not panel._monitor_stop_pending, timeout=3000)
+    panel.cleanup_worker_thread()
+    # closeEvent normally initiates this cleanup; we've already done it here so
+    # pytest-qt can close the widget without touching the deleted QThread wrapper.
+    panel.cleanup_worker_thread = lambda: None
+
+
 def test_record_button_initial_state(qtbot):
     panel, _ = _panel(qtbot)
     assert not panel._recording_active
@@ -28,6 +37,7 @@ def test_record_button_initial_state(qtbot):
     assert panel.record_btn.text() == "Record"
     assert panel.recording_elapsed_label.isHidden()
     assert panel.last_recording is None
+    _shutdown_panel(qtbot, panel)
 
 
 def test_recording_captures_irregular_samples_and_manual_stop_keeps_monitoring(qtbot, monkeypatch):
@@ -71,6 +81,7 @@ def test_recording_captures_irregular_samples_and_manual_stop_keeps_monitoring(q
     assert reads == []
     panel.timer.stop()
     panel.monitoring = False
+    _shutdown_panel(qtbot, panel)
 
 
 def test_monitor_stop_auto_finalizes_and_keeps_zero_sample_recording(qtbot, monkeypatch):
@@ -89,6 +100,7 @@ def test_monitor_stop_auto_finalizes_and_keeps_zero_sample_recording(qtbot, monk
     assert emitted[0].pout_data.shape == (0,)
     assert emitted[0].detector_data.shape == (2, 0)
     assert not panel._recording_active
+    _shutdown_panel(qtbot, panel)
 
 
 def test_monitor_error_auto_finalizes_captured_samples(qtbot, monkeypatch):
@@ -106,6 +118,7 @@ def test_monitor_error_auto_finalizes_captured_samples(qtbot, monkeypatch):
     assert len(emitted) == 1
     assert emitted[0].stop_reason is PowerMonitorRecordingStopReason.MONITORING_ERROR
     np.testing.assert_array_equal(emitted[0].pout_data, [1.0])
+    _shutdown_panel(qtbot, panel)
 
 
 def test_malformed_recording_sample_does_not_break_live_display_or_partially_append(qtbot, monkeypatch):
@@ -140,6 +153,7 @@ def test_malformed_recording_sample_does_not_break_live_display_or_partially_app
     panel._toggle_recording()
     panel.timer.stop()
     panel.monitoring = False
+    _shutdown_panel(qtbot, panel)
 
 
 def test_monitor_stop_continues_when_recording_finalization_fails(qtbot, monkeypatch):
@@ -169,6 +183,7 @@ def test_monitor_stop_continues_when_recording_finalization_fails(qtbot, monkeyp
     assert operation_finished == [True]
     assert panel.record_btn.text() == "Record"
     assert not panel.record_btn.isEnabled()
+    _shutdown_panel(qtbot, panel)
 
 
 def test_manual_recording_stop_clears_state_when_finalization_fails(qtbot, monkeypatch):
@@ -196,3 +211,4 @@ def test_manual_recording_stop_clears_state_when_finalization_fails(qtbot, monke
     assert panel.record_btn.text() == "Record"
     panel.timer.stop()
     panel.monitoring = False
+    _shutdown_panel(qtbot, panel)
