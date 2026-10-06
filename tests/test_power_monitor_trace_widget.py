@@ -5,7 +5,7 @@ from typing import ClassVar
 
 import numpy as np
 import pytest
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import QDialog, QMessageBox, QToolButton
 
 from app_settings import AppSettings
@@ -100,6 +100,35 @@ def test_trace_uses_exact_detector_palette_for_all_optical_channels(qtbot, tmp_p
         "#7570b3",
         "#e7298a",
     ]
+    widget.close()
+
+
+def test_trace_legend_hides_presentation_only_and_new_recording_resets_visibility(qtbot, tmp_path):
+    widget = PowerMonitorTraceWidget(_app_settings(tmp_path))
+    qtbot.addWidget(widget)
+    settings = _settings((Detector.DE_1, Detector.DE_3))
+    widget.start_recording(settings)
+    sample, label = widget.legend.items[0]
+    click = SimpleNamespace(button=lambda: Qt.MouseButton.LeftButton, accept=lambda: None)
+
+    sample.mouseClickEvent(click)
+    assert not widget.curve_items[Detector.DE_1].isVisible()
+    widget.append_sample(PowerMonitorRecordingSample(0.25, 1.0, settings.detectors, (2.0, 3.0)))
+    widget.append_sample(PowerMonitorRecordingSample(0.75, 1.1, settings.detectors, (4.0, 5.0)))
+    np.testing.assert_array_equal(widget.detector_values[Detector.DE_1], [2.0, 4.0])
+    np.testing.assert_array_equal(widget.curve_items[Detector.DE_1].getData()[0], [0.25, 0.75])
+    np.testing.assert_array_equal(widget.curve_items[Detector.DE_1].getData()[1], [2.0, 4.0])
+    assert label.opacity() == pytest.approx(0.45)
+
+    sample.mouseClickEvent(click)
+    assert widget.curve_items[Detector.DE_1].isVisible()
+    assert label.opacity() == pytest.approx(1.0)
+
+    sample, _label = widget.legend.items[0]
+    sample.mouseClickEvent(click)
+    widget.start_recording(settings)
+    assert all(curve.isVisible() for curve in widget.curve_items.values())
+    assert all(label.opacity() == pytest.approx(1.0) for _sample, label in widget.legend.items)
     widget.close()
 
 

@@ -97,6 +97,10 @@ _POWER_MONITOR_MAX_TEXT_COLOR = "#E40000"
 _POWER_MONITOR_AXIS_LABEL_POINT_SIZE = 12
 _POWER_MONITOR_TICK_POINT_SIZE = 11
 _POWER_MONITOR_GRID_ALPHA = 0.30
+_PLOT_LEGEND_POINT_SIZE = 11
+_PLOT_LEGEND_TEXT_COLOR = "#171717"
+_PLOT_LEGEND_BACKGROUND = (255, 255, 255, 224)
+_PLOT_LEGEND_BORDER = (140, 140, 140, 160)
 _POWER_MONITOR_AXIS_LABEL_STYLE = {
     "color": "black",
     "font-size": f"{_POWER_MONITOR_AXIS_LABEL_POINT_SIZE}pt",
@@ -126,6 +130,37 @@ def _configure_power_monitor_axes(
     left_axis.enableAutoSIPrefix(False)
 
     plot_widget.showGrid(x=show_x_grid, y=True, alpha=_POWER_MONITOR_GRID_ALPHA)
+
+
+def _configure_plot_legend(legend: pg.LegendItem) -> pg.LegendItem:
+    """Apply the shared plot legend style and native sample click behavior."""
+    legend.setPen(pg.mkPen(_PLOT_LEGEND_BORDER, width=1))
+    legend.setBrush(pg.mkBrush(_PLOT_LEGEND_BACKGROUND))
+    legend.opts["labelTextColor"] = _PLOT_LEGEND_TEXT_COLOR
+    legend.opts["labelTextSize"] = f"{_PLOT_LEGEND_POINT_SIZE}pt"
+    legend.layout.setVerticalSpacing(2)
+
+    family = make_font("sans", _PLOT_LEGEND_POINT_SIZE).family()
+    for sample, label in legend.items:
+        label_style: dict[str, str] = {
+            "color": _PLOT_LEGEND_TEXT_COLOR,
+            "size": f"{_PLOT_LEGEND_POINT_SIZE}pt",
+        }
+        if family:
+            label_style["family"] = family
+        label.setText(label.text, **label_style)
+        label.setToolTip("Click the colored sample to hide or show this trace")
+        sample.setCursor(Qt.CursorShape.PointingHandCursor)
+        sample.setToolTip("Click to hide or show this trace")
+        label.setOpacity(1.0 if sample.item.isVisible() else 0.45)
+    return legend
+
+
+def _update_plot_legend_hidden_state(legend: pg.LegendItem, item: pg.PlotDataItem) -> None:
+    for sample, label in legend.items:
+        if sample.item is item:
+            label.setOpacity(1.0 if item.isVisible() else 0.45)
+            break
 
 
 def _power_monitor_detector_for_label(label: str, index: int) -> Detector:
@@ -264,7 +299,16 @@ class PowerMonitorTraceWidget(QWidget):
         self.elapsed_values = []
         self.detector_values = {detector: [] for detector in settings.detectors}
         self.plot_widget.clear()
-        self.legend = self.plot_widget.addLegend()
+        self.legend = self.plot_widget.addLegend(
+            pen=pg.mkPen(_PLOT_LEGEND_BORDER, width=1),
+            brush=pg.mkBrush(_PLOT_LEGEND_BACKGROUND),
+            labelTextColor=_PLOT_LEGEND_TEXT_COLOR,
+            labelTextSize=f"{_PLOT_LEGEND_POINT_SIZE}pt",
+            verSpacing=2,
+        )
+        self.legend.sigSampleClicked.connect(
+            lambda item, legend=self.legend: _update_plot_legend_hidden_state(legend, item)
+        )
         self.curve_items = {}
         for detector in settings.detectors:
             curve = self.plot_widget.plot(
@@ -275,6 +319,7 @@ class PowerMonitorTraceWidget(QWidget):
                 connect="finite",
             )
             self.curve_items[detector] = curve
+        _configure_plot_legend(self.legend)
         self._set_status("No detector channels selected" if not settings.detectors else "Waiting for recorded samples")
 
     def append_sample(self, sample: PowerMonitorRecordingSample) -> None:
@@ -1648,7 +1693,16 @@ class PlotWidget(QWidget):
 
     def _ensure_detector_legend(self) -> pg.LegendItem:
         if self.detector_legend is None:
-            self.detector_legend = self.plot_widget.addLegend()
+            self.detector_legend = self.plot_widget.addLegend(
+                pen=pg.mkPen(_PLOT_LEGEND_BORDER, width=1),
+                brush=pg.mkBrush(_PLOT_LEGEND_BACKGROUND),
+                labelTextColor=_PLOT_LEGEND_TEXT_COLOR,
+                labelTextSize=f"{_PLOT_LEGEND_POINT_SIZE}pt",
+                verSpacing=2,
+            )
+            self.detector_legend.sigSampleClicked.connect(
+                lambda item, legend=self.detector_legend: _update_plot_legend_hidden_state(legend, item)
+            )
         self.detector_legend.clear()
         self.detector_legend.setVisible(True)
         return self.detector_legend
@@ -1676,6 +1730,8 @@ class PlotWidget(QWidget):
             legend.addItem(item, f"Det {detector.value}")
             if np.any(finite_mask):
                 finite_live_items.append(item)
+
+        _configure_plot_legend(legend)
 
         if finite_live_items:
             self.plot_widget.plotItem.vb.autoRange(items=finite_live_items)

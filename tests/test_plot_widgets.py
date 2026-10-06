@@ -828,6 +828,38 @@ def test_set_measurement_plots_detector_rows_by_identity_and_keeps_first_row_com
     assert widget.freeze_btn.isEnabled()
 
 
+def test_detector_legend_sample_toggles_live_trace_without_changing_measurement(qtbot):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    measurement = _detector_measurement(
+        [1510.0, 1515.0], [[-3.0, -4.0], [-30.0, -40.0]], (Detector.DE_1, Detector.DE_3)
+    )
+    widget.set_measurement(measurement)
+    sample, label = widget.detector_legend.items[0]
+
+    class Click:
+        def button(self):
+            return Qt.MouseButton.LeftButton
+
+        def accept(self):
+            pass
+
+    original_data = tuple(np.array(values, copy=True) for values in widget.detector_plot_items[Detector.DE_1].getData())
+    sample.mouseClickEvent(Click())
+    assert not widget.detector_plot_items[Detector.DE_1].isVisible()
+    assert widget.detector_plot_items[Detector.DE_3].isVisible()
+    assert label.opacity() == pytest.approx(0.45)
+    assert widget.current_measurement is measurement
+    for actual, expected in zip(widget.detector_plot_items[Detector.DE_1].getData(), original_data, strict=True):
+        np.testing.assert_array_equal(actual, expected)
+
+    sample.mouseClickEvent(Click())
+    assert widget.detector_plot_items[Detector.DE_1].isVisible()
+    assert label.opacity() == pytest.approx(1.0)
+    widget.set_measurement(measurement)
+    assert widget.detector_plot_items[Detector.DE_1].isVisible()
+
+
 def test_detector_style_and_label_follow_identity_when_row_order_changes(qtbot):
     widget = PlotWidget(ScanSettings())
     qtbot.addWidget(widget)
