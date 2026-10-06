@@ -753,8 +753,9 @@ class CameraPanel(QFrame):
         auto_btn_layout.addStretch(1)
 
         self.screenshot_btn = QPushButton("Screenshot")
-        self.screenshot_btn.setIcon(QIcon(":/icons/save.svg"))
-        self.screenshot_btn.setToolTip("Save current frame as image")
+        self.screenshot_btn.setIcon(QIcon(":/icons/camera.svg"))
+        self.screenshot_btn.setToolTip("Capture the current camera frame")
+        self.screenshot_btn.setAccessibleName("Capture camera screenshot")
         self.screenshot_btn.clicked.connect(self.take_screenshot)
 
         auto_btn_layout.addWidget(self.screenshot_btn)

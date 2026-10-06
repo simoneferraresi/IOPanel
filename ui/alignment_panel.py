@@ -2,9 +2,9 @@ import logging
 
 import numpy as np
 from PySide6.QtCore import Qt, QThread, Signal, Slot
-from PySide6.QtGui import QDoubleValidator, QFont
+from PySide6.QtGui import QDoubleValidator, QFont, QIcon
 from PySide6.QtWidgets import (
-    QCheckBox,
+    QButtonGroup,
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
@@ -38,7 +38,11 @@ QPushButton#mapButton { background-color: #2e7d32; color: white; }
 QPushButton#mapButton[running="true"] { background-color: #c62828; color: white; }
 QPushButton#mapButton:disabled,
 QPushButton#mapButton[running="true"]:disabled { background-color: #e0e0e0; color: #888888; }
+QPushButton#stopButton { background-color: #c62828; color: white; }
+QPushButton#stopButton:disabled { background-color: #e0e0e0; color: #888888; }
 """
+
+_ALIGNMENT_ACTION_BUTTON_MIN_HEIGHT = 35
 
 
 class AlignmentPanel(QWidget):
@@ -133,19 +137,28 @@ class AlignmentPanel(QWidget):
         align_form.addRow("Spiral Radius:", self.spiral_radius_spin)
         self.spiral_step_spin = QDoubleSpinBox(minimum=0.1, maximum=2.0, value=0.5, singleStep=0.1, suffix=" µm")
         align_form.addRow("Spiral Step:", self.spiral_step_spin)
-        self.butt_coupling_cb = QCheckBox("Butt")
-        self.top_coupling_cb = QCheckBox("Top")
+        self.butt_coupling_cb = QRadioButton("Butt")
+        self.top_coupling_cb = QRadioButton("Top")
+        self.coupling_button_group = QButtonGroup(self.align_group)
+        self.coupling_button_group.setExclusive(True)
+        self.coupling_button_group.addButton(self.butt_coupling_cb)
+        self.coupling_button_group.addButton(self.top_coupling_cb)
         self.butt_coupling_cb.setChecked(True)
-        self.butt_coupling_cb.toggled.connect(lambda checked: self.top_coupling_cb.setChecked(not checked))
-        self.top_coupling_cb.toggled.connect(lambda checked: self.butt_coupling_cb.setChecked(not checked))
         align_form.addRow("Coupling:", self._create_hbox(self.butt_coupling_cb, self.top_coupling_cb))
-        # Add the new button
+
         self.spiral_align_button = QPushButton("Start Spiral Alignment")
+        self.spiral_align_button.setObjectName("alignButton")
+        self.spiral_align_button.setStyleSheet(ALIGNMENT_ACTION_BUTTON_STYLE)
+        self.spiral_align_button.setIcon(QIcon(":/icons/play.svg"))
+        self.spiral_align_button.setMinimumHeight(_ALIGNMENT_ACTION_BUTTON_MIN_HEIGHT)
         self.spiral_align_button.setToolTip("Recommended: Performs a wide search then a fine alignment.")
+
         self.align_button = QPushButton("Start Fine-Tune Only")
         self.align_button.setCheckable(True)
         self.align_button.setObjectName("alignButton")
         self.align_button.setStyleSheet(ALIGNMENT_ACTION_BUTTON_STYLE)
+        self.align_button.setIcon(QIcon(":/icons/play.svg"))
+        self.align_button.setMinimumHeight(_ALIGNMENT_ACTION_BUTTON_MIN_HEIGHT)
         self.align_button.setToolTip("Runs only the fine-tuning alignment from the current position.")
 
         # Add both buttons to the form
@@ -181,8 +194,9 @@ class AlignmentPanel(QWidget):
         self.map_button = QPushButton("Generate 3D Map")
         self.map_button.setObjectName("mapButton")
         self.map_button.setStyleSheet(ALIGNMENT_ACTION_BUTTON_STYLE)
+        self.map_button.setIcon(QIcon(":/icons/play.svg"))
         self.map_button.setCheckable(True)
-        self.map_button.setMinimumHeight(35)
+        self.map_button.setMinimumHeight(_ALIGNMENT_ACTION_BUTTON_MIN_HEIGHT)
         map_form.addRow(self.map_button)
         self.map_progress = QProgressBar()
         self.map_progress.setVisible(False)
@@ -226,6 +240,10 @@ class AlignmentPanel(QWidget):
         columns_layout.addLayout(right_column_layout)
         controls_v_layout.addLayout(columns_layout)
         self.stop_operation_button = QPushButton("Stop Alignment")
+        self.stop_operation_button.setObjectName("stopButton")
+        self.stop_operation_button.setStyleSheet(ALIGNMENT_ACTION_BUTTON_STYLE)
+        self.stop_operation_button.setIcon(QIcon(":/icons/stop.svg"))
+        self.stop_operation_button.setMinimumHeight(_ALIGNMENT_ACTION_BUTTON_MIN_HEIGHT)
         self.stop_operation_button.setEnabled(False)
         controls_v_layout.addWidget(self.stop_operation_button)
 
@@ -450,6 +468,7 @@ class AlignmentPanel(QWidget):
                 self.align_button.setChecked(False)
                 return
             self.align_button.setText("Stop Alignment")
+            self.align_button.setIcon(QIcon(":/icons/stop.svg"))
             self.align_button.setProperty("running", True)
             self._start_worker_operation(self.start_alignment_requested.emit, settings)
         else:
@@ -497,6 +516,7 @@ class AlignmentPanel(QWidget):
                 self.map_button.setChecked(False)
                 return
             self.map_button.setText("Stop Map")
+            self.map_button.setIcon(QIcon(":/icons/stop.svg"))
             self.map_button.setProperty("running", True)
             self.map_progress.setValue(0)
             self.map_progress.setVisible(True)
@@ -519,6 +539,7 @@ class AlignmentPanel(QWidget):
         # Reset Fine-Tune Button
         self.align_button.setChecked(False)
         self.align_button.setText("Start Fine-Tune Only")
+        self.align_button.setIcon(QIcon(":/icons/play.svg"))
         self.align_button.setProperty("running", False)
         self.align_button.style().unpolish(self.align_button)
         self.align_button.style().polish(self.align_button)
@@ -527,6 +548,7 @@ class AlignmentPanel(QWidget):
         # Reset Mapping Button
         self.map_button.setChecked(False)
         self.map_button.setText("Generate 3D Map")
+        self.map_button.setIcon(QIcon(":/icons/play.svg"))
         self.map_button.setProperty("running", False)
         self.map_button.style().unpolish(self.map_button)
         self.map_button.style().polish(self.map_button)

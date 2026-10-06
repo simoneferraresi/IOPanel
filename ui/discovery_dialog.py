@@ -1,6 +1,7 @@
 import logging
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -58,6 +59,9 @@ class CameraDiscoveryDialog(QDialog):
         # Buttons layout
         button_layout = QHBoxLayout()
         self.refresh_button = QPushButton("Refresh List")
+        self.refresh_button.setIcon(QIcon(":/icons/refresh.svg"))
+        self.refresh_button.setToolTip("Refresh the detected camera list")
+        self.refresh_button.setAccessibleName("Refresh camera discovery list")
         self.refresh_button.clicked.connect(self.populate_table)
         button_layout.addWidget(self.refresh_button)
         button_layout.addStretch()
