@@ -93,12 +93,7 @@ _POWER_MONITOR_DETECTOR_FILL_COLOR_BY_ID = {
     Detector.DE_3: "#ACA9D1",
     Detector.DE_4: "#F07EB8",
 }
-_POWER_MONITOR_DETECTOR_MAX_TEXT_COLOR_BY_ID = {
-    Detector.DE_1: "#082F23",
-    Detector.DE_2: "#411C00",
-    Detector.DE_3: "#232135",
-    Detector.DE_4: "#450C29",
-}
+_POWER_MONITOR_MAX_TEXT_COLOR = "#E40000"
 
 
 def _power_monitor_detector_for_label(label: str, index: int) -> Detector:
@@ -735,6 +730,7 @@ class HistogramWidget(QtWidgets.QWidget):
     _DEFAULT_Y_RANGE = (-70, 10)
     _LOW_SIGNAL_FLOOR = -100.0
     _HIGH_SIGNAL_CEILING = 10.0
+    _VALUE_LABEL_GAP_PX = 0
 
     def __init__(self, control_panel, detector_keys: list[str], parent: QWidget | None = None):
         super().__init__(parent)
@@ -757,7 +753,6 @@ class HistogramWidget(QtWidgets.QWidget):
         self.font_size = 12  # Base font size for labels
         self.title_size = 14  # Title font size
         self.value_text_font_size = 15  # Specific size for value annotations on bars
-        self.text_offset = 1.0  # Offset for text from the value line
 
         self.max_pen = pg.mkPen("#e41a1c", width=1.5, style=QtCore.Qt.PenStyle.DashLine)
         self.detector_ids = tuple(_power_monitor_detector_for_label(key, i) for i, key in enumerate(self.detector_keys))
@@ -784,6 +779,10 @@ class HistogramWidget(QtWidgets.QWidget):
 
         self._configure_plot()  # Sets up axes, title, grid
         self._create_plot_items()  # Creates bars, lines, and text items
+
+        view_box = self.plot_widget.getViewBox()
+        view_box.sigResized.connect(self._reposition_value_texts)
+        view_box.sigYRangeChanged.connect(self._reposition_value_texts)
 
         self.reset_btn = QtWidgets.QPushButton("Reset Axes")
         self.reset_btn.clicked.connect(self.reset_maxima)
@@ -846,7 +845,7 @@ class HistogramWidget(QtWidgets.QWidget):
             self.max_lines.append(line)
 
             # Max texts (initially invisible)
-            max_text = pg.TextItem(text="", color=_POWER_MONITOR_DETECTOR_MAX_TEXT_COLOR_BY_ID[self.detector_ids[i]])
+            max_text = pg.TextItem(text="", color=_POWER_MONITOR_MAX_TEXT_COLOR)
             max_text.setFont(self.text_font)
             max_text.setVisible(False)
             self.plot_widget.addItem(max_text)
@@ -881,38 +880,8 @@ class HistogramWidget(QtWidgets.QWidget):
         self.current_values.fill(0.0)
         self.max_values.fill(-np.inf)
 
-        if self.bars:
-            self.bars.setOpts(height=self.current_values)
-        else:
-            logger.warning("Reset Axes: self.bars is None, cannot set heights.")
-
-        for i in range(self.num_bars):
-            x_center = i
-            current_val_at_reset = 0.0
-
-            if i < len(self.current_texts) and self.current_texts[i] is not None:
-                text_item_current = self.current_texts[i]
-                show_text_at_zero = np.isfinite(current_val_at_reset) and current_val_at_reset > -90
-
-                if show_text_at_zero:
-                    text_item_current.setText(f"{current_val_at_reset:.2f}")
-                    # Use the new logic for current text (to be UNDER)
-                    text_item_current.setAnchor((0.5, 0.0))  # Anchor: Bottom-center
-                    text_y_position = (
-                        current_val_at_reset + self.text_offset
-                    )  # Position bottom of text slightly above value
-                    text_item_current.setPos(x_center, text_y_position)
-                    text_item_current.setVisible(True)
-                else:
-                    text_item_current.setVisible(False)
-
-            if i < len(self.max_texts) and self.max_texts[i] is not None:
-                self.max_texts[i].setVisible(False)
-
-            if i < len(self.max_lines) and self.max_lines[i] is not None:
-                self.max_lines[i].clear()
-
         self._update_y_axis_scale()
+        self._update_visual_elements()
         t_end = time.perf_counter()
         logger.debug(f"Reset Axes execution took: {(t_end - t_start) * 1000:.3f} ms")
 
@@ -949,8 +918,8 @@ class HistogramWidget(QtWidgets.QWidget):
             )
 
             self._update_values(new_values_processed)
-            self._update_visual_elements()
             self._update_y_axis_scale()
+            self._update_visual_elements()
 
         except Exception:
             logger.exception("HistogramWidget: Error processing histogram update")
@@ -996,7 +965,7 @@ class HistogramWidget(QtWidgets.QWidget):
         if show_text:
             text_item.setText(f"{max_val:.2f}")
             text_item.setAnchor((0.5, 1.0))  # Anchor bottom-center
-            text_y_position = max_val - self.text_offset  # Position it slightly above
+            text_y_position = max_val + self._value_label_gap_y()
             text_item.setPos(x_center, text_y_position)
             text_item.setVisible(True)
         else:
@@ -1011,11 +980,25 @@ class HistogramWidget(QtWidgets.QWidget):
         if show_text:
             text_item.setText(f"{current_val:.2f}")
             text_item.setAnchor((0.5, 0.0))  # Anchor top-center
-            text_y_position = current_val + self.text_offset  # Position it slightly below
+            text_y_position = current_val - self._value_label_gap_y()
             text_item.setPos(x_center, text_y_position)
             text_item.setVisible(True)
         else:
             text_item.setVisible(False)
+
+    def _value_label_gap_y(self) -> float:
+        _pixel_width, pixel_height = self.plot_widget.getViewBox().viewPixelSize()
+        if not np.isfinite(pixel_height) or pixel_height == 0:
+            return 0.0
+        return self._VALUE_LABEL_GAP_PX * abs(pixel_height)
+
+    def _reposition_value_texts(self, *_args) -> None:
+        gap_y = self._value_label_gap_y()
+        for i, (max_text, current_text) in enumerate(zip(self.max_texts, self.current_texts)):
+            if max_text is not None and max_text.isVisible() and np.isfinite(self.max_values[i]):
+                max_text.setPos(i, self.max_values[i] + gap_y)
+            if current_text is not None and current_text.isVisible() and np.isfinite(self.current_values[i]):
+                current_text.setPos(i, self.current_values[i] - gap_y)
 
     def _update_y_axis_scale(self):
         try:
