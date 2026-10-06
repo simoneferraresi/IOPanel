@@ -29,6 +29,8 @@ def test_mainwindow_starts_offline_with_all_cameras_disabled(qtbot, monkeypatch,
 
     window = main_window_module.MainWindow(config)
     qtbot.addWidget(window)
+    assert window.histogram_plot_layout.spacing() == 4
+    assert window.histogram_plot_layout.stretch(0) == 1
     window.show()
 
     qtbot.waitUntil(
