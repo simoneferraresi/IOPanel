@@ -22,7 +22,7 @@ from PySide6.QtCore import (
     Signal,
     Slot,
 )
-from PySide6.QtGui import QFont, QIcon
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -52,6 +52,7 @@ from logic.scan_export import build_scan_export_v2
 from logic.scan_measurement import ScanMeasurement
 from ui.power_monitor_export_dialog import PowerMonitorExportDialog
 from ui.scan_export_dialog import ScanExportDialog
+from ui.typography import make_font
 
 try:
     import matlab.engine
@@ -763,7 +764,7 @@ class HistogramWidget(QtWidgets.QWidget):
             pg.mkPen(_POWER_MONITOR_DETECTOR_BORDER_COLOR_BY_ID[detector]) for detector in self.detector_ids
         ]
         self.current_text_color = pg.mkColor("#555555")  # Dark grey for current values
-        self.text_font = QFont("Segoe UI", self.value_text_font_size)  # Font for value annotations
+        self.text_font = make_font("mono", self.value_text_font_size)  # Numeric Power Monitor readouts.
 
         # UI Elements
         self.layout = QtWidgets.QVBoxLayout(self)
@@ -808,13 +809,13 @@ class HistogramWidget(QtWidgets.QWidget):
 
         x_axis = self.plot_widget.getAxis("bottom")
         x_axis.setLabel(text="Detector", **label_style)
-        x_axis.setTickFont(QFont("Segoe UI", self.font_size - 1))  # Slightly smaller ticks
+        x_axis.setTickFont(make_font("sans", self.font_size - 1))  # Slightly smaller ticks
         ticks = [[(i, key) for i, key in enumerate(self.detector_keys)]]
         x_axis.setTicks(ticks)
 
         y_axis = self.plot_widget.getAxis("left")
         y_axis.setLabel(text="Power (dBm)", **label_style)
-        y_axis.setTickFont(QFont("Segoe UI", self.font_size - 1))
+        y_axis.setTickFont(make_font("sans", self.font_size - 1))
         y_axis.enableAutoSIPrefix(False)  # Show raw numbers for dBm
 
         self.plot_widget.setTitle("Real-time Power Monitoring", **title_style)
@@ -1139,7 +1140,7 @@ class PlotWidget(QWidget):
         # --------------------------
 
         # Configure axes, title, grid
-        tick_font = QFont("Segoe UI", 11)
+        tick_font = make_font("sans", 11)
         label_style = {"color": "black", "font-size": "12pt"}
 
         self.plot_widget.setLabel("left", _GENERIC_SCAN_Y_LABEL, **label_style)

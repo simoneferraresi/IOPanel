@@ -2,7 +2,7 @@ import logging
 
 import numpy as np
 from PySide6.QtCore import Qt, QThread, Signal, Slot
-from PySide6.QtGui import QDoubleValidator
+from PySide6.QtGui import QDoubleValidator, QFont
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -25,6 +25,7 @@ from hardware.alignment_worker import AlignmentSettings, AlignmentWorker, Mappin
 from hardware.interfaces import AbstractCT400
 from hardware.piezo import PiezoController
 from ui.plot_widgets import ColorBarWidget, Plot3DWidget
+from ui.typography import make_font
 
 logger = logging.getLogger("LabApp.AlignmentPanel")
 
@@ -198,9 +199,7 @@ class AlignmentPanel(QWidget):
         power_box_layout.addWidget(self.status_label)
 
         self.power_label = QLabel("--.-- dBm")
-        font = self.power_label.font()
-        font.setPointSize(20)
-        font.setBold(True)
+        font = make_font("mono", 20, QFont.Weight.Bold)
         self.power_label.setFont(font)
         self.power_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.power_label.setMinimumHeight(60)

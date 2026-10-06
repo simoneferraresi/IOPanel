@@ -53,6 +53,7 @@ from ui.constants import (
     OP_AUTO_EXPOSURE,
     OP_AUTO_GAIN,
 )
+from ui.typography import make_font
 
 logger = logging.getLogger("LabApp.camera_widgets")
 
@@ -501,7 +502,7 @@ class CameraPanel(QFrame):
 
         self._current_fps: float = 0.0
         self._show_fps: bool = True
-        self._fps_font = QFont("Segoe UI", 10, QFont.Weight.Bold)
+        self._fps_font = make_font("mono", 10, QFont.Weight.Bold)
         self._fps_color = QColor("lime")
         self.setObjectName(f"cameraPanel_{camera.identifier if camera else title.replace(' ', '_')}")
         self.setFrameStyle(QFrame.Shape.StyledPanel | QFrame.Shadow.Raised)

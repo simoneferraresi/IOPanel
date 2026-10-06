@@ -26,6 +26,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from app_settings import AppSettings
 from config_model import AppConfig, ConfigSemanticError
 from ui.main_window import MainWindow
+from ui.typography import install_application_fonts
 
 # Application Metadata
 APP_NAME = "IOPanel"
@@ -44,6 +45,8 @@ def configure_qt_application(app: QApplication, app_name: str = APP_NAME) -> Non
     app.setApplicationName("IOPanel")
     app.setApplicationVersion(APP_VERSION)
     app.setStyle("Fusion")
+    if isinstance(app, QApplication):
+        install_application_fonts(app)
 
 
 def setup_logger(

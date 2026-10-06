@@ -9,16 +9,19 @@ from ui.control_panel import MONITOR_BUTTON_STYLE, SCAN_BUTTON_STYLE
 
 def test_application_configuration_selects_fusion_without_stylesheet(qapp, monkeypatch):
     stylesheet_calls = []
+    font_install_calls = []
 
     def unexpected_stylesheet(*args, **kwargs):
         stylesheet_calls.append((args, kwargs))
 
     monkeypatch.setattr(qapp, "setStyleSheet", unexpected_stylesheet)
+    monkeypatch.setattr(app, "install_application_fonts", lambda qt_app: font_install_calls.append(qt_app))
 
     app.configure_qt_application(qapp, "IOPanel test")
 
     assert qapp.style().objectName().lower() == "fusion"
     assert not stylesheet_calls
+    assert font_install_calls == [qapp]
 
 
 def test_physical_camera_panel_has_no_title_row(qapp):

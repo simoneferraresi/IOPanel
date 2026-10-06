@@ -15,14 +15,40 @@ from PySide6.QtCore import QFile, QIODevice
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 RESOURCE_COLLECTION = REPOSITORY_ROOT / "resources" / "resources.qrc"
+REQUIRED_RESOURCE_ENTRIES = {
+    ("/icons", "check.svg", "icons/check.svg"),
+    ("/icons", "chevron-down.svg", "icons/chevron-down.svg"),
+    ("/icons", "connect.svg", "icons/connect.svg"),
+    ("/icons", "refresh.svg", "icons/refresh.svg"),
+    ("/icons", "eraser.svg", "icons/eraser.svg"),
+    ("/icons", "camera.svg", "icons/camera.svg"),
+    ("/icons", "disconnect.svg", "icons/disconnect.svg"),
+    ("/icons", "exit.svg", "icons/exit.svg"),
+    ("/icons", "laser.svg", "icons/laser.svg"),
+    ("/icons", "play.svg", "icons/play.svg"),
+    ("/icons", "radio-checked.svg", "icons/radio-checked.svg"),
+    ("/icons", "spinner.svg", "icons/spinner.svg"),
+    ("/icons", "save.svg", "icons/save.svg"),
+    ("/icons", "snowflake.svg", "icons/snowflake.svg"),
+    ("/icons", "stop-circle.svg", "icons/stop-circle.svg"),
+    ("/icons", "stop.svg", "icons/stop.svg"),
+    ("/fonts", "Geist-Variable.ttf", "fonts/Geist-Variable.ttf"),
+    ("/fonts", "GeistMono-Variable.ttf", "fonts/GeistMono-Variable.ttf"),
+    ("/fonts", "OFL.txt", "fonts/OFL.txt"),
+}
 
 
 def test_resource_collection_sources_exist() -> None:
     root = ET.parse(RESOURCE_COLLECTION).getroot()
-    entries = root.findall("./qresource/file")
+    declared_entries = [
+        (qresource.get("prefix"), entry.get("alias"), entry.text or "")
+        for qresource in root.findall("./qresource")
+        for entry in qresource.findall("./file")
+    ]
+    resource_entries = set(declared_entries)
+    source_paths = [RESOURCE_COLLECTION.parent / source for _prefix, _alias, source in declared_entries]
 
-    assert len(entries) == 16
-    source_paths = [RESOURCE_COLLECTION.parent / (entry.text or "") for entry in entries]
+    assert REQUIRED_RESOURCE_ENTRIES <= resource_entries
     assert len(set(source_paths)) == len(source_paths)
     assert all(path.is_file() for path in source_paths)
 
@@ -30,7 +56,14 @@ def test_resource_collection_sources_exist() -> None:
 def test_compiled_resource_aliases_are_registered(qapp) -> None:
     importlib.import_module("resources.resources_rc")
 
-    for alias in (":/icons/laser.svg", ":/icons/play.svg", ":/icons/camera.svg"):
+    for alias in (
+        ":/icons/laser.svg",
+        ":/icons/play.svg",
+        ":/icons/camera.svg",
+        ":/fonts/Geist-Variable.ttf",
+        ":/fonts/GeistMono-Variable.ttf",
+        ":/fonts/OFL.txt",
+    ):
         resource_file = QFile(alias)
         assert resource_file.open(QIODevice.OpenModeFlag.ReadOnly), alias
         try:
@@ -62,7 +95,14 @@ def test_resource_compiler_smoke(tmp_path: Path) -> None:
         spec = importlib.util.spec_from_file_location("resources_smoke_rc", sys.argv[1])
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        for alias in (":/icons/laser.svg", ":/icons/play.svg", ":/icons/camera.svg"):
+        for alias in (
+            ":/icons/laser.svg",
+            ":/icons/play.svg",
+            ":/icons/camera.svg",
+            ":/fonts/Geist-Variable.ttf",
+            ":/fonts/GeistMono-Variable.ttf",
+            ":/fonts/OFL.txt",
+        ):
             resource = QFile(alias)
             assert resource.open(QIODevice.OpenModeFlag.ReadOnly), alias
             try:
