@@ -95,6 +95,38 @@ _POWER_MONITOR_DETECTOR_FILL_COLOR_BY_ID = {
     Detector.DE_4: "#F07EB8",
 }
 _POWER_MONITOR_MAX_TEXT_COLOR = "#E40000"
+_POWER_MONITOR_AXIS_LABEL_POINT_SIZE = 12
+_POWER_MONITOR_TICK_POINT_SIZE = 11
+_POWER_MONITOR_GRID_ALPHA = 0.30
+_POWER_MONITOR_AXIS_LABEL_STYLE = {
+    "color": "black",
+    "font-size": f"{_POWER_MONITOR_AXIS_LABEL_POINT_SIZE}pt",
+    "font-family": "Geist",
+    "font-weight": "normal",
+}
+
+
+def _configure_power_monitor_axes(
+    plot_widget: pg.PlotWidget,
+    *,
+    bottom_label: str,
+    bottom_ticks: list[list[tuple[int, str]]] | None = None,
+    show_x_grid: bool,
+) -> None:
+    """Apply the shared Power Monitor axis typography and grid conventions."""
+    tick_font = make_font("sans", _POWER_MONITOR_TICK_POINT_SIZE)
+    bottom_axis = plot_widget.getAxis("bottom")
+    bottom_axis.setLabel(text=bottom_label, **_POWER_MONITOR_AXIS_LABEL_STYLE)
+    bottom_axis.setTickFont(tick_font)
+    if bottom_ticks is not None:
+        bottom_axis.setTicks(bottom_ticks)
+
+    left_axis = plot_widget.getAxis("left")
+    left_axis.setLabel(text="Power (dBm)", **_POWER_MONITOR_AXIS_LABEL_STYLE)
+    left_axis.setTickFont(tick_font)
+    left_axis.enableAutoSIPrefix(False)
+
+    plot_widget.showGrid(x=show_x_grid, y=True, alpha=_POWER_MONITOR_GRID_ALPHA)
 
 
 def _power_monitor_detector_for_label(label: str, index: int) -> Detector:
@@ -190,10 +222,8 @@ class PowerMonitorTraceWidget(QWidget):
         plot_layout.setRowStretch(0, 1)
         plot_layout.setColumnStretch(0, 1)
         self.plot_widget = pg.PlotWidget(background="w", parent=self.plot_container)
-        self.plot_widget.setLabel("bottom", "Elapsed time (s)")
-        self.plot_widget.setLabel("left", "Power (dBm)")
+        _configure_power_monitor_axes(self.plot_widget, bottom_label="Elapsed time (s)", show_x_grid=True)
         self.plot_widget.setTitle("Power Monitor Recording", **pyqtgraph_title_style())
-        self.plot_widget.showGrid(x=True, y=True, alpha=0.25)
         plot_layout.addWidget(self.plot_widget, 0, 0)
         self.overlay_controls = QWidget(self.plot_container)
         self.overlay_controls.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
@@ -860,21 +890,15 @@ class HistogramWidget(QtWidgets.QWidget):
         logger.info("HistogramWidget initialized successfully.")
 
     def _configure_plot(self):
-        label_style = {"color": "k", "font-size": f"{self.font_size}pt"}
-
-        x_axis = self.plot_widget.getAxis("bottom")
-        x_axis.setLabel(text="Detector", **label_style)
-        x_axis.setTickFont(make_font("sans", self.font_size - 1))  # Slightly smaller ticks
         ticks = [[(i, key) for i, key in enumerate(self.detector_keys)]]
-        x_axis.setTicks(ticks)
-
-        y_axis = self.plot_widget.getAxis("left")
-        y_axis.setLabel(text="Power (dBm)", **label_style)
-        y_axis.setTickFont(make_font("sans", self.font_size - 1))
-        y_axis.enableAutoSIPrefix(False)  # Show raw numbers for dBm
+        _configure_power_monitor_axes(
+            self.plot_widget,
+            bottom_label="Detector",
+            bottom_ticks=ticks,
+            show_x_grid=False,
+        )
 
         self.plot_widget.setTitle("Real-time Power Monitoring", **pyqtgraph_title_style())
-        self.plot_widget.showGrid(y=True, alpha=0.3)  # Show horizontal grid lines
         self.plot_widget.setYRange(-70, 10)  # Initial Y range
         self.plot_widget.setXRange(-0.5, self.num_bars - 0.5, padding=0)
 

@@ -20,6 +20,7 @@ from ui import plot_widgets
 from ui.main_window import MainWindow
 from ui.plot_widgets import PowerMonitorTraceWidget
 from ui.power_monitor_export_dialog import PowerMonitorExportRequest
+from ui.typography import install_application_fonts
 
 
 def _settings(detectors=(Detector.DE_1, Detector.DE_3)):
@@ -48,6 +49,23 @@ def _app_settings(tmp_path):
     backend.clear()
     backend.sync()
     return AppSettings(backend)
+
+
+def test_trace_uses_shared_power_axis_labels_and_typography(qapp, qtbot, tmp_path):
+    install_application_fonts(qapp)
+    widget = PowerMonitorTraceWidget(_app_settings(tmp_path))
+    qtbot.addWidget(widget)
+
+    bottom_axis = widget.plot_widget.getAxis("bottom")
+    left_axis = widget.plot_widget.getAxis("left")
+    assert bottom_axis.labelText == "Elapsed time (s)"
+    assert left_axis.labelText == "Power (dBm)"
+    assert bottom_axis.labelStyle["font-size"] == "12pt"
+    assert bottom_axis.labelStyle["font-family"] == "Geist"
+    assert bottom_axis.labelStyle["font-weight"] == "normal"
+    assert bottom_axis.labelStyle["color"] == "black"
+    assert left_axis.labelStyle == bottom_axis.labelStyle
+    widget.close()
 
 
 def test_trace_plots_only_selected_detectors_with_actual_times_and_nan_gaps(qtbot, tmp_path):

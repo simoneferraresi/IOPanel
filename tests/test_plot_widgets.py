@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QPointF, Qt
+from PySide6.QtGui import QFont
 from PySide6.QtTest import QSignalSpy
 from PySide6.QtWidgets import QToolButton
 
@@ -181,6 +182,43 @@ def test_power_monitor_histogram_uses_detector_border_fill_and_text_palette(qtbo
     assert [item.color.name() for item in widget.current_texts] == ["#555555"] * 4
     assert widget.max_pen.style().name == "DashLine"
     widget.close()
+
+
+def test_power_monitor_widgets_share_axis_typography_grid_and_raw_dbm(qapp):
+    install_application_fonts(qapp)
+    assert plot_widgets._POWER_MONITOR_AXIS_LABEL_POINT_SIZE == 12
+    assert plot_widgets._POWER_MONITOR_TICK_POINT_SIZE == 11
+    assert plot_widgets._POWER_MONITOR_GRID_ALPHA == pytest.approx(0.30)
+    histogram = HistogramWidget(None, ["Det 1", "Det 2"])
+    trace = PowerMonitorTraceWidget()
+
+    widgets = (histogram, trace)
+    for widget, expected_bottom in zip(widgets, ("Detector", "Elapsed time (s)"), strict=True):
+        bottom_axis = widget.plot_widget.getAxis("bottom")
+        left_axis = widget.plot_widget.getAxis("left")
+        assert bottom_axis.labelText == expected_bottom
+        assert left_axis.labelText == "Power (dBm)"
+        assert bottom_axis.labelStyle["font-size"] == f"{plot_widgets._POWER_MONITOR_AXIS_LABEL_POINT_SIZE}pt"
+        assert bottom_axis.labelStyle["font-family"] == "Geist"
+        assert bottom_axis.labelStyle["font-weight"] == "normal"
+        assert bottom_axis.labelStyle["color"] == "black"
+        assert left_axis.labelStyle == bottom_axis.labelStyle
+        for axis in (bottom_axis, left_axis):
+            tick_font = axis.style["tickFont"]
+            assert tick_font.family() == "Geist"
+            assert tick_font.pointSizeF() == plot_widgets._POWER_MONITOR_TICK_POINT_SIZE
+            assert tick_font.weight() == QFont.Weight.Normal
+        assert left_axis.autoSIPrefixScale == 1.0
+
+    histogram_bottom = histogram.plot_widget.getAxis("bottom")
+    trace_bottom = trace.plot_widget.getAxis("bottom")
+    assert histogram_bottom.grid is False
+    assert histogram.plot_widget.getAxis("left").grid == round(plot_widgets._POWER_MONITOR_GRID_ALPHA * 255)
+    assert trace_bottom.grid == round(plot_widgets._POWER_MONITOR_GRID_ALPHA * 255)
+    assert trace.plot_widget.getAxis("left").grid == round(plot_widgets._POWER_MONITOR_GRID_ALPHA * 255)
+    assert histogram.detector_keys == ["Det 1", "Det 2"]
+    histogram.close()
+    trace.close()
 
 
 def test_power_monitor_reset_is_a_compact_top_right_plot_overlay(qtbot):
