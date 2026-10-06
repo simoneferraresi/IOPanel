@@ -6,282 +6,288 @@
 from PySide6 import QtCore
 
 qt_resource_data = b"\
-\x00\x00\x11\x1f\
+\x00\x00\x11z\
 C\
 opyright 2024 Th\
 e Geist Project \
 Authors (https:/\
 /github.com/verc\
-el/geist-font)\x0a\x0a\
-This Font Softwa\
-re is licensed u\
-nder the SIL Ope\
-n Font License, \
-Version 1.1.\x0aThi\
-s license is cop\
-ied below, and i\
-s also available\
- with a FAQ at:\x0a\
-https://openfont\
-license.org\x0a\x0a\x0a--\
+el/geist-font)\x0d\x0a\
+\x0d\x0aThis Font Soft\
+ware is licensed\
+ under the SIL O\
+pen Font License\
+, Version 1.1.\x0d\x0a\
+This license is \
+copied below, an\
+d is also availa\
+ble with a FAQ a\
+t:\x0d\x0ahttps://open\
+fontlicense.org\x0d\
+\x0a\x0d\x0a\x0d\x0a-----------\
 ----------------\
 ----------------\
 ----------------\
----------\x0aSIL OP\
-EN FONT LICENSE \
-Version 1.1 - 26\
- February 2007\x0a-\
+\x0d\x0aSIL OPEN FONT \
+LICENSE Version \
+1.1 - 26 Februar\
+y 2007\x0d\x0a--------\
 ----------------\
 ----------------\
 ----------------\
-----------\x0a\x0aPREA\
-MBLE\x0aThe goals o\
-f the Open Font \
-License (OFL) ar\
-e to stimulate w\
-orldwide\x0adevelop\
-ment of collabor\
-ative font proje\
-cts, to support \
-the font creatio\
-n\x0aefforts of aca\
-demic and lingui\
-stic communities\
-, and to provide\
- a free and\x0aopen\
- framework in wh\
-ich fonts may be\
- shared and impr\
-oved in partners\
-hip\x0awith others.\
-\x0a\x0aThe OFL allows\
- the licensed fo\
-nts to be used, \
-studied, modifie\
-d and\x0aredistribu\
-ted freely as lo\
-ng as they are n\
-ot sold by thems\
-elves. The\x0afonts\
-, including any \
-derivative works\
-, can be bundled\
-, embedded, \x0ared\
-istributed and/o\
-r sold with any \
-software provide\
-d that any reser\
-ved\x0anames are no\
-t used by deriva\
-tive works. The \
-fonts and deriva\
-tives,\x0ahowever, \
-cannot be releas\
-ed under any oth\
-er type of licen\
-se. The\x0arequirem\
-ent for fonts to\
- remain under th\
-is license does \
-not apply\x0ato any\
- document create\
-d using the font\
-s or their deriv\
-atives.\x0a\x0aDEFINIT\
-IONS\x0a\x22Font Softw\
-are\x22 refers to t\
-he set of files \
-released by the \
-Copyright\x0aHolder\
-(s) under this l\
-icense and clear\
-ly marked as suc\
-h. This may\x0aincl\
-ude source files\
-, build scripts \
-and documentatio\
-n.\x0a\x0a\x22Reserved Fo\
-nt Name\x22 refers \
-to any names spe\
-cified as such a\
-fter the\x0acopyrig\
+---\x0d\x0a\x0d\x0aPREAMBLE\x0d\
+\x0aThe goals of th\
+e Open Font Lice\
+nse (OFL) are to\
+ stimulate world\
+wide\x0d\x0adevelopmen\
+t of collaborati\
+ve font projects\
+, to support the\
+ font creation\x0d\x0a\
+efforts of acade\
+mic and linguist\
+ic communities, \
+and to provide a\
+ free and\x0d\x0aopen \
+framework in whi\
+ch fonts may be \
+shared and impro\
+ved in partnersh\
+ip\x0d\x0awith others.\
+\x0d\x0a\x0d\x0aThe OFL allo\
+ws the licensed \
+fonts to be used\
+, studied, modif\
+ied and\x0d\x0aredistr\
+ibuted freely as\
+ long as they ar\
+e not sold by th\
+emselves. The\x0d\x0af\
+onts, including \
+any derivative w\
+orks, can be bun\
+dled, embedded,\x0d\
+\x0aredistributed a\
+nd/or sold with \
+any software pro\
+vided that any r\
+eserved\x0d\x0anames a\
+re not used by d\
+erivative works.\
+ The fonts and d\
+erivatives,\x0d\x0ahow\
+ever, cannot be \
+released under a\
+ny other type of\
+ license. The\x0d\x0ar\
+equirement for f\
+onts to remain u\
+nder this licens\
+e does not apply\
+\x0d\x0ato any documen\
+t created using \
+the fonts or the\
+ir derivatives.\x0d\
+\x0a\x0d\x0aDEFINITIONS\x0d\x0a\
+\x22Font Software\x22 \
+refers to the se\
+t of files relea\
+sed by the Copyr\
+ight\x0d\x0aHolder(s) \
+under this licen\
+se and clearly m\
+arked as such. T\
+his may\x0d\x0ainclude\
+ source files, b\
+uild scripts and\
+ documentation.\x0d\
+\x0a\x0d\x0a\x22Reserved Fon\
+t Name\x22 refers t\
+o any names spec\
+ified as such af\
+ter the\x0d\x0acopyrig\
 ht statement(s).\
-\x0a\x0a\x22Original Vers\
-ion\x22 refers to t\
-he collection of\
- Font Software c\
-omponents as\x0adis\
-tributed by the \
-Copyright Holder\
-(s).\x0a\x0a\x22Modified \
-Version\x22 refers \
-to any derivativ\
-e made by adding\
- to, deleting,\x0ao\
-r substituting -\
-- in part or in \
-whole -- any of \
-the components o\
-f the\x0aOriginal V\
-ersion, by chang\
-ing formats or b\
-y porting the Fo\
-nt Software to a\
-\x0anew environment\
-.\x0a\x0a\x22Author\x22 refe\
-rs to any design\
-er, engineer, pr\
-ogrammer, techni\
-cal\x0awriter or ot\
-her person who c\
-ontributed to th\
-e Font Software.\
-\x0a\x0aPERMISSION & C\
-ONDITIONS\x0aPermis\
-sion is hereby g\
-ranted, free of \
-charge, to any p\
-erson obtaining\x0a\
-a copy of the Fo\
-nt Software, to \
-use, study, copy\
-, merge, embed, \
-modify,\x0aredistri\
+\x0d\x0a\x0d\x0a\x22Original Ve\
+rsion\x22 refers to\
+ the collection \
+of Font Software\
+ components as\x0d\x0a\
+distributed by t\
+he Copyright Hol\
+der(s).\x0d\x0a\x0d\x0a\x22Modi\
+fied Version\x22 re\
+fers to any deri\
+vative made by a\
+dding to, deleti\
+ng,\x0d\x0aor substitu\
+ting -- in part \
+or in whole -- a\
+ny of the compon\
+ents of the\x0d\x0aOri\
+ginal Version, b\
+y changing forma\
+ts or by porting\
+ the Font Softwa\
+re to a\x0d\x0anew env\
+ironment.\x0d\x0a\x0d\x0a\x22Au\
+thor\x22 refers to \
+any designer, en\
+gineer, programm\
+er, technical\x0d\x0aw\
+riter or other p\
+erson who contri\
+buted to the Fon\
+t Software.\x0d\x0a\x0d\x0aP\
+ERMISSION & COND\
+ITIONS\x0d\x0aPermissi\
+on is hereby gra\
+nted, free of ch\
+arge, to any per\
+son obtaining\x0d\x0aa\
+ copy of the Fon\
+t Software, to u\
+se, study, copy,\
+ merge, embed, m\
+odify,\x0d\x0aredistri\
 bute, and sell m\
 odified and unmo\
 dified copies of\
- the Font\x0aSoftwa\
-re, subject to t\
-he following con\
-ditions:\x0a\x0a1) Nei\
-ther the Font So\
-ftware nor any o\
-f its individual\
- components,\x0ain \
+ the Font\x0d\x0aSoftw\
+are, subject to \
+the following co\
+nditions:\x0d\x0a\x0d\x0a1) \
+Neither the Font\
+ Software nor an\
+y of its individ\
+ual components,\x0d\
+\x0ain Original or \
+Modified Version\
+s, may be sold b\
+y itself.\x0d\x0a\x0d\x0a2) \
 Original or Modi\
-fied Versions, m\
-ay be sold by it\
-self.\x0a\x0a2) Origin\
-al or Modified V\
-ersions of the F\
-ont Software may\
- be bundled,\x0ared\
-istributed and/o\
-r sold with any \
-software, provid\
-ed that each cop\
-y\x0acontains the a\
-bove copyright n\
-otice and this l\
-icense. These ca\
-n be\x0aincluded ei\
-ther as stand-al\
-one text files, \
-human-readable h\
-eaders or\x0ain the\
- appropriate mac\
-hine-readable me\
-tadata fields wi\
-thin text or\x0abin\
-ary files as lon\
-g as those field\
-s can be easily \
-viewed by the us\
-er.\x0a\x0a3) No Modif\
-ied Version of t\
-he Font Software\
- may use the Res\
-erved Font\x0aName(\
-s) unless explic\
-it written permi\
-ssion is granted\
- by the correspo\
-nding\x0aCopyright \
-Holder. This res\
-triction only ap\
-plies to the pri\
-mary font name a\
-s\x0apresented to t\
-he users.\x0a\x0a4) Th\
-e name(s) of the\
- Copyright Holde\
-r(s) or the Auth\
-or(s) of the Fon\
-t\x0aSoftware shall\
- not be used to \
-promote, endorse\
- or advertise an\
-y\x0aModified Versi\
-on, except to ac\
-knowledge the co\
-ntribution(s) of\
- the\x0aCopyright H\
-older(s) and the\
- Author(s) or wi\
-th their explici\
-t written\x0apermis\
-sion.\x0a\x0a5) The Fo\
-nt Software, mod\
-ified or unmodif\
-ied, in part or \
-in whole,\x0amust b\
-e distributed en\
-tirely under thi\
-s license, and m\
-ust not be\x0adistr\
-ibuted under any\
- other license. \
-The requirement \
-for fonts to\x0arem\
-ain under this l\
-icense does not \
-apply to any doc\
-ument created\x0aus\
-ing the Font Sof\
-tware.\x0a\x0aTERMINAT\
-ION\x0aThis license\
- becomes null an\
-d void if any of\
- the above condi\
-tions are\x0anot me\
-t.\x0a\x0aDISCLAIMER\x0aT\
-HE FONT SOFTWARE\
- IS PROVIDED \x22AS\
- IS\x22, WITHOUT WA\
-RRANTY OF ANY KI\
-ND,\x0aEXPRESS OR I\
-MPLIED, INCLUDIN\
-G BUT NOT LIMITE\
-D TO ANY WARRANT\
-IES OF\x0aMERCHANTA\
-BILITY, FITNESS \
-FOR A PARTICULAR\
- PURPOSE AND NON\
-INFRINGEMENT\x0aOF \
-COPYRIGHT, PATEN\
-T, TRADEMARK, OR\
- OTHER RIGHT. IN\
- NO EVENT SHALL \
-THE\x0aCOPYRIGHT HO\
-LDER BE LIABLE F\
-OR ANY CLAIM, DA\
-MAGES OR OTHER L\
-IABILITY,\x0aINCLUD\
-ING ANY GENERAL,\
- SPECIAL, INDIRE\
-CT, INCIDENTAL, \
-OR CONSEQUENTIAL\
-\x0aDAMAGES, WHETHE\
-R IN AN ACTION O\
-F CONTRACT, TORT\
- OR OTHERWISE, A\
-RISING\x0aFROM, OUT\
- OF THE USE OR I\
-NABILITY TO USE \
-THE FONT SOFTWAR\
-E OR FROM\x0aOTHER \
-DEALINGS IN THE \
-FONT SOFTWARE.\
+fied Versions of\
+ the Font Softwa\
+re may be bundle\
+d,\x0d\x0aredistribute\
+d and/or sold wi\
+th any software,\
+ provided that e\
+ach copy\x0d\x0acontai\
+ns the above cop\
+yright notice an\
+d this license. \
+These can be\x0d\x0ain\
+cluded either as\
+ stand-alone tex\
+t files, human-r\
+eadable headers \
+or\x0d\x0ain the appro\
+priate machine-r\
+eadable metadata\
+ fields within t\
+ext or\x0d\x0abinary f\
+iles as long as \
+those fields can\
+ be easily viewe\
+d by the user.\x0d\x0a\
+\x0d\x0a3) No Modified\
+ Version of the \
+Font Software ma\
+y use the Reserv\
+ed Font\x0d\x0aName(s)\
+ unless explicit\
+ written permiss\
+ion is granted b\
+y the correspond\
+ing\x0d\x0aCopyright H\
+older. This rest\
+riction only app\
+lies to the prim\
+ary font name as\
+\x0d\x0apresented to t\
+he users.\x0d\x0a\x0d\x0a4) \
+The name(s) of t\
+he Copyright Hol\
+der(s) or the Au\
+thor(s) of the F\
+ont\x0d\x0aSoftware sh\
+all not be used \
+to promote, endo\
+rse or advertise\
+ any\x0d\x0aModified V\
+ersion, except t\
+o acknowledge th\
+e contribution(s\
+) of the\x0d\x0aCopyri\
+ght Holder(s) an\
+d the Author(s) \
+or with their ex\
+plicit written\x0d\x0a\
+permission.\x0d\x0a\x0d\x0a5\
+) The Font Softw\
+are, modified or\
+ unmodified, in \
+part or in whole\
+,\x0d\x0amust be distr\
+ibuted entirely \
+under this licen\
+se, and must not\
+ be\x0d\x0adistributed\
+ under any other\
+ license. The re\
+quirement for fo\
+nts to\x0d\x0aremain u\
+nder this licens\
+e does not apply\
+ to any document\
+ created\x0d\x0ausing \
+the Font Softwar\
+e.\x0d\x0a\x0d\x0aTERMINATIO\
+N\x0d\x0aThis license \
+becomes null and\
+ void if any of \
+the above condit\
+ions are\x0d\x0anot me\
+t.\x0d\x0a\x0d\x0aDISCLAIMER\
+\x0d\x0aTHE FONT SOFTW\
+ARE IS PROVIDED \
+\x22AS IS\x22, WITHOUT\
+ WARRANTY OF ANY\
+ KIND,\x0d\x0aEXPRESS \
+OR IMPLIED, INCL\
+UDING BUT NOT LI\
+MITED TO ANY WAR\
+RANTIES OF\x0d\x0aMERC\
+HANTABILITY, FIT\
+NESS FOR A PARTI\
+CULAR PURPOSE AN\
+D NONINFRINGEMEN\
+T\x0d\x0aOF COPYRIGHT,\
+ PATENT, TRADEMA\
+RK, OR OTHER RIG\
+HT. IN NO EVENT \
+SHALL THE\x0d\x0aCOPYR\
+IGHT HOLDER BE L\
+IABLE FOR ANY CL\
+AIM, DAMAGES OR \
+OTHER LIABILITY,\
+\x0d\x0aINCLUDING ANY \
+GENERAL, SPECIAL\
+, INDIRECT, INCI\
+DENTAL, OR CONSE\
+QUENTIAL\x0d\x0aDAMAGE\
+S, WHETHER IN AN\
+ ACTION OF CONTR\
+ACT, TORT OR OTH\
+ERWISE, ARISING\x0d\
+\x0aFROM, OUT OF TH\
+E USE OR INABILI\
+TY TO USE THE FO\
+NT SOFTWARE OR F\
+ROM\x0d\x0aOTHER DEALI\
+NGS IN THE FONT \
+SOFTWARE.\
 \x00\x02\x9f\xc0\
 \x00\
 \x01\x00\x00\x00\x15\x01\x00\x00\x04\x00PGDEF\xf2\
@@ -21946,6 +21952,17 @@ ht=\x2224px\x22>\x0d\x0a  <c\
 ircle cx=\x2212\x22 cy\
 =\x2212\x22 r=\x225\x22/>\x0d\x0a<\
 /svg>\x0d\x0a\
+\x00\x00\x00\x8c\
+<\
+svg xmlns=\x22http:\
+//www.w3.org/200\
+0/svg\x22 viewBox=\x22\
+0 0 24 24\x22 width\
+=\x2224\x22 height=\x2224\
+\x22>\x0a  <circle cx=\
+\x2212\x22 cy=\x2212\x22 r=\x22\
+7\x22 fill=\x22#E40000\
+\x22/>\x0a</svg>\x0a\
 \x00\x00\x01\x84\
 <\
 svg xmlns=\x22http:\
@@ -22104,6 +22121,10 @@ qt_resource_name = b"\
 \x00r\
 \x00a\x00d\x00i\x00o\x00-\x00c\x00h\x00e\x00c\x00k\x00e\x00d\x00.\x00s\x00v\x00g\
 \
+\x00\x0a\
+\x06\x88M\x87\
+\x00r\
+\x00e\x00c\x00o\x00r\x00d\x00.\x00s\x00v\x00g\
 \x00\x0d\
 \x04\xbd\xe1g\
 \x00s\
@@ -22125,48 +22146,50 @@ qt_resource_name = b"\
 qt_resource_struct = b"\
 \x00\x00\x00\x00\x00\x02\x00\x00\x00\x02\x00\x00\x00\x01\
 \x00\x00\x00\x00\x00\x00\x00\x00\
-\x00\x00\x00\x10\x00\x02\x00\x00\x00\x03\x00\x00\x00\x13\
+\x00\x00\x00\x10\x00\x02\x00\x00\x00\x03\x00\x00\x00\x14\
 \x00\x00\x00\x00\x00\x00\x00\x00\
-\x00\x00\x00\x00\x00\x02\x00\x00\x00\x10\x00\x00\x00\x03\
+\x00\x00\x00\x00\x00\x02\x00\x00\x00\x11\x00\x00\x00\x03\
 \x00\x00\x00\x00\x00\x00\x00\x00\
-\x00\x00\x00\xa8\x00\x00\x00\x00\x00\x01\x00\x05J\xb9\
+\x00\x00\x00\xa8\x00\x00\x00\x00\x00\x01\x00\x05K\x14\
 \x00\x00\x01\xa1\x0c\x01\x0c\xe4\
-\x00\x00\x01\xc6\x00\x00\x00\x00\x00\x01\x00\x05X\xa1\
+\x00\x00\x01\xc6\x00\x00\x00\x00\x00\x01\x00\x05X\xfc\
 \x00\x00\x01\xa1\x0c\x01\x0c\xe6\
-\x00\x00\x01\xaa\x00\x00\x00\x00\x00\x01\x00\x05V@\
+\x00\x00\x01\xaa\x00\x00\x00\x00\x00\x01\x00\x05V\x9b\
 \x00\x00\x01\xa1\x0c\x01\x0c\xec\
-\x00\x00\x01\xee\x00\x00\x00\x00\x00\x01\x00\x05Y=\
+\x00\x00\x02\x08\x00\x00\x00\x00\x00\x01\x00\x05Z(\
 \x00\x00\x01\xa1\x0c\x01\x0c\xea\
-\x00\x00\x00\xbe\x00\x00\x00\x00\x00\x01\x00\x05KO\
+\x00\x00\x00\xbe\x00\x00\x00\x00\x00\x01\x00\x05K\xaa\
 \x00\x00\x01\xa1\x0c\x01\x0c\xee\
-\x00\x00\x02>\x00\x00\x00\x00\x00\x01\x00\x05\x5c\xc5\
+\x00\x00\x01\xee\x00\x00\x00\x00\x00\x01\x00\x05Y\x98\
+\x00\x00\x01\xa1\x10\x96}H\
+\x00\x00\x02X\x00\x00\x00\x00\x00\x01\x00\x05]\xb0\
 \x00\x00\x01\xa1\x0c\x01\x0c\xe8\
-\x00\x00\x00\x90\x00\x00\x00\x00\x00\x01\x00\x05EK\
+\x00\x00\x00\x90\x00\x00\x00\x00\x00\x01\x00\x05E\xa6\
 \x00\x00\x01\xa1\x0c\x01\x0c\xe2\
-\x00\x00\x02\x0e\x00\x00\x00\x00\x00\x01\x00\x05Z\xc5\
+\x00\x00\x02(\x00\x00\x00\x00\x00\x01\x00\x05[\xb0\
 \x00\x00\x01\xa1\x0c\x01\x0c\xe0\
-\x00\x00\x01V\x00\x00\x00\x00\x00\x01\x00\x05Q\xd8\
+\x00\x00\x01V\x00\x00\x00\x00\x00\x01\x00\x05R3\
 \x00\x00\x01\xa1\x0c\x01\x0c\xde\
-\x00\x00\x02(\x00\x00\x00\x00\x00\x01\x00\x05\x5c/\
+\x00\x00\x02B\x00\x00\x00\x00\x00\x01\x00\x05]\x1a\
 \x00\x00\x01\xa1\x0c\x01\x0c\xee\
-\x00\x00\x01$\x00\x00\x00\x00\x00\x01\x00\x05OI\
+\x00\x00\x01$\x00\x00\x00\x00\x00\x01\x00\x05O\xa4\
 \x00\x00\x01\xa1\x0c\x01\x0c\xde\
-\x00\x00\x01\x92\x00\x00\x00\x00\x00\x01\x00\x05UY\
+\x00\x00\x01\x92\x00\x00\x00\x00\x00\x01\x00\x05U\xb4\
 \x00\x00\x01\xa1\x0c\x01\x0c\xda\
-\x00\x00\x00\xe2\x00\x00\x00\x00\x00\x01\x00\x05L\xfe\
+\x00\x00\x00\xe2\x00\x00\x00\x00\x00\x01\x00\x05MY\
 \x00\x00\x01\xa1\x0c\x01\x0c\xe6\
-\x00\x00\x01x\x00\x00\x00\x00\x00\x01\x00\x05T\x04\
+\x00\x00\x01x\x00\x00\x00\x00\x00\x01\x00\x05T_\
 \x00\x00\x01\xa1\x0c\x01\x0c\xda\
-\x00\x00\x00\xfe\x00\x00\x00\x00\x00\x01\x00\x05N[\
+\x00\x00\x00\xfe\x00\x00\x00\x00\x00\x01\x00\x05N\xb6\
 \x00\x00\x01\xa1\x0c\x01\x0c\xdc\
-\x00\x00\x01@\x00\x00\x00\x00\x00\x01\x00\x05P\xab\
+\x00\x00\x01@\x00\x00\x00\x00\x00\x01\x00\x05Q\x06\
 \x00\x00\x01\xa1\x0c\x01\x0c\xe2\
 \x00\x00\x00 \x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\
-\x00\x00\x01\xa1\x10PF\xc2\
-\x00\x00\x004\x00\x00\x00\x00\x00\x01\x00\x00\x11#\
-\x00\x00\x01\xa1\x10PE\xf6\
-\x00\x00\x00f\x00\x00\x00\x00\x00\x01\x00\x02\xb0\xe7\
-\x00\x00\x01\xa1\x10PD*\
+\x00\x00\x01\xa1\x10j\xd9]\
+\x00\x00\x004\x00\x00\x00\x00\x00\x01\x00\x00\x11~\
+\x00\x00\x01\xa1\x10j\xd9[\
+\x00\x00\x00f\x00\x00\x00\x00\x00\x01\x00\x02\xb1B\
+\x00\x00\x01\xa1\x10j\xd9Y\
 "
 
 def qInitResources():

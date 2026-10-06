@@ -70,6 +70,7 @@ from ui.constants import (
     PROP_MONITORING,
     PROP_SCANNING,
 )
+from ui.typography import style_group_box_title
 
 logger = logging.getLogger("LabApp.control_panel")
 
@@ -554,6 +555,7 @@ class BaseControlPanel(QWidget, ABC, metaclass=QABCMeta):
 
         # Create a group for settings that are common to both panels
         common_settings_group = QGroupBox("Common Laser Settings")
+        style_group_box_title(common_settings_group)
         common_settings_layout = QGridLayout()
         common_settings_layout.setSpacing(8)
 
@@ -699,6 +701,7 @@ class CT400ControlPanel(BaseControlPanel):
     def _init_subclass_ui(self) -> None:
         """Creates the UI elements specific to the Scan panel."""
         scan_config_group = QGroupBox("Scan-Specific Configuration")
+        style_group_box_title(scan_config_group)
         scan_config_layout = QGridLayout()
         scan_config_layout.setSpacing(8)
 
@@ -728,6 +731,7 @@ class CT400ControlPanel(BaseControlPanel):
         self.main_layout.addWidget(scan_config_group)
 
         detector_group = QGroupBox("Scan Detectors")
+        style_group_box_title(detector_group)
         detector_layout = QHBoxLayout()
         for detector in (Detector.DE_1, Detector.DE_2, Detector.DE_3, Detector.DE_4):
             checkbox = QCheckBox(f"Det {detector.value}")
@@ -742,6 +746,7 @@ class CT400ControlPanel(BaseControlPanel):
         self.main_layout.addWidget(detector_group)
 
         control_group = QGroupBox("Operation")
+        style_group_box_title(control_group)
         control_layout = QVBoxLayout()
         self.scan_btn = QPushButton("Start Scan")
         self.scan_btn.setObjectName(ID_SCAN_BUTTON)
@@ -1106,6 +1111,7 @@ class HistogramControlPanel(BaseControlPanel):
         # This group box replaces the need for the "Measurement Configuration" group
         # as the common settings are already handled by the base class.
         config_group = QGroupBox("Monitor-Specific Configuration")
+        style_group_box_title(config_group)
         config_layout = QGridLayout()
         config_layout.setSpacing(8)
 
@@ -1119,6 +1125,7 @@ class HistogramControlPanel(BaseControlPanel):
         self.main_layout.addWidget(config_group)
 
         detector_group = QGroupBox("Active Detectors")
+        style_group_box_title(detector_group)
         detector_checkbox_layout = QGridLayout()
         detector_checkbox_layout.setSpacing(8)
         self.detector_cbs: list[QCheckBox] = []
@@ -1131,6 +1138,7 @@ class HistogramControlPanel(BaseControlPanel):
         detector_group.setLayout(detector_checkbox_layout)
 
         operation_group = QGroupBox("Operation")
+        style_group_box_title(operation_group)
         operation_layout = QVBoxLayout()
         self.monitor_btn = QPushButton("Start Monitoring")
         self.monitor_btn.setObjectName(ID_MONITOR_BUTTON)
@@ -1142,6 +1150,9 @@ class HistogramControlPanel(BaseControlPanel):
         self.record_btn = QPushButton("Record")
         self.record_btn.setObjectName("powerMonitorRecordButton")
         self.record_btn.setEnabled(False)
+        self._record_icon = QtGui.QIcon(":/icons/record.svg")
+        self._stop_recording_icon = QtGui.QIcon(":/icons/stop.svg")
+        self.record_btn.setIcon(self._record_icon)
         operation_layout.addWidget(self.record_btn)
         self.recording_elapsed_label = QLabel("Recording: 00:00")
         self.recording_elapsed_label.setObjectName("powerMonitorRecordingElapsedLabel")
@@ -1628,7 +1639,12 @@ class HistogramControlPanel(BaseControlPanel):
     def _update_recording_button(self) -> None:
         available = self.monitoring and not self._monitor_stop_pending
         self.record_btn.setEnabled(available)
-        self.record_btn.setText("Stop Recording" if self._recording_active else "Record")
+        if self._recording_active:
+            self.record_btn.setText("Stop Recording")
+            self.record_btn.setIcon(self._stop_recording_icon)
+        else:
+            self.record_btn.setText("Record")
+            self.record_btn.setIcon(self._record_icon)
 
     @Slot(str)
     def _handle_worker_error(self, error_msg: str):
