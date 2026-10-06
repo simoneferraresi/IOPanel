@@ -19,9 +19,9 @@ RESOURCE_COLLECTION = REPOSITORY_ROOT / "resources" / "resources.qrc"
 
 def test_resource_collection_sources_exist() -> None:
     root = ET.parse(RESOURCE_COLLECTION).getroot()
-    entries = root.findall("./qresource/file")
+    entries = root.findall(".//qresource/file")
 
-    assert len(entries) == 16
+    assert len(entries) == 19
     source_paths = [RESOURCE_COLLECTION.parent / (entry.text or "") for entry in entries]
     assert len(set(source_paths)) == len(source_paths)
     assert all(path.is_file() for path in source_paths)
@@ -30,7 +30,14 @@ def test_resource_collection_sources_exist() -> None:
 def test_compiled_resource_aliases_are_registered(qapp) -> None:
     importlib.import_module("resources.resources_rc")
 
-    for alias in (":/icons/laser.svg", ":/icons/play.svg", ":/icons/camera.svg"):
+    for alias in (
+        ":/icons/laser.svg",
+        ":/icons/play.svg",
+        ":/icons/camera.svg",
+        ":/fonts/Geist-Variable.ttf",
+        ":/fonts/GeistMono-Variable.ttf",
+        ":/fonts/OFL.txt",
+    ):
         resource_file = QFile(alias)
         assert resource_file.open(QIODevice.OpenModeFlag.ReadOnly), alias
         try:
@@ -62,7 +69,14 @@ def test_resource_compiler_smoke(tmp_path: Path) -> None:
         spec = importlib.util.spec_from_file_location("resources_smoke_rc", sys.argv[1])
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        for alias in (":/icons/laser.svg", ":/icons/play.svg", ":/icons/camera.svg"):
+        for alias in (
+            ":/icons/laser.svg",
+            ":/icons/play.svg",
+            ":/icons/camera.svg",
+            ":/fonts/Geist-Variable.ttf",
+            ":/fonts/GeistMono-Variable.ttf",
+            ":/fonts/OFL.txt",
+        ):
             resource = QFile(alias)
             assert resource.open(QIODevice.OpenModeFlag.ReadOnly), alias
             try:

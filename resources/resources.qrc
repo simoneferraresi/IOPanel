@@ -17,4 +17,9 @@
     <file alias="stop-circle.svg">icons/stop-circle.svg</file>
     <file alias="stop.svg">icons/stop.svg</file>
 </qresource>
+<qresource prefix="/fonts">
+    <file alias="Geist-Variable.ttf">fonts/Geist-Variable.ttf</file>
+    <file alias="GeistMono-Variable.ttf">fonts/GeistMono-Variable.ttf</file>
+    <file alias="OFL.txt">fonts/OFL.txt</file>
+</qresource>
 </RCC>
