@@ -505,8 +505,124 @@ def _detector_measurement(wavelengths, detector_data, detectors, *, final_pout=N
     )
 
 
+@pytest.mark.parametrize(
+    ("wavelengths", "target", "expected"),
+    [
+        ([1.0, 2.0, 3.0], 2.0, 1),
+        ([1.0, 2.0, 3.0], 2.6, 2),
+        ([1.0, 2.0, 3.0], -2.0, 0),
+        ([1.0, 2.0, 3.0], 9.0, 2),
+        ([3.0, 2.0, 1.0], 2.6, 0),
+        ([2.0], 5.0, 0),
+        ([float("nan"), 2.0, float("inf")], 1.0, 1),
+        ([3.0, 1.0, 2.0], 2.2, 2),
+    ],
+)
+def test_nearest_wavelength_lookup_returns_original_row(wavelengths, target, expected):
+    lookup = plot_widgets._build_wavelength_lookup(np.asarray(wavelengths))
+
+    assert plot_widgets._nearest_wavelength_index(lookup, target) == expected
+    assert plot_widgets._nearest_wavelength_index(plot_widgets._build_wavelength_lookup(np.array([])), target) is None
+
+
+def test_scan_lookup_cache_lifecycle_tracks_live_reference_and_clear(qtbot):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    first = _detector_measurement([1.0, 2.0, 3.0], [[1, 2, 3]], (Detector.DE_1,))
+    second = _detector_measurement([4.0, 5.0], [[4, 5]], (Detector.DE_1,))
+
+    widget.set_measurement(first)
+    assert widget._current_wavelength_lookup.finite_wavelengths is not None
+    np.testing.assert_array_equal(widget._current_wavelength_lookup.finite_wavelengths, first.wavelengths_nm)
+    widget.freeze_current_trace()
+    np.testing.assert_array_equal(widget._reference_wavelength_lookup.finite_wavelengths, first.wavelengths_nm)
+    widget.set_measurement(second)
+    np.testing.assert_array_equal(widget._current_wavelength_lookup.finite_wavelengths, second.wavelengths_nm)
+    np.testing.assert_array_equal(widget._reference_wavelength_lookup.finite_wavelengths, first.wavelengths_nm)
+
+    widget.clear_plot()
+
+    assert widget._current_wavelength_lookup.finite_wavelengths.size == 0
+    assert widget._reference_wavelength_lookup.finite_wavelengths.size == 0
+
+
+def test_detector_scan_live_and_frozen_colors_share_power_monitor_palette(qtbot):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    detectors = (Detector.DE_1, Detector.DE_2, Detector.DE_3, Detector.DE_4, Detector.DE_5)
+    measurement = _detector_measurement([1510.0, 1511.0], np.arange(10.0).reshape(5, 2), detectors)
+
+    widget.set_measurement(measurement)
+    widget.freeze_current_trace()
+
+    for detector in detectors:
+        live_pen = widget.detector_plot_items[detector].opts["pen"]
+        frozen_pen = widget.reference_detector_plot_items[detector].opts["pen"]
+        assert live_pen.color().name() == plot_widgets._DETECTOR_COLOR_BY_ID[detector].lower()
+        assert frozen_pen.color().name() == plot_widgets._DETECTOR_REFERENCE_COLOR_BY_ID[detector].lower()
+        assert frozen_pen.style() == Qt.PenStyle.SolidLine
+        assert frozen_pen.widthF() == pytest.approx(1.25)
+    for detector in detectors[:4]:
+        assert (
+            plot_widgets._DETECTOR_COLOR_BY_ID[detector]
+            == plot_widgets._POWER_MONITOR_DETECTOR_BORDER_COLOR_BY_ID[detector]
+        )
+        assert (
+            plot_widgets._DETECTOR_REFERENCE_COLOR_BY_ID[detector]
+            == plot_widgets._POWER_MONITOR_DETECTOR_FILL_COLOR_BY_ID[detector]
+        )
+    assert plot_widgets._DETECTOR_COLOR_BY_ID[Detector.DE_5] == "#6a3d9a"
+    assert plot_widgets._DETECTOR_REFERENCE_COLOR_BY_ID[Detector.DE_5] == "#A58BBF"
+    assert widget.detector_legend is not None
+    live_item = widget.detector_plot_items[Detector.DE_1]
+    frozen_item = widget.reference_detector_plot_items[Detector.DE_1]
+    sample = next(sample for sample, _label in widget.detector_legend.items if sample.item is live_item)
+
+    class Click:
+        def button(self):
+            return Qt.MouseButton.LeftButton
+
+        def accept(self):
+            pass
+
+    sample.mouseClickEvent(Click())
+    assert not live_item.isVisible()
+    assert frozen_item.isVisible()
+    assert widget.current_measurement is measurement
+    np.testing.assert_array_equal(measurement.detector_data, np.arange(10.0).reshape(5, 2))
+
+
+def test_detector_curves_clip_and_downsample_display_without_changing_measurement(qtbot):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    widget.resize(1100, 650)
+    widget.show()
+    QCoreApplication.processEvents()
+    point_count = 10_000
+    wavelengths = np.linspace(1510.0, 1620.0, point_count)
+    detector_data = np.vstack([np.sin(wavelengths / (i + 1)) for i in range(4)])
+    measurement = _detector_measurement(
+        wavelengths,
+        detector_data,
+        (Detector.DE_1, Detector.DE_2, Detector.DE_3, Detector.DE_4),
+    )
+
+    widget.set_measurement(measurement)
+    widget.freeze_current_trace()
+
+    for item in (*widget.detector_plot_items.values(), *widget.reference_detector_plot_items.values()):
+        assert item.opts["clipToView"] is True
+        assert item.opts["autoDownsample"] is True
+        assert item.opts["downsampleMethod"] == "peak"
+        assert len(item.xData) == point_count
+        assert len(item.yData) == point_count
+    assert measurement.wavelengths_nm.size == point_count
+    assert measurement.detector_data.shape == (4, point_count)
+
+
 def _plotted_data(item):
-    x_data, y_data = item.getData()
+    # Inspect the complete data installed on each item, not its downsampled display arrays.
+    x_data, y_data = item.xData, item.yData
     if x_data is None or y_data is None:
         return np.array([]), np.array([])
     return x_data, y_data
@@ -885,8 +1001,8 @@ def test_matlab_fig_payload_preserves_detector_identity_order_and_colors():
 
     assert payload["wavelengths_nm"] == [1510.0, 1520.0]
     assert payload["traces"] == [
-        {"detector_id": 3, "label": "Det 3", "values": [30.0, 31.0], "color": "#33a02c"},
-        {"detector_id": 1, "label": "Det 1", "values": [10.0, 11.0], "color": "#1f78b4"},
+        {"detector_id": 3, "label": "Det 3", "values": [30.0, 31.0], "color": "#7570b3"},
+        {"detector_id": 1, "label": "Det 1", "values": [10.0, 11.0], "color": "#1b9e77"},
     ]
 
 
@@ -981,7 +1097,7 @@ def test_freeze_snapshots_all_detectors_and_re_freeze_replaces_snapshot(qtbot):
     np.testing.assert_array_equal(_plotted_data(widget.reference_detector_plot_items[Detector.DE_3])[1], [3, 4])
     assert (
         widget.reference_detector_plot_items[Detector.DE_1].opts["pen"].color().name()
-        == widget.detector_plot_items[Detector.DE_1].opts["pen"].color().name()
+        == plot_widgets._DETECTOR_REFERENCE_COLOR_BY_ID[Detector.DE_1].lower()
     )
     assert (
         widget.reference_detector_plot_items[Detector.DE_1].opts["pen"].widthF()
@@ -999,6 +1115,13 @@ def test_freeze_snapshots_all_detectors_and_re_freeze_replaces_snapshot(qtbot):
     np.testing.assert_array_equal(_plotted_data(widget.reference_detector_plot_items[Detector.DE_1])[1], [11, 12])
     np.testing.assert_array_equal(_plotted_data(widget.reference_detector_plot_items[Detector.DE_3])[1], [13, 14])
     assert set(widget.reference_detector_plot_items) == {Detector.DE_1, Detector.DE_3}
+    reused_items = dict(widget.reference_detector_plot_items)
+    scene_count = len(widget.plot_widget.scene().items())
+    for _ in range(3):
+        widget.freeze_current_trace()
+    assert widget.reference_detector_plot_items == reused_items
+    assert all(widget.reference_detector_plot_items[key] is item for key, item in reused_items.items())
+    assert len(widget.plot_widget.scene().items()) == scene_count
 
 
 def test_clear_plot_clears_detector_items_legend_and_measurement_state(qtbot):

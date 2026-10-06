@@ -4,6 +4,7 @@ import io
 import json
 import logging
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -73,14 +74,6 @@ logger = logging.getLogger("LabApp.plot_widgets")
 _GENERIC_SCAN_Y_LABEL = "Power (dB)"
 _MEASUREMENT_SCAN_Y_LABEL = "Transfer function (dB)"
 
-_DETECTOR_COLOR_BY_ID = {
-    Detector.DE_1: "#1f78b4",
-    Detector.DE_2: "#e31a1c",
-    Detector.DE_3: "#33a02c",
-    Detector.DE_4: "#ff7f00",
-    Detector.DE_5: "#6a3d9a",
-}
-
 _POWER_MONITOR_DETECTOR_BORDER_COLOR_BY_ID = {
     Detector.DE_1: "#1b9e77",
     Detector.DE_2: "#d95f02",
@@ -92,6 +85,14 @@ _POWER_MONITOR_DETECTOR_FILL_COLOR_BY_ID = {
     Detector.DE_2: "#e89f67",
     Detector.DE_3: "#ACA9D1",
     Detector.DE_4: "#F07EB8",
+}
+_DETECTOR_COLOR_BY_ID = {
+    **_POWER_MONITOR_DETECTOR_BORDER_COLOR_BY_ID,
+    Detector.DE_5: "#6a3d9a",
+}
+_DETECTOR_REFERENCE_COLOR_BY_ID = {
+    **_POWER_MONITOR_DETECTOR_FILL_COLOR_BY_ID,
+    Detector.DE_5: "#A58BBF",
 }
 _POWER_MONITOR_MAX_TEXT_COLOR = "#E40000"
 _POWER_MONITOR_AXIS_LABEL_POINT_SIZE = 12
@@ -107,6 +108,60 @@ _POWER_MONITOR_AXIS_LABEL_STYLE = {
     "font-family": "Geist",
     "font-weight": "normal",
 }
+
+
+@dataclass(frozen=True)
+class _WavelengthLookup:
+    finite_indices: np.ndarray
+    finite_wavelengths: np.ndarray
+    direction: int
+    minimum: float | None
+    maximum: float | None
+
+
+def _build_wavelength_lookup(wavelengths: np.ndarray | None) -> _WavelengthLookup:
+    if wavelengths is None or wavelengths.size == 0:
+        return _WavelengthLookup(np.array([], dtype=int), np.array([], dtype=float), 0, None, None)
+
+    indices = np.flatnonzero(np.isfinite(wavelengths))
+    finite = wavelengths[indices]
+    if finite.size < 2:
+        direction = 1
+    else:
+        differences = np.diff(finite)
+        if np.all(differences >= 0):
+            direction = 1
+        elif np.all(differences <= 0):
+            direction = -1
+        else:
+            direction = 0
+    if finite.size == 0:
+        minimum = maximum = None
+    else:
+        minimum, maximum = float(np.min(finite)), float(np.max(finite))
+    return _WavelengthLookup(indices, finite, direction, minimum, maximum)
+
+
+def _nearest_wavelength_index(lookup: _WavelengthLookup, wavelength: float) -> int | None:
+    """Return the original row index nearest to wavelength."""
+    values = lookup.finite_wavelengths
+    indices = lookup.finite_indices
+    if values.size == 0:
+        return None
+    if lookup.direction == 0:
+        return int(indices[np.abs(values - wavelength).argmin()])
+
+    ordered = values if lookup.direction > 0 else -values
+    target = wavelength if lookup.direction > 0 else -wavelength
+    position = int(np.searchsorted(ordered, target, side="left"))
+    candidates: list[int] = []
+    for candidate_position in (position - 1, position):
+        if 0 <= candidate_position < len(ordered):
+            value = ordered[candidate_position]
+            first_position = int(np.searchsorted(ordered, value, side="left"))
+            candidates.append(first_position)
+    best_position = min(candidates, key=lambda i: (abs(float(values[i]) - wavelength), int(indices[i])))
+    return int(indices[best_position])
 
 
 def _configure_power_monitor_axes(
@@ -1224,6 +1279,8 @@ class PlotWidget(QWidget):
         self.current_output_power: float | None = None
         self.current_measurement: ScanMeasurement | None = None
         self.reference_measurement: ScanMeasurement | None = None
+        self._current_wavelength_lookup = _build_wavelength_lookup(None)
+        self._reference_wavelength_lookup = _build_wavelength_lookup(None)
         self.detector_plot_items: dict[Detector, pg.PlotDataItem] = {}
         self.reference_detector_plot_items: dict[Detector, pg.PlotDataItem] = {}
         self.detector_legend: pg.LegendItem | None = None
@@ -1429,11 +1486,10 @@ class PlotWidget(QWidget):
             mouse_x, mouse_y = mouse_point.x(), mouse_point.y()
             wavelengths = self.current_wavelengths
             if wavelengths is not None and len(wavelengths) > 0:
-                finite_indices = np.flatnonzero(np.isfinite(wavelengths))
-                if finite_indices.size == 0:
+                idx = _nearest_wavelength_index(self._current_wavelength_lookup, mouse_x)
+                if idx is None:
                     self._hide_crosshair()
                     return
-                idx = finite_indices[np.abs(wavelengths[finite_indices] - mouse_x).argmin()]
                 x = float(wavelengths[idx])
             else:
                 idx = None
@@ -1460,15 +1516,15 @@ class PlotWidget(QWidget):
                         label_lines.append(f"Det {detector.value}: n/a")
 
                 if reference is not None:
-                    reference_indices = np.flatnonzero(np.isfinite(reference.wavelengths_nm))
-                    if reference_indices.size == 0:
+                    reference_lookup = self._reference_wavelength_lookup
+                    if reference_lookup.finite_indices.size == 0:
                         label_lines.append("Reference: n/a")
                     else:
-                        finite_reference_wavelengths = reference.wavelengths_nm[reference_indices]
-                        if x < finite_reference_wavelengths.min() or x > finite_reference_wavelengths.max():
+                        if x < reference_lookup.minimum or x > reference_lookup.maximum:
                             label_lines.append("Reference: out of range")
                         else:
-                            reference_idx = reference_indices[np.abs(finite_reference_wavelengths - x).argmin()]
+                            reference_idx = _nearest_wavelength_index(reference_lookup, x)
+                            assert reference_idx is not None
                             reference_x = float(reference.wavelengths_nm[reference_idx])
                             label_lines.append(f"Reference @ {reference_x:.3f} nm:")
                             for detector, value in zip(
@@ -1623,6 +1679,7 @@ class PlotWidget(QWidget):
 
             logger.debug(f"Updating plot. Points: {len(x_data_np)}. Pout: {output_power}")
             self.current_wavelengths = x_data_np
+            self._current_wavelength_lookup = _build_wavelength_lookup(x_data_np)
             self.current_powers = y_data_np
             self.current_output_power = output_power
 
@@ -1669,6 +1726,19 @@ class PlotWidget(QWidget):
             item.setData([], [])
             item.setVisible(False)
 
+    def showEvent(self, event: QtGui.QShowEvent) -> None:
+        super().showEvent(event)
+        self._enable_detector_display_optimizations()
+
+    def _configure_detector_display_item(self, item: pg.PlotDataItem) -> None:
+        if self.plot_widget.isVisible() and self.plot_widget.width() > 1:
+            item.setClipToView(True)
+            item.setDownsampling(auto=True, method="peak")
+
+    def _enable_detector_display_optimizations(self) -> None:
+        for item in (*self.detector_plot_items.values(), *self.reference_detector_plot_items.values()):
+            self._configure_detector_display_item(item)
+
     def _detector_item(self, detector: Detector) -> pg.PlotDataItem:
         item = self.detector_plot_items.get(detector)
         if item is None:
@@ -1676,6 +1746,7 @@ class PlotWidget(QWidget):
                 pen=pg.mkPen(self._DETECTOR_COLORS[detector], width=2.0),
                 skipFiniteCheck=True,
             )
+            self._configure_detector_display_item(item)
             item.setZValue(10)
             self.detector_plot_items[detector] = item
         return item
@@ -1684,9 +1755,10 @@ class PlotWidget(QWidget):
         item = self.reference_detector_plot_items.get(detector)
         if item is None:
             item = self.plot_widget.plot(
-                pen=pg.mkPen(self._DETECTOR_COLORS[detector], width=1.25, style=Qt.PenStyle.DashLine),
+                pen=pg.mkPen(_DETECTOR_REFERENCE_COLOR_BY_ID[detector], width=1.25),
                 skipFiniteCheck=True,
             )
+            self._configure_detector_display_item(item)
             item.setZValue(0)
             self.reference_detector_plot_items[detector] = item
         return item
@@ -1712,6 +1784,7 @@ class PlotWidget(QWidget):
         self.plot_widget.setLabel("left", _MEASUREMENT_SCAN_Y_LABEL)
         self.current_measurement = measurement
         self.current_wavelengths = measurement.wavelengths_nm
+        self._current_wavelength_lookup = _build_wavelength_lookup(measurement.wavelengths_nm)
         self.current_powers = measurement.detector_data[0] if measurement.detectors else np.array([])
         self.current_output_power = measurement.final_pout
         self.plot_data_item.setData([], [])
@@ -1772,6 +1845,8 @@ class PlotWidget(QWidget):
         self.current_output_power = None
         self.current_measurement = None
         self.reference_measurement = None
+        self._current_wavelength_lookup = _build_wavelength_lookup(None)
+        self._reference_wavelength_lookup = _build_wavelength_lookup(None)
 
         # 3. Reset UI state
         self.set_plot_title("Wavelength Scan (Cleared)")
@@ -1790,10 +1865,12 @@ class PlotWidget(QWidget):
         measurement = self.current_measurement
         if measurement is None:
             self.reference_measurement = None
+            self._reference_wavelength_lookup = _build_wavelength_lookup(None)
             self._clear_detector_reference_items()
             self.reference_plot_item.setData(self.current_wavelengths, self.current_powers)
         else:
             self.reference_measurement = measurement
+            self._reference_wavelength_lookup = _build_wavelength_lookup(measurement.wavelengths_nm)
             self.reference_plot_item.setData([], [])
             self._clear_detector_reference_items()
             for row_index, detector in enumerate(measurement.detectors):
