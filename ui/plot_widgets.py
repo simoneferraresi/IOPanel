@@ -29,7 +29,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMessageBox,
-    QPushButton,
     QSizePolicy,
     QToolButton,
     QVBoxLayout,
@@ -1177,9 +1176,15 @@ class PlotWidget(QWidget):
         layout.setContentsMargins(5, 5, 5, 5)
         layout.setSpacing(5)
 
-        self.plot_widget = pg.PlotWidget(background="w")  # PyQtGraph PlotWidget
+        self.plot_container = QWidget(self)
+        plot_layout = QtWidgets.QGridLayout(self.plot_container)
+        plot_layout.setContentsMargins(0, 0, 0, 0)
+        plot_layout.setRowStretch(0, 1)
+        plot_layout.setColumnStretch(0, 1)
+        self.plot_widget = pg.PlotWidget(background="w", parent=self.plot_container)
         self.plot_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        layout.addWidget(self.plot_widget)
+        plot_layout.addWidget(self.plot_widget, 0, 0)
+        layout.addWidget(self.plot_container, stretch=1)
 
         # --- NEW: Reference Plot Item (The "Frozen" Trace) ---
         # We add this BEFORE the live item so it renders behind it implicitly,
@@ -1202,21 +1207,24 @@ class PlotWidget(QWidget):
         )
         self.plot_data_item.setZValue(10)  # Ensure live data is always on top
 
-        # --- NEW: Clear Button ---
-        self.clear_btn = QPushButton("Clear Plot")
-        # Use standard Qt Trash icon
+        self.clear_btn = QToolButton()
         self.clear_btn.setIcon(QIcon(":/icons/eraser.svg"))
         self.clear_btn.setToolTip("Clear all live and frozen traces")
+        self.clear_btn.setAccessibleName("Clear wavelength scan plot")
+        self.clear_btn.setObjectName("scanPlotClearButton")
+        self.clear_btn.setAutoRaise(True)
+        self.clear_btn.setFixedSize(28, 28)
         self.clear_btn.clicked.connect(self.clear_plot)
-        # -------------------------
 
-        # --- NEW: Freeze Button ---
-        self.freeze_btn = QPushButton("Freeze Trace")
+        self.freeze_btn = QToolButton()
         self.freeze_btn.setIcon(QIcon(":/icons/snowflake.svg"))
         self.freeze_btn.setToolTip("Snapshot the current trace to the background for comparison")
+        self.freeze_btn.setAccessibleName("Freeze wavelength scan trace")
+        self.freeze_btn.setObjectName("scanPlotFreezeButton")
+        self.freeze_btn.setAutoRaise(True)
+        self.freeze_btn.setFixedSize(28, 28)
         self.freeze_btn.clicked.connect(self.freeze_current_trace)
-        self.freeze_btn.setEnabled(False)  # Disabled until we have data
-        # --------------------------
+        self.freeze_btn.setEnabled(False)
 
         # Configure axes, title, grid
         tick_font = make_font("sans", 11)
@@ -1246,38 +1254,70 @@ class PlotWidget(QWidget):
         self.plot_widget.scene().sigMouseMoved.connect(self._on_mouse_moved)
         # ----------------------------
 
-        self.save_btn = QPushButton("Save Scan Data")
+        self.save_btn = QToolButton()
         self.save_btn.setIcon(QtGui.QIcon(":/icons/save.svg"))
+        self.save_btn.setToolTip("Save scan data")
+        self.save_btn.setAccessibleName("Save wavelength scan data")
+        self.save_btn.setObjectName("scanPlotSaveButton")
+        self.save_btn.setAutoRaise(True)
+        self.save_btn.setFixedSize(28, 28)
         self.save_btn.setEnabled(False)
         self.save_btn.clicked.connect(self.save_scan_data)
 
-        self.matlab_status_label = QLabel("")  # For showing "Saving .fig..."
-        self.matlab_status_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.matlab_status_label = QLabel("", self.plot_container)
+        self.matlab_status_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.matlab_status_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.matlab_status_label.setObjectName("scanPlotStatusLabel")
+        self.matlab_status_label.setVisible(False)
         self._status_clear_timer = QTimer(self)
         self._status_clear_timer.setSingleShot(True)
         self._status_clear_timer.setInterval(self._STATUS_CLEAR_TIMEOUT_MS)
         self._status_clear_timer.timeout.connect(self._clear_matlab_status)
 
-        # --- NEW: Screenshot Button ---
-        self.screenshot_btn = QPushButton("Export Img")
-        self.screenshot_btn.setIcon(QIcon(":/icons/camera.svg"))  # Now it exists!
-        self.screenshot_btn.setToolTip("Save plot as PNG image")
+        self.screenshot_btn = QToolButton()
+        self.screenshot_btn.setIcon(QIcon(":/icons/camera.svg"))
+        self.screenshot_btn.setToolTip("Export plot image")
+        self.screenshot_btn.setAccessibleName("Export wavelength scan plot image")
+        self.screenshot_btn.setObjectName("scanPlotExportImageButton")
+        self.screenshot_btn.setAutoRaise(True)
+        self.screenshot_btn.setFixedSize(28, 28)
         self.screenshot_btn.clicked.connect(self.export_plot_image)
 
-        button_layout = QHBoxLayout()
-        button_layout.addWidget(self.matlab_status_label)  # Add it to the layout
-        button_layout.addStretch(1)
-        button_layout.addWidget(self.clear_btn)
-        button_layout.addWidget(self.freeze_btn)
-        button_layout.addWidget(self.save_btn)
-        button_layout.addWidget(self.screenshot_btn)
-        layout.addLayout(button_layout)
+        self.overlay_controls = QWidget(self.plot_container)
+        self.overlay_controls.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        controls_layout = QHBoxLayout(self.overlay_controls)
+        controls_layout.setContentsMargins(4, 4, 4, 4)
+        controls_layout.setSpacing(2)
+        controls_layout.addWidget(self.clear_btn)
+        controls_layout.addWidget(self.freeze_btn)
+        controls_layout.addWidget(self.save_btn)
+        controls_layout.addWidget(self.screenshot_btn)
+        plot_layout.addWidget(
+            self.overlay_controls,
+            0,
+            0,
+            1,
+            1,
+            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight,
+        )
+        plot_layout.addWidget(
+            self.matlab_status_label,
+            0,
+            0,
+            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft,
+        )
+        self.overlay_controls.raise_()
+        self.matlab_status_label.raise_()
 
         logger.info("PlotWidget (PyQtGraph) initialized")
 
     def set_plot_title(self, text: str, *, color: str = "black") -> None:
         """Set a scan title using the shared 12 pt bold Geist policy."""
         self.plot_widget.setTitle(text, **pyqtgraph_title_style(color))
+
+    def _set_matlab_status(self, message: str) -> None:
+        self.matlab_status_label.setText(message)
+        self.matlab_status_label.setVisible(bool(message))
 
     @Slot()
     def export_plot_image(self):
@@ -1427,7 +1467,7 @@ class PlotWidget(QWidget):
 
             if not MATLAB_ENGINE_AVAILABLE:
                 logger.warning("MATLAB Engine support is not available.")
-                self.matlab_status_label.setText("MATLAB N/A")
+                self._set_matlab_status("MATLAB N/A")
                 return False
 
             if self.is_matlab_engine_starting:
@@ -1438,14 +1478,14 @@ class PlotWidget(QWidget):
                 return False  # Indicate not ready yet
 
             self.is_matlab_engine_starting = True
-            self.matlab_status_label.setText("Starting MATLAB Engine...")
+            self._set_matlab_status("Starting MATLAB Engine...")
             QApplication.processEvents()  # Update UI
 
             try:
                 logger.info("PlotWidget: Starting shared MATLAB engine...")
                 self.matlab_engine_instance = matlab.engine.start_matlab()
                 logger.info("PlotWidget: Shared MATLAB engine started successfully.")
-                self.matlab_status_label.setText("MATLAB Ready.")
+                self._set_matlab_status("MATLAB Ready.")
                 self._status_clear_timer.start(self._MATLAB_STATUS_TIMEOUT_MS)
                 return True
             except Exception as e:
@@ -1453,7 +1493,7 @@ class PlotWidget(QWidget):
                     "PlotWidget: Failed to start shared MATLAB engine",
                 )
                 self.matlab_engine_instance = None
-                self.matlab_status_label.setText("MATLAB Start Failed!")
+                self._set_matlab_status("MATLAB Start Failed!")
                 QMessageBox.critical(self, "MATLAB Error", f"Could not start MATLAB Engine: {e}")
                 return False
             finally:
@@ -1653,7 +1693,7 @@ class PlotWidget(QWidget):
         self.set_plot_title("Wavelength Scan (Cleared)")
         self.save_btn.setEnabled(False)
         self.freeze_btn.setEnabled(False)
-        self.freeze_btn.setText("Freeze Trace")
+        self.freeze_btn.setToolTip("Snapshot the current trace to the background for comparison")
 
         logger.info("Plot cleared.")
 
@@ -1683,7 +1723,7 @@ class PlotWidget(QWidget):
         logger.info("Current trace frozen as reference.")
 
         # Optional: Change button text to indicate a reference is set?
-        self.freeze_btn.setText("Update Trace")
+        self.freeze_btn.setToolTip("Update the frozen reference from the current trace")
 
     def _clear_detector_reference_items(self) -> None:
         for item in self.reference_detector_plot_items.values():
@@ -1711,7 +1751,7 @@ class PlotWidget(QWidget):
             return
 
         self.save_btn.setEnabled(False)
-        self.matlab_status_label.setText("")
+        self._set_matlab_status("")
         wavelengths = measurement.wavelengths_nm
         pout = measurement.final_pout
         logger.info(f"Saving scan data. Points: {len(wavelengths)}. Pout: {pout}")
@@ -1811,7 +1851,7 @@ class PlotWidget(QWidget):
             else:
                 self.pending_saves += 1
                 fig_path = targets["FIG"]
-                self.matlab_status_label.setText(f"Queueing {fig_path.name} save...")
+                self._set_matlab_status(f"Queueing {fig_path.name} save...")
                 if self.matlab_save_thread is not None:
                     logger.debug("Previous matlab_save_thread detected; its finished signals own cleanup.")
                 self.matlab_save_thread = QThread(self)
@@ -1851,12 +1891,12 @@ class PlotWidget(QWidget):
             # ... (append to saved_files_list, update status_label) ...
             logger.info(f"Successfully saved {filetype}: {message_or_filename}")
             self.saved_files_list.append(message_or_filename)
-            self.matlab_status_label.setText(f"{Path(message_or_filename).name} saved.")
+            self._set_matlab_status(f"{Path(message_or_filename).name} saved.")
         else:
             # ... (append to error_list, update status_label) ...
             logger.error(f"Failed to save {filetype}: {message_or_filename}")
             self.error_list.append(f"{filetype.upper()}: {message_or_filename}")
-            self.matlab_status_label.setText(f"Error saving {filetype}.")
+            self._set_matlab_status(f"Error saving {filetype}.")
 
         # The thread and worker are already connected to deleteLater via their finished signals.
         # We don't need to explicitly quit/delete them here again.
@@ -1896,7 +1936,7 @@ class PlotWidget(QWidget):
 
     @Slot()
     def _clear_matlab_status(self) -> None:
-        self.matlab_status_label.setText("")
+        self._set_matlab_status("")
 
     def get_matlab_engine(self) -> matlab.engine.MatlabEngine | None:
         with QMutexLocker(self.matlab_engine_lock):  # Protect access
