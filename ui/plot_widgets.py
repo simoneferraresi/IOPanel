@@ -195,6 +195,8 @@ class PowerMonitorTraceWidget(QWidget):
         self.legend: pg.LegendItem | None = None
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         self.status_label = QLabel()
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
@@ -793,6 +795,7 @@ class HistogramWidget(QtWidgets.QWidget):
     _LOW_SIGNAL_FLOOR = -100.0
     _HIGH_SIGNAL_CEILING = 10.0
     _VALUE_LABEL_GAP_PX = 0
+    _VALUE_LABEL_EDGE_MARGIN_PX = 4
 
     def __init__(self, control_panel, detector_keys: list[str], parent: QWidget | None = None):
         super().__init__(parent)
@@ -828,6 +831,8 @@ class HistogramWidget(QtWidgets.QWidget):
 
         # UI Elements
         self.layout = QtWidgets.QVBoxLayout(self)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setSpacing(0)
         self.plot_container = QWidget(self)
         plot_layout = QtWidgets.QGridLayout(self.plot_container)
         plot_layout.setContentsMargins(0, 0, 0, 0)
@@ -869,7 +874,7 @@ class HistogramWidget(QtWidgets.QWidget):
         self._create_plot_items()  # Creates bars, lines, and text items
 
         view_box = self.plot_widget.getViewBox()
-        view_box.sigResized.connect(self._reposition_value_texts)
+        view_box.sigResized.connect(self._handle_view_box_resized)
         view_box.sigYRangeChanged.connect(self._reposition_value_texts)
 
         self.reset_btn.clicked.connect(self.reset_maxima)
@@ -1025,6 +1030,7 @@ class HistogramWidget(QtWidgets.QWidget):
             self._update_max_line(i, x_start_line, x_end_line, max_val)
             self._update_max_text(i, x_center, max_val)  # Max text should be OVER
             self._update_current_text(i, x_center, current_val)  # Current text should be UNDER
+        self._update_y_axis_scale()
 
     def _update_max_line(self, i: int, x_start: float, x_end: float, max_val: float):
         if i < len(self.max_lines) and self.max_lines[i] is not None:
@@ -1079,6 +1085,10 @@ class HistogramWidget(QtWidgets.QWidget):
             if current_text is not None and current_text.isVisible() and np.isfinite(self.current_values[i]):
                 current_text.setPos(i, self.current_values[i] - gap_y)
 
+    def _handle_view_box_resized(self, *_args) -> None:
+        self._update_y_axis_scale()
+        self._reposition_value_texts()
+
     def _update_y_axis_scale(self):
         try:
             viewable_current = self.current_values[np.isfinite(self.current_values)]
@@ -1105,15 +1115,33 @@ class HistogramWidget(QtWidgets.QWidget):
             padding = max(2.0, data_range * 0.2) if data_range > 1e-6 else 2.0
             y_min_view = y_min_data - padding
             y_max_view = y_max_data + padding
-            y_min_view = max(y_min_view, -100.0)
-            y_max_view = min(y_max_view, 20.0)
+            y_min_view = max(y_min_view, self._LOW_SIGNAL_FLOOR)
+            y_max_view = min(y_max_view, self._HIGH_SIGNAL_CEILING)
 
             if y_max_view - y_min_view < 10.0:
                 mid_point = (y_max_view + y_min_view) / 2.0
                 y_min_view = mid_point - 5.0
                 y_max_view = mid_point + 5.0
-                y_min_view = max(y_min_view, -100.0)
-                y_max_view = min(y_max_view, 20.0)
+                y_min_view = max(y_min_view, self._LOW_SIGNAL_FLOOR)
+                y_max_view = min(y_max_view, self._HIGH_SIGNAL_CEILING)
+
+            # Reserve the annotation's rendered height at both plot edges. The
+            # initial range is data-driven and constrained above; expanding it
+            # here preserves that scaling while making the pixel clearance stable
+            # as the ViewBox becomes shorter during recording.
+            view_height_px = self.plot_widget.getViewBox().sceneBoundingRect().height()
+            rendered_label_height = max(
+                (item.boundingRect().height() for item in (*self.max_texts, *self.current_texts) if item is not None),
+                default=0.0,
+            )
+            label_height_px = max(QtGui.QFontMetricsF(self.text_font).height(), rendered_label_height)
+            label_reserve_px = label_height_px + self._VALUE_LABEL_EDGE_MARGIN_PX
+            if np.isfinite(view_height_px) and view_height_px > 2 * label_reserve_px:
+                base_span = y_max_view - y_min_view
+                final_span = base_span / (1.0 - 2.0 * label_reserve_px / view_height_px)
+                extra_span = final_span - base_span
+                y_min_view -= extra_span / 2.0
+                y_max_view += extra_span / 2.0
 
             self.plot_widget.setYRange(y_min_view, y_max_view, padding=0)
 

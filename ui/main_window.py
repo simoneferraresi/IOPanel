@@ -666,6 +666,7 @@ class MainWindow(QMainWindow):
         self.histogram_plot_container = QWidget()
         self.histogram_plot_layout = QVBoxLayout(self.histogram_plot_container)
         self.histogram_plot_layout.setContentsMargins(0, 0, 0, 0)
+        self.histogram_plot_layout.setSpacing(4)
         self.histogram_plot_layout.addWidget(self.histogram_widget, stretch=1)
         second_tab_layout.addWidget(self.histogram_control, stretch=0)
         second_tab_layout.addWidget(self.histogram_plot_container, stretch=1)

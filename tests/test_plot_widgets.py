@@ -267,7 +267,8 @@ def test_power_monitor_overlay_reset_keeps_existing_reset_behavior(qtbot):
     assert widget.current_values.tolist() == [0.0]
     assert np.isneginf(widget.max_values[0])
     reset_range = widget.plot_widget.getViewBox().viewRange()[1]
-    assert reset_range == pytest.approx((-5.0, 5.0))
+    assert reset_range[0] < -5.0 and reset_range[1] > 5.0
+    assert reset_range[0] == pytest.approx(-reset_range[1])
     assert reset_range != before_reset_range
     assert widget.bars.opts["height"].tolist() == [0.0]
     assert not widget.max_texts[0].isVisible()
@@ -352,6 +353,52 @@ def test_power_monitor_histogram_label_pixel_gap_survives_resize_and_y_range_cha
     assert widget.current_texts[0].pos().y() == pytest.approx(widget.current_values[0])
     assert reset_gap == pytest.approx(widget._VALUE_LABEL_GAP_PX, abs=0.1)
     widget.close()
+
+
+def test_power_monitor_value_annotation_bounds_stay_inside_viewbox_when_resized(qtbot):
+    widget = HistogramWidget(None, ["Det 1", "Det 2"])
+    qtbot.addWidget(widget)
+    widget.resize(640, 600)
+    widget.show()
+    qtbot.waitExposed(widget)
+    widget._update_values(np.array([9.5, -89.5]))
+    widget._update_y_axis_scale()
+    widget._update_visual_elements()
+    qtbot.wait(30)
+
+    tall_range = widget.plot_widget.getViewBox().viewRange()[1]
+    for height in (600, 220):
+        widget.resize(640, height)
+        qtbot.wait(50)
+        view_box_rect = widget.plot_widget.getViewBox().sceneBoundingRect()
+        annotations = [
+            item for item in (*widget.max_texts, *widget.current_texts) if item is not None and item.isVisible()
+        ]
+        assert annotations
+        for item in annotations:
+            text_rect = item.mapRectToScene(item.boundingRect())
+            assert text_rect.top() >= view_box_rect.top() - 1.5
+            assert text_rect.bottom() <= view_box_rect.bottom() + 1.5
+        if height == 220:
+            short_range = widget.plot_widget.getViewBox().viewRange()[1]
+
+    tall_span = tall_range[1] - tall_range[0]
+    short_span = short_range[1] - short_range[0]
+    assert short_span > tall_span
+    widget.close()
+
+
+def test_power_monitor_plot_widgets_have_zero_outer_layout_margins(qtbot):
+    histogram = HistogramWidget(None, ["Det 1"])
+    trace = PowerMonitorTraceWidget()
+    qtbot.addWidget(histogram)
+    qtbot.addWidget(trace)
+    for layout in (histogram.layout, trace.layout()):
+        margins = layout.contentsMargins()
+        assert (margins.left(), margins.top(), margins.right(), margins.bottom()) == (0, 0, 0, 0)
+        assert layout.spacing() == 0
+    histogram.close()
+    trace.close()
 
 
 def test_update_plot_autoranges_to_new_finite_trace(qtbot):
