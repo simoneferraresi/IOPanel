@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QPointF, Qt
 from PySide6.QtTest import QSignalSpy
+from PySide6.QtWidgets import QToolButton
 
 from hardware.ct400_types import CT400ScanResultKind, Detector, LaserInput
 from logic.scan_measurement import ScanAcquisitionSettings, ScanMeasurement
@@ -179,6 +180,59 @@ def test_power_monitor_histogram_uses_detector_border_fill_and_text_palette(qtbo
     assert [item.color.name() for item in widget.max_texts] == expected_max_text
     assert [item.color.name() for item in widget.current_texts] == ["#555555"] * 4
     assert widget.max_pen.style().name == "DashLine"
+    widget.close()
+
+
+def test_power_monitor_reset_is_a_compact_top_right_plot_overlay(qtbot):
+    widget = HistogramWidget(None, ["Det 1"])
+    qtbot.addWidget(widget)
+    widget.resize(640, 360)
+    widget.show()
+    qtbot.waitExposed(widget)
+
+    button = widget.reset_btn
+    assert isinstance(button, QToolButton)
+    assert button.parentWidget() is widget.overlay_controls
+    assert widget.overlay_controls.parentWidget() is widget.plot_container
+    assert button.icon().isNull() is False
+    assert button.toolTip() == "Reset current and maximum values"
+    assert button.accessibleName() == "Reset Power Monitor values"
+    assert button.autoRaise()
+    assert button.size().width() <= 32 and button.size().height() <= 32
+    button_center = button.mapTo(widget.plot_container, button.rect().center())
+    assert button_center.x() > widget.plot_container.width() * 0.8
+    assert button_center.y() < 40
+    assert widget.plot_widget.geometry().height() == widget.plot_container.height()
+    widget.resize(640, 520)
+    qtbot.wait(20)
+    button_center = button.mapTo(widget.plot_container, button.rect().center())
+    assert button_center.x() > widget.plot_container.width() * 0.8
+    assert button_center.y() < 40
+    assert widget.plot_widget.geometry().height() == widget.plot_container.height()
+    widget.close()
+
+
+def test_power_monitor_overlay_reset_keeps_existing_reset_behavior(qtbot):
+    widget = HistogramWidget(None, ["Det 1"])
+    qtbot.addWidget(widget)
+    widget.resize(640, 360)
+    widget.show()
+    qtbot.waitExposed(widget)
+    widget._update_values(np.array([-18.0]))
+    assert widget.current_values.tolist() == [-18.0]
+    assert widget.max_values.tolist() == [-18.0]
+    widget._update_y_axis_scale()
+    before_reset_range = widget.plot_widget.getViewBox().viewRange()[1]
+
+    widget.reset_btn.click()
+
+    assert widget.current_values.tolist() == [0.0]
+    assert np.isneginf(widget.max_values[0])
+    reset_range = widget.plot_widget.getViewBox().viewRange()[1]
+    assert reset_range == pytest.approx((-5.0, 5.0))
+    assert reset_range != before_reset_range
+    assert widget.bars.opts["height"].tolist() == [0.0]
+    assert not widget.max_texts[0].isVisible()
     widget.close()
 
 

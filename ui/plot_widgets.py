@@ -166,27 +166,58 @@ class PowerMonitorTraceWidget(QWidget):
         layout = QVBoxLayout(self)
         self.status_label = QLabel()
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        status_row = QHBoxLayout()
-        status_row.addWidget(self.status_label, stretch=1)
-        self.save_recording_button = QPushButton("Save Recording")
+        self.status_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.save_recording_button = QToolButton()
+        self.save_recording_button.setIcon(QIcon(":/icons/save.svg"))
+        self.save_recording_button.setToolTip("Save Power Monitor recording")
+        self.save_recording_button.setAccessibleName("Save Power Monitor recording")
+        self.save_recording_button.setObjectName("powerMonitorTraceSaveButton")
+        self.save_recording_button.setAutoRaise(True)
+        self.save_recording_button.setFixedSize(28, 28)
         self.save_recording_button.setEnabled(False)
         self.save_recording_button.clicked.connect(self.save_recording)
-        status_row.addWidget(self.save_recording_button)
         self.close_trace_button = QToolButton()
         self.close_trace_button.setText("×")
         self.close_trace_button.setToolTip("Close Power Monitor trace")
+        self.close_trace_button.setAccessibleName("Close Power Monitor trace")
         self.close_trace_button.setObjectName("powerMonitorTraceCloseButton")
         self.close_trace_button.setAutoRaise(True)
-        self.close_trace_button.setFixedSize(24, 24)
+        self.close_trace_button.setFixedSize(28, 28)
         self.close_trace_button.clicked.connect(self._hide_by_user)
-        status_row.addWidget(self.close_trace_button)
-        layout.addLayout(status_row)
-        self.plot_widget = pg.PlotWidget(background="w")
+        self.plot_container = QWidget(self)
+        plot_layout = QtWidgets.QGridLayout(self.plot_container)
+        plot_layout.setContentsMargins(0, 0, 0, 0)
+        plot_layout.setRowStretch(0, 1)
+        plot_layout.setColumnStretch(0, 1)
+        self.plot_widget = pg.PlotWidget(background="w", parent=self.plot_container)
         self.plot_widget.setLabel("bottom", "Elapsed time (s)")
         self.plot_widget.setLabel("left", "Power (dBm)")
         self.plot_widget.setTitle("Power Monitor Recording", **pyqtgraph_title_style())
         self.plot_widget.showGrid(x=True, y=True, alpha=0.25)
-        layout.addWidget(self.plot_widget, stretch=1)
+        plot_layout.addWidget(self.plot_widget, 0, 0)
+        self.overlay_controls = QWidget(self.plot_container)
+        self.overlay_controls.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        controls_layout = QHBoxLayout(self.overlay_controls)
+        controls_layout.setContentsMargins(4, 4, 4, 4)
+        controls_layout.setSpacing(2)
+        controls_layout.addWidget(self.save_recording_button)
+        controls_layout.addWidget(self.close_trace_button)
+        plot_layout.addWidget(
+            self.overlay_controls,
+            0,
+            0,
+            1,
+            1,
+            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight,
+        )
+        plot_layout.addWidget(
+            self.status_label,
+            0,
+            0,
+            Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignLeft,
+        )
+        self.overlay_controls.raise_()
+        layout.addWidget(self.plot_container, stretch=1)
         self._set_status("")
 
     def start_recording(self, settings: PowerMonitorAcquisitionSettings) -> None:
@@ -768,8 +799,35 @@ class HistogramWidget(QtWidgets.QWidget):
 
         # UI Elements
         self.layout = QtWidgets.QVBoxLayout(self)
-        self.plot_widget = pg.PlotWidget(background="w")
-        self.layout.addWidget(self.plot_widget)
+        self.plot_container = QWidget(self)
+        plot_layout = QtWidgets.QGridLayout(self.plot_container)
+        plot_layout.setContentsMargins(0, 0, 0, 0)
+        plot_layout.setRowStretch(0, 1)
+        plot_layout.setColumnStretch(0, 1)
+        self.plot_widget = pg.PlotWidget(background="w", parent=self.plot_container)
+        plot_layout.addWidget(self.plot_widget, 0, 0)
+        self.overlay_controls = QWidget(self.plot_container)
+        self.overlay_controls.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        controls_layout = QHBoxLayout(self.overlay_controls)
+        controls_layout.setContentsMargins(4, 4, 4, 4)
+        self.reset_btn = QToolButton()
+        self.reset_btn.setIcon(QIcon(":/icons/eraser.svg"))
+        self.reset_btn.setToolTip("Reset current and maximum values")
+        self.reset_btn.setAccessibleName("Reset Power Monitor values")
+        self.reset_btn.setObjectName("powerMonitorResetButton")
+        self.reset_btn.setAutoRaise(True)
+        self.reset_btn.setFixedSize(28, 28)
+        controls_layout.addWidget(self.reset_btn)
+        plot_layout.addWidget(
+            self.overlay_controls,
+            0,
+            0,
+            1,
+            1,
+            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight,
+        )
+        self.overlay_controls.raise_()
+        self.layout.addWidget(self.plot_container, stretch=1)
 
         # Plot items
         self.bars: pg.BarGraphItem | None = None
@@ -785,9 +843,7 @@ class HistogramWidget(QtWidgets.QWidget):
         view_box.sigResized.connect(self._reposition_value_texts)
         view_box.sigYRangeChanged.connect(self._reposition_value_texts)
 
-        self.reset_btn = QtWidgets.QPushButton("Reset Axes")
         self.reset_btn.clicked.connect(self.reset_maxima)
-        self.layout.addWidget(self.reset_btn)
 
         # Throttling for updates
         self._pending_power_data: dict | None = None

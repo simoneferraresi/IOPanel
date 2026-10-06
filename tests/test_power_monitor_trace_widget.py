@@ -85,6 +85,39 @@ def test_trace_uses_exact_detector_palette_for_all_optical_channels(qtbot, tmp_p
     widget.close()
 
 
+def test_trace_actions_are_compact_overlays_and_status_collapses(qtbot, tmp_path):
+    widget = PowerMonitorTraceWidget(_app_settings(tmp_path))
+    qtbot.addWidget(widget)
+    widget.resize(640, 360)
+    widget.show()
+    qtbot.waitExposed(widget)
+
+    assert widget.overlay_controls.parentWidget() is widget.plot_container
+    assert isinstance(widget.save_recording_button, QToolButton)
+    assert isinstance(widget.close_trace_button, QToolButton)
+    assert widget.save_recording_button.parentWidget() is widget.overlay_controls
+    assert widget.close_trace_button.parentWidget() is widget.overlay_controls
+    assert not widget.save_recording_button.icon().isNull()
+    assert widget.save_recording_button.toolTip() == "Save Power Monitor recording"
+    assert widget.save_recording_button.accessibleName() == "Save Power Monitor recording"
+    assert widget.close_trace_button.toolTip() == "Close Power Monitor trace"
+    assert widget.close_trace_button.accessibleName() == "Close Power Monitor trace"
+    assert widget.save_recording_button.autoRaise()
+    assert widget.close_trace_button.autoRaise()
+    button_center = widget.close_trace_button.mapTo(widget.plot_container, widget.close_trace_button.rect().center())
+    assert button_center.x() > widget.plot_container.width() * 0.8
+    assert button_center.y() < 40
+    assert widget.plot_widget.geometry().height() == widget.plot_container.height()
+    assert not widget.status_label.isVisible()
+
+    widget._set_status("Waiting for recorded samples")
+    assert widget.status_label.isVisible()
+    assert widget.status_label.text() == "Waiting for recorded samples"
+    widget._set_status("")
+    assert not widget.status_label.isVisible()
+    widget.close()
+
+
 def test_close_button_hides_only_and_samples_continue(qtbot, tmp_path):
     widget = PowerMonitorTraceWidget(_app_settings(tmp_path))
     qtbot.addWidget(widget)
@@ -95,7 +128,7 @@ def test_close_button_hides_only_and_samples_continue(qtbot, tmp_path):
 
     button = widget.close_trace_button
     assert isinstance(button, QToolButton)
-    assert button.text() == "×"
+    assert button.text() == chr(215)
     assert button.toolTip() == "Close Power Monitor trace"
     assert button.width() <= 32 and button.height() <= 32
     button.click()
