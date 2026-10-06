@@ -93,12 +93,7 @@ _POWER_MONITOR_DETECTOR_FILL_COLOR_BY_ID = {
     Detector.DE_3: "#ACA9D1",
     Detector.DE_4: "#F07EB8",
 }
-_POWER_MONITOR_DETECTOR_MAX_TEXT_COLOR_BY_ID = {
-    Detector.DE_1: "#082F23",
-    Detector.DE_2: "#411C00",
-    Detector.DE_3: "#232135",
-    Detector.DE_4: "#450C29",
-}
+_POWER_MONITOR_MAX_TEXT_COLOR = "#E40000"
 
 
 def _power_monitor_detector_for_label(label: str, index: int) -> Detector:
@@ -846,7 +841,7 @@ class HistogramWidget(QtWidgets.QWidget):
             self.max_lines.append(line)
 
             # Max texts (initially invisible)
-            max_text = pg.TextItem(text="", color=_POWER_MONITOR_DETECTOR_MAX_TEXT_COLOR_BY_ID[self.detector_ids[i]])
+            max_text = pg.TextItem(text="", color=_POWER_MONITOR_MAX_TEXT_COLOR)
             max_text.setFont(self.text_font)
             max_text.setVisible(False)
             self.plot_widget.addItem(max_text)

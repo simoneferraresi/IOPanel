@@ -137,7 +137,7 @@ def test_power_monitor_histogram_uses_detector_border_fill_and_text_palette(qtbo
 
     expected_border = ["#1b9e77", "#d95f02", "#7570b3", "#e7298a"]
     expected_fill = ["#76c4ad", "#e89f67", "#aca9d1", "#f07eb8"]
-    expected_max_text = ["#082f23", "#411c00", "#232135", "#450c29"]
+    expected_max_text = ["#e40000"] * 4
     assert [pen.color().name() for pen in widget.bars.opts["pens"]] == expected_border
     assert [brush.color().name() for brush in widget.bars.opts["brushes"]] == expected_fill
     assert [item.color.name() for item in widget.max_texts] == expected_max_text
@@ -155,7 +155,7 @@ def test_power_monitor_histogram_colors_follow_detector_identity_when_labels_reo
         "#1b9e77",
         "#7570b3",
     ]
-    assert [item.color.name() for item in widget.max_texts] == ["#450c29", "#411c00", "#082f23", "#232135"]
+    assert [item.color.name() for item in widget.max_texts] == ["#e40000"] * 4
     widget.close()
 
 
