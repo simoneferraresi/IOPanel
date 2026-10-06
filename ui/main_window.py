@@ -1353,7 +1353,7 @@ class MainWindow(QMainWindow):
             try:
                 self.plot_widget.set_measurement(measurement)
                 if isinstance(self.ct400_device, DummyCT400):
-                    self.plot_widget.plot_widget.setTitle("SIMULATED CT400 DATA", color="darkorange", size="11pt")
+                    self.plot_widget.set_plot_title("SIMULATED CT400 DATA", color="darkorange")
             except Exception:
                 logger.exception("Error updating plot widget")
 

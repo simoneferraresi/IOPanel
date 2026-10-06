@@ -52,7 +52,7 @@ from logic.scan_export import build_scan_export_v2
 from logic.scan_measurement import ScanMeasurement
 from ui.power_monitor_export_dialog import PowerMonitorExportDialog
 from ui.scan_export_dialog import ScanExportDialog
-from ui.typography import make_font
+from ui.typography import make_font, plot_title_font, pyqtgraph_title_style
 
 try:
     import matlab.engine
@@ -184,7 +184,7 @@ class PowerMonitorTraceWidget(QWidget):
         self.plot_widget = pg.PlotWidget(background="w")
         self.plot_widget.setLabel("bottom", "Elapsed time (s)")
         self.plot_widget.setLabel("left", "Power (dBm)")
-        self.plot_widget.setTitle("Power Monitor Recording")
+        self.plot_widget.setTitle("Power Monitor Recording", **pyqtgraph_title_style())
         self.plot_widget.showGrid(x=True, y=True, alpha=0.25)
         layout.addWidget(self.plot_widget, stretch=1)
         self._set_status("")
@@ -413,7 +413,8 @@ class Plot3DWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         self.title_label = QLabel("Power Map")
-        # ... (font setup for title_label)
+        self.title_label.setFont(plot_title_font())
+        self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.title_label)
 
         self.view = gl.GLViewWidget()
@@ -752,7 +753,6 @@ class HistogramWidget(QtWidgets.QWidget):
         # Plot configuration (colors, fonts, etc.)
         self.bar_width = 0.6
         self.font_size = 12  # Base font size for labels
-        self.title_size = 14  # Title font size
         self.value_text_font_size = 15  # Specific size for value annotations on bars
 
         self.max_pen = pg.mkPen("#e41a1c", width=1.5, style=QtCore.Qt.PenStyle.DashLine)
@@ -805,7 +805,6 @@ class HistogramWidget(QtWidgets.QWidget):
 
     def _configure_plot(self):
         label_style = {"color": "k", "font-size": f"{self.font_size}pt"}
-        title_style = {"color": "k", "size": f"{self.title_size}pt"}
 
         x_axis = self.plot_widget.getAxis("bottom")
         x_axis.setLabel(text="Detector", **label_style)
@@ -818,7 +817,7 @@ class HistogramWidget(QtWidgets.QWidget):
         y_axis.setTickFont(make_font("sans", self.font_size - 1))
         y_axis.enableAutoSIPrefix(False)  # Show raw numbers for dBm
 
-        self.plot_widget.setTitle("Real-time Power Monitoring", **title_style)
+        self.plot_widget.setTitle("Real-time Power Monitoring", **pyqtgraph_title_style())
         self.plot_widget.showGrid(y=True, alpha=0.3)  # Show horizontal grid lines
         self.plot_widget.setYRange(-70, 10)  # Initial Y range
         self.plot_widget.setXRange(-0.5, self.num_bars - 0.5, padding=0)
@@ -1147,7 +1146,7 @@ class PlotWidget(QWidget):
         self.plot_widget.getAxis("left").setTickFont(tick_font)
         self.plot_widget.setLabel("bottom", "Wavelength (nm)", **label_style)
         self.plot_widget.getAxis("bottom").setTickFont(tick_font)
-        self.plot_widget.setTitle("Wavelength Scan", color="black", size="11pt")
+        self.set_plot_title("Wavelength Scan")
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
         # PyQtGraph auto-ranges by default, which is often sufficient.
 
@@ -1195,6 +1194,10 @@ class PlotWidget(QWidget):
         layout.addLayout(button_layout)
 
         logger.info("PlotWidget (PyQtGraph) initialized")
+
+    def set_plot_title(self, text: str, *, color: str = "black") -> None:
+        """Set a scan title using the shared 12 pt bold Geist policy."""
+        self.plot_widget.setTitle(text, **pyqtgraph_title_style(color))
 
     @Slot()
     def export_plot_image(self):
@@ -1421,7 +1424,7 @@ class PlotWidget(QWidget):
             if x_data_np.ndim != 1 or y_data_np.ndim != 1 or len(x_data_np) != len(y_data_np):
                 logger.error(f"Invalid data shape for plotting. X: {x_data_np.shape}, Y: {y_data_np.shape}")
                 self.plot_data_item.setData([], [])
-                self.plot_widget.setTitle("Invalid Scan Data", color="red", size="11pt")
+                self.set_plot_title("Invalid Scan Data", color="red")
                 self.save_btn.setEnabled(False)
                 return False
 
@@ -1454,16 +1457,16 @@ class PlotWidget(QWidget):
                 title_text = f"Wavelength Scan ({x_data_np[0]:.1f} - {x_data_np[-1]:.1f} nm)"
                 if not np.all(finite_mask):  # If any points were filtered
                     title_text += " (Non-finite data filtered for display)"
-                self.plot_widget.setTitle(title_text, color="black", size="11pt")
+                self.set_plot_title(title_text)
             else:
-                self.plot_widget.setTitle("Wavelength Scan", color="black", size="11pt")
+                self.set_plot_title("Wavelength Scan")
 
             self.save_btn.setEnabled(self.current_measurement is not None)
             self.freeze_btn.setEnabled(True)
             return True
         except Exception:
             logger.exception("Error updating plot")
-            self.plot_widget.setTitle("Error Updating Plot", color="red", size="11pt")
+            self.set_plot_title("Error Updating Plot", color="red")
             self.save_btn.setEnabled(False)
             self.freeze_btn.setEnabled(False)
             return False
@@ -1533,9 +1536,9 @@ class PlotWidget(QWidget):
             title_text = f"Wavelength Scan ({wavelengths[0]:.1f} - {wavelengths[-1]:.1f} nm)"
             if any(not np.all(np.isfinite(row)) for row in measurement.detector_data):
                 title_text += " (Non-finite data filtered for display)"
-            self.plot_widget.setTitle(title_text, color="black", size="11pt")
+            self.set_plot_title(title_text)
         else:
-            self.plot_widget.setTitle("Wavelength Scan", color="black", size="11pt")
+            self.set_plot_title("Wavelength Scan")
 
         self.save_btn.setEnabled(True)
         self.freeze_btn.setEnabled(bool(measurement.detectors))
@@ -1567,7 +1570,7 @@ class PlotWidget(QWidget):
         self.reference_measurement = None
 
         # 3. Reset UI state
-        self.plot_widget.setTitle("Wavelength Scan (Cleared)", color="black", size="11pt")
+        self.set_plot_title("Wavelength Scan (Cleared)")
         self.save_btn.setEnabled(False)
         self.freeze_btn.setEnabled(False)
         self.freeze_btn.setText("Freeze Trace")

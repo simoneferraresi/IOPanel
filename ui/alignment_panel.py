@@ -25,7 +25,7 @@ from hardware.alignment_worker import AlignmentSettings, AlignmentWorker, Mappin
 from hardware.interfaces import AbstractCT400
 from hardware.piezo import PiezoController
 from ui.plot_widgets import ColorBarWidget, Plot3DWidget
-from ui.typography import make_font
+from ui.typography import make_font, style_group_box_title
 
 logger = logging.getLogger("LabApp.AlignmentPanel")
 
@@ -98,6 +98,7 @@ class AlignmentPanel(QWidget):
 
         # Group 1.1: Laser Settings
         self.laser_group = QGroupBox("Laser Settings")
+        style_group_box_title(self.laser_group)
         laser_form = QFormLayout()
         laser_form.setSpacing(5)
         laser_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
@@ -118,6 +119,7 @@ class AlignmentPanel(QWidget):
 
         # Group 1.2: Alignment Settings
         self.align_group = QGroupBox("Alignment Settings")
+        style_group_box_title(self.align_group)
         align_form = QFormLayout()
         align_form.setSpacing(5)
         align_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
@@ -159,6 +161,7 @@ class AlignmentPanel(QWidget):
 
         # Group 2.1: 3D Mapping Settings
         self.map_group = QGroupBox("3D Mapping Settings")
+        style_group_box_title(self.map_group)
         map_form = QFormLayout()
         map_form.setSpacing(5)
         map_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
@@ -191,6 +194,7 @@ class AlignmentPanel(QWidget):
 
         # Group 2.2: Live Power
         self.power_group = QGroupBox("Live Status")
+        style_group_box_title(self.power_group)
         power_box_layout = QVBoxLayout()
 
         # NEW: Status label

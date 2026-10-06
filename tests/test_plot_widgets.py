@@ -3,7 +3,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent, QPointF
+from PySide6.QtCore import QCoreApplication, QEvent, QPointF, Qt
 from PySide6.QtTest import QSignalSpy
 
 from hardware.ct400_types import CT400ScanResultKind, Detector, LaserInput
@@ -11,7 +11,43 @@ from logic.scan_measurement import ScanAcquisitionSettings, ScanMeasurement
 from ui import plot_widgets
 from ui.alignment_panel import AlignmentPanel
 from ui.control_panel import ScanSettings
-from ui.plot_widgets import HistogramWidget, PlotWidget, derive_scan_export_targets
+from ui.plot_widgets import (
+    HistogramWidget,
+    Plot3DWidget,
+    PlotWidget,
+    PowerMonitorTraceWidget,
+    derive_scan_export_targets,
+)
+from ui.typography import PLOT_TITLE_POINT_SIZE, install_application_fonts
+
+
+def test_plot_titles_share_canonical_size_weight_and_family(qapp):
+    install_application_fonts(qapp)
+    scan = PlotWidget(ScanSettings())
+    histogram = HistogramWidget(None, ["Det 1"])
+    trace = PowerMonitorTraceWidget()
+    power_map = Plot3DWidget()
+    widgets = [scan, histogram, trace]
+    for widget in widgets:
+        title = widget.plot_widget.getPlotItem().titleLabel
+        assert title.opts["size"] == f"{PLOT_TITLE_POINT_SIZE}pt"
+        assert title.opts["bold"] is True
+        assert title.opts["family"] == qapp.font().family()
+
+    scan.set_plot_title("SIMULATED CT400 DATA", color="darkorange")
+    simulated_style = scan.plot_widget.getPlotItem().titleLabel.opts
+    assert simulated_style["size"] == f"{PLOT_TITLE_POINT_SIZE}pt"
+    assert simulated_style["bold"] is True
+    assert simulated_style["color"] == "darkorange"
+
+    assert power_map.title_label.text() == "Power Map"
+    assert power_map.title_label.font().family() == qapp.font().family()
+    assert power_map.title_label.font().pointSize() == PLOT_TITLE_POINT_SIZE
+    assert power_map.title_label.font().bold()
+    assert power_map.title_label.alignment() & Qt.AlignmentFlag.AlignCenter
+
+    for widget in [*widgets, power_map]:
+        widget.close()
 
 
 class _CapturedSurface:

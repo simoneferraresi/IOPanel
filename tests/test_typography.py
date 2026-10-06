@@ -5,7 +5,8 @@ from __future__ import annotations
 import logging
 
 import pytest
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QFontInfo
+from PySide6.QtWidgets import QCheckBox, QGroupBox, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
 from config_model import CameraConfig
 from ui import typography
@@ -23,15 +24,55 @@ def preserved_application_font(qapp):
         qapp.setFont(original_font)
 
 
-def test_bundled_font_resources_register_expected_families_and_preserve_size(preserved_application_font):
+@pytest.mark.parametrize(("incoming_size", "expected_size"), [(9.0, 10.0), (10.0, 10.0), (11.0, 11.0)])
+def test_bundled_font_resources_enforce_minimum_baseline(preserved_application_font, incoming_size, expected_size):
     qapp = preserved_application_font
-    initial_size = qapp.font().pointSize()
+    incoming_font = QFont("Sans Serif")
+    incoming_font.setPointSizeF(incoming_size)
+    qapp.setFont(incoming_font)
     sans_family, mono_family = typography.install_application_fonts(qapp)
 
     assert sans_family == "Geist"
     assert mono_family == "Geist Mono"
     assert qapp.font().family() == sans_family
-    assert qapp.font().pointSize() == initial_size
+    assert qapp.font().pointSizeF() == expected_size
+
+
+def test_group_box_title_style_does_not_bold_or_resize_child(preserved_application_font):
+    qapp = preserved_application_font
+    typography.install_application_fonts(qapp)
+    group = QGroupBox("Section")
+    child_label = QLabel("Normal child", group)
+    child_edit = QLineEdit(group)
+    child_checkbox = QCheckBox("Normal option", group)
+    child_button = QPushButton("Normal action", group)
+    layout = QVBoxLayout(group)
+    for child in (child_label, child_edit, child_checkbox, child_button):
+        layout.addWidget(child)
+    typography.style_group_box_title(group)
+    group.ensurePolished()
+    for child in (child_label, child_edit, child_checkbox, child_button):
+        child.ensurePolished()
+    qapp.processEvents()
+
+    assert QFontInfo(group.font()).bold()
+    for child in (child_label, child_edit, child_checkbox, child_button):
+        child_font = QFontInfo(child.font())
+        assert not child_font.bold()
+        assert child_font.family() == qapp.font().family()
+        assert child.font().pointSizeF() == qapp.font().pointSizeF()
+    group.close()
+
+
+def test_pixel_sized_incoming_font_uses_ten_point_fallback(preserved_application_font):
+    qapp = preserved_application_font
+    pixel_font = QFont("Sans Serif")
+    pixel_font.setPixelSize(14)
+    qapp.setFont(pixel_font)
+
+    typography.install_application_fonts(qapp)
+
+    assert qapp.font().pointSizeF() == 10.0
 
 
 def test_selected_numeric_readouts_use_mono_at_existing_sizes(preserved_application_font):
@@ -50,6 +91,12 @@ def test_selected_numeric_readouts_use_mono_at_existing_sizes(preserved_applicat
     camera.close()
 
     alignment = AlignmentPanel(None, None, None)
+    for group_box in (alignment.laser_group, alignment.align_group, alignment.map_group, alignment.power_group):
+        assert QFontInfo(group_box.font()).bold()
+    wavelength_input_font = QFontInfo(alignment.wavelength_input.font())
+    assert not wavelength_input_font.bold()
+    assert wavelength_input_font.family() == qapp.font().family()
+    assert alignment.wavelength_input.font().pointSizeF() == qapp.font().pointSizeF()
     power_font = alignment.power_label.font()
     assert power_font.family() == mono_family
     assert power_font.pointSize() == 20

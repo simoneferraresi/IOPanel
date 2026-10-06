@@ -35,6 +35,9 @@ def test_record_button_initial_state(qtbot):
     assert not panel._recording_active
     assert not panel.record_btn.isEnabled()
     assert panel.record_btn.text() == "Record"
+    record_icon_key = panel.record_btn.icon().cacheKey()
+    assert record_icon_key == panel._record_icon.cacheKey()
+    assert not panel._record_icon.isNull()
     assert panel.recording_elapsed_label.isHidden()
     assert panel.last_recording is None
     _shutdown_panel(qtbot, panel)
@@ -61,6 +64,7 @@ def test_recording_captures_irregular_samples_and_manual_stop_keeps_monitoring(q
 
     assert panel._recording_active
     assert panel.record_btn.text() == "Stop Recording"
+    assert panel.record_btn.icon().cacheKey() == panel._stop_recording_icon.cacheKey()
     assert not panel.recording_elapsed_label.isHidden()
     assert panel._recording_settings.detectors == (Detector.DE_1, Detector.DE_3)
     assert started == [panel._recording_settings]
@@ -89,6 +93,7 @@ def test_recording_captures_irregular_samples_and_manual_stop_keeps_monitoring(q
     assert panel.timer.isActive()
     assert panel.record_btn.isEnabled()
     assert panel.record_btn.text() == "Record"
+    assert panel.record_btn.icon().cacheKey() == panel._record_icon.cacheKey()
     assert panel.recording_elapsed_label.isHidden()
     assert reads == []
     panel.timer.stop()
