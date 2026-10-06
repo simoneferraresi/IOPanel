@@ -1,6 +1,7 @@
 from typing import cast
 
 import numpy as np
+from PySide6.QtWidgets import QGroupBox
 
 from config_model import AppConfig
 from hardware.ct400_types import Detector, PowerData
@@ -28,6 +29,58 @@ def _shutdown_panel(qtbot, panel):
     # closeEvent normally initiates this cleanup; we've already done it here so
     # pytest-qt can close the widget without touching the deleted QThread wrapper.
     panel.cleanup_worker_thread = lambda: None
+
+
+def test_monitor_panel_matches_scan_group_stack_and_detector_row(qtbot):
+    panel = HistogramControlPanel(DummyCT400(scan_duration=0), AppConfig())
+    qtbot.addWidget(panel)
+    panel.resize(480, 900)
+    panel.show()
+    qtbot.waitExposed(panel)
+    qtbot.wait(20)
+
+    assert [checkbox.text() for checkbox in panel.detector_cbs] == ["Det 1", "Det 2", "Det 3", "Det 4"]
+    assert [checkbox.isChecked() for checkbox in panel.detector_cbs] == [True, True, True, True]
+    centers = [checkbox.mapTo(panel, checkbox.rect().center()) for checkbox in panel.detector_cbs]
+    assert max(point.y() for point in centers) - min(point.y() for point in centers) <= 3
+    assert [point.x() for point in centers] == sorted(point.x() for point in centers)
+
+    groups = {
+        group.objectName(): group
+        for group in panel.findChildren(QGroupBox)
+        if group.objectName()
+        in {
+            "powerMonitorActiveDetectorsGroup",
+            "powerMonitorOperationGroup",
+        }
+    }
+    detector_group = groups["powerMonitorActiveDetectorsGroup"]
+    operation_group = groups["powerMonitorOperationGroup"]
+    detector_group_left = detector_group.mapTo(panel, detector_group.rect().topLeft()).x()
+    detector_group_right = detector_group_left + detector_group.width()
+    assert detector_group_left < centers[0].x() < centers[-1].x() < detector_group_right
+    assert (
+        operation_group.mapTo(panel, operation_group.rect().topLeft()).y()
+        > detector_group.mapTo(panel, detector_group.rect().bottomLeft()).y()
+    )
+
+    monitor_groups = sorted(
+        (group for group in panel.findChildren(QGroupBox) if group.title() != "Common Laser Settings"),
+        key=lambda group: group.mapTo(panel, group.rect().topLeft()).y(),
+    )
+    assert [group.title() for group in monitor_groups] == [
+        "Monitor-Specific Configuration",
+        "Active Detectors",
+        "Operation",
+    ]
+    assert panel.monitor_btn.minimumHeight() == 35
+    assert panel.monitor_btn.minimumWidth() == 130
+    assert panel.record_btn.minimumHeight() == 35
+    assert panel.monitor_btn.height() < 100
+    assert panel.monitor_btn.width() > 130
+    assert panel.record_btn.width() > 130
+    assert panel.recording_elapsed_label.isHidden()
+    _shutdown_panel(qtbot, panel)
 
 
 def test_record_button_initial_state(qtbot):
