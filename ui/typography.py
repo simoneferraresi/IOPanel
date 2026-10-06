@@ -16,7 +16,7 @@ GEIST_SANS_RESOURCE = ":/fonts/Geist-Variable.ttf"
 GEIST_MONO_RESOURCE = ":/fonts/GeistMono-Variable.ttf"
 APPLICATION_MIN_POINT_SIZE = 10.0
 PLOT_TITLE_POINT_SIZE = 12
-GROUP_BOX_TITLE_STYLE = "QGroupBox::title { font-weight: bold; }"
+GROUP_BOX_TITLE_STYLE = "QGroupBox { font-weight: bold; }"
 
 _FONT_FAMILIES: dict[str, str | None] = {"sans": None, "mono": None}
 _FONT_IDS: list[int] = []
@@ -67,7 +67,7 @@ def install_application_fonts(app: QApplication) -> tuple[str | None, str | None
 
 
 def style_group_box_title(group_box: QGroupBox) -> None:
-    """Bold only a group's title, leaving child widget typography inherited."""
+    """Render the group caption bold without propagating bold to child widgets."""
     group_box.setStyleSheet(f"{group_box.styleSheet()}\n{GROUP_BOX_TITLE_STYLE}".strip())
 
 

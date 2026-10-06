@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 
 import pytest
-from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QGroupBox, QLabel, QVBoxLayout
+from PySide6.QtGui import QFont, QFontInfo
+from PySide6.QtWidgets import QCheckBox, QGroupBox, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
 from config_model import CameraConfig
 from ui import typography
@@ -42,16 +42,25 @@ def test_group_box_title_style_does_not_bold_or_resize_child(preserved_applicati
     qapp = preserved_application_font
     typography.install_application_fonts(qapp)
     group = QGroupBox("Section")
-    child = QLabel("Normal child", group)
+    child_label = QLabel("Normal child", group)
+    child_edit = QLineEdit(group)
+    child_checkbox = QCheckBox("Normal option", group)
+    child_button = QPushButton("Normal action", group)
     layout = QVBoxLayout(group)
-    layout.addWidget(child)
+    for child in (child_label, child_edit, child_checkbox, child_button):
+        layout.addWidget(child)
     typography.style_group_box_title(group)
+    group.ensurePolished()
+    for child in (child_label, child_edit, child_checkbox, child_button):
+        child.ensurePolished()
+    qapp.processEvents()
 
-    assert "QGroupBox::title" in group.styleSheet()
-    assert "font-weight: bold" in group.styleSheet()
-    assert not child.font().bold()
-    assert child.font().family() == qapp.font().family()
-    assert child.font().pointSizeF() == qapp.font().pointSizeF()
+    assert QFontInfo(group.font()).bold()
+    for child in (child_label, child_edit, child_checkbox, child_button):
+        child_font = QFontInfo(child.font())
+        assert not child_font.bold()
+        assert child_font.family() == qapp.font().family()
+        assert child.font().pointSizeF() == qapp.font().pointSizeF()
     group.close()
 
 
@@ -83,10 +92,10 @@ def test_selected_numeric_readouts_use_mono_at_existing_sizes(preserved_applicat
 
     alignment = AlignmentPanel(None, None, None)
     for group_box in (alignment.laser_group, alignment.align_group, alignment.map_group, alignment.power_group):
-        assert "QGroupBox::title" in group_box.styleSheet()
-        assert "font-weight: bold" in group_box.styleSheet()
-    assert not alignment.wavelength_input.font().bold()
-    assert alignment.wavelength_input.font().family() == qapp.font().family()
+        assert QFontInfo(group_box.font()).bold()
+    wavelength_input_font = QFontInfo(alignment.wavelength_input.font())
+    assert not wavelength_input_font.bold()
+    assert wavelength_input_font.family() == qapp.font().family()
     assert alignment.wavelength_input.font().pointSizeF() == qapp.font().pointSizeF()
     power_font = alignment.power_label.font()
     assert power_font.family() == mono_family
