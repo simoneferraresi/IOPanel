@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 
+import pytest
 from PySide6.QtGui import QFont
 
 from config_model import CameraConfig
@@ -13,7 +14,17 @@ from ui.camera_widgets import CameraPanel
 from ui.plot_widgets import HistogramWidget
 
 
-def test_bundled_font_resources_register_expected_families_and_preserve_size(qapp):
+@pytest.fixture
+def preserved_application_font(qapp):
+    original_font = QFont(qapp.font())
+    try:
+        yield qapp
+    finally:
+        qapp.setFont(original_font)
+
+
+def test_bundled_font_resources_register_expected_families_and_preserve_size(preserved_application_font):
+    qapp = preserved_application_font
     initial_size = qapp.font().pointSize()
     sans_family, mono_family = typography.install_application_fonts(qapp)
 
@@ -23,7 +34,8 @@ def test_bundled_font_resources_register_expected_families_and_preserve_size(qap
     assert qapp.font().pointSize() == initial_size
 
 
-def test_selected_numeric_readouts_use_mono_at_existing_sizes(qapp):
+def test_selected_numeric_readouts_use_mono_at_existing_sizes(preserved_application_font):
+    qapp = preserved_application_font
     _sans_family, mono_family = typography.install_application_fonts(qapp)
 
     histogram = HistogramWidget(None, ["Det 1"])
@@ -45,7 +57,8 @@ def test_selected_numeric_readouts_use_mono_at_existing_sizes(qapp):
     alignment.close()
 
 
-def test_font_load_failure_keeps_existing_application_font(qapp, monkeypatch, caplog):
+def test_font_load_failure_keeps_existing_application_font(preserved_application_font, monkeypatch, caplog):
+    qapp = preserved_application_font
     fallback_font = QFont("Sans Serif", 13)
     qapp.setFont(fallback_font)
     monkeypatch.setattr(typography, "_FONT_FAMILIES", {"sans": None, "mono": None})
