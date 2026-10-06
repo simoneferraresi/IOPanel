@@ -31,12 +31,18 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from app_settings import AppSettings
 from hardware.ct400_types import Detector
+from logic.power_monitor_export import (
+    build_power_monitor_export_v1,
+    default_power_monitor_export_name,
+    derive_power_monitor_export_targets,
+)
 from logic.power_monitor_recording import (
     PowerMonitorAcquisitionSettings,
     PowerMonitorRecording,
@@ -44,6 +50,7 @@ from logic.power_monitor_recording import (
 )
 from logic.scan_export import build_scan_export_v2
 from logic.scan_measurement import ScanMeasurement
+from ui.power_monitor_export_dialog import PowerMonitorExportDialog
 from ui.scan_export_dialog import ScanExportDialog
 
 try:
@@ -73,6 +80,35 @@ _DETECTOR_COLOR_BY_ID = {
     Detector.DE_4: "#ff7f00",
     Detector.DE_5: "#6a3d9a",
 }
+
+_POWER_MONITOR_DETECTOR_BORDER_COLOR_BY_ID = {
+    Detector.DE_1: "#1b9e77",
+    Detector.DE_2: "#d95f02",
+    Detector.DE_3: "#7570b3",
+    Detector.DE_4: "#e7298a",
+}
+_POWER_MONITOR_DETECTOR_FILL_COLOR_BY_ID = {
+    Detector.DE_1: "#76C4AD",
+    Detector.DE_2: "#e89f67",
+    Detector.DE_3: "#ACA9D1",
+    Detector.DE_4: "#F07EB8",
+}
+_POWER_MONITOR_DETECTOR_MAX_TEXT_COLOR_BY_ID = {
+    Detector.DE_1: "#082F23",
+    Detector.DE_2: "#411C00",
+    Detector.DE_3: "#232135",
+    Detector.DE_4: "#450C29",
+}
+
+
+def _power_monitor_detector_for_label(label: str, index: int) -> Detector:
+    """Resolve a histogram channel label to its optical detector identity."""
+    suffix = label.strip().rsplit(" ", 1)[-1]
+    try:
+        detector = Detector(int(suffix))
+    except ValueError:
+        detector = Detector(index + 1)
+    return detector if detector in _POWER_MONITOR_DETECTOR_BORDER_COLOR_BY_ID else Detector(index + 1)
 
 
 def derive_scan_export_targets(
@@ -119,10 +155,13 @@ def _is_numeric_list(values: list[object]) -> bool:
 class PowerMonitorTraceWidget(QWidget):
     """Live selected-detector trace driven only by accepted M1 recording samples."""
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(self, settings: AppSettings | None = None, parent: QWidget | None = None):
         super().__init__(parent)
+        self.app_settings = settings
         self.settings: PowerMonitorAcquisitionSettings | None = None
+        self.current_recording: PowerMonitorRecording | None = None
         self.recording_active = False
+        self._user_hidden = False
         self.elapsed_values: list[float] = []
         self.detector_values: dict[Detector, list[float]] = {}
         self.curve_items: dict[Detector, pg.PlotDataItem] = {}
@@ -131,16 +170,37 @@ class PowerMonitorTraceWidget(QWidget):
         layout = QVBoxLayout(self)
         self.status_label = QLabel()
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.status_label)
+        status_row = QHBoxLayout()
+        status_row.addWidget(self.status_label, stretch=1)
+        self.save_recording_button = QPushButton("Save Recording")
+        self.save_recording_button.setEnabled(False)
+        self.save_recording_button.clicked.connect(self.save_recording)
+        status_row.addWidget(self.save_recording_button)
+        self.close_trace_button = QToolButton()
+        self.close_trace_button.setText("×")
+        self.close_trace_button.setToolTip("Close Power Monitor trace")
+        self.close_trace_button.setObjectName("powerMonitorTraceCloseButton")
+        self.close_trace_button.setAutoRaise(True)
+        self.close_trace_button.setFixedSize(24, 24)
+        self.close_trace_button.clicked.connect(self._hide_by_user)
+        status_row.addWidget(self.close_trace_button)
+        layout.addLayout(status_row)
         self.plot_widget = pg.PlotWidget(background="w")
         self.plot_widget.setLabel("bottom", "Elapsed time (s)")
-        self.plot_widget.setLabel("left", "Detector value (unit unverified)")
+        self.plot_widget.setLabel("left", "Power (dBm)")
         self.plot_widget.setTitle("Power Monitor Recording")
         self.plot_widget.showGrid(x=True, y=True, alpha=0.25)
         layout.addWidget(self.plot_widget, stretch=1)
         self._set_status("")
 
     def start_recording(self, settings: PowerMonitorAcquisitionSettings) -> None:
+        self._user_hidden = False
+        self._reset_trace(settings)
+        self.show()
+
+    def _reset_trace(self, settings: PowerMonitorAcquisitionSettings) -> None:
+        self.current_recording = None
+        self.save_recording_button.setEnabled(False)
         self.settings = settings
         self.recording_active = True
         self.elapsed_values = []
@@ -152,7 +212,7 @@ class PowerMonitorTraceWidget(QWidget):
             curve = self.plot_widget.plot(
                 [],
                 [],
-                pen=pg.mkPen(_DETECTOR_COLOR_BY_ID[detector], width=2),
+                pen=pg.mkPen(_POWER_MONITOR_DETECTOR_BORDER_COLOR_BY_ID[detector], width=2),
                 name=f"Det {detector.value}",
                 connect="finite",
             )
@@ -172,8 +232,10 @@ class PowerMonitorTraceWidget(QWidget):
         self._set_status("No detector channels selected" if not sample.detectors else "")
 
     def set_completed_recording(self, recording: PowerMonitorRecording) -> None:
-        self.start_recording(recording.settings)
+        self._reset_trace(recording.settings)
         self.recording_active = False
+        self.current_recording = recording
+        self.save_recording_button.setEnabled(len(recording.elapsed_s) > 0)
         self.elapsed_values = recording.elapsed_s.tolist()
         self.detector_values = {
             detector: recording.detector_data[row].tolist() for row, detector in enumerate(recording.detectors)
@@ -189,6 +251,8 @@ class PowerMonitorTraceWidget(QWidget):
 
     def discard_recording(self) -> None:
         self.settings = None
+        self.current_recording = None
+        self.save_recording_button.setEnabled(False)
         self.recording_active = False
         self.elapsed_values = []
         self.detector_values = {}
@@ -197,6 +261,101 @@ class PowerMonitorTraceWidget(QWidget):
         self.plot_widget.clear()
         self._set_status("")
         self.hide()
+
+    def _hide_by_user(self) -> None:
+        self._user_hidden = True
+        self.hide()
+
+    def save_recording(self) -> None:
+        recording = self.current_recording
+        if recording is None:
+            QMessageBox.warning(self, "No Recording", "There is no completed recording to save.")
+            return
+        if len(recording.elapsed_s) == 0:
+            QMessageBox.warning(
+                self,
+                "No Samples",
+                "This recording contains no captured samples and cannot be exported.",
+            )
+            return
+        if self.app_settings is None:
+            QMessageBox.warning(self, "Save Recording", "Power Monitor export preferences are unavailable.")
+            return
+
+        directory = self.app_settings.power_monitor_export_directory()
+        formats = self.app_settings.power_monitor_export_formats()
+        default_name = default_power_monitor_export_name(recording)
+        dialog = PowerMonitorExportDialog(directory, default_name, formats, self)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        request = dialog.export_request
+        if request is None or not (request.csv or request.mat):
+            return
+
+        self.app_settings.set_power_monitor_export_directory(request.directory)
+        self.app_settings.set_power_monitor_export_formats(csv=request.csv, mat=request.mat)
+        self.app_settings.sync()
+
+        targets = derive_power_monitor_export_targets(
+            request.directory / request.base_name,
+            include_csv=request.csv,
+            include_mat=request.mat,
+        )
+        conflicts = [path for path in targets.values() if path.exists()]
+        if conflicts:
+            conflict_list = "\n".join(str(path) for path in conflicts)
+            answer = QMessageBox.question(
+                self,
+                "Overwrite Existing Files?",
+                f"The following export targets already exist:\n{conflict_list}\n\nOverwrite all listed files?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+
+        try:
+            payload = build_power_monitor_export_v1(recording, comment=request.comment)
+        except (TypeError, ValueError) as error:
+            QMessageBox.warning(self, "Power Monitor Export Not Supported", str(error))
+            return
+
+        saved: list[Path] = []
+        errors: list[str] = []
+        if request.csv:
+            csv_path = targets["CSV"]
+            try:
+                with csv_path.resolve().open("w", encoding="utf-8", newline="") as output:
+                    np.savetxt(
+                        output, payload.csv_data, delimiter=",", header=payload.csv_header, comments="", fmt="%.17g"
+                    )
+                saved.append(csv_path)
+            except Exception as error:
+                logger.exception("Power Monitor CSV save failed")
+                errors.append(f"CSV: {error}")
+
+        if request.mat:
+            mat_path = targets["MAT"]
+            try:
+                from scipy.io import savemat
+
+                savemat(str(mat_path.resolve()), payload.mat_data, do_compression=True)
+                saved.append(mat_path)
+            except Exception as error:
+                logger.exception("Power Monitor MAT save failed")
+                errors.append(f"MAT: {error}")
+
+        saved_paths = "\n".join(str(path) for path in saved)
+        if errors:
+            QMessageBox.warning(
+                self,
+                "Save Issues",
+                "Some files may have saved:\n" + saved_paths + "\n\nErrors occurred:\n" + "\n".join(errors),
+            )
+        elif saved:
+            QMessageBox.information(
+                self, "Save Successful", "Power Monitor data saved successfully to:\n" + saved_paths
+            )
 
     def _set_status(self, message: str) -> None:
         self.status_label.setText(message)
@@ -601,9 +760,13 @@ class HistogramWidget(QtWidgets.QWidget):
         self.text_offset = 1.0  # Offset for text from the value line
 
         self.max_pen = pg.mkPen("#e41a1c", width=1.5, style=QtCore.Qt.PenStyle.DashLine)
-        self.bar_brush = pg.mkBrush("#a6cee3")
-        self.bar_pen = pg.mkPen("#1f78b4")
-        self.max_text_color = pg.mkColor("#e41a1c")
+        self.detector_ids = tuple(_power_monitor_detector_for_label(key, i) for i, key in enumerate(self.detector_keys))
+        self.bar_brushes = [
+            pg.mkBrush(_POWER_MONITOR_DETECTOR_FILL_COLOR_BY_ID[detector]) for detector in self.detector_ids
+        ]
+        self.bar_pens = [
+            pg.mkPen(_POWER_MONITOR_DETECTOR_BORDER_COLOR_BY_ID[detector]) for detector in self.detector_ids
+        ]
         self.current_text_color = pg.mkColor("#555555")  # Dark grey for current values
         self.text_font = QFont("Segoe UI", self.value_text_font_size)  # Font for value annotations
 
@@ -666,8 +829,8 @@ class HistogramWidget(QtWidgets.QWidget):
             x=np.arange(self.num_bars),
             height=self.current_values,  # Initialized to zeros
             width=self.bar_width,
-            brush=self.bar_brush,
-            pen=self.bar_pen,
+            brushes=self.bar_brushes,
+            pens=self.bar_pens,
         )
         self.plot_widget.addItem(self.bars)
 
@@ -683,7 +846,7 @@ class HistogramWidget(QtWidgets.QWidget):
             self.max_lines.append(line)
 
             # Max texts (initially invisible)
-            max_text = pg.TextItem(text="", color=self.max_text_color)
+            max_text = pg.TextItem(text="", color=_POWER_MONITOR_DETECTOR_MAX_TEXT_COLOR_BY_ID[self.detector_ids[i]])
             max_text.setFont(self.text_font)
             max_text.setVisible(False)
             self.plot_widget.addItem(max_text)

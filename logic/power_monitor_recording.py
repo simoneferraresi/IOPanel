@@ -70,14 +70,16 @@ class PowerMonitorRecording:
     backend: str
     simulated: bool
     stop_reason: PowerMonitorRecordingStopReason
-    detector_unit: str | None = None
-    pout_unit: str | None = None
+    detector_unit: str = "dBm"
+    pout_unit: str = "dBm"
 
     def __post_init__(self) -> None:
         detectors = _normalize_detectors(self.detectors)
         object.__setattr__(self, "detectors", detectors)
         if detectors != self.settings.detectors:
             raise ValueError("recording detectors must match settings.detectors in identity and order")
+        if self.detector_unit != "dBm" or self.pout_unit != "dBm":
+            raise ValueError("CT400 instantaneous Power Monitor readings must use dBm")
         for name in ("started_at_utc", "completed_at_utc"):
             value = getattr(self, name)
             if value.utcoffset() is None:
