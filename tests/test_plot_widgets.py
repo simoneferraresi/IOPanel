@@ -182,8 +182,8 @@ def test_power_monitor_histogram_value_labels_use_pixel_gap_and_correct_directio
     current_text = widget.current_texts[0]
     assert max_text.anchor == QPointF(0.5, 1.0)
     assert current_text.anchor == QPointF(0.5, 0.0)
-    assert max_text.pos().y() > widget.max_values[0]
-    assert current_text.pos().y() < widget.current_values[0]
+    assert max_text.pos().y() == pytest.approx(widget.max_values[0])
+    assert current_text.pos().y() == pytest.approx(widget.current_values[0])
     np.testing.assert_allclose(_histogram_label_gaps_px(widget), [widget._VALUE_LABEL_GAP_PX] * 2, atol=0.1)
     widget.close()
 
@@ -199,26 +199,29 @@ def test_power_monitor_histogram_label_pixel_gap_survives_resize_and_y_range_cha
     widget._update_visual_elements()
     qtbot.wait(20)
     tall_gap = _histogram_label_gaps_px(widget)
-    tall_data_gap = widget.max_texts[0].pos().y() - widget.max_values[0]
 
     widget.resize(640, 320)
     qtbot.wait(50)
     short_gap = _histogram_label_gaps_px(widget)
-    short_data_gap = widget.max_texts[0].pos().y() - widget.max_values[0]
     np.testing.assert_allclose(tall_gap, [widget._VALUE_LABEL_GAP_PX] * 2, atol=0.1)
     np.testing.assert_allclose(short_gap, [widget._VALUE_LABEL_GAP_PX] * 2, atol=0.1)
-    assert not np.isclose(tall_data_gap, short_data_gap)
+    assert widget.max_texts[0].pos().y() == pytest.approx(widget.max_values[0])
+    assert widget.current_texts[0].pos().y() == pytest.approx(widget.current_values[0])
+    assert widget.max_texts[0].anchor == QPointF(0.5, 1.0)
+    assert widget.current_texts[0].anchor == QPointF(0.5, 0.0)
 
     widget.plot_widget.setYRange(-70, 10, padding=0)
     qtbot.wait(20)
     np.testing.assert_allclose(_histogram_label_gaps_px(widget), [widget._VALUE_LABEL_GAP_PX] * 2, atol=0.1)
+    assert widget.max_texts[0].pos().y() == pytest.approx(widget.max_values[0])
+    assert widget.current_texts[0].pos().y() == pytest.approx(widget.current_values[0])
 
     widget.reset_maxima()
     qtbot.wait(20)
     pixel_height = abs(widget.plot_widget.getViewBox().viewPixelSize()[1])
     reset_gap = (widget.current_values[0] - widget.current_texts[0].pos().y()) / pixel_height
     assert widget.current_texts[0].isVisible()
-    assert widget.current_texts[0].pos().y() < widget.current_values[0]
+    assert widget.current_texts[0].pos().y() == pytest.approx(widget.current_values[0])
     assert reset_gap == pytest.approx(widget._VALUE_LABEL_GAP_PX, abs=0.1)
     widget.close()
 

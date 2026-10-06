@@ -730,7 +730,7 @@ class HistogramWidget(QtWidgets.QWidget):
     _DEFAULT_Y_RANGE = (-70, 10)
     _LOW_SIGNAL_FLOOR = -100.0
     _HIGH_SIGNAL_CEILING = 10.0
-    _VALUE_LABEL_GAP_PX = 6
+    _VALUE_LABEL_GAP_PX = 0
 
     def __init__(self, control_panel, detector_keys: list[str], parent: QWidget | None = None):
         super().__init__(parent)
