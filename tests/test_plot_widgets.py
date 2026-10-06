@@ -4,7 +4,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QPointF, Qt
+from PySide6.QtGui import QFont
 from PySide6.QtTest import QSignalSpy
+from PySide6.QtWidgets import QToolButton
 
 from hardware.ct400_types import CT400ScanResultKind, Detector, LaserInput
 from logic.scan_measurement import ScanAcquisitionSettings, ScanMeasurement
@@ -179,6 +181,96 @@ def test_power_monitor_histogram_uses_detector_border_fill_and_text_palette(qtbo
     assert [item.color.name() for item in widget.max_texts] == expected_max_text
     assert [item.color.name() for item in widget.current_texts] == ["#555555"] * 4
     assert widget.max_pen.style().name == "DashLine"
+    widget.close()
+
+
+def test_power_monitor_widgets_share_axis_typography_grid_and_raw_dbm(qapp):
+    install_application_fonts(qapp)
+    assert plot_widgets._POWER_MONITOR_AXIS_LABEL_POINT_SIZE == 12
+    assert plot_widgets._POWER_MONITOR_TICK_POINT_SIZE == 11
+    assert plot_widgets._POWER_MONITOR_GRID_ALPHA == pytest.approx(0.30)
+    histogram = HistogramWidget(None, ["Det 1", "Det 2"])
+    trace = PowerMonitorTraceWidget()
+
+    widgets = (histogram, trace)
+    for widget, expected_bottom in zip(widgets, ("Detector", "Elapsed time (s)"), strict=True):
+        bottom_axis = widget.plot_widget.getAxis("bottom")
+        left_axis = widget.plot_widget.getAxis("left")
+        assert bottom_axis.labelText == expected_bottom
+        assert left_axis.labelText == "Power (dBm)"
+        assert bottom_axis.labelStyle["font-size"] == f"{plot_widgets._POWER_MONITOR_AXIS_LABEL_POINT_SIZE}pt"
+        assert bottom_axis.labelStyle["font-family"] == "Geist"
+        assert bottom_axis.labelStyle["font-weight"] == "normal"
+        assert bottom_axis.labelStyle["color"] == "black"
+        assert left_axis.labelStyle == bottom_axis.labelStyle
+        for axis in (bottom_axis, left_axis):
+            tick_font = axis.style["tickFont"]
+            assert tick_font.family() == "Geist"
+            assert tick_font.pointSizeF() == plot_widgets._POWER_MONITOR_TICK_POINT_SIZE
+            assert tick_font.weight() == QFont.Weight.Normal
+        assert left_axis.autoSIPrefixScale == 1.0
+
+    histogram_bottom = histogram.plot_widget.getAxis("bottom")
+    trace_bottom = trace.plot_widget.getAxis("bottom")
+    assert histogram_bottom.grid is False
+    assert histogram.plot_widget.getAxis("left").grid == round(plot_widgets._POWER_MONITOR_GRID_ALPHA * 255)
+    assert trace_bottom.grid == round(plot_widgets._POWER_MONITOR_GRID_ALPHA * 255)
+    assert trace.plot_widget.getAxis("left").grid == round(plot_widgets._POWER_MONITOR_GRID_ALPHA * 255)
+    assert histogram.detector_keys == ["Det 1", "Det 2"]
+    histogram.close()
+    trace.close()
+
+
+def test_power_monitor_reset_is_a_compact_top_right_plot_overlay(qtbot):
+    widget = HistogramWidget(None, ["Det 1"])
+    qtbot.addWidget(widget)
+    widget.resize(640, 360)
+    widget.show()
+    qtbot.waitExposed(widget)
+
+    button = widget.reset_btn
+    assert isinstance(button, QToolButton)
+    assert button.parentWidget() is widget.overlay_controls
+    assert widget.overlay_controls.parentWidget() is widget.plot_container
+    assert button.icon().isNull() is False
+    assert button.toolTip() == "Reset current and maximum values"
+    assert button.accessibleName() == "Reset Power Monitor values"
+    assert button.autoRaise()
+    assert button.size().width() <= 32 and button.size().height() <= 32
+    button_center = button.mapTo(widget.plot_container, button.rect().center())
+    assert button_center.x() > widget.plot_container.width() * 0.8
+    assert button_center.y() < 40
+    assert widget.plot_widget.geometry().height() == widget.plot_container.height()
+    widget.resize(640, 520)
+    qtbot.wait(20)
+    button_center = button.mapTo(widget.plot_container, button.rect().center())
+    assert button_center.x() > widget.plot_container.width() * 0.8
+    assert button_center.y() < 40
+    assert widget.plot_widget.geometry().height() == widget.plot_container.height()
+    widget.close()
+
+
+def test_power_monitor_overlay_reset_keeps_existing_reset_behavior(qtbot):
+    widget = HistogramWidget(None, ["Det 1"])
+    qtbot.addWidget(widget)
+    widget.resize(640, 360)
+    widget.show()
+    qtbot.waitExposed(widget)
+    widget._update_values(np.array([-18.0]))
+    assert widget.current_values.tolist() == [-18.0]
+    assert widget.max_values.tolist() == [-18.0]
+    widget._update_y_axis_scale()
+    before_reset_range = widget.plot_widget.getViewBox().viewRange()[1]
+
+    widget.reset_btn.click()
+
+    assert widget.current_values.tolist() == [0.0]
+    assert np.isneginf(widget.max_values[0])
+    reset_range = widget.plot_widget.getViewBox().viewRange()[1]
+    assert reset_range == pytest.approx((-5.0, 5.0))
+    assert reset_range != before_reset_range
+    assert widget.bars.opts["height"].tolist() == [0.0]
+    assert not widget.max_texts[0].isVisible()
     widget.close()
 
 

@@ -74,6 +74,9 @@ from ui.typography import style_group_box_title
 
 logger = logging.getLogger("LabApp.control_panel")
 
+_MAIN_ACTION_BUTTON_MIN_HEIGHT = 35
+_MAIN_ACTION_BUTTON_MIN_WIDTH = 130
+
 SCAN_BUTTON_STYLE = """
 QPushButton#scanButton { background-color: #2e7d32; color: white; }
 QPushButton#scanButton[scanning="true"] { background-color: #c62828; color: white; }
@@ -752,8 +755,8 @@ class CT400ControlPanel(BaseControlPanel):
         self.scan_btn.setObjectName(ID_SCAN_BUTTON)
         self.scan_btn.setStyleSheet(SCAN_BUTTON_STYLE)
         self.scan_btn.setIcon(QtGui.QIcon(":/icons/play.svg"))
-        self.scan_btn.setMinimumHeight(35)
-        self.scan_btn.setMinimumWidth(130)
+        self.scan_btn.setMinimumHeight(_MAIN_ACTION_BUTTON_MIN_HEIGHT)
+        self.scan_btn.setMinimumWidth(_MAIN_ACTION_BUTTON_MIN_WIDTH)
         control_layout.addWidget(self.scan_btn)
 
         self.scan_status_label = QLabel(MSG_SCAN_READY)
@@ -1125,31 +1128,32 @@ class HistogramControlPanel(BaseControlPanel):
         self.main_layout.addWidget(config_group)
 
         detector_group = QGroupBox("Active Detectors")
+        detector_group.setObjectName("powerMonitorActiveDetectorsGroup")
         style_group_box_title(detector_group)
-        detector_checkbox_layout = QGridLayout()
-        detector_checkbox_layout.setSpacing(8)
+        detector_checkbox_layout = QHBoxLayout()
         self.detector_cbs: list[QCheckBox] = []
         for i in range(4):
             cb = QCheckBox(f"Det {i + 1}")
             cb.setChecked(True)
             self.detector_cbs.append(cb)
-            row, col = i // 2, i % 2
-            detector_checkbox_layout.addWidget(cb, row, col)
+            detector_checkbox_layout.addWidget(cb)
         detector_group.setLayout(detector_checkbox_layout)
 
         operation_group = QGroupBox("Operation")
+        operation_group.setObjectName("powerMonitorOperationGroup")
         style_group_box_title(operation_group)
         operation_layout = QVBoxLayout()
         self.monitor_btn = QPushButton("Start Monitoring")
         self.monitor_btn.setObjectName(ID_MONITOR_BUTTON)
         self.monitor_btn.setStyleSheet(MONITOR_BUTTON_STYLE)
         self.monitor_btn.setIcon(QtGui.QIcon(":/icons/play.svg"))
-        self.monitor_btn.setMinimumHeight(100)
-        self.monitor_btn.setMinimumWidth(150)
+        self.monitor_btn.setMinimumHeight(_MAIN_ACTION_BUTTON_MIN_HEIGHT)
+        self.monitor_btn.setMinimumWidth(_MAIN_ACTION_BUTTON_MIN_WIDTH)
         operation_layout.addWidget(self.monitor_btn)
         self.record_btn = QPushButton("Record")
         self.record_btn.setObjectName("powerMonitorRecordButton")
         self.record_btn.setEnabled(False)
+        self.record_btn.setMinimumHeight(_MAIN_ACTION_BUTTON_MIN_HEIGHT)
         self._record_icon = QtGui.QIcon(":/icons/record.svg")
         self._stop_recording_icon = QtGui.QIcon(":/icons/stop.svg")
         self.record_btn.setIcon(self._record_icon)
@@ -1160,12 +1164,8 @@ class HistogramControlPanel(BaseControlPanel):
         operation_layout.addWidget(self.recording_elapsed_label)
         operation_group.setLayout(operation_layout)
 
-        # Use a horizontal layout to place detectors and operation side-by-side
-        side_by_side_layout = QHBoxLayout()
-        side_by_side_layout.addWidget(detector_group)
-        side_by_side_layout.addWidget(operation_group, 0, Qt.AlignmentFlag.AlignTop)
-        self.main_layout.addLayout(side_by_side_layout)
-
+        self.main_layout.addWidget(detector_group)
+        self.main_layout.addWidget(operation_group)
         self.main_layout.addStretch(1)
 
         self.monitor_btn.clicked.connect(self._toggle_monitoring)
