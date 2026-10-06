@@ -159,6 +159,70 @@ def test_power_monitor_histogram_colors_follow_detector_identity_when_labels_reo
     widget.close()
 
 
+def _histogram_label_gaps_px(widget):
+    pixel_height = abs(widget.plot_widget.getViewBox().viewPixelSize()[1])
+    max_gap = (widget.max_texts[0].pos().y() - widget.max_values[0]) / pixel_height
+    current_gap = (widget.current_values[0] - widget.current_texts[0].pos().y()) / pixel_height
+    return max_gap, current_gap
+
+
+def test_power_monitor_histogram_value_labels_use_pixel_gap_and_correct_direction(qtbot):
+    widget = HistogramWidget(None, ["Det 1"])
+    qtbot.addWidget(widget)
+    widget.resize(640, 480)
+    widget.show()
+    qtbot.waitExposed(widget)
+
+    widget._update_values(np.array([-20.0]))
+    widget._update_y_axis_scale()
+    widget._update_visual_elements()
+    qtbot.wait(20)
+
+    max_text = widget.max_texts[0]
+    current_text = widget.current_texts[0]
+    assert max_text.anchor == QPointF(0.5, 1.0)
+    assert current_text.anchor == QPointF(0.5, 0.0)
+    assert max_text.pos().y() > widget.max_values[0]
+    assert current_text.pos().y() < widget.current_values[0]
+    np.testing.assert_allclose(_histogram_label_gaps_px(widget), [widget._VALUE_LABEL_GAP_PX] * 2, atol=0.1)
+    widget.close()
+
+
+def test_power_monitor_histogram_label_pixel_gap_survives_resize_and_y_range_change(qtbot):
+    widget = HistogramWidget(None, ["Det 1"])
+    qtbot.addWidget(widget)
+    widget.resize(640, 700)
+    widget.show()
+    qtbot.waitExposed(widget)
+    widget._update_values(np.array([-20.0]))
+    widget._update_y_axis_scale()
+    widget._update_visual_elements()
+    qtbot.wait(20)
+    tall_gap = _histogram_label_gaps_px(widget)
+    tall_data_gap = widget.max_texts[0].pos().y() - widget.max_values[0]
+
+    widget.resize(640, 320)
+    qtbot.wait(50)
+    short_gap = _histogram_label_gaps_px(widget)
+    short_data_gap = widget.max_texts[0].pos().y() - widget.max_values[0]
+    np.testing.assert_allclose(tall_gap, [widget._VALUE_LABEL_GAP_PX] * 2, atol=0.1)
+    np.testing.assert_allclose(short_gap, [widget._VALUE_LABEL_GAP_PX] * 2, atol=0.1)
+    assert not np.isclose(tall_data_gap, short_data_gap)
+
+    widget.plot_widget.setYRange(-70, 10, padding=0)
+    qtbot.wait(20)
+    np.testing.assert_allclose(_histogram_label_gaps_px(widget), [widget._VALUE_LABEL_GAP_PX] * 2, atol=0.1)
+
+    widget.reset_maxima()
+    qtbot.wait(20)
+    pixel_height = abs(widget.plot_widget.getViewBox().viewPixelSize()[1])
+    reset_gap = (widget.current_values[0] - widget.current_texts[0].pos().y()) / pixel_height
+    assert widget.current_texts[0].isVisible()
+    assert widget.current_texts[0].pos().y() < widget.current_values[0]
+    assert reset_gap == pytest.approx(widget._VALUE_LABEL_GAP_PX, abs=0.1)
+    widget.close()
+
+
 def test_update_plot_autoranges_to_new_finite_trace(qtbot):
     widget = PlotWidget(ScanSettings())
     qtbot.addWidget(widget)
