@@ -34,7 +34,7 @@ dependencies = [
 [project.optional-dependencies]
 # --- Optional Dependencies ---
 # Use this for features that are not strictly required, like MATLAB integration.
-# To install: uv pip install -e ".[matlab]"
+# To install: uv sync --locked --extra matlab
 matlab = [
     "matlabengine==24.2.2", # Qualified against the lab's MATLAB R2024b installation
 ]

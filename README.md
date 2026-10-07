@@ -86,9 +86,9 @@ Install the camera and MATLAB extras for that lab profile with:
 uv sync --locked --extra camera --extra matlab
 ```
 
-MATLAB Engine is not required to run IOPanel. Without it, the application
-continues to support CSV, MAT, PNG, and SVG exports; only MATLAB `.fig` export
-is unavailable. For MATLAB Engine installation details, see the
+MATLAB Engine is not required to run IOPanel. Without it, CSV and MAT scan
+exports and PNG/JPG plot-image exports remain available; only MATLAB `.fig`
+export is unavailable. For MATLAB Engine installation details, see the
 [official MATLAB documentation](https://www.mathworks.com/help/matlab/matlab_external/install-the-matlab-engine-for-python.html).
 
 These commands are for manual lab diagnostics only; CI does not require MATLAB
