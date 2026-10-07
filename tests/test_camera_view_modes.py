@@ -1,8 +1,10 @@
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QLabel
+from PySide6.QtCore import QPoint, Qt
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
 from config_model import CameraConfig
 from hardware.camera_capabilities import ROI, FeatureCapability
+from hardware.simulated_camera import SimulatedCamera
 from ui.camera_widgets import VIEW_MODES, CameraPanel
 
 
@@ -21,7 +23,7 @@ def test_selecting_view_mode_does_not_write_camera_settings(qtbot):
 
     assert panel.view_mode_combo.currentData() == 240
     assert not panel.view_mode_apply.isEnabled()
-    assert "physical cameras only" in panel.view_mode_combo.toolTip()
+    assert "centered sensor ROI" in panel.view_mode_combo.toolTip()
     panel.close()
 
 
@@ -72,22 +74,94 @@ def test_camera_controls_use_compact_toolbar_and_collapsed_live_drawer(qtbot):
 def test_mode_combo_uses_cached_roi_without_camera_reads(qtbot):
     camera = FakePhysicalCamera(ROI(1292, 964, 0, 0))
     panel = _physical_panel(qtbot, camera)
-    reads = 0
+    panel.resize(900, 500)
+    panel.show()
+    panel.settings_button.click()
+    qtbot.wait(20)
+    reads = {"roi": 0, "capabilities": 0}
 
     def count_roi_reads():
-        nonlocal reads
-        reads += 1
+        reads["roi"] += 1
         return camera.roi
 
+    original_caps = camera.get_capabilities
+
+    def count_capability_reads():
+        reads["capabilities"] += 1
+        return original_caps()
+
     camera.get_roi = count_roi_reads
+    camera.get_capabilities = count_capability_reads
     panel.view_mode_combo.setCurrentIndex(3)
-    panel.view_mode_combo.showPopup()
     panel._update_view_mode_availability()
+    availability_updates = 0
+    original_update = panel._update_view_mode_availability
+
+    def count_availability_updates(*args):
+        nonlocal availability_updates
+        availability_updates += 1
+        return original_update(*args)
+
+    panel._update_view_mode_availability = count_availability_updates
+    panel.view_mode_combo.showPopup()
+    popup = panel.view_mode_combo.view()
+    qtbot.waitUntil(popup.isVisible, timeout=1000)
+    for index in range(panel.view_mode_combo.count()):
+        rect = popup.visualRect(panel.view_mode_combo.model().index(index, 0))
+        QTest.mouseMove(popup.viewport(), rect.center(), 10)
+        qtbot.wait(25)
+        assert popup.isVisible()
     panel.view_mode_combo.hidePopup()
 
-    assert reads == 0
+    assert reads == {"roi": 0, "capabilities": 0}
+    assert availability_updates == 0
     assert panel.view_mode_apply.isEnabled()
     panel.close()
+
+
+def test_popup_hover_stays_open_while_simulated_frames_arrive(qtbot):
+    host = QWidget()
+    layout = QHBoxLayout(host)
+    panels = []
+    cameras = []
+    for camera_id in ("popup-live-top", "popup-live-side"):
+        panel = CameraPanel(None, camera_id, CameraConfig(identifier=camera_id, name=camera_id, backend="simulation"))
+        camera = SimulatedCamera(camera_id, width=24, height=16, frame_interval=0.02)
+        camera.open()
+        panel.set_camera(camera)
+        panel.settings_button.click()
+        layout.addWidget(panel)
+        panels.append(panel)
+        cameras.append(camera)
+        qtbot.addWidget(panel)
+    qtbot.addWidget(host)
+    host.resize(1100, 600)
+    host.show()
+    qtbot.waitUntil(lambda: all(camera._frame_count >= 3 for camera in cameras), timeout=1500)
+    before = [camera._frame_count for camera in cameras]
+    initial_indices = [panel.view_mode_combo.currentIndex() for panel in panels]
+
+    for panel_index, panel in enumerate(panels):
+        panel.view_mode_combo.showPopup()
+        popup = panel.view_mode_combo.view()
+        qtbot.waitUntil(popup.isVisible, timeout=1000)
+        for cycle in range(3):
+            for index in range(panel.view_mode_combo.count()):
+                rect = popup.visualRect(panel.view_mode_combo.model().index(index, 0))
+                QTest.mouseMove(popup.viewport(), rect.center(), 10)
+                if cycle == 1 and index == 2:
+                    host.resize(1120, 620)
+                qtbot.wait(35)
+                assert popup.isVisible()
+        panel.view_mode_combo.hidePopup()
+        assert panel.view_mode_combo.currentIndex() == initial_indices[panel_index]
+
+    assert all(camera._frame_count > previous + 5 for camera, previous in zip(cameras, before, strict=True))
+    for panel, camera in zip(panels, cameras, strict=True):
+        panel.prepare_camera_shutdown()
+        camera.close()
+        panel.close()
+    host.close()
 
 
 def test_mode_combo_keeps_width_stable_across_selections(qtbot):
@@ -97,6 +171,7 @@ def test_mode_combo_keeps_width_stable_across_selections(qtbot):
     qtbot.addWidget(panel)
     panel.resize(1000, 500)
     panel.show()
+    panel.set_controls_visibility(True)
     qtbot.wait(20)
 
     widths = []
@@ -107,7 +182,23 @@ def test_mode_combo_keeps_width_stable_across_selections(qtbot):
         widths.append(panel.view_mode_combo.width())
 
     assert max(widths) - min(widths) <= 1
-    assert panel.view_mode_combo.itemData(0, Qt.ItemDataRole.ToolTipRole) == "Centered ROI 1292×964 · aspect 1.34:1"
+    assert panel.view_mode_combo.width() == 230
+    assert all(panel.view_mode_combo.itemData(i, Qt.ItemDataRole.ToolTipRole) is None for i in range(len(widths)))
+    assert panel.view_mode_combo.toolTip() == (
+        "Select a centered sensor ROI. Smaller heights increase the available camera frame-rate range."
+    )
+    assert all(
+        panel.view_mode_combo.itemData(i, Qt.ItemDataRole.TextAlignmentRole) == int(Qt.AlignmentFlag.AlignCenter)
+        for i in range(panel.view_mode_combo.count())
+    )
+    assert panel.view_mode_apply.width() == 68
+    assert panel.view_mode_label.sizePolicy().horizontalPolicy() == panel.view_mode_label.sizePolicy().Policy.Fixed
+    label_left = panel.view_mode_label.mapTo(panel.controls_container, QPoint(0, 0)).x()
+    apply_right = (
+        panel.view_mode_apply.mapTo(panel.controls_container, QPoint(0, 0)).x() + panel.view_mode_apply.width()
+    )
+    row_center = (label_left + apply_right) / 2
+    assert abs(row_center - panel.controls_container.rect().center().x()) <= 1
     panel.close()
 
 
@@ -132,6 +223,7 @@ def test_exposure_gain_gamma_slider_tracks_have_equal_width(qtbot):
 
 class FakePhysicalCamera:
     identifier = "physical-test"
+    camera_name = "Physical"
     is_streaming = True
     is_open = True
 
@@ -196,6 +288,7 @@ def test_combo_selection_is_inert_and_apply_runs_one_transaction(qtbot):
     panel = _physical_panel(qtbot, camera)
 
     panel.view_mode_combo.setCurrentIndex(3)
+    panel.view_mode_combo.activated.emit(3)
     assert camera.apply_calls == []
     assert panel.view_mode_apply.isEnabled()
 
@@ -217,6 +310,7 @@ def test_prepare_camera_shutdown_restores_baseline_once_before_close(qtbot):
     camera = FakePhysicalCamera(ROI(1292, 964, 0, 0))
     panel = _physical_panel(qtbot, camera)
     panel.view_mode_combo.setCurrentIndex(2)
+    panel.view_mode_combo.activated.emit(2)
     panel.view_mode_apply.setEnabled(True)
     panel._view_mode_baseline = {"roi": camera.roi, "rate": 30.0}
     panel._view_mode_changed = True

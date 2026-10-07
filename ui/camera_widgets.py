@@ -52,6 +52,9 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QSlider,
+    QStyle,
+    QStyleOptionComboBox,
+    QStylePainter,
     QToolButton,
     QToolTip,
     QVBoxLayout,
@@ -86,6 +89,31 @@ VIEW_MODES = (
 
 class ViewModeSignals(QObject):
     finished = Signal(object, str)
+
+
+class CenteredComboBox(QComboBox):
+    """A native combo box whose closed selection text is centered."""
+
+    def paintEvent(self, _event):
+        painter = QStylePainter(self)
+        option = QStyleOptionComboBox()
+        self.initStyleOption(option)
+        text = option.currentText
+        option.currentText = ""
+        painter.drawComplexControl(QStyle.ComplexControl.CC_ComboBox, option)
+        text_rect = self.style().subControlRect(
+            QStyle.ComplexControl.CC_ComboBox,
+            option,
+            QStyle.SubControl.SC_ComboBoxEditField,
+            self,
+        )
+        painter.drawItemText(
+            text_rect,
+            Qt.AlignmentFlag.AlignCenter,
+            option.palette,
+            self.isEnabled(),
+            text,
+        )
 
 
 class ViewModeWorker(QRunnable):
@@ -663,7 +691,7 @@ class CameraPanel(QFrame):
         overlay_layout.setSpacing(2)
         self.screenshot_btn = QToolButton(self.overlay_actions)
         self.screenshot_btn.setObjectName("cameraScreenshotButton")
-        self.screenshot_btn.setIcon(QIcon(":/icons/camera.svg"))
+        self.screenshot_btn.setIcon(QIcon(":/icons/camera-white.svg"))
         self.screenshot_btn.setToolTip("Save camera screenshot")
         self.screenshot_btn.setAccessibleName("Save camera screenshot")
         self.screenshot_btn.clicked.connect(self.take_screenshot)
@@ -901,7 +929,6 @@ class CameraPanel(QFrame):
             and callable(getattr(self.camera, "apply_view_mode", None))
         )
         if not physical:
-            self.view_mode_combo.setToolTip("View mode ROI controls are available for physical cameras only.")
             self.view_mode_apply.setToolTip("View mode ROI controls are available for physical cameras only.")
         selected = self.view_mode_combo.currentData()
         current = self._current_roi if physical else None
@@ -981,30 +1008,43 @@ class CameraPanel(QFrame):
         toolbar = QHBoxLayout()
         toolbar.setContentsMargins(0, 0, 0, 0)
         toolbar.setSpacing(6)
-        toolbar.addWidget(QLabel("Camera mode:"))
+        toolbar.addStretch(1)
+        self.view_mode_label = QLabel("Camera mode:")
+        self.view_mode_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        toolbar.addWidget(self.view_mode_label)
+        toolbar.addSpacing(8)
 
-        self.view_mode_combo = QComboBox()
+        self.view_mode_combo = CenteredComboBox()
         self.view_mode_combo.setObjectName("cameraViewModeCombo")
         self.view_mode_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.view_mode_combo.setMinimumContentsLength(20)
-        for height, label, aspect in VIEW_MODES:
+        self.view_mode_combo.setFixedWidth(230)
+        self.view_mode_combo.setToolTip(
+            "Select a centered sensor ROI. Smaller heights increase the available camera frame-rate range."
+        )
+        for height, label, _aspect in VIEW_MODES:
             self.view_mode_combo.addItem(f"{label} — 1292×{height}", height)
             self.view_mode_combo.setItemData(
                 self.view_mode_combo.count() - 1,
-                f"Centered ROI 1292×{height} · aspect {aspect}",
-                Qt.ItemDataRole.ToolTipRole,
+                int(Qt.AlignmentFlag.AlignCenter),
+                Qt.ItemDataRole.TextAlignmentRole,
             )
         self.view_mode_combo.addItem("Custom/current", None)
+        self.view_mode_combo.setItemData(
+            self.view_mode_combo.count() - 1,
+            int(Qt.AlignmentFlag.AlignCenter),
+            Qt.ItemDataRole.TextAlignmentRole,
+        )
         self.view_mode_combo.activated.connect(self._update_view_mode_availability)
-        # Availability is computed only from cached GUI state, so programmatic
-        # index updates remain responsive and never read the camera.
-        self.view_mode_combo.currentIndexChanged.connect(self._update_view_mode_availability)
         toolbar.addWidget(self.view_mode_combo)
+        toolbar.addSpacing(6)
 
         self.view_mode_apply = QPushButton("Apply")
         self.view_mode_apply.setObjectName("cameraViewModeApply")
+        self.view_mode_apply.setFixedWidth(68)
         self.view_mode_apply.clicked.connect(self._apply_selected_view_mode)
         toolbar.addWidget(self.view_mode_apply)
+        toolbar.addStretch(1)
 
         controls_layout.addLayout(toolbar)
 
