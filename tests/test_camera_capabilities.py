@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pytest
 
@@ -104,6 +106,27 @@ def test_capability_report_does_not_write_features():
     assert report["features"]["gain"]["value"] == 24
     assert feature.value == 24
     assert report["features"]["width"]["available"] is False
+
+
+def test_capability_report_serializes_native_enum_without_deepcopy():
+    class NativeEnum:
+        name = "Continuous"
+
+        def __deepcopy__(self, _memo):
+            raise ValueError("ctypes objects containing pointers cannot be pickled")
+
+    enum_value = NativeEnum()
+    device = FakeDevice({"AcquisitionMode": FakeFeature(enum_value, entries=(enum_value,))})
+    report = inspect_camera(device)
+    assert json.dumps(report)
+    assert report["features"]["acquisition_mode"]["value"] == "Continuous"
+    assert report["features"]["acquisition_mode"]["values"] == ["Continuous"]
+
+
+def test_capability_report_preserves_numeric_values():
+    report = inspect_camera(FakeDevice({"Gain": FakeFeature(12.5, (0.0, 24.0), 0.1)}))
+    feature = report["features"]["gain"]
+    assert (feature["value"], feature["minimum"], feature["maximum"], feature["increment"]) == (12.5, 0.0, 24.0, 0.1)
 
 
 def test_frame_rate_set_is_explicit_and_enables_control_when_needed():

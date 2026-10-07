@@ -138,3 +138,59 @@ The physical tools are prepared for a later authorized lab session; running
 them is separate from software tests. Capability reports and synthetic metrics
 cannot establish the physical cameras' sustained ROI rates, transport quality,
 noise, or preferred exposure/gain points.
+
+## Automated read-only baseline
+
+Run the complete baseline for explicitly named cameras with:
+
+```powershell
+.\.venv\Scripts\python.exe tools\camera_lab_validate.py `
+  --camera DEV_000F315B9CE1=Top `
+  --camera DEV_000F315BA8F9=Side `
+  --baseline --duration 30 --network-audit
+```
+
+The runner requires exact camera IDs, shares one bounded discovery deadline,
+audits capabilities without starting acquisition, then measures each camera
+alone and both together. Streaming is skipped unless the existing camera
+state reads `AcquisitionMode=Continuous` and `TriggerMode=Off`; it does not
+change those settings to make a test pass. Results go to a timestamped
+`camera-validation-results` directory by default or to `--output-dir`. JSON
+stage statuses are `PASS`, `PASS WITH OBSERVATIONS`, `FAIL`, or `NOT RUN`.
+Exit code 0 means required stages passed, 1 a validation failure, and 2 an
+environment precondition failure. The optional network audit uses read-only
+PowerShell queries and records unavailable optional fields as observations.
+
+The default runner never writes camera features or NIC settings. GenICam enum
+values may wrap native ctypes state, so reports must not use recursive
+`dataclasses.asdict()` serialization. The capability layer keeps raw values
+for internal logic and converts them only at the JSON report boundary, keeping
+numeric values numeric and representing enum values by their semantic names.
+
+ROI, exposure/gain sweeps, and Auto Once are later opt-in characterization
+stages and require `--authorize-settings-changes`. They are not part of a
+baseline run; see `camera_characterize.py` for the operator-supervised
+restoration workflow.
+
+For a later settings-changing run, the lab runner requires explicit authorization
+and delegates the operation to the existing characterized workflow. Examples
+(the commands below are not part of the baseline):
+
+```powershell
+.\.venv\Scripts\python.exe tools\camera_lab_validate.py `
+  --camera DEV_000F315B9CE1=Top --roi 1292x480 `
+  --authorize-settings-changes --duration 30
+
+.\.venv\Scripts\python.exe tools\camera_lab_validate.py `
+  --camera DEV_000F315B9CE1=Top --quality-sweep `
+  --authorize-settings-changes --gain-values 0,6,12 `
+  --exposure-values-us 1000,2000 --frames 200
+
+.\.venv\Scripts\python.exe tools\camera_lab_validate.py `
+  --camera DEV_000F315B9CE1=Top --auto-once exposure `
+  --authorize-settings-changes --frames 200
+```
+
+These modes must only be used after reviewing the capability report. The
+characterization workflow snapshots and restores settings; inspect its output
+for restoration confirmation before returning a camera to service.

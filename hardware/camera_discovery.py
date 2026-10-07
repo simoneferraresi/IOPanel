@@ -44,6 +44,7 @@ def wait_for_cameras_by_id(
     poll_interval_s: float = DISCOVERY_POLL_INTERVAL_SECONDS,
     cancel_event: threading.Event | None = None,
     on_wait: Callable[[], None] | None = None,
+    on_visible: Callable[[tuple[str, ...]], None] | None = None,
     clock: Callable[[], float] = time.monotonic,
     sleeper: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
@@ -69,6 +70,8 @@ def wait_for_cameras_by_id(
         cameras = system.get_all_cameras()
         by_id = {camera.get_id(): camera for camera in cameras}
         visible_ids = tuple(by_id)
+        if on_visible is not None:
+            on_visible(visible_ids)
         if all(camera_id in by_id for camera_id in requested):
             return {camera_id: by_id[camera_id] for camera_id in requested}
 

@@ -6,7 +6,7 @@ features differ across vendors, firmware revisions, and VmbPy versions.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, replace
+from dataclasses import dataclass, fields, replace
 from typing import Any
 
 FEATURE_ALIASES: dict[str, tuple[str, ...]] = {
@@ -57,6 +57,33 @@ def _safe_call(obj: Any, method: str, default: Any = None) -> Any:
         return default
 
 
+def report_value(value: Any) -> Any:
+    """Convert a vendor value for reports without copying native SDK objects."""
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    get_name = getattr(value, "get_name", None)
+    if callable(get_name):
+        try:
+            name = get_name()
+            if isinstance(name, str):
+                return name
+        except Exception:  # noqa: BLE001 - SDK enum wrappers vary by binding version.
+            return str(value)
+    name = getattr(value, "name", None)
+    if isinstance(name, str):
+        return name
+    return str(value)
+
+
+def feature_capability_to_report(capability: FeatureCapability) -> dict[str, Any]:
+    """Build a JSON-safe report mapping while preserving raw internal values."""
+    result = {field.name: getattr(capability, field.name) for field in fields(FeatureCapability)}
+    for key in ("value", "minimum", "maximum", "increment"):
+        result[key] = report_value(result[key])
+    result["values"] = [report_value(value) for value in capability.values]
+    return result
+
+
 def find_feature(device: Any, aliases: tuple[str, ...] | list[str]) -> tuple[str | None, Any | None]:
     """Return the first named feature that the device exposes."""
     for name in aliases:
@@ -90,7 +117,7 @@ def inspect_feature(device: Any, aliases: tuple[str, ...] | list[str]) -> Featur
     entries = _safe_call(feature, "get_available_entries")
     if entries is None:
         entries = _safe_call(feature, "get_available_values")
-    values = tuple(str(_safe_call(entry, "get_name", entry)) for entry in (entries or ()))
+    values = tuple(str(report_value(entry)) for entry in (entries or ()))
     if readable and value is None:
         errors.append("value unreadable")
     if readable and isinstance(value, (int, float)) and not isinstance(value, bool) and bounds is None and not errors:
@@ -125,19 +152,21 @@ def inspect_feature(device: Any, aliases: tuple[str, ...] | list[str]) -> Featur
 
 def inspect_camera(device: Any) -> dict[str, Any]:
     """Build a JSON-serializable, read-only camera capability report."""
-    features = {key: asdict(inspect_feature(device, aliases)) for key, aliases in FEATURE_ALIASES.items()}
+    features = {
+        key: feature_capability_to_report(inspect_feature(device, aliases)) for key, aliases in FEATURE_ALIASES.items()
+    }
     pixel_formats = _safe_call(device, "get_pixel_formats", ()) or ()
     report: dict[str, Any] = {
         "identity": {
-            "id": _safe_call(device, "get_id"),
-            "name": _safe_call(device, "get_name"),
-            "model": _safe_call(device, "get_model"),
-            "serial": _safe_call(device, "get_serial"),
-            "interface_id": _safe_call(device, "get_interface_id"),
-            "transport_layer": _safe_call(device, "get_transport_layer", None),
+            "id": report_value(_safe_call(device, "get_id")),
+            "name": report_value(_safe_call(device, "get_name")),
+            "model": report_value(_safe_call(device, "get_model")),
+            "serial": report_value(_safe_call(device, "get_serial")),
+            "interface_id": report_value(_safe_call(device, "get_interface_id")),
+            "transport_layer": report_value(_safe_call(device, "get_transport_layer", None)),
         },
         "features": features,
-        "supported_pixel_formats": [str(getattr(fmt, "name", fmt)) for fmt in pixel_formats],
+        "supported_pixel_formats": [report_value(fmt) for fmt in pixel_formats],
         "notes": ["Inspection is read-only; acquisition is not started."],
     }
     return report
