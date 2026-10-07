@@ -143,6 +143,19 @@ def test_frame_rate_set_is_explicit_and_enables_control_when_needed():
     assert rate.value == 45.0
 
 
+def test_frame_rate_set_accepts_enum_off_on_enable_semantics():
+    rate = FakeFeature(30.0, (1.0, 60.0), 0.5)
+    enable = FakeFeature("Off", entries=("Off", "On"))
+    camera = VimbaCam("fake-enum-rate")
+    camera.device = FakeDevice({"AcquisitionFrameRate": rate, "AcquisitionFrameRateEnable": enable})
+
+    capability = camera.get_frame_rate_capability()
+    assert capability["enable_required"] is True
+    assert camera.set_frame_rate(45.0)
+    assert enable.value == "On"
+    assert rate.value == 45.0
+
+
 def test_frame_rate_capability_is_refreshed_after_geometry_changes():
     height = FakeFeature(964, (8, 964), 4)
 
@@ -155,6 +168,67 @@ def test_frame_rate_capability_is_refreshed_after_geometry_changes():
     assert camera.get_frame_rate_capability()["feature"].maximum == 30.0
     height.value = 480
     assert camera.get_frame_rate_capability()["feature"].maximum == 60.0
+
+
+def test_view_mode_from_fast_small_roi_uses_safe_rate_before_enlargement():
+    events = []
+    features = {}
+
+    class LoggedFeature(FakeFeature):
+        def __init__(self, name, value, bounds=None, increment=None):
+            super().__init__(value, bounds, increment)
+            self.name = name
+
+        def set(self, value):
+            events.append(("write", self.name, value))
+            if self.name == "AcquisitionFrameRate" and float(value) > (
+                145.0 if features["Height"].value <= 120 else 30.0
+            ):
+                raise RuntimeError("illegal rate for geometry")
+            super().set(value)
+
+    class DynamicRate(LoggedFeature):
+        def get_range(self):
+            return 1.0, 145.0 if features["Height"].value <= 120 else 30.0
+
+    features.update(
+        {
+            "Width": LoggedFeature("Width", 1292, (1, 1292), 1),
+            "Height": LoggedFeature("Height", 120, (1, 964), 1),
+            "OffsetX": LoggedFeature("OffsetX", 0, (0, 1292), 1),
+            "OffsetY": LoggedFeature("OffsetY", 422, (0, 964), 1),
+            "WidthMax": FakeFeature(1292),
+            "HeightMax": FakeFeature(964),
+            "AcquisitionFrameRate": DynamicRate("AcquisitionFrameRate", 145.0, (1.0, 145.0), 0.1),
+            "Gain": FakeFeature(7.5, (0.0, 24.0), 0.1),
+            "ExposureTime": FakeFeature(12000.0, (10.0, 100000.0), 2.0),
+        }
+    )
+
+    class StreamingDevice(FakeDevice):
+        def stop_streaming(self):
+            events.append(("stop",))
+
+        def start_streaming(self, *_args, **_kwargs):
+            events.append(("start",))
+
+    camera = VimbaCam("fast-small")
+    camera.device = StreamingDevice(features)
+    camera.is_streaming = True
+    result = camera.apply_view_mode(1292, 964)
+
+    writes = [event for event in events if event[0] == "write"]
+    first_rate_write = next(i for i, event in enumerate(events) if event[:2] == ("write", "AcquisitionFrameRate"))
+    height_write = next(i for i, event in enumerate(events) if event[:2] == ("write", "Height"))
+    assert events[0] == ("stop",)
+    assert first_rate_write < height_write
+    assert features["AcquisitionFrameRate"].value == pytest.approx(30.0)
+    assert result["roi"].height == 964
+    assert result["roi_cap_fps"] == pytest.approx(30.0)
+    assert events[-1] == ("start",)
+    assert len(writes) >= 5
+    assert features["Gain"].value == pytest.approx(7.5)
+    assert features["ExposureTime"].value == pytest.approx(12000.0)
 
 
 def test_roi_validation_respects_bounds_and_increment():

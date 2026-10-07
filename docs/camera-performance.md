@@ -13,6 +13,37 @@ sustained rates must be queried and measured on each camera. ROI cropping is
 different from binning: cropping reads a smaller sensor region, while binning
 combines neighboring sensor pixels. IOPanel does not enable either automatically.
 
+### Operator-selectable view modes
+
+Each physical CameraPanel offers session-scoped centered vertical sensor ROI
+crops. **Full (1292 × 964)** remains the normal startup behavior and default;
+the operator must press Apply before a different mode is written. The other
+choices keep the full 1292-pixel width and use heights of 720, 480, 240, or
+120 pixels. Smaller heights reduce the vertical field of view. These are
+sensor crops, not image resizing. Simulation panels disable the physical ROI
+controls.
+
+| View mode | Sensor ROI | Aspect ratio |
+| --- | ---: | ---: |
+| Full | 1292 × 964 | 1.34:1 |
+| 720 crop | 1292 × 720 | 1.79:1 |
+| 480 crop | 1292 × 480 | 2.69:1 |
+| 240 crop | 1292 × 240 | 5.38:1 |
+| 120 crop | 1292 × 120 | 10.77:1 |
+
+The status separates the queried ROI-dependent **ROI cap** from **Live** FPS
+measured during acquisition. The cap is not a promised or actual achieved FPS:
+exposure time can limit live acquisition. In physical characterization at
+1292 × 240, both cameras reported an ROI cap near 94.5 FPS; Top acquired near
+94.5 FPS while Side acquired near 67.1 FPS because its exposure was longer.
+Those values are reference measurements, not guarantees.
+
+Alternative modes are not persisted. On normal panel shutdown, if a mode was
+applied, IOPanel best-effort restores the ROI and frame-rate baseline captured
+before the first change. Manual Gain and Exposure are never changed by view
+mode selection. An abnormal process termination cannot perform this best-effort
+restoration.
+
 Acquisition FPS and display FPS describe different stages. The camera can
 deliver frames faster than the GUI paints them. The presentation pipeline keeps
 the newest frame and coalesces obsolete presentation work, so high-rate
