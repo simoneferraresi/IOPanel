@@ -62,10 +62,8 @@ The `uv` workflow simplifies environment creation and dependency installation in
 git clone https://github.com/simoneferraresi/IOPanel.git
 cd IOPanel
 
-# 2. Create a virtual environment and install all dependencies
-# This single command creates a virtual environment in .venv and installs
-# all dependencies from pyproject.toml, including optional test/dev groups.
-uv sync --all-extras
+# 2. Create a virtual environment and install core dependencies
+uv sync --locked
 
 # 3. Activate the virtual environment
 # On Windows (PowerShell):
@@ -74,21 +72,33 @@ uv sync --all-extras
 source .venv/bin/activate
 ```
 
-### 3. (Optional) MATLAB Engine Setup
+### 3. Optional lab profiles
 
-If you have MATLAB and want `.fig` export functionality, install the MATLAB Engine API for Python into the `uv`-managed environment.
+Camera and MATLAB support are optional extras. The qualified laboratory MATLAB
+profile is MATLAB R2024b Update 4 at
+`C:\Program Files\MATLAB\R2024b`, with CPython 3.12.8 and
+`matlabengine==24.2.2`. The Engine package is intentionally pinned to match
+that MATLAB release; review and update the pin when changing MATLAB releases.
 
-**Make sure your virtual environment is activated first.**
+Install the camera and MATLAB extras for that lab profile with:
 
-**Example on Windows:**
 ```powershell
-# First, ensure your prompt shows (.venv)
-# Then, navigate to the MATLAB installation directory
-cd "C:\Program Files\MATLAB\R2023b\extern\engines\python"
-# Install the engine into the active environment
-python setup.py install
+uv sync --locked --extra camera --extra matlab
 ```
-[See official MATLAB documentation for details.](https://www.mathworks.com/help/matlab/matlab_external/install-the-matlab-engine-for-python.html)
+
+MATLAB Engine is not required to run IOPanel. Without it, CSV and MAT scan
+exports and PNG/JPG plot-image exports remain available; only MATLAB `.fig`
+export is unavailable. For MATLAB Engine installation details, see the
+[official MATLAB documentation](https://www.mathworks.com/help/matlab/matlab_external/install-the-matlab-engine-for-python.html).
+
+These commands are for manual lab diagnostics only; CI does not require MATLAB
+or the MATLAB extra. In PowerShell, check the Engine import and runtime with:
+
+```powershell
+.\.venv\Scripts\python.exe -c "import matlab.engine; print('MATLAB Engine import OK')"
+.\.venv\Scripts\python.exe -c "import matlab.engine; eng=matlab.engine.start_matlab(); print(eng.version()); print(eng.matlabroot()); eng.quit()"
+& "C:\Program Files\MATLAB\R2024b\bin\matlab.exe" -batch "disp(version('-release')); disp(matlabroot)"
+```
 
 ---
 

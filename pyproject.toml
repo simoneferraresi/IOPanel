@@ -34,9 +34,9 @@ dependencies = [
 [project.optional-dependencies]
 # --- Optional Dependencies ---
 # Use this for features that are not strictly required, like MATLAB integration.
-# To install: uv pip install -e ".[matlab]"
+# To install: uv sync --locked --extra matlab
 matlab = [
-    "matlabengine", # The package name for the MATLAB Engine
+    "matlabengine==24.2.2", # Qualified against the lab's MATLAB R2024b installation
 ]
 camera = [
     "vmbpy>=1.0.5,<2", # Lab SDK-managed and packaged-wheel profiles are documented separately
