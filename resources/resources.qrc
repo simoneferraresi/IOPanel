@@ -7,6 +7,8 @@
     <file alias="record.svg">icons/record.svg</file>
     <file alias="eraser.svg">icons/eraser.svg</file>
     <file alias="camera.svg">icons/camera.svg</file>
+    <file alias="camera-white.svg">icons/camera-white.svg</file>
+    <file alias="settings.svg">icons/settings.svg</file>
     <file alias="disconnect.svg">icons/disconnect.svg</file>
     <file alias="exit.svg">icons/exit.svg</file>
     <file alias="laser.svg">icons/laser.svg</file>

@@ -87,8 +87,10 @@ def test_camera_capture_and_discovery_use_camera_and_refresh_actions(qtbot, monk
     )
     qtbot.addWidget(camera)
     assert camera.screenshot_btn.icon().isNull() is False
-    assert camera.screenshot_btn.toolTip() == "Capture the current camera frame"
-    assert camera.screenshot_btn.accessibleName() == "Capture camera screenshot"
+    assert camera.screenshot_btn.toolTip() == "Save camera screenshot"
+    assert camera.screenshot_btn.accessibleName() == "Save camera screenshot"
+    assert camera.video_container.layout().indexOf(camera.overlay_actions) == 1
+    assert camera.settings_button.icon().isNull() is False
 
     monkeypatch.setattr(discovery_dialog, "VIMBA_AVAILABLE", False)
     dialog = CameraDiscoveryDialog()

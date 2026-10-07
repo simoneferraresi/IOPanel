@@ -88,6 +88,33 @@ def test_roi_screenshot_source_keeps_native_acquired_dimensions(qtbot):
     panel.close()
 
 
+def test_overlay_screenshot_button_saves_native_roi_without_gui_overlay(qtbot, monkeypatch, tmp_path):
+    panel = CameraPanel(None, "Overlay Screenshot", CameraConfig(identifier="overlay-shot", name="Overlay Shot"))
+    qtbot.addWidget(panel)
+    panel.resize(800, 500)
+    panel.show()
+    image = QImage(1292, 240, QImage.Format.Format_RGB888)
+    image.fill(Qt.GlobalColor.darkBlue)
+    panel._display_converted_image(image)
+    panel.update_fps(30.4)
+    panel._delayed_display_update()
+    output = tmp_path / "native-roi.png"
+    monkeypatch.setattr(
+        "ui.camera_widgets.QFileDialog.getSaveFileName",
+        lambda *_args, **_kwargs: (str(output), "PNG Images (*.png)"),
+    )
+
+    panel.screenshot_btn.click()
+
+    saved = QImage(str(output))
+    assert (saved.width(), saved.height()) == (1292, 240)
+    assert saved.pixelColor(0, 0) == image.pixelColor(0, 0)
+    assert saved.pixelColor(20, 20) == image.pixelColor(20, 20)
+    assert panel.video_label.pixmap() is not None
+    assert panel.video_label.pixmap().width() != saved.width()
+    panel.close()
+
+
 def test_panel_shutdown_drops_pending_frame_and_stops_conversion_thread(qtbot):
     panel = CameraPanel(None, "Shutdown", CameraConfig(identifier="shutdown", name="Shutdown"))
     qtbot.addWidget(panel)

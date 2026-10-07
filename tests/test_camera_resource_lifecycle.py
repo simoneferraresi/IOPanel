@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+
 import pytest
 
 from hardware import camera
@@ -88,10 +90,29 @@ def test_successful_internal_open_transfers_context_to_device_until_close(monkey
     assert instance.device is device
     assert device.enter_calls == 1
     assert device.exit_calls == 0
-
     instance.close()
     assert device.exit_calls == 1
     assert instance.device is None
+
+
+def test_camera_close_waits_for_inflight_frame_callback_before_device_exit(monkeypatch, qtbot):
+    device = FakeCamera()
+    instance = make_camera(monkeypatch, device)
+    instance.device = device
+    instance._active_frame_callbacks = 1
+    closer = threading.Thread(target=instance.close)
+
+    closer.start()
+    qtbot.waitUntil(lambda: instance._is_closing, timeout=1000)
+    assert device.exit_calls == 0
+
+    with instance._frame_callback_condition:
+        instance._active_frame_callbacks -= 1
+        instance._frame_callback_condition.notify_all()
+    closer.join(timeout=1)
+
+    assert not closer.is_alive()
+    assert device.exit_calls == 1
 
 
 def test_recovery_uses_bounded_discovery_after_camera_temporarily_disappears(monkeypatch):

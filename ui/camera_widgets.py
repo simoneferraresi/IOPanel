@@ -25,11 +25,13 @@ from typing import Literal
 
 import cv2
 import numpy as np
+import shiboken6
 from PySide6 import QtCore, QtGui
 from PySide6.QtCore import (
     Q_ARG,
     QMetaObject,
     QObject,
+    QPoint,
     QRunnable,
     QSize,
     Qt,
@@ -41,7 +43,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (
-    QComboBox,
+    QButtonGroup,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -51,6 +53,8 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QSlider,
+    QToolButton,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -58,6 +62,7 @@ from PySide6.QtWidgets import (
 from app_settings import AppSettings
 from config_model import CameraConfig
 from hardware.camera import VimbaCam
+from hardware.camera_capabilities import ROI
 from ui.constants import (
     CAMERA_RESIZE_EVENT_THROTTLE_MS,
     CAMERA_RESIZE_UPDATE_DELAY_MS,
@@ -280,6 +285,7 @@ class ParameterControl(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
         self.label = QLabel(f"{self.param_name}:")
+        self.label.setFixedWidth(130)
         self.label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.slider = QSlider(Qt.Orientation.Horizontal)
         self.slider.setRange(0, 1000)  # Always use a fixed high-resolution slider range
@@ -581,9 +587,12 @@ class CameraPanel(QFrame):
         self._recovery_failed = False
         self._auto_op_active = False
         self._camera_mode_change_active = False
+        self._current_roi: ROI | None = None
+        self._current_view_mode_height: int | None = None
         self._view_mode_baseline: dict | None = None
         self._view_mode_changed = False
         self._panel_closing = False
+        self._camera_shutdown_prepared = False
         self._presentation_enabled = False
         self._display_lock = threading.Lock()
         self._latest_qimage: QImage | None = None
@@ -598,6 +607,7 @@ class CameraPanel(QFrame):
 
         self.conversion_thread: QThread | None = None
         self.conversion_worker: ImageConversionWorker | None = None
+        self._conversion_shutdown_complete = False
 
         self._last_resize_time: float = 0.0
         self._resize_timer = QTimer(self)
@@ -637,7 +647,10 @@ class CameraPanel(QFrame):
         self._init_ui()
         self.main_layout.addWidget(self.controls_container)
 
-        self.video_label = AspectLockedLabel(self)
+        self.video_container = QWidget(self)
+        video_layout = QGridLayout(self.video_container)
+        video_layout.setContentsMargins(0, 0, 0, 0)
+        self.video_label = AspectLockedLabel(self.video_container)
         if self.camera:
             self.video_label.setText(MSG_CAMERA_WAITING)
         else:
@@ -645,7 +658,39 @@ class CameraPanel(QFrame):
 
         self.video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.video_label.setStyleSheet("background-color: transparent; color: grey;")
-        self.main_layout.addWidget(self.video_label, stretch=1)
+        video_layout.addWidget(self.video_label, 0, 0)
+        self.overlay_actions = QWidget(self.video_container)
+        self.overlay_actions.setObjectName("cameraOverlayActions")
+        overlay_layout = QHBoxLayout(self.overlay_actions)
+        overlay_layout.setContentsMargins(0, 0, 0, 0)
+        overlay_layout.setSpacing(2)
+        self.screenshot_btn = QToolButton(self.overlay_actions)
+        self.screenshot_btn.setObjectName("cameraScreenshotButton")
+        self.screenshot_btn.setIcon(QIcon(":/icons/camera-white.svg"))
+        self.screenshot_btn.setToolTip("Save camera screenshot")
+        self.screenshot_btn.setAccessibleName("Save camera screenshot")
+        self.screenshot_btn.clicked.connect(self.take_screenshot)
+        self.settings_button = QToolButton(self.overlay_actions)
+        self.settings_button.setObjectName("cameraSettingsGear")
+        self.settings_button.setIcon(QIcon(":/icons/settings.svg"))
+        self.settings_button.setToolTip("Show or hide camera settings")
+        self.settings_button.setAccessibleName("Toggle camera settings")
+        self.settings_button.setCheckable(True)
+        self.settings_button.setChecked(self.controls_visible)
+        self.settings_button.toggled.connect(self.set_controls_visibility)
+        overlay_layout.addWidget(self.screenshot_btn)
+        overlay_layout.addWidget(self.settings_button)
+        overlay_button_style = (
+            "QToolButton { background: rgba(25, 25, 25, 190); color: white; border: 0; border-radius: 4px; }"
+            "QToolButton:hover { background: rgba(55, 55, 55, 230); }"
+            "QToolButton:pressed, QToolButton:checked { background: rgba(75, 75, 75, 235); }"
+        )
+        for button in (self.screenshot_btn, self.settings_button):
+            button.setFixedSize(28, 28)
+            button.setIconSize(QSize(16, 16))
+            button.setStyleSheet(overlay_button_style)
+        video_layout.addWidget(self.overlay_actions, 0, 0, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight)
+        self.main_layout.addWidget(self.video_container, stretch=1)
 
         self.controls_container.setVisible(self.controls_visible)
         self.clear_status_indicators()
@@ -733,6 +778,7 @@ class CameraPanel(QFrame):
         self._recovery_failed = False
         self._camera_error_active = True
         self.video_label.setText("Camera reopened; waiting for frames…")
+        self._refresh_view_mode_from_camera()
         self._update_control_availability()
         self._arm_watchdog()
 
@@ -814,14 +860,17 @@ class CameraPanel(QFrame):
 
     def _refresh_view_mode_from_camera(self):
         if not self.camera or not callable(getattr(self.camera, "get_roi", None)):
-            self.view_mode_status.setText("Physical camera required")
+            self._current_roi = None
+            self._current_view_mode_height = None
+            self._set_view_mode_selection(None)
             self._update_view_mode_availability()
             return
         roi = self.camera.get_roi()
-        capability = self.camera.get_frame_rate_capability()
         if roi is None:
-            self.view_mode_combo.setCurrentIndex(self.view_mode_combo.count() - 1)
-            self.view_mode_status.setText("Current: ROI unavailable")
+            self._current_roi = None
+            self._current_view_mode_height = None
+            self._set_view_mode_selection(None)
+            self._update_view_mode_availability()
             return
         caps_report = (
             self.camera.get_capabilities() if callable(getattr(self.camera, "get_capabilities", None)) else None
@@ -838,34 +887,35 @@ class CameraPanel(QFrame):
         sensor_width = int(features.get("width_max", {}).get("value") or roi.width)
         sensor_height = int(features.get("height_max", {}).get("value") or roi.height)
         matches = [
-            i
-            for i, (height, _label, _aspect) in enumerate(VIEW_MODES)
+            height
+            for height, _label, _aspect in VIEW_MODES
             if roi.width == 1292
             and roi.height == height
             and roi.offset_x == centered_offset(1292, sensor_width, "offset_x")
             and roi.offset_y == centered_offset(height, sensor_height, "offset_y")
         ]
-        self.view_mode_combo.setCurrentIndex(matches[0] if matches else self.view_mode_combo.count() - 1)
-        rate = (
-            getattr(getattr(capability, "get", lambda *_: None)("feature"), "maximum", None)
-            if isinstance(capability, dict)
-            else None
-        )
-        self._view_mode_status_roi = roi
-        self._view_mode_status_cap = rate
-        self._render_view_mode_status()
+        self._current_roi = roi
+        self._current_view_mode_height = matches[0] if matches else None
+        self._set_view_mode_selection(self._current_view_mode_height)
         self._update_view_mode_availability()
 
-    def _render_view_mode_status(self):
-        roi = getattr(self, "_view_mode_status_roi", None)
-        cap = getattr(self, "_view_mode_status_cap", None)
-        if roi is None:
-            return
-        aspect = f"{roi.width / roi.height:.2f}:1" if roi.height else "aspect unavailable"
-        cap_text = f"ROI cap {float(cap):.1f} FPS" if cap is not None else "ROI cap unavailable"
-        self.view_mode_status.setText(
-            f"ROI: {roi.width}×{roi.height} · {aspect} · {cap_text} · Live {self._current_fps:.1f} FPS"
-        )
+    def _set_view_mode_selection(self, height: int | None):
+        """Reflect a physical preset without generating a pending user change."""
+        with QtCore.QSignalBlocker(self.view_mode_button_group):
+            if height is None:
+                self.view_mode_button_group.setExclusive(False)
+                for button in self.view_mode_buttons.values():
+                    button.setChecked(False)
+                self.view_mode_button_group.setExclusive(True)
+            else:
+                button = self.view_mode_buttons.get(height)
+                if button is not None:
+                    button.setChecked(True)
+        self.view_mode_custom_label.setVisible(height is None and self._current_roi is not None)
+
+    def _selected_view_mode_height(self) -> int | None:
+        selected = self.view_mode_button_group.checkedId()
+        return selected if selected in self.view_mode_buttons else None
 
     def _update_view_mode_availability(self, *_args):
         if not hasattr(self, "view_mode_apply"):
@@ -876,28 +926,28 @@ class CameraPanel(QFrame):
             and callable(getattr(self.camera, "apply_view_mode", None))
         )
         if not physical:
-            self.view_mode_combo.setToolTip("View mode ROI controls are available for physical cameras only.")
             self.view_mode_apply.setToolTip("View mode ROI controls are available for physical cameras only.")
-        selected = self.view_mode_combo.currentData()
-        current = self.camera.get_roi() if physical and callable(getattr(self.camera, "get_roi", None)) else None
-        same = (
-            selected is not None and current is not None and current.width == 1292 and current.height == int(selected)
-        )
+        selected = self._selected_view_mode_height()
+        same = selected is not None and selected == self._current_view_mode_height
         busy = self._recovery_active or self._recovery_failed or self._auto_op_active or self._camera_mode_change_active
-        self.view_mode_combo.setEnabled(physical and not busy)
-        self.view_mode_apply.setEnabled(physical and not busy and selected is not None and not same)
+        selector_enabled = physical and not busy
+        apply_enabled = physical and not busy and selected is not None and not same
+        if self.view_mode_selector.isEnabled() != selector_enabled:
+            self.view_mode_selector.setEnabled(selector_enabled)
+        if self.view_mode_apply.isEnabled() != apply_enabled:
+            self.view_mode_apply.setEnabled(apply_enabled)
 
     def _apply_selected_view_mode(self):
         if not self.camera or self._camera_mode_change_active:
             return
-        height = self.view_mode_combo.currentData()
+        height = self._selected_view_mode_height()
         if height is None or not self.view_mode_apply.isEnabled():
             return
         if self._view_mode_baseline is None:
             capability = self.camera.get_frame_rate_capability()
             feature = capability.get("feature") if isinstance(capability, dict) else None
             if feature is None or feature.value is None:
-                self.view_mode_status.setText("Cannot read frame-rate baseline")
+                self._show_view_mode_feedback("Cannot read frame-rate baseline")
                 return
             self._view_mode_baseline = {
                 "roi": self.camera.get_roi(),
@@ -925,17 +975,20 @@ class CameraPanel(QFrame):
             self._latest_pixmap = None
             self.video_label.setPixmap(QPixmap())
             self.video_label.setText("Waiting for fresh frames…")
-            self.view_mode_status.setText("Mode applied · waiting for live FPS")
             self._refresh_view_mode_from_camera()
         else:
-            self.controls_toggle.setChecked(True)
-            self.view_mode_status.setText(f"Mode change failed: {error}")
+            self.settings_button.setChecked(True)
+            self._show_view_mode_feedback(f"Mode change failed: {error}")
             if self.camera and not self.camera.is_streaming:
                 self._recovery_failed = True
                 self.recovery_requested.emit(self.camera.identifier)
         self._update_control_availability()
         self._arm_watchdog()
         self.auto_operation_finished.emit()
+
+    def _show_view_mode_feedback(self, message: str):
+        anchor = self.view_mode_apply
+        QToolTip.showText(anchor.mapToGlobal(QPoint(0, anchor.height())), message, anchor, anchor.rect(), 3500)
 
     def _gain_is_writable(self) -> bool:
         checker = getattr(self.camera, "is_feature_writable", None)
@@ -953,36 +1006,64 @@ class CameraPanel(QFrame):
         toolbar = QHBoxLayout()
         toolbar.setContentsMargins(0, 0, 0, 0)
         toolbar.setSpacing(6)
-        toolbar.addWidget(QLabel("Camera mode:"))
+        toolbar.addStretch(1)
+        self.view_mode_label = QLabel("Camera mode:")
+        self.view_mode_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        toolbar.addWidget(self.view_mode_label)
+        toolbar.addSpacing(8)
 
-        self.view_mode_combo = QComboBox()
-        self.view_mode_combo.setObjectName("cameraViewModeCombo")
-        self.view_mode_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
-        for height, label, _aspect in VIEW_MODES:
-            self.view_mode_combo.addItem(f"{label} — 1292×{height}", height)
-        self.view_mode_combo.addItem("Custom/current", None)
-        self.view_mode_combo.currentIndexChanged.connect(self._update_view_mode_availability)
-        toolbar.addWidget(self.view_mode_combo, stretch=1)
+        self.view_mode_selector = QWidget(self.controls_container)
+        self.view_mode_selector.setObjectName("cameraViewModeSelector")
+        selector_layout = QHBoxLayout(self.view_mode_selector)
+        selector_layout.setContentsMargins(0, 0, 0, 0)
+        selector_layout.setSpacing(0)
+        self.view_mode_button_group = QButtonGroup(self.view_mode_selector)
+        self.view_mode_button_group.setExclusive(True)
+        self.view_mode_button_group.idToggled.connect(self._update_view_mode_availability)
+        self.view_mode_buttons: dict[int, QToolButton] = {}
+        for index, (height, label, _aspect) in enumerate(VIEW_MODES):
+            button = QToolButton(self.view_mode_selector)
+            button.setObjectName(f"cameraViewMode{height}")
+            button.setText("Full" if index == 0 else str(height))
+            button.setCheckable(True)
+            button.setFixedSize(43, 28)
+            button.setAccessibleName(
+                f"Full camera mode — 1292 by {height}" if index == 0 else f"{height} crop — 1292 by {height}"
+            )
+            button.setToolTip(f"{label}: 1292 by {height}")
+            button.setStyleSheet(
+                "QToolButton { border: 1px solid palette(mid); border-right: 0; padding: 2px; }"
+                "QToolButton:hover { background: palette(midlight); }"
+                "QToolButton:checked { background: palette(highlight); color: palette(highlighted-text); "
+                "border-color: palette(highlight); }"
+                "QToolButton:disabled { color: palette(mid); }"
+            )
+            if index == 0:
+                button.setStyleSheet(
+                    button.styleSheet() + "QToolButton { border-top-left-radius: 4px; border-bottom-left-radius: 4px; }"
+                )
+            elif index == len(VIEW_MODES) - 1:
+                button.setStyleSheet(
+                    button.styleSheet().replace("border-right: 0;", "border-right: 1px solid palette(mid);")
+                    + "QToolButton { border-top-right-radius: 4px; border-bottom-right-radius: 4px; }"
+                )
+            self.view_mode_button_group.addButton(button, height)
+            self.view_mode_buttons[height] = button
+            selector_layout.addWidget(button)
+        toolbar.addWidget(self.view_mode_selector)
+        self.view_mode_custom_label = QLabel("Custom", self.controls_container)
+        self.view_mode_custom_label.setObjectName("cameraViewModeCustom")
+        self.view_mode_custom_label.setToolTip("Current camera ROI does not match a preset")
+        self.view_mode_custom_label.setVisible(False)
+        toolbar.addWidget(self.view_mode_custom_label)
+        toolbar.addSpacing(6)
 
         self.view_mode_apply = QPushButton("Apply")
         self.view_mode_apply.setObjectName("cameraViewModeApply")
+        self.view_mode_apply.setFixedWidth(68)
         self.view_mode_apply.clicked.connect(self._apply_selected_view_mode)
         toolbar.addWidget(self.view_mode_apply)
-
-        self.controls_toggle = QPushButton("Controls ▸")
-        self.controls_toggle.setObjectName("cameraSettingsToggle")
-        self.controls_toggle.setCheckable(True)
-        self.controls_toggle.setChecked(False)
-        self.controls_toggle.setToolTip("Show or hide live camera tuning controls")
-        self.controls_toggle.toggled.connect(self._set_settings_drawer_visible)
-        toolbar.addWidget(self.controls_toggle)
-
-        self.screenshot_btn = QPushButton("Screenshot")
-        self.screenshot_btn.setIcon(QIcon(":/icons/camera.svg"))
-        self.screenshot_btn.setToolTip("Capture the current camera frame")
-        self.screenshot_btn.setAccessibleName("Capture camera screenshot")
-        self.screenshot_btn.clicked.connect(self.take_screenshot)
-        toolbar.addWidget(self.screenshot_btn)
+        toolbar.addStretch(1)
 
         controls_layout.addLayout(toolbar)
 
@@ -1074,13 +1155,15 @@ class CameraPanel(QFrame):
             decimals=2,
         )
         self.gamma_control.valueChanged.connect(lambda val: self._handle_parameter_changed("gamma", val))
-        drawer_grid.addWidget(self.gamma_control, 2, 0, 1, 3)
+        gamma_action_space = QWidget()
+        gamma_action_space.setFixedWidth(self.exposure_btn.sizeHint().width() + self.exposure_status.width() + 6)
+        gamma_row = QHBoxLayout()
+        gamma_row.setContentsMargins(0, 0, 0, 0)
+        gamma_row.setSpacing(6)
+        gamma_row.addWidget(self.gamma_control, stretch=1)
+        gamma_row.addWidget(gamma_action_space)
+        drawer_grid.addLayout(gamma_row, 2, 0, 1, 3)
 
-        self.view_mode_status = QLabel("ROI: —")
-        self.view_mode_status.setObjectName("cameraViewModeStatus")
-        self.view_mode_status.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        self.view_mode_status.setToolTip("Current sensor ROI, aspect ratio, ROI frame-rate capability, and live FPS")
-        drawer_grid.addWidget(self.view_mode_status, 3, 0, 1, 3)
         drawer_grid.setColumnStretch(0, 1)
 
         controls_layout.addWidget(self.settings_drawer)
@@ -1088,12 +1171,6 @@ class CameraPanel(QFrame):
 
         self.exposure_btn.clicked.connect(lambda: self._start_auto_op(OP_AUTO_EXPOSURE))
         self.gain_btn.clicked.connect(lambda: self._start_auto_op(OP_AUTO_GAIN))
-
-    @Slot(bool)
-    def _set_settings_drawer_visible(self, visible: bool):
-        """Expand/collapse tuning controls without interrupting the live feed."""
-        self.settings_drawer.setVisible(visible)
-        self.controls_toggle.setText("Controls ▾" if visible else "Controls ▸")
 
     def _handle_parameter_changed(self, name: str, value: float):
         """Handles the valueChanged signal from any ParameterControl widget."""
@@ -1151,10 +1228,16 @@ class CameraPanel(QFrame):
         self.video_label.setStyleSheet("background-color: #333; color: #ffc107;")
 
     def set_controls_visibility(self, visible: bool):
-        if self.controls_visible == visible:
-            return
-        self.controls_visible = visible
+        self.controls_visible = bool(visible)
         self.controls_container.setVisible(self.controls_visible)
+        self.settings_drawer.setVisible(self.controls_visible)
+        if hasattr(self, "settings_button"):
+            with QtCore.QSignalBlocker(self.settings_button):
+                self.settings_button.setChecked(self.controls_visible)
+        if self.controls_visible:
+            self._update_view_mode_availability()
+        if self.settings is not None:
+            self.settings.set_camera_controls_visible(self.camera_identifier, self.controls_visible)
         logger.debug(f"CameraPanel '{self._panel_title}' controls set to visible: {self.controls_visible}")
 
     def get_controls_visible(self) -> bool:
@@ -1218,14 +1301,17 @@ class CameraPanel(QFrame):
                 logger.exception("Exception saving screenshot")
                 self._flash_button_feedback(self.screenshot_btn, success=False)
 
-    def _flash_button_feedback(self, button: QPushButton, success: bool):
+    def _flash_button_feedback(self, button: QWidget, success: bool):
         """Helper to flash the button green (success) or red (failure)."""
         original_style = button.styleSheet()
         color = "#ccffcc" if success else "#ffcccc"  # Light green vs Light red
         button.setStyleSheet(f"background-color: {color}; border: 1px solid {'green' if success else 'red'};")
 
         # Revert after 500ms
-        QTimer.singleShot(500, lambda: button.setStyleSheet(original_style))
+        feedback_timer = QTimer(button)
+        feedback_timer.setSingleShot(True)
+        feedback_timer.timeout.connect(lambda: button.setStyleSheet(original_style))
+        feedback_timer.start(500)
 
     # --- REFACTOR: All old slider/edit handler and helper methods are now removed ---
     # _exposure_to_slider, _slider_to_exposure, _handle_gamma_slider,
@@ -1446,8 +1532,6 @@ class CameraPanel(QFrame):
     @Slot(float)
     def update_fps(self, fps: float):
         self._current_fps = fps
-        if hasattr(self, "view_mode_status") and self.camera:
-            self._render_view_mode_status()
         self.process_new_frame_data()
 
     def resizeEvent(self, event: QtGui.QResizeEvent):
@@ -1487,9 +1571,11 @@ class CameraPanel(QFrame):
             self.video_label.setStyleSheet("background-color: black; color: grey;")
             self.video_label.setPixmap(QPixmap())
 
-    def closeEvent(self, event: QtGui.QCloseEvent):
-        """Handles the widget close event."""
-        logger.debug(f"Closing CameraPanel for {self._panel_title}")
+    def prepare_camera_shutdown(self):
+        """Restore camera state, then prevent new panel work before producer shutdown."""
+        if self._camera_shutdown_prepared:
+            return
+        self._camera_shutdown_prepared = True
         self._panel_closing = True
         if self.camera and self._view_mode_changed and self._view_mode_baseline is not None:
             try:
@@ -1497,20 +1583,34 @@ class CameraPanel(QFrame):
             except Exception as exc:  # noqa: BLE001 - shutdown restoration is best effort.
                 logger.warning("Could not restore camera view-mode baseline: %s", exc)
         self._set_presentation_enabled(False)
-        if self.camera and self.conversion_worker:
-            # Disconnect the signal to prevent sending frames to a closing worker
-            try:
-                self.camera.new_frame.disconnect(self.conversion_worker.submit_frame)
-            except (TypeError, RuntimeError):
-                # This can happen if the connection was already broken. Safe to ignore.
-                pass
-
-        if self.conversion_thread and self.conversion_thread.isRunning():
-            self.conversion_worker.stop()
-            self.conversion_thread.quit()
-            if not self.conversion_thread.wait(3000):
-                logger.warning(f"Conversion thread for {self._panel_title} did not close gracefully.")
-
         self.watchdog_timer.stop()
         self._resize_timer.stop()
+
+    def closeEvent(self, event: QtGui.QCloseEvent):
+        """Tear down the conversion consumer after camera production has stopped."""
+        logger.debug(f"Closing CameraPanel for {self._panel_title}")
+        self.prepare_camera_shutdown()
+        self._teardown_conversion_pipeline()
+
         super().closeEvent(event)
+
+    def _teardown_conversion_pipeline(self):
+        """Disconnect and stop the conversion consumer once, even after thread exit."""
+        if self._conversion_shutdown_complete:
+            return
+        self._conversion_shutdown_complete = True
+        camera = self.camera
+        worker = self.conversion_worker
+        thread = self.conversion_thread
+        if camera is not None and worker is not None and shiboken6.isValid(worker):
+            try:
+                camera.new_frame.disconnect(worker.submit_frame)
+            except (TypeError, RuntimeError):
+                pass
+        if thread is not None and thread.isRunning():
+            if worker is not None and shiboken6.isValid(worker):
+                worker.stop()
+            thread.quit()
+            if not thread.wait(3000):
+                logger.warning("Conversion thread for %s did not close gracefully.", self._panel_title)
+        self.conversion_worker = None

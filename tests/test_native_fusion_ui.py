@@ -30,7 +30,11 @@ def test_physical_camera_panel_has_no_title_row(qapp):
     panel = CameraPanel(None, "Top Camera", config)
 
     assert panel.title_label is None
-    assert panel.main_layout.indexOf(panel.video_label) == 1
+    assert panel.main_layout.indexOf(panel.video_container) == 1
+    assert panel.video_container.layout().indexOf(panel.video_label) == 0
+    assert panel.video_container.layout().indexOf(panel.overlay_actions) == 1
+    assert panel.overlay_actions.layout().indexOf(panel.screenshot_btn) == 0
+    assert panel.overlay_actions.layout().indexOf(panel.settings_button) == 1
     panel.close()
 
 

@@ -735,11 +735,45 @@ def test_dual_simulated_panels_render_independently_and_stop_on_window_close(qtb
     assert all(panel.conversion_worker.max_pending_frames <= 1 for panel in panels)
     assert panels[0].conversion_worker is not panels[1].conversion_worker
 
-    outer.close()
-    qtbot.wait(20)
+    for panel in panels:
+        panel.prepare_camera_shutdown()
     for camera in cameras:
         camera.close()
+    outer.close()
     assert all(panel.conversion_thread is not None and not panel.conversion_thread.isRunning() for panel in panels)
+
+
+def test_repeated_dual_simulated_shutdown_keeps_producers_ahead_of_consumers(qtbot):
+    for cycle, intervals in enumerate(((1 / 30, 1 / 75), (1 / 45, 1 / 90), (1 / 60, 1 / 120))):
+        cameras = [
+            SimulatedCamera(f"stress-{cycle}-top", width=16, height=12, frame_interval=intervals[0]),
+            SimulatedCamera(f"stress-{cycle}-side", width=20, height=10, frame_interval=intervals[1]),
+        ]
+        panels = [
+            InstrumentedCameraPanel(
+                None, camera.identifier, CameraConfig(identifier=camera.identifier, name=camera.identifier)
+            )
+            for camera in cameras
+        ]
+        outer = DiagnosticCameraWindow(panels)
+        qtbot.addWidget(outer)
+        outer.show()
+        for panel, camera in zip(panels, cameras, strict=True):
+            panel.set_camera(camera)
+            camera.open()
+        qtbot.waitUntil(
+            lambda cycle_panels=panels: all(panel.conversion_worker.converted_frames > 0 for panel in cycle_panels),
+            timeout=2000,
+        )
+
+        for panel in panels:
+            panel.prepare_camera_shutdown()
+        for camera in cameras:
+            camera.close()
+            assert camera._frame_thread is None
+        outer.close()
+
+        assert all(panel.conversion_thread is not None and not panel.conversion_thread.isRunning() for panel in panels)
 
 
 @pytest.mark.parametrize(
