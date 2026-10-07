@@ -214,6 +214,8 @@ def _capture_simultaneous(cameras: list[Any], duration_s: float) -> dict[str, An
 
 
 def _single_stream_test(camera: Any, args: argparse.Namespace) -> dict[str, Any]:
+    if args.roi:
+        return _roi_stream_test(camera, args)
     original_roi = None
     result: dict[str, Any] = {}
     try:
@@ -251,6 +253,162 @@ def _single_stream_test(camera: Any, args: argparse.Namespace) -> dict[str, Any]
     return result
 
 
+def _capability_report(capability: Any) -> dict[str, Any]:
+    return {
+        "available": capability.available,
+        "readable": capability.readable,
+        "writable": capability.writable,
+        "value": report_value(capability.value),
+        "minimum": report_value(capability.minimum),
+        "maximum": report_value(capability.maximum),
+        "increment": report_value(capability.increment),
+        "unit": capability.unit,
+    }
+
+
+def _numeric_frame_rate(capability: Any, *, writable: bool = False) -> float:
+    if (
+        not capability.available
+        or not capability.readable
+        or (writable and not capability.writable)
+        or isinstance(capability.value, bool)
+        or not isinstance(capability.value, (int, float))
+        or isinstance(capability.maximum, bool)
+        or not isinstance(capability.maximum, (int, float))
+        or isinstance(capability.minimum, bool)
+        or not isinstance(capability.minimum, (int, float))
+        or not np.isfinite(float(capability.minimum))
+        or not np.isfinite(float(capability.maximum))
+        or capability.maximum < capability.minimum
+    ):
+        access = "readable, writable, and numeric" if writable else "readable and numeric"
+        raise RuntimeError(f"Acquisition frame-rate capability is not {access}")
+    return float(capability.value)
+
+
+def _roi_stream_test(camera: Any, args: argparse.Namespace) -> dict[str, Any]:
+    """Measure a centered ROI and optionally its maximum supported frame rate."""
+    width, height = _parse_roi_size(args.roi)
+    original_roi = read_roi(camera)
+    original_rate = inspect_feature(camera, FEATURE_ALIASES["frame_rate"])
+    original_enable = inspect_feature(camera, FEATURE_ALIASES["frame_rate_enable"])
+    original_rate_value = _numeric_frame_rate(original_rate) if original_rate.available else None
+    original_enable_value = original_enable.value if original_enable.available and original_enable.readable else None
+    requested_roi = _centered_roi(camera, original_roi, width, height)
+    results: dict[str, Any] = {
+        "requested_roi": requested_roi.__dict__,
+        "original_roi": original_roi.__dict__,
+        "frame_rate_capabilities": {"original_roi": _capability_report(original_rate)},
+    }
+    restore_rate = False
+    errors: list[str] = []
+    roi_confirmed = False
+    frame_rate_confirmed = False
+    enable_confirmed = original_enable_value is None
+    try:
+        print(f"Planned ROI write: {requested_roi}; original ROI: {original_roi}")
+        apply_roi(camera, requested_roi)
+        reduced_rate = inspect_feature(camera, FEATURE_ALIASES["frame_rate"])
+        if args.maximize_frame_rate_for_roi:
+            if original_enable.available:
+                if not original_enable.readable:
+                    raise RuntimeError("Acquisition frame-rate enable state is not readable")
+                if report_value(original_enable.value) is not True:
+                    if not original_enable.writable:
+                        raise RuntimeError("Acquisition frame-rate enable feature is not writable")
+                    _set(camera, "frame_rate_enable", True)
+                # Some cameras expose the writable frame-rate range only while enabled.
+                reduced_rate = inspect_feature(camera, FEATURE_ALIASES["frame_rate"])
+            _numeric_frame_rate(reduced_rate, writable=True)
+            maximum = float(reduced_rate.maximum)
+            print(f"Planned frame-rate write after ROI re-query: {maximum:g} FPS")
+            restore_rate = True
+            _set(camera, "frame_rate", maximum)
+        results["frame_rate_capabilities"].update(
+            {
+                "reduced_roi": _capability_report(reduced_rate),
+                "reduced_roi_maximum": report_value(reduced_rate.maximum),
+                "original_frame_rate": report_value(original_rate_value),
+                "original_enable": report_value(original_enable_value),
+            }
+        )
+        _frames, timestamps, ids, incomplete = _capture(
+            camera, None, args.duration + 10, duration_s=args.duration, collect_images=False
+        )
+        timing = frame_timing_metrics(timestamps, ids)
+        actual_roi = read_roi(camera)
+        results["measurements"] = [
+            {
+                "requested_roi": requested_roi.__dict__,
+                "actual_roi": actual_roi.__dict__,
+                "reported_frame_rate": report_value(inspect_feature(camera, FEATURE_ALIASES["frame_rate"]).value),
+                "complete_frames": len(timestamps),
+                "incomplete_frames": incomplete,
+                **timing.__dict__,
+            }
+        ]
+    finally:
+        # Enable rate control before restoring a rate, lower it to a value legal
+        # for the reduced ROI, restore the original ROI, then restore the exact
+        # original rate and finally its original enable state.
+        if args.maximize_frame_rate_for_roi and original_enable.available and original_enable_value is False:
+            try:
+                _set(camera, "frame_rate_enable", True)
+            except Exception as exc:  # noqa: BLE001 - report every restoration problem.
+                errors.append(f"enable frame-rate control for restoration: {exc}")
+        if restore_rate and original_rate_value is not None:
+            try:
+                current_rate = inspect_feature(camera, FEATURE_ALIASES["frame_rate"])
+                current_max = float(current_rate.maximum)
+                current_min = float(current_rate.minimum)
+                increment = float(current_rate.increment or 0)
+                safe_rate = min(max(original_rate_value, current_min), current_max)
+                if increment > 0:
+                    safe_rate = current_min + np.floor((safe_rate - current_min) / increment) * increment
+                _set(camera, "frame_rate", safe_rate)
+            except Exception as exc:  # noqa: BLE001 - continue with ROI restoration.
+                errors.append(f"safe frame-rate restore before ROI: {exc}")
+        try:
+            apply_roi(camera, original_roi)
+            roi_confirmed = read_roi(camera) == original_roi
+            if not roi_confirmed:
+                errors.append("ROI readback did not match original ROI")
+        except Exception as exc:  # noqa: BLE001 - report restoration failure explicitly.
+            errors.append(f"ROI restoration: {exc}")
+        if original_rate_value is not None:
+            try:
+                current_rate_value = _numeric_frame_rate(inspect_feature(camera, FEATURE_ALIASES["frame_rate"]))
+                if not np.isclose(current_rate_value, original_rate_value, rtol=1e-6, atol=1e-6):
+                    _set(camera, "frame_rate", original_rate_value)
+                restored_rate = _numeric_frame_rate(inspect_feature(camera, FEATURE_ALIASES["frame_rate"]))
+                frame_rate_confirmed = bool(np.isclose(restored_rate, original_rate_value, rtol=1e-6, atol=1e-6))
+                if not frame_rate_confirmed:
+                    errors.append("frame-rate readback did not match original value")
+            except Exception as exc:  # noqa: BLE001 - preserve failure in the structured result.
+                errors.append(f"frame-rate restoration: {exc}")
+        if original_enable_value is not None:
+            try:
+                current_enable = inspect_feature(camera, FEATURE_ALIASES["frame_rate_enable"])
+                if report_value(current_enable.value) != report_value(original_enable_value):
+                    _set(camera, "frame_rate_enable", original_enable_value)
+                restored_enable = inspect_feature(camera, FEATURE_ALIASES["frame_rate_enable"])
+                enable_confirmed = report_value(restored_enable.value) == report_value(original_enable_value)
+                if not enable_confirmed:
+                    errors.append("frame-rate enable readback did not match original state")
+            except Exception as exc:  # noqa: BLE001 - report restoration failure explicitly.
+                enable_confirmed = False
+                errors.append(f"frame-rate enable restoration: {exc}")
+        if original_rate_value is None:
+            frame_rate_confirmed = not args.maximize_frame_rate_for_roi
+        results["restoration"] = {
+            "roi_confirmed": roi_confirmed,
+            "frame_rate_confirmed": frame_rate_confirmed,
+            "frame_rate_enable_confirmed": enable_confirmed,
+            "errors": errors,
+        }
+    return results
+
+
 def _centered_roi(camera: Any, original: ROI, width: int, height: int) -> ROI:
     for logical in ("binning_horizontal", "binning_vertical"):
         cap = inspect_feature(camera, FEATURE_ALIASES[logical])
@@ -280,6 +438,11 @@ def main() -> int:
     mode.add_argument("--auto-once", choices=("exposure", "gain"), help="Measure existing one-shot auto behavior")
     parser.add_argument("--duration", type=float, default=10.0, help="Stream-test duration in seconds")
     parser.add_argument("--roi", help="Optional explicit acquisition ROI as WIDTHxHEIGHT (requires authorization)")
+    parser.add_argument(
+        "--maximize-frame-rate-for-roi",
+        action="store_true",
+        help="After applying --roi, set the queried maximum frame rate (requires explicit authorization)",
+    )
     parser.add_argument("--frames", type=int, default=200, help="Complete frames per quality operating point")
     parser.add_argument("--saturation-threshold", type=float, default=250.0)
     parser.add_argument("--near-zero-threshold", type=float, default=2.0)
@@ -293,6 +456,14 @@ def main() -> int:
     args = parser.parse_args()
     if args.duration <= 0 or not 1 <= args.frames <= 500:
         parser.error("duration must be positive and frames must be between 1 and 500")
+    if args.maximize_frame_rate_for_roi and not args.stream_test:
+        parser.error("--maximize-frame-rate-for-roi requires --stream-test")
+    if args.maximize_frame_rate_for_roi and not args.roi:
+        parser.error("--maximize-frame-rate-for-roi requires --roi WIDTHxHEIGHT")
+    if args.maximize_frame_rate_for_roi and not args.authorize_settings_changes:
+        parser.error("--maximize-frame-rate-for-roi requires --authorize-settings-changes")
+    if args.maximize_frame_rate_for_roi and len(args.camera_id) != 1:
+        parser.error("--maximize-frame-rate-for-roi supports exactly one camera ID")
     if (args.quality_sweep or args.auto_once or args.roi) and not args.authorize_settings_changes:
         parser.error("--quality-sweep, --auto-once, and --roi require --authorize-settings-changes")
     if args.roi and not args.stream_test:
@@ -480,7 +651,13 @@ def main() -> int:
     if args.output:
         with open(args.output, "w", encoding="utf-8") as stream:
             stream.write(output + "\n")
-    restoration_confirmed = results.get("restoration", {}).get("confirmed", True)
+    restoration = results.get("restoration", {})
+    restoration_confirmed = restoration.get(
+        "confirmed",
+        restoration.get("roi_confirmed", True)
+        and restoration.get("frame_rate_confirmed", True)
+        and restoration.get("frame_rate_enable_confirmed", True),
+    )
     roi_restoration_confirmed = results.get("roi_restoration_confirmed", True)
     return 0 if restoration_confirmed and roi_restoration_confirmed else 3
 
