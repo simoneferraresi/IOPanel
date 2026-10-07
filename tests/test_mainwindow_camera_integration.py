@@ -157,6 +157,7 @@ def test_camera_gear_controls_are_independent_and_do_not_stop_frames(qtbot, monk
     bottom = window.camera_panels["simulated-bottom"]
     first_camera, second_camera = window.cameras
     assert top.settings_button.isVisible() and bottom.settings_button.isVisible()
+    assert top.screenshot_btn.isVisible() and bottom.screenshot_btn.isVisible()
     first_count = first_camera._frame_count
     top.settings_button.click()
     assert top.controls_visible
@@ -259,9 +260,10 @@ def test_two_simulated_cameras_survive_resize_cinema_and_control_visibility(qtbo
     window.resize(1400, 900)
     qtbot.wait(30)
     for panel in panels:
-        gear_rect = panel.settings_button.geometry()
-        assert gear_rect.right() >= panel.video_container.width() - 3
-        assert gear_rect.top() <= 3
+        overlay_rect = panel.overlay_actions.geometry()
+        assert overlay_rect.right() >= panel.video_container.width() - 3
+        assert overlay_rect.top() <= 3
+        assert panel.screenshot_btn.isVisible() and panel.settings_button.isVisible()
         panel.set_controls_visibility(True)
         assert panel.controls_container.isVisible()
         panel.set_controls_visibility(False)
@@ -277,8 +279,8 @@ def test_two_simulated_cameras_survive_resize_cinema_and_control_visibility(qtbo
     qtbot.wait(30)
     assert window.control_container.isVisible() is was_visible
     for panel in panels:
-        gear_rect = panel.settings_button.geometry()
-        assert gear_rect.right() >= panel.video_container.width() - 3
-        assert gear_rect.top() <= 3
+        overlay_rect = panel.overlay_actions.geometry()
+        assert overlay_rect.right() >= panel.video_container.width() - 3
+        assert overlay_rect.top() <= 3
 
     _close_window_and_check_cleanup(window, qtbot)

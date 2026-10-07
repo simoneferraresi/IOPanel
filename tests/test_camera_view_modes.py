@@ -1,3 +1,6 @@
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QLabel
+
 from config_model import CameraConfig
 from hardware.camera_capabilities import ROI, FeatureCapability
 from ui.camera_widgets import VIEW_MODES, CameraPanel
@@ -31,14 +34,33 @@ def test_camera_controls_use_compact_toolbar_and_collapsed_live_drawer(qtbot):
 
     assert panel.settings_button.isVisible()
     assert not panel.settings_button.isChecked()
+    assert panel.overlay_actions.isVisible()
+    assert panel.overlay_actions.layout().indexOf(panel.screenshot_btn) == 0
+    assert panel.overlay_actions.layout().indexOf(panel.settings_button) == 1
+    assert panel.screenshot_btn.isVisible()
+    assert panel.screenshot_btn.toolTip() == "Save camera screenshot"
+    assert panel.screenshot_btn.accessibleName() == "Save camera screenshot"
+    assert panel.settings_button.toolTip() == "Show or hide camera settings"
+    assert panel.settings_button.accessibleName() == "Toggle camera settings"
+    assert not hasattr(panel, "view_mode_status")
+    assert not any(
+        "ROI" in label.text() or "Aspect" in label.text() or "ROI cap" in label.text()
+        for label in panel.findChildren(QLabel)
+    )
     assert panel.settings_drawer.isHidden()
+    assert not panel.controls_container.isVisible()
+    assert not panel.view_mode_combo.isVisible()
+    assert not any(child.text() == "Screenshot" for child in panel.findChildren(type(panel.view_mode_apply)))
+    assert panel.screenshot_btn.size() == panel.settings_button.size()
+    assert panel.screenshot_btn.iconSize() == panel.settings_button.iconSize()
     assert "1.34:1" not in panel.view_mode_combo.itemText(0)
     assert panel.exposure_btn.text() == "Auto"
     assert panel.gain_btn.text() == "Auto"
     assert panel.settings_drawer.isAncestorOf(panel.exposure_control)
     assert panel.settings_drawer.isAncestorOf(panel.gain_control)
     assert panel.settings_drawer.isAncestorOf(panel.gamma_control)
-    assert panel.settings_drawer.isAncestorOf(panel.view_mode_status)
+    assert panel.controls_container.isAncestorOf(panel.view_mode_combo)
+    assert panel.controls_container.isAncestorOf(panel.view_mode_apply)
 
     panel.settings_button.click()
 
@@ -85,6 +107,7 @@ def test_mode_combo_keeps_width_stable_across_selections(qtbot):
         widths.append(panel.view_mode_combo.width())
 
     assert max(widths) - min(widths) <= 1
+    assert panel.view_mode_combo.itemData(0, Qt.ItemDataRole.ToolTipRole) == "Centered ROI 1292×964 · aspect 1.34:1"
     panel.close()
 
 
@@ -181,11 +204,11 @@ def test_combo_selection_is_inert_and_apply_runs_one_transaction(qtbot):
     assert camera.apply_calls == [(1292, 240, True)]
     assert panel.view_mode_combo.currentData() == 240
     assert camera.roi == ROI(1292, 240, 0, 362)
-    old_status = panel.view_mode_status.text()
     panel.update_fps(67.1)
-    assert panel.view_mode_status.text() == old_status
+    assert panel._current_fps == 67.1
+    assert not hasattr(panel, "_render_view_mode_status")
     panel.set_controls_visibility(True)
-    assert "Live 67.1 FPS" in panel.view_mode_status.text()
+    assert panel._current_roi == camera.roi
     panel.close()
     assert len(camera.restore_calls) == 1
 
@@ -203,4 +226,17 @@ def test_prepare_camera_shutdown_restores_baseline_once_before_close(qtbot):
 
     assert len(camera.restore_calls) == 1
     assert panel._panel_closing
+    panel.close()
+
+
+def test_camera_mode_failure_uses_temporary_feedback_without_status_row(qtbot, monkeypatch):
+    camera = FakePhysicalCamera(ROI(1292, 964, 0, 0))
+    panel = _physical_panel(qtbot, camera)
+    feedback = []
+    monkeypatch.setattr("ui.camera_widgets.QToolTip.showText", lambda *_args: feedback.append(_args[1]))
+
+    panel._finish_view_mode_change(None, "injected transaction failure")
+
+    assert feedback == ["Mode change failed: injected transaction failure"]
+    assert not hasattr(panel, "view_mode_status")
     panel.close()
