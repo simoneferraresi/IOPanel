@@ -37,7 +37,7 @@ def _recording(settings, elapsed, detector_data):
         detectors=settings.detectors,
         started_at_utc=now,
         completed_at_utc=now + timedelta(seconds=2),
-        duration_s=2.0,
+        duration_s=max(2.0, float(np.asarray(elapsed)[-1]) if len(elapsed) else 0.0),
         backend="test.Backend",
         simulated=True,
         stop_reason=PowerMonitorRecordingStopReason.USER_STOPPED,
@@ -194,6 +194,9 @@ def test_close_button_hides_only_and_samples_continue(qtbot, tmp_path):
     assert widget.isHidden()
     assert widget.elapsed_values == [0.25, 0.75]
     assert widget.detector_values[Detector.DE_1] == [1.0, 2.0]
+    # Hidden traces retain raw samples without sending redraw work to PyQtGraph.
+    np.testing.assert_array_equal(widget.curve_items[Detector.DE_1].getData()[0], [0.25])
+    widget.show()
     np.testing.assert_array_equal(widget.curve_items[Detector.DE_1].getData()[0], [0.25, 0.75])
     widget.close()
 
@@ -306,6 +309,38 @@ def test_completed_zero_sample_and_zero_detector_recordings_canonicalize_and_dis
     widget.start_recording(settings)
     widget.append_sample(PowerMonitorRecordingSample(0.25, 1.0, settings.detectors, (8.0, 9.0)))
     widget.discard_recording()
+
+
+def test_completed_long_trace_keeps_raw_recording_and_bounds_curve_data(qtbot, tmp_path):
+    count = 10_000
+    settings = _settings()
+    elapsed = np.arange(count, dtype=float) * 0.25
+    detector_data = np.vstack((np.sin(elapsed), np.cos(elapsed)))
+    detector_data[0, 4321] = 80.0
+    detector_data[0, 4322] = np.nan
+    detector_data[0, 7321] = -80.0
+    recording = _recording(settings, elapsed, detector_data)
+    widget = PowerMonitorTraceWidget(_app_settings(tmp_path))
+    qtbot.addWidget(widget)
+    widget.set_completed_recording(recording)
+    widget.show()
+    assert widget.current_recording is recording
+    assert len(widget.elapsed_values) == count
+    assert len(widget.detector_values[Detector.DE_1]) == count
+    assert len(widget.curve_items[Detector.DE_1].getData()[0]) <= 4000
+    np.testing.assert_array_equal(widget.elapsed_values, recording.elapsed_s)
+    plotted_x, plotted_y = widget.curve_items[Detector.DE_1].getData()
+    assert plotted_y[np.flatnonzero(plotted_x == elapsed[4321])[0]] == 80.0
+    assert np.isnan(plotted_y).any()
+    assert plotted_y[np.flatnonzero(plotted_x == elapsed[7321])[0]] == -80.0
+    assert plotted_x[-1] == elapsed[-1]
+    widget.plot_widget.setXRange(100.0, 200.0, padding=0)
+    assert widget.plot_widget.viewRange()[0] == pytest.approx([100.0, 200.0])
+
+    widget.discard_recording()
+    assert widget.current_recording is None
+    assert widget.elapsed_values == []
+    assert widget.detector_values == {}
     assert widget.isHidden()
     assert widget.elapsed_values == []
     assert widget.curve_items == {}
