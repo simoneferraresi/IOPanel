@@ -1216,9 +1216,8 @@ class MainWindow(QMainWindow):
         # The connection to the worker is now handled inside CameraPanel.
         # We only need to connect the signals that the panel itself consumes.
 
-        # This connection is now just for the watchdog timer
-        cam_instance.new_frame.connect(panel.process_new_frame_data)
-
+        # FPS is recalculated at the camera's ~0.5 s cadence and serves as the
+        # low-rate activity heartbeat for recovery/watchdog state.
         cam_instance.fps_updated.connect(panel.update_fps)
         cam_instance.error.connect(panel._handle_camera_error_message)
         panel.recovery_requested.connect(self._request_camera_recovery)

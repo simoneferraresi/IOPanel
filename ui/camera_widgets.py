@@ -18,6 +18,7 @@ background workers needed for performance.
 
 import logging
 import math
+import threading
 import time
 from pathlib import Path
 from typing import Literal
@@ -25,7 +26,19 @@ from typing import Literal
 import cv2
 import numpy as np
 from PySide6 import QtCore, QtGui
-from PySide6.QtCore import Q_ARG, QMetaObject, QObject, QRunnable, QSize, Qt, QThread, QThreadPool, QTimer, Signal, Slot
+from PySide6.QtCore import (
+    Q_ARG,
+    QMetaObject,
+    QObject,
+    QRunnable,
+    QSize,
+    Qt,
+    QThread,
+    QThreadPool,
+    QTimer,
+    Signal,
+    Slot,
+)
 from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -78,27 +91,75 @@ class ImageConversionWorker(QObject):
     # Define signals directly in the class
     image_ready = Signal(QImage)
     conversion_error = Signal(str)
+    _frame_available = Signal()
 
     def __init__(self, is_mono: bool, camera_name: str, parent=None):
         super().__init__(parent)
         self.is_mono = is_mono
         self.camera_name = camera_name
         self._is_running = True
+        self._frame_lock = threading.Lock()
+        self._latest_frame: np.ndarray | None = None
+        self._frame_notification_pending = False
+        self._active = False
+        self.submitted_frames = 0
+        self.converted_frames = 0
+        self.coalesced_frames = 0
+        self.max_pending_frames = 0
+        self._frame_available.connect(self._process_latest_frame, Qt.ConnectionType.QueuedConnection)
 
     @Slot()
     def stop(self):
         """Allows the worker to be stopped cleanly."""
-        self._is_running = False
+        with self._frame_lock:
+            self._is_running = False
+            self._latest_frame = None
+
+    def set_active(self, active: bool):
+        with self._frame_lock:
+            self._active = active and self._is_running
+            if not self._active:
+                self._latest_frame = None
+
+    @Slot(np.ndarray)
+    def submit_frame(self, frame: np.ndarray):
+        """Thread-safe latest-frame mailbox; the camera-owned array stays alive."""
+        if frame is None or frame.size == 0:
+            return
+        notify = False
+        with self._frame_lock:
+            if not self._is_running or not self._active:
+                return
+            self.submitted_frames += 1
+            if self._latest_frame is not None:
+                self.coalesced_frames += 1
+            self._latest_frame = frame
+            self.max_pending_frames = max(self.max_pending_frames, 1)
+            if not self._frame_notification_pending:
+                self._frame_notification_pending = True
+                notify = True
+        if notify:
+            self._frame_available.emit()
+
+    @Slot()
+    def _process_latest_frame(self):
+        with self._frame_lock:
+            frame = self._latest_frame
+            self._latest_frame = None
+            self._frame_notification_pending = False
+            running = self._is_running
+        if running and frame is not None:
+            self.process_frame(frame)
 
     # This is the new slot that will receive frames
-    @Slot(np.ndarray)
     def process_frame(self, frame: np.ndarray):
         """
         The workhorse method that runs in the background thread.
         Converts the numpy frame to the appropriate QImage format.
         """
-        if not self._is_running or frame is None or frame.size == 0:
-            return
+        with self._frame_lock:
+            if not self._is_running or frame is None or frame.size == 0:
+                return
 
         try:
             h, w = frame.shape[:2]
@@ -125,6 +186,7 @@ class ImageConversionWorker(QObject):
                 # The QImage must be copied because the underlying numpy buffer
                 # will go out of scope and be garbage-collected.
                 self.image_ready.emit(q_img.copy())
+                self.converted_frames += 1
             elif not q_img:
                 self.conversion_error.emit("Converted QImage was null.")
         except Exception as e:
@@ -453,6 +515,7 @@ class CameraPanel(QFrame):
     maximize_requested = Signal()
     recovery_requested = Signal(str)
     auto_operation_finished = Signal()
+    _display_image_ready = Signal()
 
     def __init__(
         self,
@@ -482,6 +545,15 @@ class CameraPanel(QFrame):
         self._recovery_active = False
         self._recovery_failed = False
         self._auto_op_active = False
+        self._panel_closing = False
+        self._presentation_enabled = False
+        self._display_lock = threading.Lock()
+        self._latest_qimage: QImage | None = None
+        self._display_notification_pending = False
+        self.coalesced_images = 0
+        self.max_pending_images = 0
+        self._controls_available_state: bool | None = None
+        self._display_image_ready.connect(self._display_latest_converted_image, Qt.ConnectionType.QueuedConnection)
         self._display_size_cache: QtCore.QSize | None = None
 
         self._thread_pool = QThreadPool.globalInstance()
@@ -559,6 +631,7 @@ class CameraPanel(QFrame):
 
         # --- START THE PERSISTENT WORKER ---
         self._start_conversion_worker()
+        self._set_presentation_enabled(self.isVisible())
 
         # Update controls AFTER starting worker, just in case
         self._update_controls_from_camera()
@@ -566,6 +639,9 @@ class CameraPanel(QFrame):
 
     def _update_control_availability(self):
         available = not self._recovery_active and not self._recovery_failed and not self._auto_op_active
+        if self._controls_available_state == available:
+            return
+        self._controls_available_state = available
         self.controls_container.setEnabled(available)
 
     def _arm_watchdog(self):
@@ -599,6 +675,7 @@ class CameraPanel(QFrame):
         self._recovery_failed = False
         self.watchdog_timer.stop()
         self._camera_error_active = True
+        self._latest_pixmap = None
         self.video_label.setPixmap(QPixmap())
         self.video_label.setText("Recovering camera…")
         self.video_label.setStyleSheet("background-color: #333; color: #ffc107;")
@@ -639,7 +716,7 @@ class CameraPanel(QFrame):
 
         # Connect signals:
         # 1. Worker's output signals to the panel's slots
-        self.conversion_worker.image_ready.connect(self._display_converted_image)
+        self.conversion_worker.image_ready.connect(self._accept_converted_image, Qt.ConnectionType.DirectConnection)
         self.conversion_worker.conversion_error.connect(self._handle_conversion_error)
 
         # 2. Thread management signals
@@ -652,9 +729,9 @@ class CameraPanel(QFrame):
         self.conversion_thread.start()
         logger.info(f"Persistent conversion worker created for {self._panel_title}")
 
-        # --- CRITICAL: Connect the camera's frame signal to the worker's slot ---
-        # This is the new, efficient pipeline
-        self.camera.new_frame.connect(self.conversion_worker.process_frame)
+        # DirectConnection only enters the worker's mutex-protected mailbox. It
+        # never touches widgets or performs conversion in the acquisition thread.
+        self.camera.new_frame.connect(self.conversion_worker.submit_frame, Qt.ConnectionType.DirectConnection)
 
     def _update_controls_from_camera(self):
         """Refreshes control widgets with values from the live camera."""
@@ -968,23 +1045,19 @@ class CameraPanel(QFrame):
             self.gain_status.setText("")
 
     @Slot(np.ndarray)
-    def process_new_frame_data(self, frame: np.ndarray):
-        """Receives a raw numpy frame and initiates its display process.
-
-        This slot is connected to the `VimbaCam.new_frame` signal. It creates
-        an `ImageConversionWorker` to convert the frame to a `QImage` on a
-        background thread, ensuring the GUI remains responsive.
-
-        Args:
-            frame: The raw numpy array frame from the camera.
-        """
+    def process_new_frame_data(self, frame: np.ndarray | None = None):
+        """Refresh recovery state from throttled camera activity."""
+        if self._auto_op_active:
+            return
         # A fresh frame marks recovery from a camera acquisition error. Ignore
         # conversion results already queued when the error was reported.
         if not self._recovery_active:
+            state_changed = self._camera_error_active or self._automatic_recovery_used or self._recovery_failed
             self._camera_error_active = False
             self._automatic_recovery_used = False
             self._recovery_failed = False
-            self._update_control_availability()
+            if state_changed:
+                self._update_control_availability()
             self._arm_watchdog()
 
     @Slot(str)
@@ -993,6 +1066,42 @@ class CameraPanel(QFrame):
         logger.warning(f"Failed to process frame for {self._panel_title}: {error_msg}")
         # Optionally display an error state on the video label
         # self.set_frame_pixmap(None)
+
+    @Slot(QImage)
+    def _accept_converted_image(self, q_img: QImage):
+        """Store conversion output and queue at most one GUI display event."""
+        notify = False
+        with self._display_lock:
+            if self._panel_closing or not self._presentation_enabled:
+                return
+            if self._latest_qimage is not None:
+                self.coalesced_images += 1
+            self._latest_qimage = q_img
+            self.max_pending_images = 1
+            if not self._display_notification_pending:
+                self._display_notification_pending = True
+                notify = True
+        if notify:
+            self._display_image_ready.emit()
+
+    @Slot()
+    def _display_latest_converted_image(self):
+        with self._display_lock:
+            q_img = self._latest_qimage
+            self._latest_qimage = None
+            self._display_notification_pending = False
+            active = self._presentation_enabled and not self._panel_closing
+        if active and q_img is not None:
+            self._display_converted_image(q_img)
+
+    def _set_presentation_enabled(self, enabled: bool):
+        with self._display_lock:
+            self._presentation_enabled = enabled and not self._panel_closing
+            if not self._presentation_enabled:
+                self._latest_qimage = None
+                self._display_notification_pending = False
+        if self.conversion_worker is not None:
+            self.conversion_worker.set_active(enabled)
 
     @Slot(QImage)
     def _display_converted_image(self, q_img: QImage):
@@ -1039,6 +1148,7 @@ class CameraPanel(QFrame):
     def showEvent(self, event: QtGui.QShowEvent):
         """Override for QFrame.showEvent."""
         super().showEvent(event)
+        self._set_presentation_enabled(True)
         # --- FIX: Check if camera exists before using it. Use panel title for logging. ---
         if self.camera:
             logger.debug(f"CameraPanel for {self.camera.camera_name} shown, starting watchdog.")
@@ -1049,6 +1159,7 @@ class CameraPanel(QFrame):
     def hideEvent(self, event: QtGui.QHideEvent):
         """Override for QFrame.hideEvent."""
         super().hideEvent(event)
+        self._set_presentation_enabled(False)
         # --- FIX: Check if camera exists before using it. Use panel title for logging. ---
         if self.camera:
             logger.debug(f"CameraPanel for {self.camera.camera_name} hidden, stopping watchdog.")
@@ -1069,6 +1180,7 @@ class CameraPanel(QFrame):
     @Slot(float)
     def update_fps(self, fps: float):
         self._current_fps = fps
+        self.process_new_frame_data()
 
     def resizeEvent(self, event: QtGui.QResizeEvent):
         super().resizeEvent(event)
@@ -1110,10 +1222,12 @@ class CameraPanel(QFrame):
     def closeEvent(self, event: QtGui.QCloseEvent):
         """Handles the widget close event."""
         logger.debug(f"Closing CameraPanel for {self._panel_title}")
+        self._panel_closing = True
+        self._set_presentation_enabled(False)
         if self.camera and self.conversion_worker:
             # Disconnect the signal to prevent sending frames to a closing worker
             try:
-                self.camera.new_frame.disconnect(self.conversion_worker.process_frame)
+                self.camera.new_frame.disconnect(self.conversion_worker.submit_frame)
             except (TypeError, RuntimeError):
                 # This can happen if the connection was already broken. Safe to ignore.
                 pass
@@ -1121,7 +1235,7 @@ class CameraPanel(QFrame):
         if self.conversion_thread and self.conversion_thread.isRunning():
             self.conversion_worker.stop()
             self.conversion_thread.quit()
-            if not self.conversion_thread.wait(500):
+            if not self.conversion_thread.wait(3000):
                 logger.warning(f"Conversion thread for {self._panel_title} did not close gracefully.")
 
         self.watchdog_timer.stop()

@@ -16,10 +16,9 @@ def _runner_stopped(task):
         return True
 
 
-def _start_main_window(qtbot, monkeypatch, tmp_path, fail_after_frames=None):
+def _start_main_window(qtbot, monkeypatch, tmp_path, fail_after_frames=None, camera_count=1):
     config_path = tmp_path / "simulated-camera.ini"
-    config_path.write_text(
-        """[App]
+    config_text = """[App]
 name = IOPanel integration test
 
 [Instruments]
@@ -32,9 +31,18 @@ name = Top camera
 backend = simulation
 simulation_width = 16
 simulation_height = 12
-""",
-        encoding="utf-8",
-    )
+"""
+    if camera_count == 2:
+        config_text += """
+[Camera:Bottom]
+identifier = simulated-bottom
+enabled = true
+name = Bottom camera
+backend = simulation
+simulation_width = 16
+simulation_height = 12
+"""
+    config_path.write_text(config_text, encoding="utf-8")
     config = AppConfig.from_ini_dict(app.load_raw_config_from_ini(config_path))
 
     # MainWindow always starts CT400 initialization. Force its existing safe
@@ -71,7 +79,7 @@ simulation_height = 12
     window._integration_observed_errors = observed_errors
     qtbot.addWidget(window)
     window.show()
-    qtbot.waitUntil(lambda: len(window.cameras) == 1, timeout=4000)
+    qtbot.waitUntil(lambda: len(window.cameras) == camera_count, timeout=4000)
     qtbot.waitUntil(lambda: isinstance(window.ct400_device, DummyCT400), timeout=4000)
     # Camera initialization is a short-lived TaskRunner. Its QThread may have
     # finished before the GUI processes the queued bookkeeping callback.
@@ -85,16 +93,16 @@ simulation_height = 12
 
 
 def _close_window_and_check_cleanup(window, qtbot):
-    camera_instance = window.cameras[0]
-    panel = window.camera_panels[camera_instance.identifier]
-    frame_thread = camera_instance._frame_thread
+    cameras = list(window.cameras)
+    panels = list(window.camera_panels.values())
+    frame_threads = [camera_instance._frame_thread for camera_instance in cameras]
     ct400_task = window.ct400_task
 
     window.close()
 
-    assert frame_thread is not None
-    qtbot.waitUntil(lambda: not frame_thread.is_alive(), timeout=1500)
-    assert not camera_instance.is_streaming
+    assert all(frame_thread is not None for frame_thread in frame_threads)
+    qtbot.waitUntil(lambda: all(not frame_thread.is_alive() for frame_thread in frame_threads), timeout=1500)
+    assert all(not camera_instance.is_streaming for camera_instance in cameras)
     assert not window.cameras
     if ct400_task is not None:
         try:
@@ -103,7 +111,7 @@ def _close_window_and_check_cleanup(window, qtbot):
             pass
     for task in window._init_tasks:
         assert _runner_stopped(task)
-    assert not panel.conversion_thread.isRunning()
+    assert all(not panel.conversion_thread.isRunning() for panel in panels)
 
 
 def test_mainwindow_loads_simulation_config_and_displays_camera_frames(qtbot, monkeypatch, tmp_path):
@@ -178,4 +186,28 @@ def test_simulated_acquisition_failure_recovers_once_through_watchdog(qtbot, mon
     assert not panel._recovery_active
     assert not panel._automatic_recovery_used
     assert camera_instance.identifier not in window._camera_recovery_tasks
+    _close_window_and_check_cleanup(window, qtbot)
+
+
+def test_two_simulated_cameras_survive_resize_cinema_and_control_visibility(qtbot, monkeypatch, tmp_path):
+    window = _start_main_window(qtbot, monkeypatch, tmp_path, camera_count=2)
+    panels = list(window.camera_panels.values())
+    qtbot.waitUntil(lambda: all(panel._latest_pixmap is not None for panel in panels), timeout=2000)
+
+    window.resize(1400, 900)
+    for panel in panels:
+        panel.set_controls_visibility(True)
+        assert panel.controls_container.isVisible()
+        panel.set_controls_visibility(False)
+        assert not panel.controls_container.isVisible()
+        pixmap = panel._latest_pixmap
+        assert (pixmap.width(), pixmap.height()) == (16, 12)
+
+    was_visible = window.control_container.isVisible()
+    window.toggle_cinema_mode()
+    assert window.control_container.isVisible() is not was_visible
+    window.resize(1000, 700)
+    window.toggle_cinema_mode()
+    assert window.control_container.isVisible() is was_visible
+
     _close_window_and_check_cleanup(window, qtbot)
