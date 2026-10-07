@@ -1554,6 +1554,9 @@ class MainWindow(QMainWindow):
         if hasattr(self, "histogram_control") and self.histogram_control:
             self.histogram_control.cleanup_worker_thread()
 
+        if hasattr(self, "plot_widget") and self.plot_widget:
+            self.plot_widget.cleanup()
+
         # 2. Close all camera streams
         self._cleanup_cameras()
 

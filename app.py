@@ -277,6 +277,7 @@ def main() -> int:
 
         window = MainWindow(config=app_config, settings=AppSettings())
         window.show()
+        window.plot_widget.schedule_matlab_prewarm()
 
         def on_shutdown():
             """A closure to be called when the application is about to quit."""
