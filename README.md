@@ -49,6 +49,7 @@ This project is designed to be run from a local Python environment and uses [`uv
 -   **Git**
 -   **Required Hardware Drivers:**
     -   **Allied Vision Vimba X:** For physical camera support. The preferred laboratory profile is Vimba X 2026-2 with VmbPy 1.2.2, VmbC 1.3.1 and VmbImageTransform 2.3 on Windows x64 / Python 3.12.8. See the [VmbPy compatibility profiles](docs/vmbpy-compatibility.md).
+    -   Camera capability, exposure/gain, ROI, frame-pacing, and GigE validation guidance is in [Camera performance and image quality](docs/camera-performance.md).
     -   **Yenista CT400 Drivers:** The `CT400_lib.dll` file is required. This is provided with the instrument. Ensure you have the correct 32-bit or 64-bit version that matches your Python interpreter.
 -   **(Optional) MATLAB:** Required *only* for saving scan plots as `.fig` files. If you need this feature, you must also install the MATLAB Engine for Python.
 

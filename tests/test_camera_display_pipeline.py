@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage
 from PySide6.QtTest import QSignalSpy
@@ -76,6 +77,17 @@ def test_full_resolution_screenshot_pixmap_keeps_orientation_and_color(qtbot):
     panel.close()
 
 
+def test_roi_screenshot_source_keeps_native_acquired_dimensions(qtbot):
+    panel = CameraPanel(None, "ROI Screenshot", CameraConfig(identifier="roi-shot", name="ROI Shot"))
+    qtbot.addWidget(panel)
+    image = QImage(1292, 480, QImage.Format.Format_Grayscale8)
+    image.fill(127)
+    panel._display_converted_image(image)
+    assert panel._latest_pixmap is not None
+    assert (panel._latest_pixmap.width(), panel._latest_pixmap.height()) == (1292, 480)
+    panel.close()
+
+
 def test_panel_shutdown_drops_pending_frame_and_stops_conversion_thread(qtbot):
     panel = CameraPanel(None, "Shutdown", CameraConfig(identifier="shutdown", name="Shutdown"))
     qtbot.addWidget(panel)
@@ -90,3 +102,22 @@ def test_panel_shutdown_drops_pending_frame_and_stops_conversion_thread(qtbot):
     assert thread is not None and not thread.isRunning()
     assert worker._latest_frame is None
     assert panel._panel_closing
+
+
+@pytest.mark.parametrize("fps", [30, 45, 60, 75, 90])
+def test_simulated_camera_rates_keep_presentation_mailboxes_bounded(qtbot, fps):
+    camera = SimulatedCamera(f"rate-{fps}", width=16, height=12, frame_interval=1 / fps)
+    panel = CameraPanel(None, f"Rate {fps}", CameraConfig(identifier=f"rate-{fps}", name=f"Rate {fps}"))
+    qtbot.addWidget(panel)
+    panel.show()
+    panel.set_camera(camera)
+    assert camera.open()
+    try:
+        minimum_frames = max(3, int(fps * 0.1))
+        qtbot.waitUntil(lambda: camera._frame_count >= minimum_frames, timeout=2000)
+        assert panel.conversion_worker.max_pending_frames <= 1
+        assert panel.max_pending_images <= 1
+        assert panel._latest_pixmap is not None
+    finally:
+        camera.close()
+        panel.close()
