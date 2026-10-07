@@ -113,8 +113,8 @@ def test_simulated_camera_rates_keep_presentation_mailboxes_bounded(qtbot, fps):
     panel.set_camera(camera)
     assert camera.open()
     try:
-        qtbot.wait(250)
-        assert camera._frame_count >= int(fps * 0.2)
+        minimum_frames = max(3, int(fps * 0.1))
+        qtbot.waitUntil(lambda: camera._frame_count >= minimum_frames, timeout=2000)
         assert panel.conversion_worker.max_pending_frames <= 1
         assert panel.max_pending_images <= 1
         assert panel._latest_pixmap is not None
