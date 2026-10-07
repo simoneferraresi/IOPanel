@@ -22,6 +22,33 @@ def test_selecting_view_mode_does_not_write_camera_settings(qtbot):
     panel.close()
 
 
+def test_camera_controls_use_compact_toolbar_and_collapsed_live_drawer(qtbot):
+    panel = CameraPanel(
+        None, "Simulated", CameraConfig(identifier="compact-controls", name="Simulated", backend="simulation")
+    )
+    qtbot.addWidget(panel)
+    panel.set_controls_visibility(True)
+    panel.show()
+
+    assert panel.controls_toggle.text() == "Controls ▸"
+    assert panel.controls_toggle.isChecked() is False
+    assert panel.settings_drawer.isHidden()
+    assert "1.34:1" not in panel.view_mode_combo.itemText(0)
+    assert panel.exposure_btn.text() == "Auto"
+    assert panel.gain_btn.text() == "Auto"
+    assert panel.settings_drawer.isAncestorOf(panel.exposure_control)
+    assert panel.settings_drawer.isAncestorOf(panel.gain_control)
+    assert panel.settings_drawer.isAncestorOf(panel.gamma_control)
+    assert panel.settings_drawer.isAncestorOf(panel.view_mode_status)
+
+    panel.controls_toggle.click()
+
+    assert panel.controls_toggle.isChecked() is True
+    assert panel.controls_toggle.text() == "Controls ▾"
+    assert not panel.settings_drawer.isHidden()
+    panel.close()
+
+
 class FakePhysicalCamera:
     identifier = "physical-test"
     is_streaming = True
