@@ -15,6 +15,7 @@ from config_model import CameraConfig
 from hardware.camera_capabilities import ROI, apply_roi
 from hardware.simulated_camera import SimulatedCamera
 from tools.camera_display_characterize import (
+    DiagnosticCameraWindow,
     InstrumentedCameraPanel,
     PaintCounter,
     _restore_settings,
@@ -701,6 +702,44 @@ def test_dual_partial_failures_keep_attempting_peer_restore_and_cleanup(monkeypa
     if fault == "first_thread_cleanup":
         assert any(message in error for error in result["cleanup_errors"])
         assert result["cameras"]["DEV_SIDE"]["cleanup"]["camera_closed"] is True
+
+
+def test_dual_simulated_panels_render_independently_and_stop_on_window_close(qtbot):
+    cameras = [
+        SimulatedCamera("sim-60", width=16, height=12, frame_interval=1 / 60),
+        SimulatedCamera("sim-100", width=20, height=10, frame_interval=1 / 100),
+    ]
+    panels = [
+        InstrumentedCameraPanel(
+            None, camera.identifier, CameraConfig(identifier=camera.identifier, name=camera.identifier)
+        )
+        for camera in cameras
+    ]
+    for panel, camera in zip(panels, cameras, strict=True):
+        panel.set_camera(camera)
+    outer = DiagnosticCameraWindow(panels)
+    qtbot.addWidget(outer)
+    outer.resize(1000, 420)
+    outer.show()
+    for camera in cameras:
+        camera.open()
+
+    qtbot.waitUntil(
+        lambda: all(panel._latest_pixmap is not None and panel.conversion_worker is not None for panel in panels),
+        timeout=3000,
+    )
+    qtbot.wait(250)
+    assert all(panel.isVisible() for panel in panels)
+    assert [(panel._latest_pixmap.width(), panel._latest_pixmap.height()) for panel in panels] == [(16, 12), (20, 10)]
+    assert all(panel.conversion_worker.converted_frames > 0 for panel in panels)
+    assert all(panel.conversion_worker.max_pending_frames <= 1 for panel in panels)
+    assert panels[0].conversion_worker is not panels[1].conversion_worker
+
+    outer.close()
+    qtbot.wait(20)
+    for camera in cameras:
+        camera.close()
+    assert all(panel.conversion_thread is not None and not panel.conversion_thread.isRunning() for panel in panels)
 
 
 @pytest.mark.parametrize(

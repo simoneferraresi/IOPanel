@@ -108,6 +108,25 @@ class InstrumentedCameraPanel(CameraPanel):
         super()._display_converted_image(q_img)
 
 
+class DiagnosticCameraWindow(QWidget):
+    """Own both diagnostic panels so closing the window shuts down converters."""
+
+    def __init__(self, panels: list[InstrumentedCameraPanel]):
+        super().__init__()
+        self.close_errors: list[str] = []
+        layout = QHBoxLayout(self)
+        for panel in panels:
+            layout.addWidget(panel)
+
+    def closeEvent(self, event) -> None:
+        for panel in self.findChildren(InstrumentedCameraPanel):
+            try:
+                panel.close()
+            except Exception as exc:  # noqa: BLE001 - continue closing the other panel
+                self.close_errors.append(f"{panel.windowTitle()}: {exc}")
+        super().closeEvent(event)
+
+
 class PaintCounter(QObject):
     def __init__(self):
         super().__init__()
@@ -848,10 +867,7 @@ def _main_dual(args: argparse.Namespace) -> int:
             counters[camera_id] = counter
             camera.new_frame.connect(counter.record, Qt.ConnectionType.DirectConnection)
             camera.fps_updated.connect(lambda fps, dest=fps_samples[camera_id]: dest.append(float(fps)))
-        outer = QWidget()
-        layout = QHBoxLayout(outer)
-        for panel in panels.values():
-            layout.addWidget(panel)
+        outer = DiagnosticCameraWindow(list(panels.values()))
         outer.resize(*args.window_size)
         outer.show()
         heartbeat: list[float] = []
