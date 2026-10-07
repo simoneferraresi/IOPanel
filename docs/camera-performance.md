@@ -21,6 +21,57 @@ frame IDs should be used for acquisition pacing; GUI FPS is a display metric.
 Screenshots preserve the full acquired ROI at native resolution and omit the
 preview FPS overlay.
 
+### Camera display pipeline characterization
+
+The standalone `tools/camera_display_characterize.py` diagnostic reports camera
+acquisition FPS, conversion throughput, `presentation_call_fps`, and Qt paint
+events as separate stages. `presentation_call_fps` measures calls into the
+production presentation method. Paint reporting preserves the event count and
+timestamp interval statistics, and distinguishes
+`paint_events_per_wall_second` (count divided by the full measurement duration)
+from `active_span_paint_event_fps` (cadence between the first and last captured
+paint timestamps). `paint_timestamp_span_seconds` and
+`paint_timestamp_coverage_fraction` show how much of the measurement interval
+those timestamps cover. Low coverage adds the machine-readable observation
+`paint_timestamps_do_not_span_measurement`; it does not invalidate acquisition,
+conversion, presentation, heartbeat, or CPU measurements. QWidget paint events
+can depend on window exposure and occlusion, and Qt or the operating system can
+coalesce paint work. These paint metrics do not measure monitor refresh rate.
+Latest-frame coalescing is intentional: the GUI presents recent images instead
+of requiring every acquired frame to appear on screen. The diagnostic also
+counts conversion-worker submissions and completions, converted images accepted
+by CameraPanel, and GUI-mailbox coalescing independently; these counts can
+differ. It reports event-loop heartbeat timings and process CPU time divided by
+wall time; the latter is not a machine-wide profiler.
+
+The tool requires one explicit physical camera ID and an operator-visible
+window. It deliberately uses the real `VimbaCam.open()` path, which applies
+IOPanel's standard startup configuration (acquisition/trigger and auto
+selectors, gamma, and preferred pixel format). Before opening that path, the
+diagnostic snapshots each readable affected feature, ROI, and frame-rate
+settings; after closing the stream it restores and independently reads them
+back. Manual Gain and Exposure values are not written. Restoration proceeds
+best-effort in dependency order: make the current frame rate legal if it was
+changed, restore pixel format, restore ROI, restore the exact original frame
+rate, restore independent startup selectors and gamma, then restore the
+original frame-rate enable state. Each failure is reported while later
+restoration steps continue.
+
+ROI and maximum frame-rate requests change camera settings and require
+`--authorize-settings-changes`. A nonzero exit status indicates a measurement,
+restoration, or cleanup failure. The diagnostic performs no CT400, laser,
+piezo, or NIC operations and does not alter normal application display
+behavior.
+
+```powershell
+uv run python tools/camera_display_characterize.py --camera-id <CAMERA_ID> `
+  --window-size 960x720 --duration 30 --output display-characterization.json
+
+uv run python tools/camera_display_characterize.py --camera-id <CAMERA_ID> `
+  --roi 1292x480 --maximize-frame-rate-for-roi `
+  --authorize-settings-changes --duration 30 --output display-roi.json
+```
+
 ## Exposure and gain
 
 Longer exposure collects more light but can increase motion blur and reduce the
