@@ -112,6 +112,9 @@ def _close_window_and_check_cleanup(window, qtbot):
     for task in window._init_tasks:
         assert _runner_stopped(task)
     assert all(not panel.conversion_thread.isRunning() for panel in panels)
+    window.close()
+    assert not window.cameras
+    assert all(not frame_thread.is_alive() for frame_thread in frame_threads)
 
 
 def test_mainwindow_loads_simulation_config_and_displays_camera_frames(qtbot, monkeypatch, tmp_path):
@@ -124,6 +127,12 @@ def test_mainwindow_loads_simulation_config_and_displays_camera_frames(qtbot, mo
     assert "[SIMULATED]" in panel.title_label.text()
     menu_titles = [action.text().replace("&", "") for action in window.menuBar().actions()]
     assert menu_titles == ["File", "Instruments", "Cameras", "Help"]
+    cameras_menu = next(
+        action.menu() for action in window.menuBar().actions() if action.text().replace("&", "") == "Cameras"
+    )
+    camera_actions = [action.text() for action in cameras_menu.actions() if action.isVisible()]
+    assert any("Discover Cameras" in label for label in camera_actions)
+    assert not any("Controls" in label for label in camera_actions)
     qtbot.waitUntil(lambda: raw_frames.count() >= 2, timeout=2000)
     first = raw_frames.at(0)[0]
     second = raw_frames.at(1)[0]
@@ -140,6 +149,59 @@ def test_mainwindow_loads_simulation_config_and_displays_camera_frames(qtbot, mo
     assert not panel.video_label.pixmap().isNull()
 
     _close_window_and_check_cleanup(window, qtbot)
+
+
+def test_camera_gear_controls_are_independent_and_do_not_stop_frames(qtbot, monkeypatch, tmp_path):
+    window = _start_main_window(qtbot, monkeypatch, tmp_path, camera_count=2)
+    top = window.camera_panels["simulated-top"]
+    bottom = window.camera_panels["simulated-bottom"]
+    first_camera, second_camera = window.cameras
+    assert top.settings_button.isVisible() and bottom.settings_button.isVisible()
+    first_count = first_camera._frame_count
+    top.settings_button.click()
+    assert top.controls_visible
+    assert not bottom.controls_visible
+    assert bottom.settings_button.isVisible()
+    top.view_mode_combo.showPopup()
+    assert top.view_mode_combo.view().isVisible()
+    qtbot.waitUntil(lambda: first_camera._frame_count > first_count, timeout=1500)
+    assert top.view_mode_combo.view().isVisible()
+    top.view_mode_combo.hidePopup()
+    bottom.settings_button.click()
+    assert bottom.controls_visible and top.controls_visible
+    second_count = second_camera._frame_count
+    top.settings_button.click()
+    assert not top.controls_visible and bottom.controls_visible
+    qtbot.waitUntil(lambda: second_camera._frame_count > second_count, timeout=1500)
+    _close_window_and_check_cleanup(window, qtbot)
+
+
+def test_camera_cleanup_attempts_peer_after_one_close_failure(qtbot, monkeypatch, tmp_path):
+    window = _start_main_window(qtbot, monkeypatch, tmp_path, camera_count=2)
+    first, second = window.cameras
+    original_first_close = first.close
+    original_second_close = second.close
+    attempts = []
+
+    def failing_close():
+        attempts.append(first.identifier)
+        original_first_close()
+        raise RuntimeError("injected close failure after producer stopped")
+
+    def recorded_second_close():
+        attempts.append(second.identifier)
+        original_second_close()
+
+    monkeypatch.setattr(first, "close", failing_close)
+    monkeypatch.setattr(second, "close", recorded_second_close)
+    panels = list(window.camera_panels.values())
+
+    window._cleanup_cameras()
+
+    assert attempts == [first.identifier, second.identifier]
+    assert all(not camera._frame_thread for camera in (first, second))
+    assert all(panel.conversion_thread is not None and not panel.conversion_thread.isRunning() for panel in panels)
+    window.close()
 
 
 def test_mainwindow_displays_camera_error_recovers_and_shuts_down(qtbot, monkeypatch, tmp_path):
@@ -195,7 +257,11 @@ def test_two_simulated_cameras_survive_resize_cinema_and_control_visibility(qtbo
     qtbot.waitUntil(lambda: all(panel._latest_pixmap is not None for panel in panels), timeout=2000)
 
     window.resize(1400, 900)
+    qtbot.wait(30)
     for panel in panels:
+        gear_rect = panel.settings_button.geometry()
+        assert gear_rect.right() >= panel.video_container.width() - 3
+        assert gear_rect.top() <= 3
         panel.set_controls_visibility(True)
         assert panel.controls_container.isVisible()
         panel.set_controls_visibility(False)
@@ -208,6 +274,11 @@ def test_two_simulated_cameras_survive_resize_cinema_and_control_visibility(qtbo
     assert window.control_container.isVisible() is not was_visible
     window.resize(1000, 700)
     window.toggle_cinema_mode()
+    qtbot.wait(30)
     assert window.control_container.isVisible() is was_visible
+    for panel in panels:
+        gear_rect = panel.settings_button.geometry()
+        assert gear_rect.right() >= panel.video_container.width() - 3
+        assert gear_rect.top() <= 3
 
     _close_window_and_check_cleanup(window, qtbot)

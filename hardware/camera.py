@@ -216,6 +216,8 @@ class VimbaCam(QObject):
 
         self.device: Camera | None = None
         self.lock = QMutex()
+        self._frame_callback_condition = threading.Condition()
+        self._active_frame_callbacks = 0
         self.is_mono: bool | None = None
         self.is_streaming: bool = False
         self._is_closing: bool = False
@@ -299,42 +301,50 @@ class VimbaCam(QObject):
         """Callback executed by Vimba for each incoming frame."""
         import cv2
 
-        if self._is_closing:
-            return
+        with self._frame_callback_condition:
+            if self._is_closing:
+                return
+            self._active_frame_callbacks += 1
 
         try:
-            if frame.get_status() == FrameStatus.Complete:
-                # Convert frame to OpenCV image
-                current_image = frame.as_opencv_image()
-                if current_image is None or current_image.size == 0:
-                    logger.warning(f"Handler {self.camera_name}: Frame from as_opencv_image() is None or empty.")
-                    return
-
-                # Apply horizontal flip if configured
-                if self.flip_horizontal:
-                    current_image = cv2.flip(current_image, 1)
-
-                # Update frame buffer. Must copy as the underlying buffer will be reused by Vimba.
-                processed_image = current_image.copy()
-                self.frame_buffer.add_frame(processed_image)
-
-                # Emit signals for the GUI
-                self.new_frame.emit(processed_image)
-                fps = self.frame_monitor.update()
-                if fps is not None:
-                    self.fps_updated.emit(fps)
-        except Exception:
-            logger.exception(f"Handler {self.camera_name}: Unhandled error in frame processing")
-        finally:
-            # CRITICAL: Always re-queue the frame.
             try:
-                # The lock here prevents a race condition on shutdown.
-                with QMutexLocker(self.lock):
-                    if not self._is_closing and self.device:
-                        cam.queue_frame(frame)
-            except VmbCameraError as e:
-                logger.error(f"Handler {self.camera_name}: CRITICAL - Failed to queue frame back: {e}")
-                self.error.emit(f"CRITICAL Frame queueing error: {e}")
+                if frame.get_status() == FrameStatus.Complete:
+                    # Convert frame to OpenCV image
+                    current_image = frame.as_opencv_image()
+                    if current_image is None or current_image.size == 0:
+                        logger.warning(f"Handler {self.camera_name}: Frame from as_opencv_image() is None or empty.")
+                        return
+
+                    # Apply horizontal flip if configured
+                    if self.flip_horizontal:
+                        current_image = cv2.flip(current_image, 1)
+
+                    # Update frame buffer. Must copy as the underlying buffer will be reused by Vimba.
+                    processed_image = current_image.copy()
+                    self.frame_buffer.add_frame(processed_image)
+
+                    # Emit signals for the GUI
+                    self.new_frame.emit(processed_image)
+                    fps = self.frame_monitor.update()
+                    if fps is not None:
+                        self.fps_updated.emit(fps)
+            except Exception:
+                logger.exception(f"Handler {self.camera_name}: Unhandled error in frame processing")
+        finally:
+            try:
+                # CRITICAL: Always re-queue the frame.
+                try:
+                    with QMutexLocker(self.lock):
+                        if not self._is_closing and self.device:
+                            cam.queue_frame(frame)
+                except VmbCameraError as e:
+                    logger.error(f"Handler {self.camera_name}: CRITICAL - Failed to queue frame back: {e}")
+                    self.error.emit(f"CRITICAL Frame queueing error: {e}")
+            finally:
+                with self._frame_callback_condition:
+                    self._active_frame_callbacks -= 1
+                    if self._active_frame_callbacks == 0:
+                        self._frame_callback_condition.notify_all()
 
     # --- Open/Close and Configuration ---
     def open(self) -> bool:
@@ -392,6 +402,11 @@ class VimbaCam(QObject):
             except VmbCameraError as e:
                 logger.error(f"Error stopping Vimba streaming: {e}")
         self.is_streaming = False
+
+        # stop_streaming prevents new callbacks; wait for callbacks already in
+        # flight before closing the device context or its conversion consumer.
+        with self._frame_callback_condition:
+            self._frame_callback_condition.wait_for(lambda: self._active_frame_callbacks == 0)
 
         if self.device:
             try:

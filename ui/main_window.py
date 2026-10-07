@@ -213,7 +213,6 @@ class MainWindow(QMainWindow):
         self._ct400_error_reset_timer = QTimer(self)
         self._ct400_error_reset_timer.setSingleShot(True)
         self._ct400_error_reset_timer.timeout.connect(self._reset_ct400_error_visuals)
-        self.camera_control_actions: dict[str, QAction] = {}
         self.cameras_menu: QMenu | None = None
 
         self.piezo_connection_succeeded.connect(self._on_piezo_connection_success)
@@ -1137,7 +1136,6 @@ class MainWindow(QMainWindow):
 
             panel.set_camera(camera_instance)
             self._connect_camera_signals(camera_instance, panel)
-            self._create_camera_menu_action(camera_instance, panel)
             panel._arm_watchdog()
 
             panel.video_label.setText(MSG_CAMERA_WAITING)
@@ -1276,17 +1274,6 @@ class MainWindow(QMainWindow):
         if self._pending_camera_lifecycle_close and not self._camera_lifecycle_busy():
             QTimer.singleShot(0, self.close)
 
-    def _create_camera_menu_action(self, cam_instance: VimbaCam, panel: CameraPanel):
-        """Creates and registers a menu action to control the camera panel's visibility."""
-        action = QAction(self)
-        action.setCheckable(True)
-        action.setChecked(panel.get_controls_visible())
-        action.setText(f"{'Hide' if panel.get_controls_visible() else 'Show'} {cam_instance.camera_name} Controls")
-        action.setData(cam_instance.identifier)
-        action.triggered.connect(self._handle_camera_control_toggle)
-        self.cameras_menu.addAction(action)
-        self.camera_control_actions[cam_instance.identifier] = action
-
     def _create_camera_error_placeholder(self, message: str) -> QWidget:
         """Helper to create a consistent placeholder for camera errors."""
         placeholder_widget = QFrame()
@@ -1328,23 +1315,6 @@ class MainWindow(QMainWindow):
 
         placeholder_widget.setToolTip(f"Camera Initialization Error: {message.replace('\n', ' ')}")
         return placeholder_widget
-
-    @Slot(bool)
-    def _handle_camera_control_toggle(self, checked: bool):
-        action = self.sender()
-        if not isinstance(action, QAction):
-            return
-
-        camera_identifier = action.data()
-        if camera_identifier in self.camera_panels:
-            panel = self.camera_panels[camera_identifier]
-            panel.set_controls_visibility(checked)
-            self.settings.set_camera_controls_visible(camera_identifier, checked)
-            action.setText(f"{'Hide' if checked else 'Show'} {panel._panel_title} Controls")
-        else:
-            logger.warning(f"Camera panel not found for identifier: {camera_identifier} during toggle.")
-            action.setChecked(not checked)
-            action.setEnabled(False)
 
     @Slot(object)
     def _handle_scan_data(self, measurement):
@@ -1416,31 +1386,16 @@ class MainWindow(QMainWindow):
 
     def _cleanup_cameras(self):
         logger.info(f"Closing {len(self.cameras)} camera(s)...")
-
-        # Disconnect menu actions
-        if hasattr(self, "cameras_menu") and self.cameras_menu is not None:
-            for cam_id in list(self.camera_control_actions.keys()):
-                action = self.camera_control_actions.pop(cam_id, None)
-                if action:
-                    self.cameras_menu.removeAction(action)
-                    action.deleteLater()
-        self.camera_control_actions.clear()
-
-        # Remove panels from the UI
-        if hasattr(self, "camera_container") and self.camera_container.layout() is not None:
-            layout = self.camera_container.layout()
-            while layout.count():
-                item = layout.takeAt(0)
-                widget = item.widget()
-                if widget is not None:
-                    # This ensures the panel's own closeEvent is called if it has one
-                    widget.close()
-                    widget.deleteLater()
-
-        # Close the actual camera hardware instances
         cameras_to_close = list(self.cameras)
-        self.cameras.clear()
-        self.camera_panels.clear()
+        panels_to_close = list(dict.fromkeys(self.camera_panels.values()))
+
+        # Restore per-session camera settings and quiesce all panel work while
+        # the camera is still open, then stop every producer before consumers.
+        for panel in panels_to_close:
+            try:
+                panel.prepare_camera_shutdown()
+            except Exception:
+                logger.exception("Error preparing camera panel %s for shutdown", panel._panel_title)
 
         for cam in cameras_to_close:
             if cam is not None:
@@ -1450,6 +1405,29 @@ class MainWindow(QMainWindow):
                     cam.close()
                 except Exception:
                     logger.exception(f"Error closing camera {cam.camera_name}")
+
+        # Camera callbacks and frame threads are now stopped. It is safe to
+        # disconnect and destroy each conversion consumer.
+        layout = self.camera_container.layout() if hasattr(self, "camera_container") else None
+        if layout is not None:
+            while layout.count():
+                item = layout.takeAt(0)
+                widget = item.widget()
+                if widget is not None:
+                    try:
+                        widget.close()
+                    except Exception:
+                        logger.exception("Error closing camera panel widget")
+                    widget.deleteLater()
+        for panel in panels_to_close:
+            if panel.parent() is not None:
+                try:
+                    panel.close()
+                except Exception:
+                    logger.exception("Error closing camera panel %s", panel._panel_title)
+
+        self.cameras.clear()
+        self.camera_panels.clear()
 
         logger.info("Camera cleanup finished.")
 

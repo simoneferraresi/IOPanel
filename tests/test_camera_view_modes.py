@@ -27,11 +27,10 @@ def test_camera_controls_use_compact_toolbar_and_collapsed_live_drawer(qtbot):
         None, "Simulated", CameraConfig(identifier="compact-controls", name="Simulated", backend="simulation")
     )
     qtbot.addWidget(panel)
-    panel.set_controls_visibility(True)
     panel.show()
 
-    assert panel.controls_toggle.text() == "Controls ▸"
-    assert panel.controls_toggle.isChecked() is False
+    assert panel.settings_button.isVisible()
+    assert not panel.settings_button.isChecked()
     assert panel.settings_drawer.isHidden()
     assert "1.34:1" not in panel.view_mode_combo.itemText(0)
     assert panel.exposure_btn.text() == "Auto"
@@ -41,17 +40,77 @@ def test_camera_controls_use_compact_toolbar_and_collapsed_live_drawer(qtbot):
     assert panel.settings_drawer.isAncestorOf(panel.gamma_control)
     assert panel.settings_drawer.isAncestorOf(panel.view_mode_status)
 
-    panel.controls_toggle.click()
+    panel.settings_button.click()
 
-    assert panel.controls_toggle.isChecked() is True
-    assert panel.controls_toggle.text() == "Controls ▾"
+    assert panel.settings_button.isChecked() is True
     assert not panel.settings_drawer.isHidden()
+    panel.close()
+
+
+def test_mode_combo_uses_cached_roi_without_camera_reads(qtbot):
+    camera = FakePhysicalCamera(ROI(1292, 964, 0, 0))
+    panel = _physical_panel(qtbot, camera)
+    reads = 0
+
+    def count_roi_reads():
+        nonlocal reads
+        reads += 1
+        return camera.roi
+
+    camera.get_roi = count_roi_reads
+    panel.view_mode_combo.setCurrentIndex(3)
+    panel.view_mode_combo.showPopup()
+    panel._update_view_mode_availability()
+    panel.view_mode_combo.hidePopup()
+
+    assert reads == 0
+    assert panel.view_mode_apply.isEnabled()
+    panel.close()
+
+
+def test_mode_combo_keeps_width_stable_across_selections(qtbot):
+    panel = CameraPanel(
+        None, "Simulated", CameraConfig(identifier="stable-combo", name="Simulated", backend="simulation")
+    )
+    qtbot.addWidget(panel)
+    panel.resize(1000, 500)
+    panel.show()
+    qtbot.wait(20)
+
+    widths = []
+    for index in range(panel.view_mode_combo.count()):
+        panel.view_mode_combo.setCurrentIndex(index)
+        panel.view_mode_combo.updateGeometry()
+        qtbot.wait(1)
+        widths.append(panel.view_mode_combo.width())
+
+    assert max(widths) - min(widths) <= 1
+    panel.close()
+
+
+def test_exposure_gain_gamma_slider_tracks_have_equal_width(qtbot):
+    panel = CameraPanel(
+        None, "Simulated", CameraConfig(identifier="equal-sliders", name="Simulated", backend="simulation")
+    )
+    qtbot.addWidget(panel)
+    panel.set_controls_visibility(True)
+    panel.resize(900, 500)
+    panel.show()
+    qtbot.wait(30)
+
+    widths = [
+        panel.exposure_control.slider.width(),
+        panel.gain_control.slider.width(),
+        panel.gamma_control.slider.width(),
+    ]
+    assert max(widths) - min(widths) <= 1
     panel.close()
 
 
 class FakePhysicalCamera:
     identifier = "physical-test"
     is_streaming = True
+    is_open = True
 
     def __init__(self, roi):
         self.roi = roi
@@ -83,6 +142,7 @@ class FakePhysicalCamera:
         return {"roi": self.roi, "aspect_ratio": width / height, "roi_cap_fps": 60.0, "frame_rate_fps": 60.0}
 
     def restore_view_mode_baseline(self, baseline):
+        assert self.is_open
         self.restore_calls.append(baseline)
 
 
@@ -121,7 +181,26 @@ def test_combo_selection_is_inert_and_apply_runs_one_transaction(qtbot):
     assert camera.apply_calls == [(1292, 240, True)]
     assert panel.view_mode_combo.currentData() == 240
     assert camera.roi == ROI(1292, 240, 0, 362)
+    old_status = panel.view_mode_status.text()
     panel.update_fps(67.1)
+    assert panel.view_mode_status.text() == old_status
+    panel.set_controls_visibility(True)
     assert "Live 67.1 FPS" in panel.view_mode_status.text()
     panel.close()
     assert len(camera.restore_calls) == 1
+
+
+def test_prepare_camera_shutdown_restores_baseline_once_before_close(qtbot):
+    camera = FakePhysicalCamera(ROI(1292, 964, 0, 0))
+    panel = _physical_panel(qtbot, camera)
+    panel.view_mode_combo.setCurrentIndex(2)
+    panel.view_mode_apply.setEnabled(True)
+    panel._view_mode_baseline = {"roi": camera.roi, "rate": 30.0}
+    panel._view_mode_changed = True
+
+    panel.prepare_camera_shutdown()
+    panel.prepare_camera_shutdown()
+
+    assert len(camera.restore_calls) == 1
+    assert panel._panel_closing
+    panel.close()
