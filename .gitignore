@@ -105,3 +105,6 @@ env/
 ENV/
 # Python profiler output
 /profile_output.prof
+
+# Generated laboratory camera reports
+camera-validation-results/
