@@ -66,6 +66,23 @@ def rate_fps(samples: list[float]) -> float:
     return (len(samples) - 1) / (samples[-1] - samples[0]) if len(samples) > 1 and samples[-1] > samples[0] else 0.0
 
 
+def paint_metrics(timestamps: list[float], wall_seconds: float) -> dict[str, Any]:
+    """Describe paint-event count, active cadence, and timestamp coverage."""
+    count = len(timestamps)
+    span = timestamps[-1] - timestamps[0] if count >= 2 else None
+    coverage = span / wall_seconds if span is not None and wall_seconds > 0 else 0.0
+    observations = ["paint_timestamps_do_not_span_measurement"] if coverage < 0.9 else []
+    return {
+        "count": count,
+        "paint_events_per_wall_second": count / wall_seconds if wall_seconds > 0 else 0.0,
+        "active_span_paint_event_fps": rate_fps(timestamps),
+        "paint_timestamp_span_seconds": span,
+        "paint_timestamp_coverage_fraction": coverage,
+        "timing": timing_stats(timestamps),
+        "observations": observations,
+    }
+
+
 def counter_delta(before: int, after: int) -> int:
     return max(0, after - before)
 
@@ -459,11 +476,7 @@ def _collect_metrics(
             "max_pending_images": panel.max_pending_images,
             "max_pending_images_at_most_one": panel.max_pending_images <= 1,
         },
-        "paint": {
-            "count": len(paint.timestamps),
-            "qt_paint_event_fps": rate_fps(paint.timestamps),
-            "timing": timing_stats(paint.timestamps),
-        },
+        "paint": paint_metrics(paint.timestamps, wall),
         "event_loop": {"heartbeat": timing_stats(heartbeat)},
         "process": {
             "wall_seconds": wall,

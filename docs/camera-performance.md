@@ -23,16 +23,26 @@ preview FPS overlay.
 
 ### Camera display pipeline characterization
 
-The standalone `tools/camera_display_characterize.py` diagnostic measures
-camera acquisition FPS, conversion throughput, presentation-call FPS, and Qt
-paint-event FPS as separate stages. A Qt paint event is not a measurement of
-physical monitor refresh timing. Latest-frame coalescing is intentional: the
-GUI presents recent images instead of requiring every acquired frame to appear
-on screen. It also counts conversion-worker submissions and completions,
-converted images accepted by CameraPanel, GUI-mailbox coalescing, and
-presentation calls independently; these counts can differ. The diagnostic
-reports event-loop heartbeat timings and process CPU time divided by wall time;
-the latter is not a machine-wide profiler.
+The standalone `tools/camera_display_characterize.py` diagnostic reports camera
+acquisition FPS, conversion throughput, `presentation_call_fps`, and Qt paint
+events as separate stages. `presentation_call_fps` measures calls into the
+production presentation method. Paint reporting preserves the event count and
+timestamp interval statistics, and distinguishes
+`paint_events_per_wall_second` (count divided by the full measurement duration)
+from `active_span_paint_event_fps` (cadence between the first and last captured
+paint timestamps). `paint_timestamp_span_seconds` and
+`paint_timestamp_coverage_fraction` show how much of the measurement interval
+those timestamps cover. Low coverage adds the machine-readable observation
+`paint_timestamps_do_not_span_measurement`; it does not invalidate acquisition,
+conversion, presentation, heartbeat, or CPU measurements. QWidget paint events
+can depend on window exposure and occlusion, and Qt or the operating system can
+coalesce paint work. These paint metrics do not measure monitor refresh rate.
+Latest-frame coalescing is intentional: the GUI presents recent images instead
+of requiring every acquired frame to appear on screen. The diagnostic also
+counts conversion-worker submissions and completions, converted images accepted
+by CameraPanel, and GUI-mailbox coalescing independently; these counts can
+differ. It reports event-loop heartbeat timings and process CPU time divided by
+wall time; the latter is not a machine-wide profiler.
 
 The tool requires one explicit physical camera ID and an operator-visible
 window. It deliberately uses the real `VimbaCam.open()` path, which applies

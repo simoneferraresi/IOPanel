@@ -22,6 +22,7 @@ from tools.camera_display_characterize import (
     coalescing_fraction,
     counter_delta,
     diagnostic_exit_status,
+    paint_metrics,
     parse_size,
     timing_stats,
     validate_args,
@@ -46,6 +47,34 @@ def test_timing_statistics_use_interval_samples():
     assert result["p95_seconds"] == pytest.approx(0.029)
     assert result["max_seconds"] == pytest.approx(0.03)
     assert timing_stats([1.0])["max_seconds"] is None
+
+
+@pytest.mark.parametrize(
+    ("timestamps", "wall", "expected_count", "expected_span", "expected_coverage", "expected_active_fps"),
+    [
+        ([], 30.0, 0, None, 0.0, 0.0),
+        ([4.0], 30.0, 1, None, 0.0, 0.0),
+        ([0.1, 10.0, 20.0, 29.9], 30.0, 4, 29.8, 29.8 / 30.0, 3 / 29.8),
+        ([10.0, 10.01, 10.02, 12.95], 30.0, 4, 2.95, 2.95 / 30.0, 3 / 2.95),
+    ],
+    ids=["zero-events", "one-event", "full-coverage", "clustered-events"],
+)
+def test_paint_metrics_distinguish_wall_rate_active_rate_and_coverage(
+    timestamps, wall, expected_count, expected_span, expected_coverage, expected_active_fps
+):
+    result = paint_metrics(timestamps, wall)
+
+    assert result["count"] == expected_count
+    assert result["paint_events_per_wall_second"] == pytest.approx(expected_count / wall)
+    assert result["active_span_paint_event_fps"] == pytest.approx(expected_active_fps)
+    if expected_span is None:
+        assert result["paint_timestamp_span_seconds"] is None
+    else:
+        assert result["paint_timestamp_span_seconds"] == pytest.approx(expected_span)
+    assert result["paint_timestamp_coverage_fraction"] == pytest.approx(expected_coverage)
+    assert result["timing"]["count"] == expected_count
+    observation = "paint_timestamps_do_not_span_measurement"
+    assert (observation in result["observations"]) == (expected_coverage < 0.9)
 
 
 def test_presentation_call_counter_and_paint_event_counter(qtbot):
