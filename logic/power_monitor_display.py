@@ -20,20 +20,21 @@ class _Bucket:
     start: int
     stop: int
     indices: list[list[int]]
-    minima: list[int]
-    maxima: list[int]
+    minima: list[int | None]
+    maxima: list[int | None]
+    nonfinite: list[int | None]
 
 
 class PowerMonitorDisplayHistory:
     """Incremental min/max envelope indices, independently preserved per detector."""
 
     def __init__(self, detector_count: int, point_limit: int = DEFAULT_DISPLAY_POINT_LIMIT):
-        if detector_count < 0 or point_limit < 4:
-            raise ValueError("detector_count must be non-negative and point_limit at least four")
+        if detector_count < 0 or point_limit < 5:
+            raise ValueError("detector_count must be non-negative and point_limit at least five")
         self.detector_count = detector_count
         self.point_limit = point_limit
-        self._recent_points = min(_RECENT_FULL_RESOLUTION_POINTS, point_limit // 4)
-        self._bucket_limit = max(1, (point_limit - self._recent_points) // 4)
+        self._recent_points = min(_RECENT_FULL_RESOLUTION_POINTS, max(0, point_limit - 5))
+        self._bucket_limit = max(1, (point_limit - self._recent_points) // 5)
         self._bucket_width = 1
         self._count = 0
         self._buckets: list[_Bucket] = []
@@ -75,21 +76,45 @@ class PowerMonitorDisplayHistory:
             return
         bucket_id = index // self._bucket_width
         if bucket_id == len(self._buckets):
-            indices = [[index] for _ in range(self.detector_count)]
-            self._buckets.append(
-                _Bucket(index, index + 1, indices, [index] * self.detector_count, [index] * self.detector_count)
-            )
+            indices: list[list[int]] = []
+            minima: list[int | None] = []
+            maxima: list[int | None] = []
+            nonfinite: list[int | None] = []
+            for value in values:
+                if np.isfinite(value):
+                    minima.append(index)
+                    maxima.append(index)
+                    nonfinite.append(None)
+                else:
+                    minima.append(None)
+                    maxima.append(None)
+                    nonfinite.append(index)
+                indices.append([index])
+            self._buckets.append(_Bucket(index, index + 1, indices, minima, maxima, nonfinite))
             return
         bucket = self._buckets[bucket_id]
         bucket.stop = index + 1
         for channel, value in enumerate(values):
-            low_index = bucket.minima[channel]
-            high_index = bucket.maxima[channel]
-            if value < self._value_at(channel, low_index):
-                bucket.minima[channel] = index
-            if value > self._value_at(channel, high_index):
-                bucket.maxima[channel] = index
-            bucket.indices[channel] = sorted({bucket.start, bucket.minima[channel], bucket.maxima[channel], index})
+            if np.isfinite(value):
+                low_index = bucket.minima[channel]
+                high_index = bucket.maxima[channel]
+                if low_index is None or value < self._value_at(channel, low_index):
+                    bucket.minima[channel] = index
+                if high_index is None or value > self._value_at(channel, high_index):
+                    bucket.maxima[channel] = index
+            elif bucket.nonfinite[channel] is None:
+                bucket.nonfinite[channel] = index
+            bucket.indices[channel] = sorted(
+                {
+                    bucket.start,
+                    bucket.stop - 1,
+                    *(
+                        candidate
+                        for candidate in (bucket.minima[channel], bucket.maxima[channel], bucket.nonfinite[channel])
+                        if candidate is not None
+                    ),
+                }
+            )
 
     def _value_at(self, channel: int, index: int) -> float:
         # Read extrema comparisons directly from the authoritative raw channel.
@@ -100,21 +125,33 @@ class PowerMonitorDisplayHistory:
         for start in range(0, self._count, self._bucket_width):
             stop = min(self._count, start + self._bucket_width)
             channels: list[list[int]] = []
+            minima: list[int | None] = []
+            maxima: list[int | None] = []
+            nonfinite: list[int | None] = []
             for channel in range(self.detector_count):
-                data = self._values[channel][start:stop]
-                if not len(data):
-                    channels.append([])
-                    continue
-                minimum = start + int(np.argmin(data))
-                maximum = start + int(np.argmax(data))
-                channels.append(sorted({start, minimum, maximum, stop - 1}))
-            minima = [
-                start + int(np.argmin(self._values[channel][start:stop])) for channel in range(self.detector_count)
-            ]
-            maxima = [
-                start + int(np.argmax(self._values[channel][start:stop])) for channel in range(self.detector_count)
-            ]
-            self._buckets.append(_Bucket(start, stop, channels, minima, maxima))
+                data = np.asarray(self._values[channel][start:stop], dtype=float)
+                finite_indices = np.flatnonzero(np.isfinite(data))
+                if finite_indices.size:
+                    finite_data = data[finite_indices]
+                    minimum = start + int(finite_indices[int(np.argmin(finite_data))])
+                    maximum = start + int(finite_indices[int(np.argmax(finite_data))])
+                else:
+                    minimum = maximum = None
+                nonfinite_mask = np.flatnonzero(~np.isfinite(data))
+                gap_index = start + int(nonfinite_mask[0]) if nonfinite_mask.size else None
+                minima.append(minimum)
+                maxima.append(maximum)
+                nonfinite.append(gap_index)
+                channels.append(
+                    sorted(
+                        {
+                            start,
+                            stop - 1,
+                            *(candidate for candidate in (minimum, maximum, gap_index) if candidate is not None),
+                        }
+                    )
+                )
+            self._buckets.append(_Bucket(start, stop, channels, minima, maxima, nonfinite))
 
     def indices(self, channel: int) -> np.ndarray:
         if channel < 0 or channel >= self.detector_count:

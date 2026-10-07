@@ -7,8 +7,10 @@ MAT exports use those arrays and remain full-resolution.
 Only the on-screen completed/live recording trace is summarized. Until the
 trace reaches 4,000 points per detector, it is plotted unchanged. Longer traces
 use a contiguous-bucket min/max envelope: each detector independently retains
-bucket boundaries and its local minima and maxima. A recent 256-sample window
-remains at full resolution. Bucket widths grow geometrically, so ordinary
+bucket boundaries, finite minima and maxima, and one marker for any NaN or
+infinite sample. This preserves extrema without losing a representative gap
+that should break the rendered line. A recent 256-sample window remains at full
+resolution. Bucket widths grow geometrically, so ordinary
 sample updates touch only the current bucket; a full display-index rebuild
 happens only when the bucket width needs to double. This preserves brief peaks
 and dips while keeping PyQtGraph input bounded and recent motion smooth. As with

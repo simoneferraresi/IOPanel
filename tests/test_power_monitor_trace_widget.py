@@ -317,6 +317,7 @@ def test_completed_long_trace_keeps_raw_recording_and_bounds_curve_data(qtbot, t
     elapsed = np.arange(count, dtype=float) * 0.25
     detector_data = np.vstack((np.sin(elapsed), np.cos(elapsed)))
     detector_data[0, 4321] = 80.0
+    detector_data[0, 4322] = np.nan
     detector_data[0, 7321] = -80.0
     recording = _recording(settings, elapsed, detector_data)
     widget = PowerMonitorTraceWidget(_app_settings(tmp_path))
@@ -330,6 +331,7 @@ def test_completed_long_trace_keeps_raw_recording_and_bounds_curve_data(qtbot, t
     np.testing.assert_array_equal(widget.elapsed_values, recording.elapsed_s)
     plotted_x, plotted_y = widget.curve_items[Detector.DE_1].getData()
     assert plotted_y[np.flatnonzero(plotted_x == elapsed[4321])[0]] == 80.0
+    assert np.isnan(plotted_y).any()
     assert plotted_y[np.flatnonzero(plotted_x == elapsed[7321])[0]] == -80.0
     assert plotted_x[-1] == elapsed[-1]
     widget.plot_widget.setXRange(100.0, 200.0, padding=0)
