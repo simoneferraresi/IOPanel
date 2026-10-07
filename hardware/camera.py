@@ -10,6 +10,15 @@ from typing import Any
 import numpy as np
 from PySide6.QtCore import QMutex, QMutexLocker, QObject, Signal
 
+from hardware.camera_capabilities import (
+    FEATURE_ALIASES,
+    apply_roi,
+    find_feature,
+    inspect_camera,
+    inspect_feature,
+    read_roi,
+)
+
 try:
     from vmbpy import (
         COLOR_PIXEL_FORMATS,
@@ -405,7 +414,7 @@ class VimbaCam(QObject):
                     if feat.is_writeable():
                         feat.set(value)
                         logger.debug(f"Set {name} to {value}.")
-                except VmbCameraError as e:
+                except Exception as e:  # noqa: BLE001 - SDK-specific feature errors are optional here.
                     logger.warning(f"Could not set feature '{name}': {e}")
 
             _safe_set("AcquisitionMode", "Continuous")
@@ -419,8 +428,8 @@ class VimbaCam(QObject):
                     min_g, max_g = feat.get_range()
                     target_gamma = max(min_g, min(max_g, 1.0))
                     feat.set(target_gamma)
-            except VmbCameraError:
-                logger.info("Gamma feature not available/writable.")
+            except Exception as exc:  # noqa: BLE001 - Gamma is optional and must not prevent startup.
+                logger.info("Gamma feature not available/writable: %s", exc)
 
             self._set_pixel_format()
 
@@ -467,8 +476,8 @@ class VimbaCam(QObject):
         try:
             self.settings.is_auto_exposure_on = self.device.get_feature_by_name("ExposureAuto").get() != "Off"
             self.settings.is_auto_gain_on = self.device.get_feature_by_name("GainAuto").get() != "Off"
-        except VmbCameraError:
-            pass  # Features may not exist
+        except Exception as exc:  # noqa: BLE001 - Auto selectors are optional across devices.
+            logger.debug("Could not read auto selector state: %s", exc)
 
     # --- Feature Access Methods ---
 
@@ -513,11 +522,36 @@ class VimbaCam(QObject):
             with QMutexLocker(self.lock):
                 if not self.device:
                     return None
-                feat = self.device.get_feature_by_name(feature_name)
-                return feat.get_range() if feat.is_readable() else None
-        except VmbCameraError as e:
+                aliases = FEATURE_ALIASES.get(feature_name, (feature_name,))
+                cap = inspect_feature(self.device, aliases)
+                if cap.available and cap.readable and cap.minimum is not None and cap.maximum is not None:
+                    return cap.minimum, cap.maximum
+                return None
+        except Exception as e:  # noqa: BLE001 - GenICam features vary by camera/firmware.
             logger.warning(f"Could not get range for '{feature_name}': {e}")
             return None
+
+    def get_feature_capability(self, feature_name: str):
+        """Return the refreshed feature descriptor, if a camera is open."""
+        if not self.device:
+            return None
+        try:
+            with QMutexLocker(self.lock):
+                return inspect_feature(self.device, FEATURE_ALIASES.get(feature_name, (feature_name,)))
+        except Exception as exc:  # noqa: BLE001 - this is an optional capability query.
+            logger.debug("Could not inspect feature %s: %s", feature_name, exc)
+            return None
+
+    def is_feature_writable(self, feature_name: str) -> bool:
+        if not self.device:
+            return False
+        try:
+            with QMutexLocker(self.lock):
+                cap = inspect_feature(self.device, FEATURE_ALIASES.get(feature_name, (feature_name,)))
+                return cap.available and cap.writable
+        except Exception as exc:  # noqa: BLE001 - capability queries are best-effort.
+            logger.debug("Could not inspect writability for %s: %s", feature_name, exc)
+            return False
 
     def _get_feature_value(self, feature_name: str, cache_attr: str, default: Any) -> Any:
         """Generic private helper to get a feature's value and update the cache."""
@@ -530,15 +564,146 @@ class VimbaCam(QObject):
                 val = self.device.get_feature_by_name(feature_name).get()
                 setattr(self.settings, cache_attr, val)
                 return val
-        except VmbCameraError as e:
+        except Exception as e:  # noqa: BLE001 - GenICam missing/unreadable errors are SDK-specific.
             logger.warning(f"Error getting feature '{feature_name}': {e}")
             return getattr(self.settings, cache_attr, default)
 
     def get_exposure(self) -> float:
-        return self._get_feature_value("ExposureTimeAbs", "exposure_us", 10000.0)
+        return self._get_feature_alias_value(FEATURE_ALIASES["exposure"], "exposure_us", 10000.0)
 
     def get_gain(self) -> float:
-        return self._get_feature_value("Gain", "gain_db", 0.0)
+        return self._get_feature_alias_value(FEATURE_ALIASES["gain"], "gain_db", 0.0)
+
+    def _get_feature_alias_value(self, aliases: tuple[str, ...], cache_attr: str, default: Any) -> Any:
+        if not self.device:
+            return getattr(self.settings, cache_attr, default)
+        try:
+            with QMutexLocker(self.lock):
+                if not self.device:
+                    return getattr(self.settings, cache_attr, default)
+                cap = inspect_feature(self.device, aliases)
+                if cap.readable:
+                    setattr(self.settings, cache_attr, cap.value)
+                    return cap.value
+        except Exception as exc:  # noqa: BLE001 - optional feature failures are non-fatal.
+            logger.warning("Could not read camera feature %s: %s", aliases[0], exc)
+        return getattr(self.settings, cache_attr, default)
+
+    def get_capabilities(self) -> dict[str, Any] | None:
+        """Return a best-effort capability report for an open camera."""
+        if not self.device:
+            return None
+        try:
+            with QMutexLocker(self.lock):
+                return inspect_camera(self.device) if self.device else None
+        except Exception as exc:  # noqa: BLE001 - diagnostics must not break streaming.
+            logger.warning("Could not inspect camera capabilities: %s", exc)
+            return None
+
+    def get_roi(self):
+        if not self.device:
+            return None
+        try:
+            with QMutexLocker(self.lock):
+                return read_roi(self.device) if self.device else None
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not read camera ROI: %s", exc)
+            return None
+
+    def set_roi(self, roi) -> bool:
+        """Apply an explicitly requested ROI, restoring the original on failure."""
+        if not self.device or self.is_streaming:
+            logger.warning("ROI changes require an open, stopped camera")
+            return False
+        try:
+            with QMutexLocker(self.lock):
+                apply_roi(self.device, roi)
+            return True
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Could not set camera ROI: %s", exc)
+            self.error.emit(f"ROI error: {exc}")
+            return False
+
+    def get_frame_rate_capability(self) -> dict[str, Any] | None:
+        """Refresh the frame-rate feature/range from the current ROI state."""
+        if not self.device:
+            return None
+        try:
+            with QMutexLocker(self.lock):
+                if not self.device:
+                    return None
+                rate = inspect_feature(self.device, FEATURE_ALIASES["frame_rate"])
+                enabled = inspect_feature(self.device, FEATURE_ALIASES["frame_rate_enable"])
+                return {
+                    "feature": rate,
+                    "enable_feature": enabled,
+                    "enable_required": (enabled.value is False if enabled.readable else None),
+                }
+        except Exception as exc:  # noqa: BLE001 - optional feature query cannot break acquisition.
+            logger.warning("Could not inspect frame-rate capability: %s", exc)
+            return None
+
+    def set_frame_rate(self, value_fps: float) -> bool:
+        """Set an explicitly requested, freshly range-checked frame rate.
+
+        This never runs during startup. Camera XML ranges are re-queried on each
+        call because ROI changes can alter the legal maximum.
+        """
+
+        if self.is_streaming:
+            logger.warning("Frame-rate changes require a stopped camera")
+            return False
+
+        def action():
+            cap = inspect_feature(self.device, FEATURE_ALIASES["frame_rate"])
+            if not cap.available or not cap.writable or cap.minimum is None or cap.maximum is None:
+                raise ValueError("Acquisition frame-rate feature is unavailable or read-only")
+            value = float(value_fps)
+            if not cap.minimum <= value <= cap.maximum:
+                raise ValueError(f"Requested frame rate {value:g} is outside [{cap.minimum}, {cap.maximum}]")
+            if cap.increment:
+                steps = (value - cap.minimum) / cap.increment
+                if abs(steps - round(steps)) > 1e-5:
+                    raise ValueError(f"Requested frame rate does not match increment {cap.increment}")
+            _, rate_feature = find_feature(self.device, FEATURE_ALIASES["frame_rate"])
+            original_rate = cap.value
+            enable_cap = inspect_feature(self.device, FEATURE_ALIASES["frame_rate_enable"])
+            changed_enable = enable_cap.available and enable_cap.value is False
+            enable_feature = None
+            rate_write_attempted = False
+            try:
+                if changed_enable:
+                    _, enable_feature = find_feature(self.device, FEATURE_ALIASES["frame_rate_enable"])
+                    if not enable_cap.writable or enable_feature is None:
+                        raise ValueError("Explicit frame-rate control is disabled and cannot be enabled")
+                    enable_feature.set(True)
+                    # Refresh range after enabling, just as after an ROI change.
+                    cap = inspect_feature(self.device, FEATURE_ALIASES["frame_rate"])
+                    if cap.minimum is not None and cap.maximum is not None and not cap.minimum <= value <= cap.maximum:
+                        raise ValueError(
+                            f"Requested frame rate {value:g} is outside refreshed range [{cap.minimum}, {cap.maximum}]"
+                        )
+                if rate_feature is None:
+                    raise ValueError("Acquisition frame-rate feature disappeared")
+                rate_write_attempted = True
+                rate_feature.set(value)
+                actual = rate_feature.get()
+                if not np.isclose(float(actual), value, rtol=1e-5, atol=1e-5):
+                    raise ValueError(f"Camera accepted frame rate {actual}, not {value}")
+            except Exception:
+                if rate_write_attempted and rate_feature is not None and original_rate is not None:
+                    try:
+                        rate_feature.set(original_rate)
+                    except Exception as restore_error:  # noqa: BLE001 - log a failed rollback explicitly.
+                        logger.error("Could not restore previous frame rate: %s", restore_error)
+                if changed_enable and enable_feature is not None:
+                    try:
+                        enable_feature.set(False)
+                    except Exception as restore_error:  # noqa: BLE001 - retain original failure, log rollback failure.
+                        logger.error("Could not restore frame-rate enable state: %s", restore_error)
+                raise
+
+        return self._set_feature(action, "AcquisitionFrameRate")
 
     def get_gamma(self) -> float:
         return self._get_feature_value("Gamma", "gamma", 1.0)
@@ -568,7 +733,9 @@ class VimbaCam(QObject):
     def set_exposure(self, value_us: float) -> bool:
         def action():
             self.device.get_feature_by_name("ExposureAuto").set("Off")
-            feat = self.device.get_feature_by_name("ExposureTimeAbs")
+            _, feat = find_feature(self.device, FEATURE_ALIASES["exposure"])
+            if feat is None:
+                raise VmbCameraError("Exposure feature is unavailable")
             min_val, max_val = feat.get_range()
             set_val = max(min_val, min(max_val, value_us))
             feat.set(set_val)
@@ -580,11 +747,20 @@ class VimbaCam(QObject):
     def set_gain(self, value_db: float) -> bool:
         def action():
             self.device.get_feature_by_name("GainAuto").set("Off")
-            feat = self.device.get_feature_by_name("Gain")
+            _, feat = find_feature(self.device, FEATURE_ALIASES["gain"])
+            if feat is None:
+                raise VmbCameraError("Gain feature is unavailable")
             min_val, max_val = feat.get_range()
             set_val = max(min_val, min(max_val, value_db))
+            try:
+                increment = feat.get_increment()
+            except Exception:  # noqa: BLE001 - not all GenICam feature types expose increments.
+                increment = None
+            if increment:
+                set_val = min_val + round((set_val - min_val) / increment) * increment
+                set_val = max(min_val, min(max_val, set_val))
             feat.set(set_val)
-            self.settings.gain_db = set_val
+            self.settings.gain_db = feat.get()
             self.settings.is_auto_gain_on = False
 
         return self._set_feature(action, "Gain")

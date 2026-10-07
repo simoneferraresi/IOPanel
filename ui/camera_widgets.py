@@ -240,6 +240,10 @@ class ParameterControl(QWidget):
 
         self._init_ui()
         self._connect_signals()
+        self._feedback_timer = QTimer(self)
+        self._feedback_timer.setSingleShot(True)
+        self._feedback_timer.timeout.connect(self._restore_feedback_style)
+        self._feedback_original_style = ""
         self.setValue(initial_val, emit_signal=False)
 
     def _init_ui(self):
@@ -358,10 +362,13 @@ class ParameterControl(QWidget):
 
     def visual_feedback(self, success: bool = True, duration_ms: int = 400):
         """Provides brief visual feedback on the line edit widget."""
-        original_style = self.edit.styleSheet()
+        self._feedback_original_style = self.edit.styleSheet()
         color = "#e0ffe0" if success else "#ffe0e0"  # Light green/red
         self.edit.setStyleSheet(f"background-color: {color};")
-        QTimer.singleShot(duration_ms, lambda: self.edit.setStyleSheet(original_style))
+        self._feedback_timer.start(duration_ms)
+
+    def _restore_feedback_style(self):
+        self.edit.setStyleSheet(self._feedback_original_style)
 
 
 class AspectLockedLabel(QLabel):
@@ -759,6 +766,16 @@ class CameraPanel(QFrame):
         if gamma_range:
             self.gamma_control.min_val, self.gamma_control.max_val = gamma_range
 
+        gain_range = self.camera.get_feature_range("gain")
+        self.gain_control.setEnabled(gain_range is not None and self._gain_is_writable())
+        if gain_range:
+            self.gain_control.min_val, self.gain_control.max_val = gain_range
+            self.gain_control.setValue(self.camera.get_gain())
+
+    def _gain_is_writable(self) -> bool:
+        checker = getattr(self.camera, "is_feature_writable", None)
+        return bool(checker("gain")) if callable(checker) else True
+
     def _init_ui(self):
         """Initializes the UI, using defaults if camera is not yet available."""
         self.controls_container = QWidget()
@@ -784,6 +801,31 @@ class CameraPanel(QFrame):
         self.gamma_control.valueChanged.connect(lambda val: self._handle_parameter_changed("gamma", val))
         controls_grid.addWidget(self.gamma_control, 0, 0, 1, 3)
 
+        gain_min_db, gain_max_db = 0.0, 30.0
+        if self.camera:
+            gain_range = self.camera.get_feature_range("gain")
+            if gain_range:
+                gain_min_db, gain_max_db = gain_range
+        gain_capability_getter = getattr(self.camera, "get_feature_capability", None)
+        gain_capability = gain_capability_getter("gain") if callable(gain_capability_getter) else None
+        gain_unit = getattr(gain_capability, "unit", None)
+        if not gain_unit and getattr(gain_capability, "name", None) == "GainRaw":
+            gain_unit = "raw"
+        gain_label = f"Gain ({gain_unit})" if gain_unit else "Gain"
+        self.gain_control = ParameterControl(
+            name=gain_label,
+            min_val=gain_min_db,
+            max_val=gain_max_db,
+            initial_val=self.camera.get_gain() if self.camera else 0.0,
+            scale="linear",
+            decimals=2,
+        )
+        self.gain_control.valueChanged.connect(lambda val: self._handle_parameter_changed("gain", val))
+        controls_grid.addWidget(self.gain_control, 1, 0, 1, 3)
+        self.gain_control.setEnabled(
+            bool(self.camera and self.camera.get_feature_range("gain") and self._gain_is_writable())
+        )
+
         # --- REVISED LOGIC FOR EXPOSURE ---
         exposure_min_us, exposure_max_us = 12.0, 8.45e7
         if self.camera:
@@ -802,7 +844,7 @@ class CameraPanel(QFrame):
             decimals=0,
         )
         self.exposure_control.valueChanged.connect(lambda val: self._handle_parameter_changed("exposure", val))
-        controls_grid.addWidget(self.exposure_control, 1, 0, 1, 3)
+        controls_grid.addWidget(self.exposure_control, 2, 0, 1, 3)
 
         auto_btn_layout = QHBoxLayout()
         self.exposure_btn = QPushButton("Auto Exposure")
@@ -837,7 +879,7 @@ class CameraPanel(QFrame):
 
         auto_btn_layout.addWidget(self.screenshot_btn)
 
-        controls_grid.addLayout(auto_btn_layout, 2, 0, 1, 3)
+        controls_grid.addLayout(auto_btn_layout, 3, 0, 1, 3)
         controls_grid.setColumnStretch(1, 1)
 
         self.exposure_btn.clicked.connect(lambda: self._start_auto_op(OP_AUTO_EXPOSURE))
@@ -867,6 +909,12 @@ class CameraPanel(QFrame):
 
                 def reverted_value_getter():
                     return self.camera.exposure_us
+            case "gain":
+                success = self.camera.set_gain(value)
+                control_widget = self.gain_control
+
+                def reverted_value_getter():
+                    return self.camera.get_gain()
             case _:
                 logger.warning(f"Unhandled parameter change: {name}")
                 return
@@ -1018,6 +1066,7 @@ class CameraPanel(QFrame):
             self.exposure_status.setStyleSheet("color: green; font-weight: bold;")
             QTimer.singleShot(2500, lambda: self.clear_status_indicators("exposure"))
         elif op_type == "auto_gain":
+            self.gain_control.setValue(result_value)
             self.gain_status.setText("✓")
             self.gain_status.setStyleSheet("color: green; font-weight: bold;")
             QTimer.singleShot(2500, lambda: self.clear_status_indicators("gain"))
@@ -1036,6 +1085,7 @@ class CameraPanel(QFrame):
         elif op_type == "auto_gain":
             self.gain_status.setText("✗")
             self.gain_status.setStyleSheet("color: red; font-weight: bold;")
+            self.gain_control.setValue(self.camera.get_gain())
             QTimer.singleShot(3500, lambda: self.clear_status_indicators("gain"))
 
     def clear_status_indicators(self, control: str | None = None):
