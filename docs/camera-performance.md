@@ -21,6 +21,31 @@ frame IDs should be used for acquisition pacing; GUI FPS is a display metric.
 Screenshots preserve the full acquired ROI at native resolution and omit the
 preview FPS overlay.
 
+### Camera display pipeline characterization
+
+The standalone `tools/camera_display_characterize.py` diagnostic measures
+camera acquisition FPS, conversion throughput, presentation-call FPS, and Qt
+paint-event FPS as separate stages. A Qt paint event is not a measurement of
+physical monitor refresh timing. Latest-frame coalescing is intentional: the
+GUI presents recent images instead of requiring every acquired frame to appear
+on screen. The diagnostic reports event-loop heartbeat timings and process CPU
+time divided by wall time; the latter is not a machine-wide profiler.
+
+The tool requires one explicit physical camera ID and an operator-visible
+window. ROI and maximum frame-rate requests change camera settings and require
+`--authorize-settings-changes`; originals are read back, restored after the
+run, and independently checked. This diagnostic does not alter normal
+application display behavior.
+
+```powershell
+uv run python tools/camera_display_characterize.py --camera-id <CAMERA_ID> `
+  --window-size 960x720 --duration 30 --output display-characterization.json
+
+uv run python tools/camera_display_characterize.py --camera-id <CAMERA_ID> `
+  --roi 1292x480 --maximize-frame-rate-for-roi `
+  --authorize-settings-changes --duration 30 --output display-roi.json
+```
+
 ## Exposure and gain
 
 Longer exposure collects more light but can increase motion blur and reduce the
