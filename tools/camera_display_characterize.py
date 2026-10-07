@@ -1,8 +1,9 @@
 """Measure the real IOPanel camera conversion and Qt presentation pipeline.
 
 This operator-supervised diagnostic requires one explicit physical camera ID.
-It never initializes lab motion/control hardware and does not change camera
-settings unless an authorized ROI operation was requested.
+It uses the normal VimbaCam startup path, snapshots features that path may
+change, and restores them after the measurement. It never initializes lab
+motion/control hardware.
 """
 
 from __future__ import annotations
@@ -74,11 +75,16 @@ def coalescing_fraction(coalesced: int, submitted: int) -> float:
 
 
 class InstrumentedCameraPanel(CameraPanel):
-    """Count production presentation calls without changing their behavior."""
+    """Count accepted images and production presentation calls."""
 
     def __init__(self, *args: Any, **kwargs: Any):
         self.presentation_timestamps: list[float] = []
+        self.accepted_image_timestamps: list[float] = []
         super().__init__(*args, **kwargs)
+
+    def _accept_converted_image(self, q_img):
+        self.accepted_image_timestamps.append(time.monotonic())
+        super()._accept_converted_image(q_img)
 
     def _display_converted_image(self, q_img):
         self.presentation_timestamps.append(time.monotonic())
@@ -143,7 +149,7 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
 
 
 def _set_feature(camera: Any, logical: str, value: Any) -> Any:
-    name, feature = find_feature(camera, FEATURE_ALIASES[logical])
+    name, feature = find_feature(camera, _aliases(logical))
     if feature is None or not feature.is_writeable():
         raise RuntimeError(f"Feature {logical} is not writable")
     feature.set(value)
@@ -167,61 +173,209 @@ def _centered_roi(camera: Any, size: tuple[int, int], original: ROI) -> ROI:
     )
 
 
-def _snapshot_settings(camera: Any) -> dict[str, Any]:
-    rate = inspect_feature(camera, FEATURE_ALIASES["frame_rate"])
-    enable = inspect_feature(camera, FEATURE_ALIASES["frame_rate_enable"])
-    if rate.available and rate.readable and rate.value is not None:
-        try:
-            rate_value = float(rate.value)
-        except (TypeError, ValueError):
-            rate_value = None
-    else:
-        rate_value = None
-    return {
-        "roi": read_roi(camera),
-        "frame_rate": rate_value,
-        "frame_rate_enable": enable.value if enable.available and enable.readable else None,
-        "frame_rate_enable_available": enable.available,
+PRODUCTION_OPEN_FEATURES = (
+    "acquisition_mode",
+    "trigger_mode",
+    "exposure_auto",
+    "gain_auto",
+    "gamma",
+    "pixel_format",
+)
+
+DIAGNOSTIC_FEATURE_ALIASES = {**FEATURE_ALIASES, "gamma": ("Gamma",)}
+
+
+def _aliases(logical: str) -> tuple[str, ...]:
+    return DIAGNOSTIC_FEATURE_ALIASES.get(logical, (logical,))
+
+
+def _feature_snapshot(camera: Any, logical: str) -> dict[str, Any]:
+    capability = inspect_feature(camera, _aliases(logical))
+    entry: dict[str, Any] = {
+        "available": capability.available,
+        "readable": capability.available and capability.readable,
+        "value": None,
     }
+    if not entry["readable"]:
+        return entry
+    value = capability.value
+    if logical in ("frame_rate", "gamma"):
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            entry["readable"] = False
+            return entry
+    else:
+        # Store semantic GenICam values (for example, "Off" or "Mono8"), not
+        # native enum wrapper instances tied to the configuration handle.
+        value = report_value(value)
+    entry["value"] = value
+    return entry
+
+
+def _snapshot_settings(camera: Any) -> dict[str, Any]:
+    result: dict[str, Any] = {"roi": read_roi(camera)}
+    for logical in ("frame_rate", "frame_rate_enable", *PRODUCTION_OPEN_FEATURES):
+        result[logical] = _feature_snapshot(camera, logical)
+    return result
 
 
 def _restore_settings(camera: Any, snapshot: dict[str, Any], changed_rate: bool) -> dict[str, Any]:
+    """Restore all captured settings independently and verify each by readback.
+
+    Restore pixel format before ROI because the format can affect legal geometry
+    and rate ranges. If the requested run changed frame rate, first lower it to
+    a value legal in the current configuration; after restoring format and ROI,
+    apply the exact saved rate. Independent startup selectors and gamma follow.
+    The original frame-rate enable state is restored last.
+    """
     errors: list[str] = []
-    rate_ok = not changed_rate
-    enable_ok = snapshot["frame_rate_enable"] is None
-    roi_ok = False
-    try:
-        if snapshot["frame_rate_enable_available"]:
-            current = inspect_feature(camera, FEATURE_ALIASES["frame_rate_enable"])
-            if report_value(current.value) is not True:
+    unavailable: list[str] = []
+    fields: dict[str, bool | None] = {"roi_confirmed": False}
+
+    def attempt(label: str, operation) -> None:
+        try:
+            operation()
+        except Exception as exc:  # noqa: BLE001 - keep attempting later restores
+            errors.append(f"{label}: {exc}")
+
+    def captured(logical: str) -> Any | None:
+        value = snapshot.get(logical)
+        if not isinstance(value, dict) or not value.get("available") or not value.get("readable"):
+            unavailable.append(logical)
+            return None
+        return value["value"]
+
+    saved_rate = captured("frame_rate")
+    saved_enable = captured("frame_rate_enable")
+    saved_pixel_format = captured("pixel_format")
+
+    if changed_rate and saved_enable is not None:
+
+        def enable_rate_control() -> None:
+            cap = inspect_feature(camera, FEATURE_ALIASES["frame_rate_enable"])
+            if not cap.available or not cap.readable:
+                raise RuntimeError("frame-rate enable readback unavailable")
+            if report_value(cap.value) is not True:
                 _set_feature(camera, "frame_rate_enable", True)
-        # Put rate in the current ROI's legal range before restoring the ROI.
-        if changed_rate and snapshot["frame_rate"] is not None:
+            verified = inspect_feature(camera, FEATURE_ALIASES["frame_rate_enable"])
+            if not verified.readable or report_value(verified.value) is not True:
+                raise RuntimeError("frame-rate control did not enable")
+
+        attempt("enable frame-rate control for restoration", enable_rate_control)
+
+    if changed_rate and saved_rate is not None:
+
+        def set_safe_rate() -> None:
             cap = inspect_feature(camera, FEATURE_ALIASES["frame_rate"])
-            safe_rate = min(max(snapshot["frame_rate"], float(cap.minimum)), float(cap.maximum))
-            _set_feature(camera, "frame_rate", safe_rate)
+            if not cap.available or not cap.writable or cap.minimum is None or cap.maximum is None:
+                raise RuntimeError("current frame-rate range is unavailable")
+            minimum = float(cap.minimum)
+            safe_rate = min(max(float(saved_rate), minimum), float(cap.maximum))
+            increment = float(cap.increment or 0)
+            if increment > 0:
+                safe_rate = minimum + np.floor((safe_rate - minimum) / increment) * increment
+            current = cap.value
+            if current is None or not np.isclose(float(current), safe_rate, rtol=1e-6, atol=1e-6):
+                _set_feature(camera, "frame_rate", safe_rate)
+            verified = inspect_feature(camera, FEATURE_ALIASES["frame_rate"])
+            if not verified.readable or not np.isclose(float(verified.value), safe_rate, rtol=1e-6, atol=1e-6):
+                raise RuntimeError("safe intermediate frame-rate readback mismatch")
+
+        attempt("safe frame-rate before restoring format/ROI", set_safe_rate)
+
+    def restore_feature(logical: str, saved: Any) -> None:
+        cap = inspect_feature(camera, _aliases(logical))
+        if not cap.available or not cap.readable:
+            raise RuntimeError("feature is unavailable or unreadable during restoration")
+        current = report_value(cap.value)
+        if logical in ("gamma", "frame_rate"):
+            equal = bool(np.isclose(float(cap.value), float(saved), rtol=1e-6, atol=1e-6))
+        else:
+            equal = current == report_value(saved)
+        if not equal:
+            _set_feature(camera, logical, saved)
+        verified = inspect_feature(camera, _aliases(logical))
+        if not verified.readable:
+            raise RuntimeError("readback unavailable after restoration")
+        if logical in ("gamma", "frame_rate"):
+            confirmed = bool(np.isclose(float(verified.value), float(saved), rtol=1e-6, atol=1e-6))
+        else:
+            confirmed = report_value(verified.value) == report_value(saved)
+        if not confirmed:
+            raise RuntimeError(
+                f"readback {report_value(verified.value)!r} does not match saved {report_value(saved)!r}"
+            )
+
+    def restore_roi() -> None:
         if read_roi(camera) != snapshot["roi"]:
             apply_roi(camera, snapshot["roi"])
-        roi_ok = read_roi(camera) == snapshot["roi"]
-        if changed_rate and snapshot["frame_rate"] is not None:
-            _set_feature(camera, "frame_rate", snapshot["frame_rate"])
-            actual = inspect_feature(camera, FEATURE_ALIASES["frame_rate"]).value
-            rate_ok = bool(np.isclose(float(actual), snapshot["frame_rate"], rtol=1e-6, atol=1e-6))
-        if snapshot["frame_rate_enable"] is not None:
-            current = inspect_feature(camera, FEATURE_ALIASES["frame_rate_enable"])
-            if report_value(current.value) != report_value(snapshot["frame_rate_enable"]):
-                _set_feature(camera, "frame_rate_enable", snapshot["frame_rate_enable"])
-            enable_ok = report_value(
-                inspect_feature(camera, FEATURE_ALIASES["frame_rate_enable"]).value
-            ) == report_value(snapshot["frame_rate_enable"])
-    except Exception as exc:  # noqa: BLE001 - preserve restoration failure distinctly
-        errors.append(str(exc))
-    return {
-        "roi_confirmed": roi_ok,
-        "frame_rate_confirmed": rate_ok,
-        "frame_rate_enable_confirmed": enable_ok,
-        "errors": errors,
-    }
+        if read_roi(camera) != snapshot["roi"]:
+            raise RuntimeError("ROI readback did not match saved ROI")
+
+    if saved_pixel_format is not None:
+        attempt("pixel format restoration", lambda: restore_feature("pixel_format", saved_pixel_format))
+    attempt("ROI restoration", restore_roi)
+
+    if saved_rate is not None:
+        if changed_rate:
+            attempt("exact frame-rate restoration", lambda: restore_feature("frame_rate", saved_rate))
+        else:
+            # VimbaCam startup does not touch frame rate; confirm its unchanged value.
+            attempt("frame-rate verification", lambda: restore_feature("frame_rate", saved_rate))
+    for logical in PRODUCTION_OPEN_FEATURES:
+        if logical == "pixel_format":
+            continue
+        saved = captured(logical)
+        flag = f"{logical}_confirmed"
+        if saved is None:
+            fields[flag] = None
+            continue
+        before_errors = len(errors)
+        attempt(f"{logical} restoration", lambda logical=logical, saved=saved: restore_feature(logical, saved))
+        fields[flag] = len(errors) == before_errors
+
+    if saved_enable is not None:
+        # A saved disabled state must not block the exact rate write; restore it last.
+        attempt("frame-rate enable restoration", lambda: restore_feature("frame_rate_enable", saved_enable))
+
+    # Independent final readbacks make confirmations describe the final state,
+    # including when an earlier operation reported a write or readback error.
+    fields["roi_confirmed"] = False
+    attempt("final ROI verification", lambda: fields.__setitem__("roi_confirmed", read_roi(camera) == snapshot["roi"]))
+    for logical, field in (
+        ("frame_rate", "frame_rate_confirmed"),
+        ("frame_rate_enable", "frame_rate_enable_confirmed"),
+        ("pixel_format", "pixel_format_confirmed"),
+        ("acquisition_mode", "acquisition_mode_confirmed"),
+        ("trigger_mode", "trigger_mode_confirmed"),
+        ("exposure_auto", "exposure_auto_confirmed"),
+        ("gain_auto", "gain_auto_confirmed"),
+        ("gamma", "gamma_confirmed"),
+    ):
+        saved = snapshot.get(logical)
+        if not isinstance(saved, dict) or not saved.get("available") or not saved.get("readable"):
+            fields[field] = None
+            continue
+        before_errors = len(errors)
+        attempt(
+            f"final {logical} verification",
+            lambda logical=logical, value=saved["value"]: verify_feature(camera, logical, value),
+        )
+        fields[field] = len(errors) == before_errors
+    return {**fields, "unavailable_features": sorted(set(unavailable)), "errors": errors}
+
+
+def verify_feature(camera: Any, logical: str, saved: Any) -> None:
+    cap = inspect_feature(camera, _aliases(logical))
+    if not cap.available or not cap.readable:
+        raise RuntimeError("readback unavailable")
+    if logical in ("gamma", "frame_rate"):
+        matches = bool(np.isclose(float(cap.value), float(saved), rtol=1e-6, atol=1e-6))
+    else:
+        matches = report_value(cap.value) == report_value(saved)
+    if not matches:
+        raise RuntimeError(f"readback {report_value(cap.value)!r} does not match saved {report_value(saved)!r}")
 
 
 def _collect_metrics(
@@ -247,7 +401,7 @@ def _collect_metrics(
             "fps_samples": fps_samples,
             "mean_fps": statistics.fmean(fps_samples) if fps_samples else 0.0,
             "median_fps": statistics.median(fps_samples) if fps_samples else 0.0,
-            "submitted_frame_count": len(acquisition),
+            "camera_frame_signals": len(acquisition),
             "camera_acquisition_fps": rate_fps(acquisition),
         },
         "conversion": {
@@ -263,8 +417,22 @@ def _collect_metrics(
             "max_pending_frames_at_most_one": (worker.max_pending_frames <= 1) if worker else True,
         },
         "presentation": {
-            "accepted_available_count": len(presentation),
+            "accepted_images": counter_delta(
+                before["accepted_images"],
+                len(panel.accepted_image_timestamps)
+                if isinstance(panel, InstrumentedCameraPanel)
+                else before["accepted_images"],
+            ),
             "coalesced_images": counter_delta(before["coalesced_images"], panel.coalesced_images),
+            "presentation_coalescing_fraction": coalescing_fraction(
+                counter_delta(before["coalesced_images"], panel.coalesced_images),
+                counter_delta(
+                    before["accepted_images"],
+                    len(panel.accepted_image_timestamps)
+                    if isinstance(panel, InstrumentedCameraPanel)
+                    else before["accepted_images"],
+                ),
+            ),
             "presentation_calls": len(presentation),
             "presentation_call_fps": rate_fps(presentation),
             "max_pending_images": panel.max_pending_images,
@@ -304,9 +472,16 @@ def main(argv: list[str] | None = None) -> int:
     system_exited = False
     snapshot = None
     restoration = {
-        "roi_confirmed": True,
-        "frame_rate_confirmed": True,
-        "frame_rate_enable_confirmed": True,
+        "roi_confirmed": None,
+        "frame_rate_confirmed": None,
+        "frame_rate_enable_confirmed": None,
+        "acquisition_mode_confirmed": None,
+        "trigger_mode_confirmed": None,
+        "exposure_auto_confirmed": None,
+        "gain_auto_confirmed": None,
+        "gamma_confirmed": None,
+        "pixel_format_confirmed": None,
+        "unavailable_features": [],
         "errors": [],
     }
     changed_rate = False
@@ -398,6 +573,7 @@ def main(argv: list[str] | None = None) -> int:
             "converted": worker.converted_frames,
             "coalesced": worker.coalesced_frames,
             "coalesced_images": panel.coalesced_images,
+            "accepted_images": len(panel.accepted_image_timestamps),
         }
         acquisition_counter = AcquisitionCounter()
         camera.new_frame.connect(acquisition_counter.record, Qt.ConnectionType.DirectConnection)
@@ -438,12 +614,16 @@ def main(argv: list[str] | None = None) -> int:
                 else:
                     panel.close()
                     thread_stopped = True
+                if not thread_stopped:
+                    result.setdefault("cleanup_errors", []).append("CameraPanel conversion thread did not stop")
             except Exception as exc:  # noqa: BLE001 - finish remaining cleanup steps
                 result.setdefault("cleanup_errors", []).append(f"CameraPanel: {exc}")
         if camera is not None:
             try:
                 camera.close()
                 camera_closed = camera.device is None and not camera.is_streaming
+                if not camera_closed:
+                    result.setdefault("cleanup_errors", []).append("VimbaCam remained open after close")
             except Exception as exc:  # noqa: BLE001 - finish remaining cleanup steps
                 result.setdefault("cleanup_errors", []).append(f"VimbaCam: {exc}")
         if config_camera is not None:
@@ -461,12 +641,7 @@ def main(argv: list[str] | None = None) -> int:
                 finally:
                     restored.__exit__(None, None, None)
             except Exception as exc:  # noqa: BLE001 - report restoration failure distinctly
-                restoration = {
-                    "roi_confirmed": False,
-                    "frame_rate_confirmed": False,
-                    "frame_rate_enable_confirmed": False,
-                    "errors": [f"restoration handle: {exc}"],
-                }
+                restoration = restoration_failure(f"restoration handle: {exc}")
             result["restoration"] = restoration
         if system_entered:
             try:
@@ -482,7 +657,41 @@ def main(argv: list[str] | None = None) -> int:
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(json.dumps(result, indent=2, default=report_value), encoding="utf-8")
-    return 0 if result.get("measurement_error") is None and not restoration.get("errors") else 1
+    return diagnostic_exit_status(result)
+
+
+def diagnostic_exit_status(result: dict[str, Any]) -> int:
+    """Return success only when measurement, restoration, and cleanup all passed."""
+    cleanup = result.get("cleanup", {})
+    return (
+        0
+        if (
+            result.get("measurement_error") is None
+            and not result.get("restoration", {}).get("errors")
+            and not result.get("cleanup_errors")
+            and cleanup.get("camera_closed") is True
+            and cleanup.get("conversion_thread_stopped") is True
+            and cleanup.get("VmbSystem_exited") is True
+        )
+        else 1
+    )
+
+
+def restoration_failure(message: str) -> dict[str, Any]:
+    """Build a complete report when the restoration camera cannot be opened."""
+    return {
+        "roi_confirmed": False,
+        "frame_rate_confirmed": False,
+        "frame_rate_enable_confirmed": False,
+        "acquisition_mode_confirmed": False,
+        "trigger_mode_confirmed": False,
+        "exposure_auto_confirmed": False,
+        "gain_auto_confirmed": False,
+        "gamma_confirmed": False,
+        "pixel_format_confirmed": False,
+        "unavailable_features": [],
+        "errors": [message],
+    }
 
 
 def _git_sha() -> str | None:

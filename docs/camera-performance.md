@@ -28,14 +28,30 @@ camera acquisition FPS, conversion throughput, presentation-call FPS, and Qt
 paint-event FPS as separate stages. A Qt paint event is not a measurement of
 physical monitor refresh timing. Latest-frame coalescing is intentional: the
 GUI presents recent images instead of requiring every acquired frame to appear
-on screen. The diagnostic reports event-loop heartbeat timings and process CPU
-time divided by wall time; the latter is not a machine-wide profiler.
+on screen. It also counts conversion-worker submissions and completions,
+converted images accepted by CameraPanel, GUI-mailbox coalescing, and
+presentation calls independently; these counts can differ. The diagnostic
+reports event-loop heartbeat timings and process CPU time divided by wall time;
+the latter is not a machine-wide profiler.
 
 The tool requires one explicit physical camera ID and an operator-visible
-window. ROI and maximum frame-rate requests change camera settings and require
-`--authorize-settings-changes`; originals are read back, restored after the
-run, and independently checked. This diagnostic does not alter normal
-application display behavior.
+window. It deliberately uses the real `VimbaCam.open()` path, which applies
+IOPanel's standard startup configuration (acquisition/trigger and auto
+selectors, gamma, and preferred pixel format). Before opening that path, the
+diagnostic snapshots each readable affected feature, ROI, and frame-rate
+settings; after closing the stream it restores and independently reads them
+back. Manual Gain and Exposure values are not written. Restoration proceeds
+best-effort in dependency order: make the current frame rate legal if it was
+changed, restore pixel format, restore ROI, restore the exact original frame
+rate, restore independent startup selectors and gamma, then restore the
+original frame-rate enable state. Each failure is reported while later
+restoration steps continue.
+
+ROI and maximum frame-rate requests change camera settings and require
+`--authorize-settings-changes`. A nonzero exit status indicates a measurement,
+restoration, or cleanup failure. The diagnostic performs no CT400, laser,
+piezo, or NIC operations and does not alter normal application display
+behavior.
 
 ```powershell
 uv run python tools/camera_display_characterize.py --camera-id <CAMERA_ID> `
