@@ -1,4 +1,7 @@
+import threading
+
 import numpy as np
+from PySide6.QtCore import QThread
 from PySide6.QtTest import QSignalSpy
 from PySide6.QtWidgets import QApplication
 
@@ -37,6 +40,35 @@ def test_camera_init_worker_explicitly_opens_simulator_without_vimba(qtbot, monk
     frame_thread = instance._frame_thread
     instance.close()
     assert frame_thread is not None and not frame_thread.is_alive()
+
+
+def test_physical_camera_open_stays_on_initialization_worker_thread(qtbot, monkeypatch):
+    monkeypatch.setattr(camera, "VIMBA_AVAILABLE", True)
+    open_started = threading.Event()
+    open_threads = []
+
+    def fake_open(_instance):
+        open_threads.append(QThread.currentThread())
+        open_started.set()
+        return False
+
+    monkeypatch.setattr(camera.VimbaCam, "open", fake_open)
+    config = CameraConfig(identifier="physical-test-id", name="Physical test")
+    worker = CameraInitWorker(config.identifier, config)
+    runner = TaskRunner(worker)
+    runner.start()
+
+    qtbot.waitUntil(open_started.is_set, timeout=1500)
+
+    def runner_stopped():
+        try:
+            return not runner.worker_thread.isRunning()
+        except RuntimeError:
+            return True
+
+    qtbot.waitUntil(runner_stopped, timeout=1500)
+
+    assert open_threads[0] != QApplication.instance().thread()
 
 
 def test_simulated_frames_reach_existing_panel_conversion_path(qtbot):

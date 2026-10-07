@@ -1,3 +1,5 @@
+import threading
+
 from PySide6.QtWidgets import QRadioButton, QToolButton
 
 from config_model import CameraConfig
@@ -97,3 +99,27 @@ def test_camera_capture_and_discovery_use_camera_and_refresh_actions(qtbot, monk
 
     dialog.close()
     camera.close()
+
+
+def test_camera_discovery_dialog_runs_camera_listing_off_gui_thread(qtbot, monkeypatch):
+    entered = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+
+    def delayed_list(**_kwargs):
+        entered.set()
+        release.wait(1)
+        finished.set()
+        return []
+
+    monkeypatch.setattr(discovery_dialog, "VIMBA_AVAILABLE", True)
+    monkeypatch.setattr(discovery_dialog.VimbaCam, "list_cameras", delayed_list)
+    dialog = CameraDiscoveryDialog()
+    qtbot.addWidget(dialog)
+
+    assert entered.wait(0.5)
+    qtbot.wait(25)
+    assert dialog.refresh_button.isEnabled() is False
+    dialog.close()
+    release.set()
+    assert finished.wait(0.5)

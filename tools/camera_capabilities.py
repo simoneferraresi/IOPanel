@@ -15,6 +15,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from hardware.camera_capabilities import inspect_camera
+from hardware.camera_discovery import DISCOVERY_TIMEOUT_SECONDS, CameraNotFoundError, wait_for_camera_by_id
 
 
 def _identity(camera: Any, method: str) -> Any:
@@ -38,7 +39,19 @@ def main() -> int:
         return 2
 
     with VmbSystem.get_instance() as system:
-        camera = system.get_camera_by_id(args.camera_id)
+        try:
+            camera = wait_for_camera_by_id(
+                system,
+                args.camera_id,
+                on_wait=lambda: print(
+                    f"Waiting for camera {args.camera_id} to become discoverable "
+                    f"(timeout {DISCOVERY_TIMEOUT_SECONDS:g} s)...",
+                    file=sys.stderr,
+                ),
+            )
+        except CameraNotFoundError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
         with camera:
             report = inspect_camera(camera)
             report["diagnostic_mode"] = "read-only"
