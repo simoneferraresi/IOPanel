@@ -2,10 +2,15 @@
 
 import argparse
 import json
+import sys
+import types
+from types import SimpleNamespace
 
 import pytest
 from PySide6.QtGui import QImage
+from PySide6.QtWidgets import QLabel, QWidget
 
+import tools.camera_display_characterize as diagnostic
 from config_model import CameraConfig
 from hardware.camera_capabilities import ROI, apply_roi
 from hardware.simulated_camera import SimulatedCamera
@@ -125,14 +130,17 @@ class FakeFeature:
         self.minimum = minimum
         self.maximum = maximum
         self.fail_restore = False
+        self.readable = True
 
     def is_readable(self):
-        return True
+        return self.readable
 
     def is_writeable(self):
         return True
 
     def get(self):
+        if not self.readable:
+            raise RuntimeError("feature is unreadable")
         return self.value
 
     def get_range(self):
@@ -146,6 +154,7 @@ class FakeFeature:
         return 1
 
     def set(self, value):
+        self.camera.operation_log.append((self.name, value))
         if self.fail_restore:
             self.fail_restore = False
             raise RuntimeError("injected Gamma write failure")
@@ -177,6 +186,8 @@ class FakeGenICamCamera:
     def __init__(self):
         self.rate_write_log = []
         self.illegal_rate_attempts = []
+        self.rate_range_heights = []
+        self.operation_log = []
         self.features = {}
         values = {
             "Width": (1292, 4, 1292),
@@ -202,10 +213,132 @@ class FakeGenICamCamera:
     def get_feature_by_name(self, name):
         return self.features[name]
 
+    def get_model(self):
+        return "Fake camera"
+
     def rate_maximum(self):
         pixel = self.features["PixelFormat"].get().get_name()
         height = self.features["Height"].get()
+        self.rate_range_heights.append(height)
         return 60.0 if pixel == "RGB8" and height < 964 else 120.0
+
+
+class FakeSignal:
+    def __init__(self):
+        self.slots = []
+
+    def connect(self, slot, *_args):
+        self.slots.append(slot)
+
+    def disconnect(self, slot):
+        self.slots.remove(slot)
+
+
+class FakeDiagnosticCamera:
+    def __init__(self, _identifier, camera_name=None):
+        self.identifier = _identifier
+        self.device = None
+        self.is_streaming = False
+        self.is_mono = True
+        self.frame_monitor = SimpleNamespace(get_fps=lambda: 1.0)
+        self.new_frame = FakeSignal()
+        self.fps_updated = FakeSignal()
+
+    def open(self):
+        self.device = camera_state
+        self.is_streaming = True
+        return True
+
+    def get_roi(self):
+        return diagnostic.read_roi(self.device)
+
+    def get_frame_rate_capability(self):
+        return {"feature": diagnostic.inspect_feature(self.device, diagnostic.FEATURE_ALIASES["frame_rate"])}
+
+    def close(self):
+        self.device = None
+        self.is_streaming = False
+
+
+class FakeDiagnosticPanel(QWidget):
+    def __init__(self, *_args, **_kwargs):
+        super().__init__()
+        self.video_label = QLabel(self)
+        self.conversion_worker = SimpleNamespace(
+            submitted_frames=0, converted_frames=0, coalesced_frames=0, max_pending_frames=0
+        )
+        self.conversion_thread = None
+        self.coalesced_images = 0
+        self.max_pending_images = 0
+        self.accepted_image_timestamps = []
+        self.presentation_timestamps = []
+        self._latest_pixmap = object()
+
+    def set_camera(self, camera):
+        self.camera = camera
+
+
+camera_state: FakeGenICamCamera
+
+
+def _run_fake_main(monkeypatch, tmp_path, camera, *, fail_rate_query=False, duration="0.01"):
+    global camera_state
+    camera_state = camera
+    system = SimpleNamespace(entered=False, exited=False)
+
+    def system_enter():
+        system.entered = True
+        return system
+
+    def system_exit(*_args):
+        system.exited = True
+
+    system.__enter__ = system_enter
+    system.__exit__ = system_exit
+    system.get_instance = lambda: system
+
+    config_handle = camera
+    config_handle.__enter__ = lambda: config_handle
+    config_handle.__exit__ = lambda *_args: None
+    monkeypatch.setitem(sys.modules, "vmbpy", types.SimpleNamespace(VmbSystem=system))
+    monkeypatch.setattr(diagnostic, "wait_for_cameras_by_id", lambda *_args, **_kwargs: {"DEV_TEST": config_handle})
+    monkeypatch.setattr(diagnostic, "VimbaCam", FakeDiagnosticCamera)
+    monkeypatch.setattr(diagnostic, "CameraPanel", FakeDiagnosticPanel)
+    monkeypatch.setattr(diagnostic, "InstrumentedCameraPanel", FakeDiagnosticPanel)
+
+    original_inspect = diagnostic.inspect_feature
+    failed = False
+
+    def inspect_with_optional_failure(device, aliases):
+        nonlocal failed
+        if (
+            fail_rate_query
+            and not failed
+            and "AcquisitionFrameRateAbs" in aliases
+            and device.features["Height"].get() == 480
+        ):
+            failed = True
+            raise RuntimeError("injected ROI-dependent frame-rate query failure")
+        return original_inspect(device, aliases)
+
+    if fail_rate_query:
+        monkeypatch.setattr(diagnostic, "inspect_feature", inspect_with_optional_failure)
+    output = tmp_path / "main-path.json"
+    status = diagnostic.main(
+        [
+            "--camera-id",
+            "DEV_TEST",
+            "--roi",
+            "1292x480",
+            "--maximize-frame-rate-for-roi",
+            "--authorize-settings-changes",
+            "--duration",
+            duration,
+            "--output",
+            str(output),
+        ]
+    )
+    return status, json.loads(output.read_text(encoding="utf-8")), system
 
 
 def test_snapshot_normalizes_native_enum_wrappers_and_leaves_manual_controls_out():
@@ -296,6 +429,74 @@ def test_unavailable_restore_features_are_explicitly_unconfirmed():
     result = _restore_settings(camera, original, changed_rate=False)
     assert result["gamma_confirmed"] is None
     assert "gamma" in result["unavailable_features"]
+
+
+def test_main_roi_max_rate_path_works_without_enable_feature(monkeypatch, tmp_path, qtbot):
+    camera = FakeGenICamCamera()
+    camera.features.pop("AcquisitionFrameRateEnable")
+
+    status, result, system = _run_fake_main(monkeypatch, tmp_path, camera)
+
+    assert status == 0, result
+    assert result["measurement_error"] is None
+    assert result["metrics"]["process"]["wall_seconds"] > 0
+    assert 480 in camera.rate_range_heights
+    assert any(row[0] == 120.0 and row[2] == 480 for row in camera.rate_write_log)
+    assert camera.features["Height"].get() == 964
+    assert result["restoration"]["roi_confirmed"] is True
+    assert result["restoration"]["frame_rate_enable_confirmed"] is None
+    assert system.exited
+
+
+@pytest.mark.parametrize("enum_state", [False, True])
+def test_main_roi_max_rate_enables_then_restores_original_enable_state(monkeypatch, tmp_path, qtbot, enum_state):
+    camera = FakeGenICamCamera()
+    if enum_state:
+        camera.features["AcquisitionFrameRateEnable"].value = EnumEntry("Off")
+
+    status, result, system = _run_fake_main(monkeypatch, tmp_path, camera)
+
+    assert status == 0, result
+    assert result["measurement_error"] is None
+    enabled_value = "On" if enum_state else True
+    restored_value = "Off" if enum_state else False
+    enabled_index = camera.operation_log.index(("AcquisitionFrameRateEnable", enabled_value))
+    maximum_index = camera.operation_log.index(("AcquisitionFrameRateAbs", 120.0))
+    assert enabled_index < maximum_index
+    final_enable = camera.features["AcquisitionFrameRateEnable"].get()
+    if enum_state:
+        assert final_enable == restored_value
+    else:
+        assert final_enable is restored_value
+    assert result["restoration"]["frame_rate_enable_confirmed"] is True
+    assert result["restoration"]["roi_confirmed"] is True
+    assert system.exited
+
+
+def test_main_roi_max_rate_rejects_available_unreadable_enable_and_restores_roi(monkeypatch, tmp_path, qtbot):
+    camera = FakeGenICamCamera()
+    camera.features["AcquisitionFrameRateEnable"].readable = False
+
+    status, result, system = _run_fake_main(monkeypatch, tmp_path, camera)
+
+    assert status != 0
+    assert "not readable" in result["measurement_error"]
+    assert camera.features["Height"].get() == 964
+    assert result["restoration"]["roi_confirmed"] is True
+    assert result["restoration"]["frame_rate_enable_confirmed"] is None
+    assert system.exited
+
+
+def test_main_roi_query_failure_restores_roi_and_closes_system(monkeypatch, tmp_path, qtbot):
+    camera = FakeGenICamCamera()
+
+    status, result, system = _run_fake_main(monkeypatch, tmp_path, camera, fail_rate_query=True)
+
+    assert status != 0
+    assert "injected ROI-dependent frame-rate query failure" in result["measurement_error"]
+    assert camera.features["Height"].get() == 964
+    assert result["restoration"]["roi_confirmed"] is True
+    assert system.exited
 
 
 @pytest.mark.parametrize(

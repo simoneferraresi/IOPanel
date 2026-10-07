@@ -162,6 +162,27 @@ def _set_feature(camera: Any, logical: str, value: Any) -> Any:
     return actual
 
 
+def _feature_is_enabled(value: Any) -> bool:
+    """Interpret GenICam bools and semantic enum readbacks without identity assumptions."""
+    value = report_value(value)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value == 1
+    return str(value).casefold() in {"on", "enabled", "true", "1"}
+
+
+def _enabled_feature_value(capability: Any) -> Any:
+    """Choose an enabled value matching the feature's exposed representation."""
+    current = capability.value
+    if isinstance(report_value(current), bool):
+        return True
+    for value in capability.values:
+        if _feature_is_enabled(value):
+            return value
+    return "On" if isinstance(report_value(current), str) else True
+
+
 def _centered_roi(camera: Any, size: tuple[int, int], original: ROI) -> ROI:
     width, height = size
     x_cap = inspect_feature(camera, FEATURE_ALIASES["offset_x"])
@@ -256,10 +277,10 @@ def _restore_settings(camera: Any, snapshot: dict[str, Any], changed_rate: bool)
             cap = inspect_feature(camera, FEATURE_ALIASES["frame_rate_enable"])
             if not cap.available or not cap.readable:
                 raise RuntimeError("frame-rate enable readback unavailable")
-            if report_value(cap.value) is not True:
-                _set_feature(camera, "frame_rate_enable", True)
+            if not _feature_is_enabled(cap.value):
+                _set_feature(camera, "frame_rate_enable", _enabled_feature_value(cap))
             verified = inspect_feature(camera, FEATURE_ALIASES["frame_rate_enable"])
-            if not verified.readable or report_value(verified.value) is not True:
+            if not verified.readable or not _feature_is_enabled(verified.value):
                 raise RuntimeError("frame-rate control did not enable")
 
         attempt("enable frame-rate control for restoration", enable_rate_control)
@@ -515,12 +536,16 @@ def main(argv: list[str] | None = None) -> int:
                 raise RuntimeError("ROI readback does not match requested ROI")
             if args.maximize_frame_rate_for_roi:
                 cap = inspect_feature(config_camera, FEATURE_ALIASES["frame_rate"])
-                if snapshot["frame_rate_enable_available"]:
+                frame_rate_enable_snapshot = snapshot["frame_rate_enable"]
+                if frame_rate_enable_snapshot["available"]:
                     enable = inspect_feature(config_camera, FEATURE_ALIASES["frame_rate_enable"])
-                    if not enable.readable:
+                    if not frame_rate_enable_snapshot["readable"] or not enable.readable:
                         raise RuntimeError("Frame-rate enable state is not readable")
-                    if report_value(enable.value) is not True:
-                        _set_feature(config_camera, "frame_rate_enable", True)
+                    if not _feature_is_enabled(enable.value):
+                        _set_feature(config_camera, "frame_rate_enable", _enabled_feature_value(enable))
+                        enable = inspect_feature(config_camera, FEATURE_ALIASES["frame_rate_enable"])
+                        if not enable.readable or not _feature_is_enabled(enable.value):
+                            raise RuntimeError("Acquisition frame-rate control did not enable")
                 cap = inspect_feature(config_camera, FEATURE_ALIASES["frame_rate"])
                 if not cap.available or not cap.writable or cap.maximum is None:
                     raise RuntimeError("ROI-dependent maximum frame rate is unavailable")
