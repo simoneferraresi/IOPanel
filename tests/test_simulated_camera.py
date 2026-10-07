@@ -46,7 +46,6 @@ def test_simulated_frames_reach_existing_panel_conversion_path(qtbot):
     qtbot.addWidget(panel)
     panel.show()
     panel.set_camera(camera_instance)
-    camera_instance.new_frame.connect(panel.process_new_frame_data)
     raw_frames = QSignalSpy(camera_instance.new_frame)
     converted_frames = QSignalSpy(panel.conversion_worker.image_ready)
 
@@ -71,6 +70,23 @@ def test_simulated_frames_reach_existing_panel_conversion_path(qtbot):
     assert not camera_instance.is_streaming
     assert frame_thread is not None and not frame_thread.is_alive()
     assert not panel.conversion_thread.isRunning()
+
+
+def test_simulated_fps_signal_is_throttled_below_raw_frame_rate(qtbot):
+    camera_instance = SimulatedCamera("sim-fps", width=8, height=6, frame_interval=0.01)
+    raw_frames = QSignalSpy(camera_instance.new_frame)
+    fps_updates = QSignalSpy(camera_instance.fps_updated)
+    camera_instance.frame_monitor.update = lambda: None
+    assert camera_instance.open()
+    try:
+        qtbot.waitUntil(lambda: raw_frames.count() >= 20, timeout=1500)
+        assert fps_updates.count() == 0
+        camera_instance.frame_monitor.update = lambda: 12.5
+        qtbot.waitUntil(lambda: fps_updates.count() >= 1, timeout=1500)
+        assert raw_frames.count() > fps_updates.count()
+        assert fps_updates.at(fps_updates.count() - 1)[0] == 12.5
+    finally:
+        camera_instance.close()
 
 
 def test_simulator_error_can_be_recovered_and_closed(qtbot):

@@ -86,7 +86,9 @@ class SimulatedCamera(VimbaCam):
             self._frame_count += 1
             self.frame_buffer.add_frame(frame)
             self.new_frame.emit(frame)
-            self.fps_updated.emit(self.frame_monitor.update())
+            fps = self.frame_monitor.update()
+            if fps is not None:
+                self.fps_updated.emit(fps)
             if self.fail_after_frames is not None and self._frame_count >= self.fail_after_frames:
                 self.is_streaming = False
                 self.error.emit("Simulated camera acquisition failure")

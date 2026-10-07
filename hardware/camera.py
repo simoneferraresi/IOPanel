@@ -78,8 +78,8 @@ class FrameRateMonitor:
         self.last_fps_update_time: float = 0.0
         self.update_interval: float = 0.5  # Update FPS value every 0.5 seconds
 
-    def update(self) -> float:
-        """Adds a new timestamp and recalculates FPS if the update interval has passed."""
+    def update(self) -> float | None:
+        """Add a timestamp and return an FPS value only when recalculated."""
         now = time.monotonic()
         self.timestamps.append(now)
         if (now - self.last_fps_update_time >= self.update_interval) and len(self.timestamps) >= 2:
@@ -89,7 +89,8 @@ class FrameRateMonitor:
             else:
                 self.fps = 0.0
             self.last_fps_update_time = now
-        return self.fps
+            return self.fps
+        return None
 
     def get_fps(self) -> float:
         """Returns the last calculated FPS value."""
@@ -267,7 +268,9 @@ class VimbaCam(QObject):
 
                 # Emit signals for the GUI
                 self.new_frame.emit(processed_image)
-                self.fps_updated.emit(self.frame_monitor.update())
+                fps = self.frame_monitor.update()
+                if fps is not None:
+                    self.fps_updated.emit(fps)
         except Exception:
             logger.exception(f"Handler {self.camera_name}: Unhandled error in frame processing")
         finally:
