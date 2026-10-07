@@ -1,4 +1,5 @@
 import logging
+import threading
 from typing import override
 
 from PySide6.QtCore import QCoreApplication, QThread, Signal, Slot
@@ -24,12 +25,19 @@ class CameraInitWorker(BaseWorker):
         self.identifier = identifier
         self.cam_config = cam_config
         self._is_running = True
+        self._cancel_event = threading.Event()
+
+    def cancel(self) -> None:
+        """Cancel initialization promptly if it is waiting for discovery."""
+        self._is_running = False
+        self._cancel_event.set()
 
     @override
     @Slot()
     def run(self) -> None:
         """Creates and opens a VimbaCam instance."""
         if not self._is_running:
+            self.finished.emit()
             return
         logger.info(f"Worker starting initialization for: {self.cam_config.name} (ID: {self.identifier})")
         cam_instance = None
@@ -56,7 +64,19 @@ class CameraInitWorker(BaseWorker):
                     camera_name=self.cam_config.name,
                     flip_horizontal=self.cam_config.flip_horizontal,
                 )
+                set_cancel_event = getattr(cam_instance, "set_discovery_cancel_event", None)
+                if callable(set_cancel_event):
+                    set_cancel_event(self._cancel_event)
+            if self._cancel_event.is_set():
+                if cam_instance is not None:
+                    cam_instance.close()
+                self.finished.emit()
+                return
             if cam_instance.open():
+                if self._cancel_event.is_set():
+                    cam_instance.close()
+                    self.finished.emit()
+                    return
                 logger.info(f"Worker successfully opened camera: {self.cam_config.name}")
                 app = QCoreApplication.instance()
                 if app is not None and QThread.currentThread() != app.thread():
@@ -65,11 +85,13 @@ class CameraInitWorker(BaseWorker):
             else:
                 logger.error(f"Worker failed to open camera: {self.cam_config.name}")
                 cam_instance.close()  # Ensure cleanup
-                self.camera_initialized.emit(self.identifier, None, self.cam_config)
+                if not self._cancel_event.is_set():
+                    self.camera_initialized.emit(self.identifier, None, self.cam_config)
         except Exception:
             logger.exception(f"Exception in camera init worker for {self.cam_config.name}")
             if cam_instance:
                 cam_instance.close()
-            self.camera_initialized.emit(self.identifier, None, self.cam_config)
+            if not self._cancel_event.is_set():
+                self.camera_initialized.emit(self.identifier, None, self.cam_config)
 
         self.finished.emit()

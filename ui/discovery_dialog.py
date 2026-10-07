@@ -1,16 +1,15 @@
 import logging
+import threading
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QIcon
+from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, Signal
+from PySide6.QtGui import QCloseEvent, QIcon
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QApplication,
     QDialog,
     QDialogButtonBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -29,6 +28,8 @@ class CameraDiscoveryDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._discovery_cancel_event = threading.Event()
+        self._discovery_task: _CameraDiscoveryTask | None = None
         self.setWindowTitle("Camera Discovery")
         self.setMinimumSize(600, 300)
 
@@ -77,55 +78,84 @@ class CameraDiscoveryDialog(QDialog):
 
     def populate_table(self):
         """
-        Clears the table and repopulates it by calling the static VimbaCam method.
+        Starts camera discovery in the global worker pool so GigE settling does
+        not block the dialog's GUI thread.
         """
         self.table.setRowCount(0)  # Clear existing rows
         self.refresh_button.setEnabled(False)
         self.setCursor(Qt.CursorShape.WaitCursor)
-        QApplication.processEvents()  # Update UI to show wait cursor
+        if not VIMBA_AVAILABLE:
+            self._show_message("Vimba driver unavailable. Install the camera extra and Allied Vision SDK.")
+            self._finish_discovery()
+            return
 
+        self._discovery_cancel_event.clear()
+        task = _CameraDiscoveryTask(self._discovery_cancel_event)
+        task.signals.updated.connect(self._show_cameras)
+        task.signals.failed.connect(self._show_error)
+        task.signals.finished.connect(self._finish_discovery)
+        self._discovery_task = task
+        QThreadPool.globalInstance().start(task)
+
+    def _show_cameras(self, cameras_info):
+        if not cameras_info:
+            self._show_message("No Vimba cameras found on this system.")
+            return
+        self.table.setRowCount(len(cameras_info))
+        for row, cam_info in enumerate(cameras_info):
+            values = (
+                cam_info.get("name", "N/A"),
+                cam_info.get("model", "N/A"),
+                cam_info.get("serial", "N/A"),
+                cam_info.get("id", "N/A"),
+            )
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(str(value))
+                if column == 3:
+                    font = item.font()
+                    font.setBold(True)
+                    item.setFont(font)
+                self.table.setItem(row, column, item)
+        self.table.resizeColumnsToContents()
+        self.table.horizontalHeader().setStretchLastSection(True)
+
+    def _show_message(self, message: str):
+        self.table.setRowCount(1)
+        item = QTableWidgetItem(message)
+        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.table.setItem(0, 0, item)
+        self.table.setSpan(0, 0, 1, 4)
+
+    def _show_error(self, error: str):
+        logger.error("Error during camera discovery: %s", error)
+        self._show_message(f"Camera discovery failed: {error}")
+
+    def _finish_discovery(self):
+        self.refresh_button.setEnabled(True)
+        self.unsetCursor()
+        self._discovery_task = None
+
+    def closeEvent(self, event: QCloseEvent):
+        self._discovery_cancel_event.set()
+        super().closeEvent(event)
+
+
+class _DiscoverySignals(QObject):
+    updated = Signal(object)
+    failed = Signal(str)
+    finished = Signal()
+
+
+class _CameraDiscoveryTask(QRunnable):
+    def __init__(self, cancel_event: threading.Event):
+        super().__init__()
+        self.cancel_event = cancel_event
+        self.signals = _DiscoverySignals()
+
+    def run(self):
         try:
-            if not VIMBA_AVAILABLE:
-                self.table.setRowCount(1)
-                item = QTableWidgetItem("Vimba driver unavailable. Install the camera extra and Allied Vision SDK.")
-                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.table.setItem(0, 0, item)
-                self.table.setSpan(0, 0, 1, 4)
-                return
-
-            cameras_info = VimbaCam.list_cameras()
-            if not cameras_info:
-                # Add a placeholder row if no cameras are found
-                self.table.setRowCount(1)
-                item = QTableWidgetItem("No Vimba cameras found on this system.")
-                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.table.setItem(0, 0, item)
-                self.table.setSpan(0, 0, 1, 4)  # Span the message across all columns
-                return
-
-            self.table.setRowCount(len(cameras_info))
-            for row, cam_info in enumerate(cameras_info):
-                name = QTableWidgetItem(cam_info.get("name", "N/A"))
-                model = QTableWidgetItem(cam_info.get("model", "N/A"))
-                serial = QTableWidgetItem(cam_info.get("serial", "N/A"))
-                identifier = QTableWidgetItem(cam_info.get("id", "N/A"))
-
-                # Make the identifier bold to draw attention to it
-                font = identifier.font()
-                font.setBold(True)
-                identifier.setFont(font)
-
-                self.table.setItem(row, 0, name)
-                self.table.setItem(row, 1, model)
-                self.table.setItem(row, 2, serial)
-                self.table.setItem(row, 3, identifier)
-
-            self.table.resizeColumnsToContents()
-            self.table.horizontalHeader().setStretchLastSection(True)
-
-        except Exception as e:
-            logger.exception("Error during camera discovery")
-            QMessageBox.critical(self, "Discovery Error", f"An error occurred while discovering cameras:\n{e}")
+            VimbaCam.list_cameras(on_update=self.signals.updated.emit, cancel_event=self.cancel_event)
+        except Exception as exc:  # noqa: BLE001 - report unexpected worker errors in the dialog.
+            self.signals.failed.emit(str(exc))
         finally:
-            self.refresh_button.setEnabled(True)
-            self.unsetCursor()
+            self.signals.finished.emit()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from collections import deque
 from collections.abc import Callable
@@ -17,6 +18,13 @@ from hardware.camera_capabilities import (
     inspect_camera,
     inspect_feature,
     read_roi,
+)
+from hardware.camera_discovery import (
+    DISCOVERY_TIMEOUT_SECONDS,
+    CameraDiscoveryCancelled,
+    CameraNotFoundError,
+    poll_camera_list,
+    wait_for_camera_by_id,
 )
 
 try:
@@ -194,6 +202,7 @@ class VimbaCam(QObject):
         self.is_mono: bool | None = None
         self.is_streaming: bool = False
         self._is_closing: bool = False
+        self._discovery_cancel_event = threading.Event()
 
         self.frame_monitor = FrameRateMonitor()
         self.frame_buffer = FrameBuffer(max_size=3)
@@ -202,7 +211,11 @@ class VimbaCam(QObject):
         logger.info(f"VimbaCam instance created for identifier: {self.identifier} (Name: {self.camera_name})")
 
     @staticmethod
-    def list_cameras() -> list[CameraInfoDict]:
+    def list_cameras(
+        *,
+        on_update: Callable[[list[CameraInfoDict]], None] | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> list[CameraInfoDict]:
         """
         Discovers all connected Vimba-compatible cameras.
 
@@ -218,37 +231,50 @@ class VimbaCam(QObject):
             logger.warning("Camera discovery is unavailable: the optional Vimba binding is not installed.")
             return []
 
-        cameras_info = []
+        cameras_info: list[CameraInfoDict] = []
         logger.info("Listing available Vimba cameras...")
         try:
             with VmbSystem.get_instance() as vmb:
-                all_cams = vmb.get_all_cameras()
-                logger.info(f"Total cameras detected: {len(all_cams)}")
 
-                for i, cam in enumerate(all_cams):
-                    info = {"numeric_index": i}
-                    try:
-                        # Use the high-level vmbpy getters
-                        info["id"] = cam.get_id()
-                        info["serial"] = cam.get_serial()
-                        info["model"] = cam.get_model()
-                        info["name"] = cam.get_name()
-                        cameras_info.append(info)
-                        logger.debug(f"  Found Cam {i}: ID={info['id']}, Serial={info.get('serial')}")
-                    except Exception as e:  # noqa: BLE001  # Preserve VmbPy metadata and enumeration fallbacks.
-                        # If querying fails, try to get at least the ID for a better log message
-                        cam_id_for_log = f"at index {i}"
+                def describe(cameras: list[Any]) -> list[CameraInfoDict]:
+                    result: list[CameraInfoDict] = []
+                    for i, cam in enumerate(cameras):
+                        info = {"numeric_index": i}
                         try:
-                            cam_id_for_log = cam.get_id()
-                        except Exception:  # noqa: BLE001, S110 — retain the camera index if get_id also fails.
-                            # If even getting the ID fails, we stick with the index.
-                            pass
-                        logger.warning(f"Could not fully query camera '{cam_id_for_log}': {e}")
+                            info["id"] = cam.get_id()
+                            info["serial"] = cam.get_serial()
+                            info["model"] = cam.get_model()
+                            info["name"] = cam.get_name()
+                            result.append(info)
+                            logger.debug(f"  Found Cam {i}: ID={info['id']}, Serial={info.get('serial')}")
+                        except Exception as e:  # noqa: BLE001 - metadata getters are optional.
+                            try:
+                                cam_id_for_log = cam.get_id()
+                            except Exception:  # noqa: BLE001 - retain index if ID lookup also fails.
+                                cam_id_for_log = f"at index {i}"
+                            logger.warning(f"Could not fully query camera '{cam_id_for_log}': {e}")
+                    return result
+
+                def publish(cameras: list[Any]) -> None:
+                    nonlocal cameras_info
+                    cameras_info = describe(cameras)
+                    logger.info("Total cameras currently detected: %d", len(cameras_info))
+                    if on_update is not None:
+                        on_update(cameras_info)
+
+                if on_update is None:
+                    publish(list(vmb.get_all_cameras()))
+                else:
+                    poll_camera_list(vmb, cancel_event=cancel_event, on_update=publish)
 
         except VmbSystemError as e:
             logger.error(f"Vimba system error while listing cameras: {e}")
-        except Exception as e:  # noqa: BLE001  # Preserve VmbPy metadata and enumeration fallbacks.
+            if on_update is not None:
+                raise
+        except Exception as e:  # Preserve VmbPy metadata and enumeration fallbacks.
             logger.error(f"An unexpected error occurred while listing cameras: {e}")
+            if on_update is not None:
+                raise
         return cameras_info
 
     # --- Vimba Frame Callback Handler ---
@@ -317,6 +343,11 @@ class VimbaCam(QObject):
             logger.info(f"Camera {self.camera_name} opened and streaming started.")
             self.connected.emit()
             return True
+        except CameraNotFoundError as e:
+            logger.error("Camera discovery timed out for %s: %s", self.identifier, e)
+            self.error.emit(f"Camera discovery timeout: {e}")
+            self.close()
+            return False
         except VmbCameraError as e:
             logger.error(f"Vimba error during camera open sequence: {e}")
             self.error.emit(f"Open error: {e}")
@@ -365,6 +396,7 @@ class VimbaCam(QObject):
         self.close()
         time.sleep(self._RECOVERY_DELAY_SECONDS)
 
+        self._discovery_cancel_event.clear()
         success = self.open()
         if success:
             logger.info(f"Recovery successful for {self.camera_name}.")
@@ -372,12 +404,25 @@ class VimbaCam(QObject):
             logger.error(f"Recovery failed for {self.camera_name}.")
         return success
 
+    def set_discovery_cancel_event(self, event: threading.Event) -> None:
+        """Allow an owning initialization worker to cancel a pending open."""
+        self._discovery_cancel_event = event
+
     def _open_device_internal(self) -> bool:
         """Internal: Opens device. Assumes VimbaSystem is ACTIVE."""
         entered_camera = None
         try:
             vmb = VmbSystem.get_instance()
-            cam_opened = vmb.get_camera_by_id(self.identifier)
+            cam_opened = wait_for_camera_by_id(
+                vmb,
+                self.identifier,
+                cancel_event=self._discovery_cancel_event,
+                on_wait=lambda: logger.info(
+                    "Waiting up to %.1fs for camera %s to become discoverable.",
+                    DISCOVERY_TIMEOUT_SECONDS,
+                    self.identifier,
+                ),
+            )
             cam_opened.__enter__()
             entered_camera = cam_opened
             self.device = cam_opened
@@ -385,6 +430,12 @@ class VimbaCam(QObject):
             self._configure_camera()
             self._update_settings_cache()
             return True
+        except CameraDiscoveryCancelled:
+            logger.info("Discovery wait cancelled for camera %s.", self.identifier)
+            self.device = None
+            self.is_streaming = False
+            self.is_mono = None
+            return False
         except VmbCameraError as e:
             error_msg = f"Failed to open camera {self.camera_name}: {e}"
             logger.error(error_msg)

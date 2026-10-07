@@ -38,6 +38,15 @@ quality-first controller is introduced here.
 
 ## Read-only and operator modes
 
+Physical GigE cameras can appear in Vimba after the system context has already
+been entered. Production camera opening and current diagnostic tools therefore
+poll for the exact requested camera ID for up to ten seconds, at 250 ms
+intervals, and stop as soon as it appears. The manual discovery dialog scans
+on a worker and updates its list as devices arrive. The older `vimba_b2`,
+`vimba_b3`, and `vimba_b4` qualification scripts retain their fixed ten-second
+wait because they are historical, manually operated lab records; current
+application and diagnostic paths use bounded polling instead.
+
 Run the read-only capability report for one explicitly selected camera:
 
 ```powershell

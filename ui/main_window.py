@@ -1538,6 +1538,10 @@ class MainWindow(QMainWindow):
             self._pending_init_close = True
             self.statusBar().showMessage("Waiting for hardware initialization to finish…", 0)
             logger.info("Deferring application close with %d initialization task(s) active.", len(self._init_tasks))
+            for task in tuple(self._init_tasks):
+                cancel = getattr(task.worker, "cancel", None)
+                if callable(cancel):
+                    cancel()
             return
 
         if self._piezo_operations_in_flight:

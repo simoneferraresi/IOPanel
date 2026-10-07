@@ -1,8 +1,13 @@
+import threading
+
+from PySide6.QtGui import QCloseEvent
+
 import app
-from config_model import AppConfig
+from config_model import AppConfig, CameraConfig
 from hardware import camera as camera_module
-from hardware import ct400_init_worker
+from hardware import camera_init_worker, ct400_init_worker
 from hardware.simulated_camera import SimulatedCamera
+from logic.task_runner import TaskRunner
 from ui import main_window as main_window_module
 
 
@@ -117,3 +122,45 @@ def test_mainwindow_keeps_simulated_camera_when_physical_initialization_fails(qt
     window.close()
     qtbot.waitUntil(lambda: not frame_thread.is_alive(), timeout=1500)
     assert not window.cameras
+
+
+def test_close_cancels_camera_init_while_discovery_is_waiting(qtbot, monkeypatch):
+    poll_started = threading.Event()
+
+    class FakeSystem:
+        def get_all_cameras(self):
+            poll_started.set()
+            return []
+
+    class FakeVmbSystem:
+        @staticmethod
+        def get_instance():
+            return FakeSystem()
+
+    monkeypatch.setattr(camera_module, "VIMBA_AVAILABLE", True)
+    monkeypatch.setattr(camera_module, "VmbSystem", FakeVmbSystem)
+    monkeypatch.setattr(main_window_module.MainWindow, "_begin_lazy_init", lambda _window: None)
+    scheduled = []
+    monkeypatch.setattr(main_window_module.QTimer, "singleShot", lambda _delay, callback: scheduled.append(callback))
+    window = main_window_module.MainWindow(AppConfig(instruments={"ct400_backend": "simulation"}))
+    qtbot.addWidget(window)
+    config = CameraConfig(identifier="physical-wait", name="Physical wait")
+    worker = camera_init_worker.CameraInitWorker(config.identifier, config)
+    initialized = []
+    worker.camera_initialized.connect(lambda *args: initialized.append(args))
+    task = TaskRunner(worker)
+    window._track_init_task(task)
+    task.start()
+
+    qtbot.waitUntil(poll_started.is_set, timeout=1500)
+    scheduled.clear()
+    event = QCloseEvent()
+    window.closeEvent(event)
+
+    assert not event.isAccepted()
+    assert worker._cancel_event.is_set()
+    qtbot.waitUntil(lambda: _runner_stopped(task), timeout=1500)
+    qtbot.waitUntil(lambda: task not in window._init_tasks, timeout=1500)
+    assert initialized == []
+    assert len(scheduled) == 1
+    window._pending_init_close = False

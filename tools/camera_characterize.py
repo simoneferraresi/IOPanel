@@ -30,6 +30,7 @@ from hardware.camera_capabilities import (
     inspect_feature,
     read_roi,
 )
+from hardware.camera_discovery import DISCOVERY_TIMEOUT_SECONDS, CameraNotFoundError, wait_for_cameras_by_id
 
 
 def _read(camera: Any, logical_name: str) -> tuple[str, Any]:
@@ -318,7 +319,21 @@ def main() -> int:
     gains = _parse_values(args.gain_values, "gain-values") if args.quality_sweep else []
     exposures = _parse_values(args.exposure_values_us, "exposure-values-us") if args.quality_sweep else []
     with VmbSystem.get_instance() as system, ExitStack() as stack:
-        cameras = [stack.enter_context(system.get_camera_by_id(camera_id)) for camera_id in args.camera_id]
+        try:
+            selected = wait_for_cameras_by_id(
+                system,
+                args.camera_id,
+                on_wait=lambda: print(
+                    "Waiting for camera ID(s) "
+                    f"{', '.join(args.camera_id)} to become discoverable "
+                    f"(timeout {DISCOVERY_TIMEOUT_SECONDS:g} s)...",
+                    file=sys.stderr,
+                ),
+            )
+        except CameraNotFoundError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        cameras = [stack.enter_context(selected[camera_id]) for camera_id in args.camera_id]
         camera = cameras[0]
         results["camera_model"] = camera.get_model()
         results["camera_models"] = {candidate.get_id(): candidate.get_model() for candidate in cameras}
