@@ -44,9 +44,9 @@ by CameraPanel, and GUI-mailbox coalescing independently; these counts can
 differ. It reports event-loop heartbeat timings and process CPU time divided by
 wall time; the latter is not a machine-wide profiler.
 
-The tool requires one explicit physical camera ID and an operator-visible
-window. It deliberately uses the real `VimbaCam.open()` path, which applies
-IOPanel's standard startup configuration (acquisition/trigger and auto
+The tool requires one or two explicit physical camera IDs and an operator-visible
+window. It deliberately uses the real `VimbaCam.open()` path for every selected
+camera, which applies IOPanel's standard startup configuration (acquisition/trigger and auto
 selectors, gamma, and preferred pixel format). Before opening that path, the
 diagnostic snapshots each readable affected feature, ROI, and frame-rate
 settings; after closing the stream it restores and independently reads them
@@ -70,7 +70,23 @@ uv run python tools/camera_display_characterize.py --camera-id <CAMERA_ID> `
 uv run python tools/camera_display_characterize.py --camera-id <CAMERA_ID> `
   --roi 1292x480 --maximize-frame-rate-for-roi `
   --authorize-settings-changes --duration 30 --output display-roi.json
+
+uv run python tools/camera_display_characterize.py `
+  --camera-id <TOP_ID> <SIDE_ID> `
+  --camera-roi <TOP_ID>=1292x240 --camera-roi <SIDE_ID>=1292x480 `
+  --maximize-frame-rate-for-roi --authorize-settings-changes `
+  --window-size 1800x720 --duration 30 --output dual-display.json
 ```
+
+In dual-camera mode, `--roi WIDTHxHEIGHT` is accepted as a shorthand that
+applies the same ROI to both cameras. Use `--camera-roi CAMERA_ID=WIDTHxHEIGHT`
+for independent ROIs. Both panels appear side by side and use their production
+acquisition and conversion paths. The diagnostic waits until both panels have
+displayed a frame, then measures them over one interval with one GUI heartbeat
+and one process CPU metric. ROI writes and maximum frame-rate queries are
+independent per camera. Exposure and gain are not modified, so Side may remain
+exposure-limited at a small ROI. Settings and restoration readbacks are reported
+independently per camera.
 
 ## Exposure and gain
 
