@@ -1268,7 +1268,8 @@ class MainWindow(QMainWindow):
 
     def _camera_lifecycle_busy(self) -> bool:
         return bool(self._camera_recovery_tasks) or any(
-            panel.auto_operation_active for panel in self.camera_panels.values()
+            panel.auto_operation_active or getattr(panel, "_camera_mode_change_active", False)
+            for panel in self.camera_panels.values()
         )
 
     def _resume_close_after_camera_lifecycle_if_ready(self):

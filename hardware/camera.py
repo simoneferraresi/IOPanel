@@ -14,6 +14,7 @@ from PySide6.QtCore import QMutex, QMutexLocker, QObject, Signal
 from hardware.camera_capabilities import (
     FEATURE_ALIASES,
     apply_roi,
+    centered_offset,
     find_feature,
     inspect_camera,
     inspect_feature,
@@ -74,6 +75,17 @@ type CameraInfoDict = dict[str, Any]
 type FeatureRange = tuple[Any, Any] | None
 
 
+def _frame_rate_enable_is_enabled(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in {"on", "enabled", "true", "1"}:
+        return True
+    if normalized in {"off", "disabled", "false", "0"}:
+        return False
+    return None
+
+
 @dataclass
 class CameraSettings:
     """Holds a cache of the last known camera settings."""
@@ -112,6 +124,11 @@ class FrameRateMonitor:
     def get_fps(self) -> float:
         """Returns the last calculated FPS value."""
         return self.fps
+
+    def reset(self) -> None:
+        self.timestamps.clear()
+        self.fps = 0.0
+        self.last_fps_update_time = 0.0
 
 
 class FrameBuffer:
@@ -675,6 +692,171 @@ class VimbaCam(QObject):
             self.error.emit(f"ROI error: {exc}")
             return False
 
+    def apply_view_mode(self, width: int, height: int, maximize_rate: bool = True) -> dict[str, Any]:
+        """Stop, configure a centered ROI and legal rate, then restart acquisition.
+
+        Streaming is stopped and restarted outside ``self.lock`` because the
+        frame callback needs that lock to finish requeueing outstanding frames.
+        """
+        if not self.device or not self.is_streaming:
+            raise RuntimeError("View mode changes require an open, streaming physical camera")
+        device = self.device
+        was_streaming = self.is_streaming
+        with QMutexLocker(self.lock):
+            previous_roi = read_roi(device)
+            previous_rate = inspect_feature(device, FEATURE_ALIASES["frame_rate"])
+            previous_enable = inspect_feature(device, FEATURE_ALIASES["frame_rate_enable"])
+        if previous_rate.readable is False or previous_rate.value is None:
+            raise RuntimeError("Cannot read current acquisition frame rate for transactional view mode change")
+
+        self.is_streaming = False
+        try:
+            device.stop_streaming()
+        except Exception:
+            self.is_streaming = was_streaming
+            raise
+
+        def write_rate(value: float) -> float:
+            cap = inspect_feature(device, FEATURE_ALIASES["frame_rate"])
+            if not cap.available or not cap.writable or cap.minimum is None or cap.maximum is None:
+                raise RuntimeError("Acquisition frame-rate feature is unavailable or read-only")
+            value = min(float(cap.maximum), max(float(cap.minimum), value))
+            if cap.increment:
+                value = float(cap.minimum) + float(
+                    np.floor((value - float(cap.minimum)) / float(cap.increment) + 1e-9)
+                ) * float(cap.increment)
+            _, feature = find_feature(device, FEATURE_ALIASES["frame_rate"])
+            if feature is None:
+                raise RuntimeError("Acquisition frame-rate feature disappeared")
+            feature.set(value)
+            actual = float(feature.get())
+            if not np.isclose(actual, value, rtol=1e-5, atol=1e-5):
+                raise RuntimeError(f"Frame-rate readback {actual:g} does not match requested {value:g}")
+            return actual
+
+        def set_enable(enabled: bool) -> None:
+            cap = inspect_feature(device, FEATURE_ALIASES["frame_rate_enable"])
+            if not cap.available or not cap.readable or _frame_rate_enable_is_enabled(cap.value) is enabled:
+                return
+            _, feature = find_feature(device, FEATURE_ALIASES["frame_rate_enable"])
+            if feature is None or not cap.writable:
+                raise RuntimeError("Frame-rate control is disabled and cannot be enabled")
+            values = {str(v).lower(): v for v in cap.values}
+            candidate = values.get("on", True) if enabled else values.get("off", False)
+            feature.set(candidate)
+
+        try:
+            with QMutexLocker(self.lock):
+                if not self.device:
+                    raise RuntimeError("Camera closed during view mode change")
+                rate_cap = inspect_feature(device, FEATURE_ALIASES["frame_rate"])
+                enable_cap = inspect_feature(device, FEATURE_ALIASES["frame_rate_enable"])
+                enabled_before = _frame_rate_enable_is_enabled(enable_cap.value) if enable_cap.readable else None
+                if enable_cap.available and enabled_before is False:
+                    set_enable(True)
+                sensor_width = int(inspect_feature(device, FEATURE_ALIASES["width_max"]).value or previous_roi.width)
+                sensor_height = int(inspect_feature(device, FEATURE_ALIASES["height_max"]).value or previous_roi.height)
+                offset_x_cap = inspect_feature(device, FEATURE_ALIASES["offset_x"])
+                offset_y_cap = inspect_feature(device, FEATURE_ALIASES["offset_y"])
+                target = type(previous_roi)(
+                    width,
+                    height,
+                    centered_offset(offset_x_cap, sensor_width, width),
+                    centered_offset(offset_y_cap, sensor_height, height),
+                )
+                if width > previous_roi.width or height > previous_roi.height:
+                    # The feature minimum is the conservative legal rate before
+                    # enlargement; the old ROI's maximum says nothing about the
+                    # larger geometry's legal ceiling.
+                    minimum = rate_cap.minimum
+                    if minimum is not None and float(previous_rate.value) > float(minimum):
+                        write_rate(float(minimum))
+                apply_roi(device, target)
+                actual_roi = read_roi(device)
+                if actual_roi != target:
+                    raise RuntimeError(f"ROI readback {actual_roi} does not match requested {target}")
+                refreshed = inspect_feature(device, FEATURE_ALIASES["frame_rate"])
+                roi_cap = float(refreshed.maximum) if refreshed.maximum is not None else None
+                if maximize_rate:
+                    if roi_cap is None:
+                        raise RuntimeError("Could not query frame-rate maximum after applying ROI")
+                    final_rate = write_rate(roi_cap)
+                else:
+                    final_rate = write_rate(float(previous_rate.value))
+                if enabled_before is False:
+                    set_enable(False)
+            device.start_streaming(self._frame_handler, buffer_count=self._DEFAULT_STREAM_BUFFER_COUNT)
+            self.is_streaming = True
+            self.frame_monitor.reset()
+            self.frame_buffer.clear()
+            self.fps_updated.emit(0.0)
+            return {
+                "roi": actual_roi,
+                "aspect_ratio": actual_roi.width / actual_roi.height,
+                "roi_cap_fps": roi_cap,
+                "frame_rate_fps": final_rate,
+            }
+        except Exception as original:
+            rollback_errors: list[str] = []
+            try:
+                with QMutexLocker(self.lock):
+                    if not self.device:
+                        raise RuntimeError("camera is no longer open")
+                    current = inspect_feature(device, FEATURE_ALIASES["frame_rate"])
+                    if current.maximum is not None and float(previous_rate.value) > float(current.maximum):
+                        write_rate(float(current.maximum))
+                    apply_roi(device, previous_roi)
+                    write_rate(float(previous_rate.value))
+                    if previous_enable.readable:
+                        desired = _frame_rate_enable_is_enabled(previous_enable.value)
+                        set_enable(desired)
+            except Exception as rollback_error:  # noqa: BLE001 - retain original failure and report rollback failures.
+                rollback_errors.append(f"rollback: {rollback_error}")
+            try:
+                if was_streaming and self.device:
+                    device.start_streaming(self._frame_handler, buffer_count=self._DEFAULT_STREAM_BUFFER_COUNT)
+                    self.is_streaming = True
+                    self.frame_monitor.reset()
+                    self.frame_buffer.clear()
+                    self.fps_updated.emit(0.0)
+            except Exception as restart_error:  # noqa: BLE001 - report failure to resume acquisition.
+                self.is_streaming = False
+                rollback_errors.append(f"restart: {restart_error}")
+            detail = f"View mode change failed: {original}"
+            if rollback_errors:
+                detail += "; " + "; ".join(rollback_errors)
+            raise RuntimeError(detail) from original
+
+    def restore_view_mode_baseline(self, baseline: dict[str, Any]) -> None:
+        """Best-effort normal-shutdown restoration of ROI/rate state only."""
+        if not self.device or not self.is_streaming:
+            return
+        device = self.device
+        self.is_streaming = False
+        device.stop_streaming()
+        try:
+            with QMutexLocker(self.lock):
+                current = inspect_feature(device, FEATURE_ALIASES["frame_rate"])
+                original_rate = float(baseline["rate"])
+                if current.maximum is not None and original_rate > float(current.maximum):
+                    _, rate_feature = find_feature(device, FEATURE_ALIASES["frame_rate"])
+                    if rate_feature is not None:
+                        rate_feature.set(float(current.maximum))
+                apply_roi(device, baseline["roi"])
+                _, rate_feature = find_feature(device, FEATURE_ALIASES["frame_rate"])
+                if rate_feature is not None:
+                    rate_feature.set(original_rate)
+                enable = baseline.get("enable")
+                if enable is not None and enable.available and enable.readable:
+                    _, enable_feature = find_feature(device, FEATURE_ALIASES["frame_rate_enable"])
+                    if enable_feature is not None and enable.writable:
+                        enable_feature.set(enable.value)
+        finally:
+            device.start_streaming(self._frame_handler, buffer_count=self._DEFAULT_STREAM_BUFFER_COUNT)
+            self.is_streaming = True
+            self.frame_monitor.reset()
+            self.frame_buffer.clear()
+
     def get_frame_rate_capability(self) -> dict[str, Any] | None:
         """Refresh the frame-rate feature/range from the current ROI state."""
         if not self.device:
@@ -688,7 +870,9 @@ class VimbaCam(QObject):
                 return {
                     "feature": rate,
                     "enable_feature": enabled,
-                    "enable_required": (enabled.value is False if enabled.readable else None),
+                    "enable_required": (
+                        _frame_rate_enable_is_enabled(enabled.value) is False if enabled.readable else None
+                    ),
                 }
         except Exception as exc:  # noqa: BLE001 - optional feature query cannot break acquisition.
             logger.warning("Could not inspect frame-rate capability: %s", exc)
@@ -719,7 +903,7 @@ class VimbaCam(QObject):
             _, rate_feature = find_feature(self.device, FEATURE_ALIASES["frame_rate"])
             original_rate = cap.value
             enable_cap = inspect_feature(self.device, FEATURE_ALIASES["frame_rate_enable"])
-            changed_enable = enable_cap.available and enable_cap.value is False
+            changed_enable = enable_cap.available and _frame_rate_enable_is_enabled(enable_cap.value) is False
             enable_feature = None
             rate_write_attempted = False
             try:
@@ -727,7 +911,8 @@ class VimbaCam(QObject):
                     _, enable_feature = find_feature(self.device, FEATURE_ALIASES["frame_rate_enable"])
                     if not enable_cap.writable or enable_feature is None:
                         raise ValueError("Explicit frame-rate control is disabled and cannot be enabled")
-                    enable_feature.set(True)
+                    values = {str(v).lower(): v for v in enable_cap.values}
+                    enable_feature.set(values.get("on", True))
                     # Refresh range after enabling, just as after an ROI change.
                     cap = inspect_feature(self.device, FEATURE_ALIASES["frame_rate"])
                     if cap.minimum is not None and cap.maximum is not None and not cap.minimum <= value <= cap.maximum:
@@ -749,7 +934,8 @@ class VimbaCam(QObject):
                         logger.error("Could not restore previous frame rate: %s", restore_error)
                 if changed_enable and enable_feature is not None:
                     try:
-                        enable_feature.set(False)
+                        values = {str(v).lower(): v for v in enable_cap.values}
+                        enable_feature.set(values.get("off", False))
                     except Exception as restore_error:  # noqa: BLE001 - retain original failure, log rollback failure.
                         logger.error("Could not restore frame-rate enable state: %s", restore_error)
                 raise
