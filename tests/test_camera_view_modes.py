@@ -1,6 +1,9 @@
-from PySide6.QtCore import QPoint, Qt
+from typing import ClassVar
+
+from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, Qt
+from PySide6.QtGui import QCursor, QFocusEvent, QMouseEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
+from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QToolTip, QWidget
 
 from config_model import CameraConfig
 from hardware.camera_capabilities import ROI, FeatureCapability
@@ -23,7 +26,7 @@ def test_selecting_view_mode_does_not_write_camera_settings(qtbot):
 
     assert panel.view_mode_combo.currentData() == 240
     assert not panel.view_mode_apply.isEnabled()
-    assert "centered sensor ROI" in panel.view_mode_combo.toolTip()
+    assert panel.view_mode_combo.toolTip() == ""
     panel.close()
 
 
@@ -133,7 +136,6 @@ def test_popup_hover_stays_open_while_simulated_frames_arrive(qtbot):
         layout.addWidget(panel)
         panels.append(panel)
         cameras.append(camera)
-        qtbot.addWidget(panel)
     qtbot.addWidget(host)
     host.resize(1100, 600)
     host.show()
@@ -164,6 +166,189 @@ def test_popup_hover_stays_open_while_simulated_frames_arrive(qtbot):
     host.close()
 
 
+class PopupEventCounter(QObject):
+    watched_events: ClassVar[dict[QEvent.Type, str]] = {
+        QEvent.Type.Show: "show",
+        QEvent.Type.Hide: "hide",
+        QEvent.Type.FocusIn: "focus_in",
+        QEvent.Type.FocusOut: "focus_out",
+        QEvent.Type.WindowActivate: "window_activate",
+        QEvent.Type.WindowDeactivate: "window_deactivate",
+        QEvent.Type.ToolTip: "tooltip",
+        QEvent.Type.EnabledChange: "enabled_change",
+        QEvent.Type.Resize: "resize",
+        QEvent.Type.MouseButtonPress: "mouse_press",
+        QEvent.Type.MouseButtonRelease: "mouse_release",
+        QEvent.Type.MouseMove: "mouse_move",
+        QEvent.Type.Enter: "enter",
+        QEvent.Type.Leave: "leave",
+    }
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.counts = {name: 0 for name in self.watched_events.values()}
+        self.sequence = []
+        self.focus_changes = []
+        self.focus_objects = []
+        app = QApplication.instance()
+        if app is not None:
+            app.focusChanged.connect(self._focus_changed)
+
+    def _focus_changed(self, old, new):
+        self.focus_objects.append((id(old) if old is not None else None, id(new) if new is not None else None))
+        old_name = old.objectName() or old.metaObject().className() if old is not None else None
+        new_name = new.objectName() or new.metaObject().className() if new is not None else None
+        self.focus_changes.append((old_name, new_name))
+
+    def eventFilter(self, _watched, event):
+        name = self.watched_events.get(event.type())
+        if name is not None:
+            self.counts[name] += 1
+            reason = f":{event.reason().name}" if isinstance(event, QFocusEvent) else ""
+            extra = f"@{event.position().toPoint()}" if isinstance(event, QMouseEvent) else ""
+            focus = QApplication.focusWidget()
+            focus_name = focus.objectName() or focus.metaObject().className() if focus is not None else None
+            self.sequence.append(f"{name}:{_watched.metaObject().className()}{reason}{extra}:focus={focus_name}")
+        return False
+
+
+def test_mouse_open_popup_survives_hover_and_post_selection_reopens(qtbot, request):
+    panels = []
+    cameras = []
+
+    def cleanup():
+        for panel in panels:
+            panel.prepare_camera_shutdown()
+        for camera in cameras:
+            camera.close()
+
+    request.addfinalizer(cleanup)
+    for index, camera_id in enumerate(("mouse-popup-top", "mouse-popup-side")):
+        panel = CameraPanel(None, camera_id, CameraConfig(identifier=camera_id, name=camera_id, backend="vimba"))
+        camera = SimulatedCamera(camera_id, width=24, height=16, frame_interval=0.02)
+        camera.open()
+        panel.set_camera(camera)
+        camera.fps_updated.connect(panel.update_fps)
+        panel.resize(540, 420)
+        panel.move(index * 560, 20)
+        panel.show()
+        panel.settings_button.click()
+        panels.append(panel)
+        cameras.append(camera)
+        qtbot.addWidget(panel)
+    qtbot.waitUntil(lambda: all(camera._frame_count >= 3 for camera in cameras), timeout=1500)
+
+    target_panel = panels[0]
+    target_camera = cameras[0]
+    combo = target_panel.view_mode_combo
+    assert combo.toolTip() == ""
+    assert all(combo.itemData(index, Qt.ItemDataRole.ToolTipRole) is None for index in range(combo.count()))
+    popup = combo.view()
+    popup_window = popup.window()
+    events = PopupEventCounter(target_panel)
+    combo.installEventFilter(events)
+    popup.installEventFilter(events)
+    popup.viewport().installEventFilter(events)
+    popup_window.installEventFilter(events)
+    target_panel.installEventFilter(events)
+    calls = {"get_roi": 0, "get_capabilities": 0, "get_frame_rate_capability": 0, "apply_view_mode": 0}
+    for method_name in calls:
+        original = getattr(target_camera, method_name)
+
+        def counted(*args, _name=method_name, _original=original, **kwargs):
+            calls[_name] += 1
+            return _original(*args, **kwargs)
+
+        setattr(target_camera, method_name, counted)
+    calls.update({key: 0 for key in calls})
+    starting_frames = [camera._frame_count for camera in cameras]
+    settings_states = [panel.settings_button.isChecked() for panel in panels]
+
+    def click_combo_to_open():
+        QCursor.setPos(combo.mapToGlobal(combo.rect().center()))
+        QTest.mouseMove(combo, combo.rect().center(), 20)
+        qtbot.wait(60)
+        QTest.mouseClick(combo, Qt.MouseButton.LeftButton, pos=combo.rect().center())
+        qtbot.waitUntil(popup.isVisible, timeout=1000)
+
+    def click_combo_to_close():
+        QCursor.setPos(combo.mapToGlobal(combo.rect().center()))
+        QTest.keyClick(popup, Qt.Key.Key_Escape)
+        qtbot.waitUntil(lambda: not popup.isVisible(), timeout=1000)
+
+    def move_over_popup(index, delay=20):
+        rect = popup.visualRect(combo.model().index(index, 0))
+        global_pos = popup.viewport().mapToGlobal(rect.center())
+        QCursor.setPos(global_pos)
+        move_event = QMouseEvent(
+            QEvent.Type.MouseMove,
+            QPointF(rect.center()),
+            QPointF(global_pos),
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        QApplication.sendEvent(popup.viewport(), move_event)
+        qtbot.wait(delay)
+
+    def assert_popup_survives_hover(indices, interval_ms=0):
+        watched_during_open = (
+            "hide",
+            "focus_out",
+            "window_deactivate",
+            "tooltip",
+            "enabled_change",
+            "resize",
+            "mouse_press",
+            "mouse_release",
+        )
+        before_counts = {name: events.counts[name] for name in watched_during_open}
+        if interval_ms:
+            qtbot.wait(interval_ms)
+        assert popup.isVisible()
+        assert QApplication.focusWidget() in (popup, popup.viewport())
+        assert not QToolTip.isVisible()
+        for index in indices:
+            move_over_popup(index, 100)
+            assert popup.isVisible(), events.sequence[-20:]
+            assert QApplication.focusWidget() in (popup, popup.viewport())
+            assert not QToolTip.isVisible()
+        assert {name: events.counts[name] for name in watched_during_open} == before_counts
+
+    QTest.mouseMove(combo, combo.rect().center(), 10)
+    qtbot.wait(1200)
+    click_combo_to_open()
+    assert_popup_survives_hover((1, 2, 3, 4), 1200)
+    click_combo_to_close()
+
+    for selection_index in (2, 3, 4):
+        click_combo_to_open()
+        move_over_popup(selection_index)
+        rect = popup.visualRect(combo.model().index(selection_index, 0))
+        QTest.mouseClick(popup.viewport(), Qt.MouseButton.LeftButton, pos=rect.center())
+        qtbot.waitUntil(lambda: not popup.isVisible(), timeout=1000)
+        assert combo.currentData() == (480 if selection_index == 2 else 240 if selection_index == 3 else 120)
+        assert calls == {key: 0 for key in calls}
+        assert not target_panel._camera_mode_change_active
+        assert not hasattr(target_panel, "_active_view_mode_worker")
+
+        click_combo_to_open()
+        assert_popup_survives_hover((0, 2, 4), 1050)
+        click_combo_to_close()
+
+    for _ in range(6):
+        click_combo_to_open()
+        assert_popup_survives_hover((0, 1, 3, 4), 1050)
+        click_combo_to_close()
+
+    assert events.counts["tooltip"] == 0
+    assert calls == {key: 0 for key in calls}
+    assert all(camera._frame_count > initial + 20 for camera, initial in zip(cameras, starting_frames, strict=True))
+    assert [panel.settings_button.isChecked() for panel in panels] == settings_states
+    assert events.counts["show"] >= events.counts["hide"]
+    assert not panels[1].view_mode_combo.view().isVisible()
+
+
 def test_mode_combo_keeps_width_stable_across_selections(qtbot):
     panel = CameraPanel(
         None, "Simulated", CameraConfig(identifier="stable-combo", name="Simulated", backend="simulation")
@@ -184,9 +369,7 @@ def test_mode_combo_keeps_width_stable_across_selections(qtbot):
     assert max(widths) - min(widths) <= 1
     assert panel.view_mode_combo.width() == 230
     assert all(panel.view_mode_combo.itemData(i, Qt.ItemDataRole.ToolTipRole) is None for i in range(len(widths)))
-    assert panel.view_mode_combo.toolTip() == (
-        "Select a centered sensor ROI. Smaller heights increase the available camera frame-rate range."
-    )
+    assert panel.view_mode_combo.toolTip() == ""
     assert all(
         panel.view_mode_combo.itemData(i, Qt.ItemDataRole.TextAlignmentRole) == int(Qt.AlignmentFlag.AlignCenter)
         for i in range(panel.view_mode_combo.count())

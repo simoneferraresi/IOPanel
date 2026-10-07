@@ -936,8 +936,12 @@ class CameraPanel(QFrame):
             selected is not None and current is not None and current.width == 1292 and current.height == int(selected)
         )
         busy = self._recovery_active or self._recovery_failed or self._auto_op_active or self._camera_mode_change_active
-        self.view_mode_combo.setEnabled(physical and not busy)
-        self.view_mode_apply.setEnabled(physical and not busy and selected is not None and not same)
+        combo_enabled = physical and not busy
+        apply_enabled = physical and not busy and selected is not None and not same
+        if self.view_mode_combo.isEnabled() != combo_enabled:
+            self.view_mode_combo.setEnabled(combo_enabled)
+        if self.view_mode_apply.isEnabled() != apply_enabled:
+            self.view_mode_apply.setEnabled(apply_enabled)
 
     def _apply_selected_view_mode(self):
         if not self.camera or self._camera_mode_change_active:
@@ -1019,9 +1023,6 @@ class CameraPanel(QFrame):
         self.view_mode_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.view_mode_combo.setMinimumContentsLength(20)
         self.view_mode_combo.setFixedWidth(230)
-        self.view_mode_combo.setToolTip(
-            "Select a centered sensor ROI. Smaller heights increase the available camera frame-rate range."
-        )
         for height, label, _aspect in VIEW_MODES:
             self.view_mode_combo.addItem(f"{label} — 1292×{height}", height)
             self.view_mode_combo.setItemData(
