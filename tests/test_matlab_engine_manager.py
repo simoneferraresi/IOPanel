@@ -3,6 +3,8 @@ from __future__ import annotations
 import threading
 from types import SimpleNamespace
 
+import shiboken6
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, QThread, QTimer, Signal, Slot
 from PySide6.QtTest import QSignalSpy
 
 from logic.matlab_engine_manager import MatlabEngineManager, MatlabEngineState
@@ -66,6 +68,15 @@ class FakeEngine:
 
     def quit(self):
         self.quit_calls += 1
+
+
+class FinishedWorker(QObject):
+    finished_saving = Signal(str, bool, str)
+    engine_unhealthy = Signal(str)
+
+    @Slot()
+    def run(self) -> None:
+        self.finished_saving.emit("fig", True, "scan.fig")
 
 
 def test_unavailable_manager_has_no_timers_or_start_attempts(qtbot):
@@ -174,6 +185,153 @@ def test_ready_shutdown_quits_exactly_once(qtbot):
     assert engine.quit_calls == 1
     assert manager.engine is None
     assert manager.state is MatlabEngineState.SHUTTING_DOWN
+
+
+def test_plotwidget_clears_finished_thread_refs_and_starts_later_fig_thread(qtbot, monkeypatch):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    thread = QThread(widget)
+    worker = FinishedWorker()
+    widget.matlab_save_thread = thread
+    widget.matlab_save_worker = worker
+    worker.moveToThread(thread)
+    worker.finished_saving.connect(worker.deleteLater)
+    worker.finished_saving.connect(thread.quit)
+    thread.started.connect(worker.run)
+    thread.finished.connect(
+        lambda completed_thread=thread, completed_worker=worker: widget._matlab_save_thread_finished.emit(
+            completed_thread, completed_worker
+        )
+    )
+    thread.finished.connect(thread.deleteLater)
+    thread.start()
+
+    qtbot.waitUntil(lambda: widget.matlab_save_thread is None, timeout=1000)
+    assert widget.matlab_save_worker is None
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    QCoreApplication.processEvents()
+    assert not shiboken6.isValid(thread)
+    assert not shiboken6.isValid(worker)
+
+    def complete_worker(target, *_args):
+        QTimer.singleShot(10, lambda: target.finished_saving.emit("fig", True, "scan.fig"))
+        return True
+
+    monkeypatch.setattr(plot_widgets.QMetaObject, "invokeMethod", complete_worker)
+    monkeypatch.setattr(plot_widgets.QMessageBox, "information", lambda *_args: None)
+    widget.matlab_engine_manager._engine = FakeEngine()
+    widget.matlab_engine_manager._set_state(MatlabEngineState.READY)
+    widget.pending_saves = 1
+    widget.saved_files_list = []
+    widget.error_list = []
+    widget._completion_reported = False
+    widget._pending_matlab_fig = ("payload", "first.fig", "title", "x", "y")
+    widget._start_pending_matlab_fig()
+    first_fig_thread = widget.matlab_save_thread
+
+    qtbot.waitUntil(lambda: widget.matlab_save_thread is None, timeout=1000)
+    assert widget.matlab_save_worker is None
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    QCoreApplication.processEvents()
+    assert not shiboken6.isValid(first_fig_thread)
+
+    widget.pending_saves = 1
+    widget.saved_files_list = []
+    widget.error_list = []
+    widget._completion_reported = False
+    widget._pending_matlab_fig = ("payload", "second.fig", "title", "x", "y")
+    widget._start_pending_matlab_fig()
+    second_fig_thread = widget.matlab_save_thread
+    assert second_fig_thread is not first_fig_thread
+    qtbot.waitUntil(lambda: widget.matlab_save_thread is None, timeout=1000)
+    assert widget.matlab_save_worker is None
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    QCoreApplication.processEvents()
+    assert not shiboken6.isValid(second_fig_thread)
+
+
+def test_plotwidget_cleanup_tolerates_deleted_qthread_and_always_shuts_manager(qtbot):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    thread = QThread(widget)
+    worker = QObject()
+    thread.start()
+    thread.quit()
+    assert thread.wait(1000)
+    thread.deleteLater()
+    worker.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    QCoreApplication.processEvents()
+    assert not shiboken6.isValid(thread)
+    assert not shiboken6.isValid(worker)
+    widget.matlab_save_thread = thread
+    widget.matlab_save_worker = worker
+    shutdown_calls = []
+    widget.matlab_engine_manager.shutdown = lambda: shutdown_calls.append(True)
+
+    widget.cleanup()
+    widget.cleanup()
+
+    assert shutdown_calls == [True]
+    assert widget.matlab_save_thread is None
+    assert widget.matlab_save_worker is None
+
+
+def test_plotwidget_cleanup_logs_thread_teardown_error_and_still_shuts_manager(qtbot, monkeypatch, caplog):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+
+    class BrokenThread:
+        @staticmethod
+        def isRunning():
+            raise RuntimeError("deleted wrapper")
+
+    thread = BrokenThread()
+    worker = QObject()
+    widget.matlab_save_thread = thread
+    widget.matlab_save_worker = worker
+    shutdown_calls = []
+    widget.matlab_engine_manager.shutdown = lambda: shutdown_calls.append(True)
+    monkeypatch.setattr(shiboken6, "isValid", lambda obj: obj is thread or obj is worker)
+
+    widget.cleanup()
+
+    assert shutdown_calls == [True]
+    assert widget.matlab_save_thread is None
+    assert widget.matlab_save_worker is None
+    assert "Could not fully stop the MATLAB save thread" in caplog.text
+
+
+def test_matlab_status_persists_for_long_startup_states(qtbot, monkeypatch):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    widget._status_clear_timer.start(1000)
+
+    widget._on_matlab_engine_state_changed(MatlabEngineState.STARTING)
+    assert widget.matlab_status_label.text() == "MATLAB Starting…"
+    assert not widget._status_clear_timer.isActive()
+
+    widget.matlab_engine_manager._available = True
+    monkeypatch.setattr(widget.matlab_engine_manager, "request_engine", lambda: MatlabEngineState.STARTING)
+    widget.pending_saves = 0
+    widget.saved_files_list = []
+    widget.error_list = []
+    widget._queue_matlab_fig(("payload", "scan.fig", "title", "x", "y"))
+    assert widget.matlab_status_label.text() == "Waiting for MATLAB…"
+    assert not widget._status_clear_timer.isActive()
+
+    widget._set_matlab_status("Restarting MATLAB…", persistent=True)
+    assert not widget._status_clear_timer.isActive()
+
+    widget._pending_matlab_fig = None
+    widget._on_matlab_engine_ready()
+    assert widget.matlab_status_label.text() == "MATLAB Ready"
+    assert widget._status_clear_timer.isActive()
+
+    widget._pending_matlab_fig = None
+    widget._on_matlab_engine_startup_failed("startup failed")
+    assert widget.matlab_status_label.text() == "MATLAB Start Failed"
+    assert widget._status_clear_timer.isActive()
 
 
 def test_startup_shutdown_disposes_late_engine_off_the_qt_thread(qtbot):

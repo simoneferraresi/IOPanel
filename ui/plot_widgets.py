@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 import pyqtgraph as pg
 import pyqtgraph.opengl as gl
+import shiboken6
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import (
     Q_ARG,
@@ -1278,6 +1279,7 @@ class PlotWidget(QWidget):
 
     # Signal to update UI from worker, e.g., re-enable button, show status
     matlab_save_status_update = Signal(str)  # Message for status bar or dialog
+    _matlab_save_thread_finished = Signal(object, object)
 
     def __init__(self, shared_settings, parent: QWidget | None = None, settings: AppSettings | None = None):
         super().__init__(parent)
@@ -1316,6 +1318,9 @@ class PlotWidget(QWidget):
         self._pending_matlab_fig: tuple[str, str, str, str, str] | None = None
         self._matlab_fig_retry_count = 0
         self._cleaned_up = False
+        self._matlab_save_thread_finished.connect(
+            self._handle_matlab_save_thread_finished, Qt.ConnectionType.QueuedConnection
+        )
 
         # --- NEW: Remember last save directory ---
         # Start with the current working directory
@@ -1467,7 +1472,9 @@ class PlotWidget(QWidget):
         """Set a scan title using the shared 12 pt bold Geist policy."""
         self.plot_widget.setTitle(text, **pyqtgraph_title_style(color))
 
-    def _set_matlab_status(self, message: str) -> None:
+    def _set_matlab_status(self, message: str, *, persistent: bool = False) -> None:
+        if persistent:
+            self._status_clear_timer.stop()
         self.matlab_status_label.setText(message)
         self.matlab_status_label.setVisible(bool(message))
 
@@ -1600,8 +1607,7 @@ class PlotWidget(QWidget):
     @Slot(object)
     def _on_matlab_engine_state_changed(self, state: MatlabEngineState) -> None:
         if state is MatlabEngineState.STARTING and self._pending_matlab_fig is None:
-            self._set_matlab_status("MATLAB Starting…")
-            self._status_clear_timer.start(self._MATLAB_STATUS_TIMEOUT_MS)
+            self._set_matlab_status("MATLAB Starting…", persistent=True)
 
     @Slot()
     def _on_matlab_engine_ready(self) -> None:
@@ -1625,6 +1631,10 @@ class PlotWidget(QWidget):
             return
 
         payload, fig_path, title, xlabel, ylabel = request
+        previous_thread = self.matlab_save_thread
+        if previous_thread is not None and shiboken6.isValid(previous_thread) and previous_thread.isRunning():
+            return
+
         self._set_matlab_status(f"Saving {Path(fig_path).name}…")
         thread = QThread(self)
         worker = MatlabSaveWorker()
@@ -1633,11 +1643,17 @@ class PlotWidget(QWidget):
         worker.moveToThread(thread)
         worker.finished_saving.connect(self._handle_matlab_save_finished)
         worker.engine_unhealthy.connect(self._handle_matlab_engine_unhealthy)
+        worker.finished_saving.connect(worker.deleteLater)
+        worker.engine_unhealthy.connect(worker.deleteLater)
         worker.finished_saving.connect(thread.quit)
         worker.engine_unhealthy.connect(thread.quit)
         thread.started.connect(lambda: logger.info("MATLAB save worker thread started for FIG."))
+        thread.finished.connect(
+            lambda completed_thread=thread, completed_worker=worker: self._matlab_save_thread_finished.emit(
+                completed_thread, completed_worker
+            )
+        )
         thread.finished.connect(thread.deleteLater)
-        thread.finished.connect(worker.deleteLater)
         thread.start()
         QMetaObject.invokeMethod(
             worker,
@@ -1651,6 +1667,19 @@ class PlotWidget(QWidget):
             Q_ARG(QWidget, self),
         )
 
+    @Slot(object, object)
+    def _handle_matlab_save_thread_finished(self, thread: QThread, worker: MatlabSaveWorker) -> None:
+        if self.matlab_save_thread is thread:
+            self.matlab_save_thread = None
+        if self.matlab_save_worker is worker:
+            self.matlab_save_worker = None
+        if (
+            not self._cleaned_up
+            and self._pending_matlab_fig is not None
+            and self.matlab_engine_manager.state is MatlabEngineState.READY
+        ):
+            self._start_pending_matlab_fig()
+
     @Slot(str)
     def _handle_matlab_engine_unhealthy(self, error: str) -> None:
         self.matlab_engine_manager.engine_unresponsive(RuntimeError(error))
@@ -1659,7 +1688,7 @@ class PlotWidget(QWidget):
             return
         self._matlab_fig_retry_count += 1
         logger.warning("Retrying FIG save after MATLAB Engine health check failed: %s", error)
-        self._set_matlab_status("Restarting MATLAB…")
+        self._set_matlab_status("Restarting MATLAB…", persistent=True)
         self.matlab_engine_manager.request_engine()
 
     def _finish_pending_matlab_fig_failure(self, error: str) -> None:
@@ -1686,7 +1715,7 @@ class PlotWidget(QWidget):
         if state is MatlabEngineState.READY:
             self._start_pending_matlab_fig()
         elif state is MatlabEngineState.STARTING and self._pending_matlab_fig is not None:
-            self._set_matlab_status("Waiting for MATLAB…")
+            self._set_matlab_status("Waiting for MATLAB…", persistent=True)
         elif state is MatlabEngineState.UNAVAILABLE:
             self._finish_pending_matlab_fig_failure("FIG: MATLAB Engine support is not available.")
 
@@ -2100,11 +2129,7 @@ class PlotWidget(QWidget):
             self.error_list.append(f"{filetype.upper()}: {message_or_filename}")
             self._set_matlab_status(f"Error saving {filetype}.")
 
-        # The thread and worker are already connected to deleteLater via their finished signals.
-        # We don't need to explicitly quit/delete them here again.
-        # Setting the Python attributes to None after they are "done" for this operation
-        # can be a good practice to signal they shouldn't be reused directly.
-        # However, the next call to save_scan_data will overwrite them anyway.
+        # QThread.finished clears the Python references before the thread wrapper is deleted.
 
         self._check_all_saves_done()
 
@@ -2150,22 +2175,30 @@ class PlotWidget(QWidget):
         self._cleaned_up = True
         logger.debug("PlotWidget cleanup: Cleaning up resources.")
         self._status_clear_timer.stop()
-        # Stop any ongoing save worker thread
-        if self.matlab_save_thread and self.matlab_save_thread.isRunning():
-            logger.info("PlotWidget close: Stopping active MATLAB save worker thread.")
-            if self.matlab_save_worker:
-                QMetaObject.invokeMethod(
-                    self.matlab_save_worker,
-                    "stop_worker",
-                    Qt.ConnectionType.QueuedConnection,
-                )
-            self.matlab_save_thread.quit()
-            if not self.matlab_save_thread.wait(self._THREAD_WAIT_TIMEOUT_MS):  # Wait for graceful exit
-                logger.warning("MATLAB save thread did not quit gracefully on PlotWidget close. Terminating.")
-                self.matlab_save_thread.terminate()
-                self.matlab_save_thread.wait()  # Wait for termination
-
-        self.matlab_engine_manager.shutdown()
+        thread = self.matlab_save_thread
+        worker = self.matlab_save_worker
+        try:
+            if thread is not None and shiboken6.isValid(thread) and thread.isRunning():
+                logger.info("PlotWidget close: Stopping active MATLAB save worker thread.")
+                if worker is not None and shiboken6.isValid(worker):
+                    QMetaObject.invokeMethod(
+                        worker,
+                        "stop_worker",
+                        Qt.ConnectionType.QueuedConnection,
+                    )
+                thread.quit()
+                if not thread.wait(self._THREAD_WAIT_TIMEOUT_MS) and shiboken6.isValid(thread) and thread.isRunning():
+                    logger.warning("MATLAB save thread did not quit gracefully on PlotWidget close. Terminating.")
+                    thread.terminate()
+                    thread.wait()
+        except Exception:
+            logger.exception("Could not fully stop the MATLAB save thread during PlotWidget cleanup.")
+        finally:
+            if self.matlab_save_thread is thread:
+                self.matlab_save_thread = None
+            if self.matlab_save_worker is worker:
+                self.matlab_save_worker = None
+            self.matlab_engine_manager.shutdown()
 
     def closeEvent(self, event: QtGui.QCloseEvent):
         self.cleanup()
