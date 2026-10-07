@@ -185,6 +185,7 @@ class MainWindow(QMainWindow):
         # --- Member variable initialization ---
         self.cameras: list[VimbaCam] = []
         self.camera_panels: dict[str, CameraPanel] = {}
+        self._camera_cleanup_complete = False
         self._init_tasks: set[TaskRunner] = set()
         self._camera_recovery_tasks: dict[str, TaskRunner] = {}
 
@@ -1385,9 +1386,14 @@ class MainWindow(QMainWindow):
             logger.exception("Error clearing discarded Power Monitor recording trace")
 
     def _cleanup_cameras(self):
+        if self._camera_cleanup_complete:
+            return
+        self._camera_cleanup_complete = True
         logger.info(f"Closing {len(self.cameras)} camera(s)...")
         cameras_to_close = list(self.cameras)
-        panels_to_close = list(dict.fromkeys(self.camera_panels.values()))
+        panels_to_close = list(
+            dict.fromkeys([*self.camera_panels.values(), *self.camera_container.findChildren(CameraPanel)])
+        )
 
         # Restore per-session camera settings and quiesce all panel work while
         # the camera is still open, then stop every producer before consumers.
@@ -1414,17 +1420,21 @@ class MainWindow(QMainWindow):
                 item = layout.takeAt(0)
                 widget = item.widget()
                 if widget is not None:
-                    try:
-                        widget.close()
-                    except Exception:
-                        logger.exception("Error closing camera panel widget")
-                    widget.deleteLater()
+                    if isinstance(widget, CameraPanel):
+                        if widget not in panels_to_close:
+                            panels_to_close.append(widget)
+                    else:
+                        try:
+                            widget.close()
+                        except Exception:
+                            logger.exception("Error closing camera placeholder widget")
+                        widget.deleteLater()
         for panel in panels_to_close:
-            if panel.parent() is not None:
-                try:
-                    panel.close()
-                except Exception:
-                    logger.exception("Error closing camera panel %s", panel._panel_title)
+            try:
+                panel.close()
+            except Exception:
+                logger.exception("Error closing camera panel %s", panel._panel_title)
+            panel.deleteLater()
 
         self.cameras.clear()
         self.camera_panels.clear()
