@@ -274,7 +274,7 @@ class FakeDiagnosticCamera:
         self.fps_updated = FakeSignal()
 
     def open(self):
-        self.device = camera_state
+        self.device = camera_states.get(self.identifier, camera_state)
         self.is_streaming = True
         return True
 
@@ -308,11 +308,13 @@ class FakeDiagnosticPanel(QWidget):
 
 
 camera_state: FakeGenICamCamera
+camera_states: dict[str, FakeGenICamCamera] = {}
 
 
 def _run_fake_main(monkeypatch, tmp_path, camera, *, fail_rate_query=False, duration="0.01"):
-    global camera_state
+    global camera_state, camera_states
     camera_state = camera
+    camera_states = {"DEV_TEST": camera}
     system = SimpleNamespace(entered=False, exited=False)
 
     def system_enter():
@@ -526,6 +528,179 @@ def test_main_roi_query_failure_restores_roi_and_closes_system(monkeypatch, tmp_
     assert camera.features["Height"].get() == 964
     assert result["restoration"]["roi_confirmed"] is True
     assert system.exited
+
+
+def _run_fake_dual_main(monkeypatch, tmp_path, cameras, *, fail_second_roi=False, fault=None):
+    global camera_state, camera_states
+    camera_states = cameras
+    camera_state = next(iter(cameras.values()))
+    system = SimpleNamespace(entered=False, exited=False)
+    system.__enter__ = lambda: setattr(system, "entered", True) or system
+    system.__exit__ = lambda *_args: setattr(system, "exited", True)
+    system.get_instance = lambda: system
+    handles = {}
+    for camera_id, camera in cameras.items():
+        camera.__enter__ = lambda camera=camera: camera
+        camera.__exit__ = lambda *_args: None
+        camera.get_id = lambda camera_id=camera_id: camera_id
+        handles[camera_id] = camera
+    monkeypatch.setitem(sys.modules, "vmbpy", types.SimpleNamespace(VmbSystem=system))
+    discoveries = []
+    monkeypatch.setattr(
+        diagnostic,
+        "wait_for_cameras_by_id",
+        lambda _system, ids, **_kw: discoveries.append(tuple(ids)) or {key: handles[key] for key in ids},
+    )
+    monkeypatch.setattr(diagnostic, "VimbaCam", FakeDiagnosticCamera)
+    monkeypatch.setattr(diagnostic, "CameraPanel", FakeDiagnosticPanel)
+    monkeypatch.setattr(diagnostic, "InstrumentedCameraPanel", FakeDiagnosticPanel)
+    restore_calls = []
+    real_restore = diagnostic._restore_settings
+    monkeypatch.setattr(
+        diagnostic,
+        "_restore_settings",
+        lambda camera, snapshot, changed: restore_calls.append(camera) or real_restore(camera, snapshot, changed),
+    )
+    if fault == "second_open":
+        original_open = FakeDiagnosticCamera.open
+
+        def fail_second_open(camera):
+            if camera.identifier == "DEV_SIDE":
+                raise RuntimeError("injected second VimbaCam open failure")
+            return original_open(camera)
+
+        monkeypatch.setattr(FakeDiagnosticCamera, "open", fail_second_open)
+    elif fault == "second_conversion":
+
+        class FailingConversionPanel(FakeDiagnosticPanel):
+            def set_camera(self, camera):
+                if camera.identifier == "DEV_SIDE":
+                    raise RuntimeError("injected second conversion path failure")
+                super().set_camera(camera)
+
+        monkeypatch.setattr(diagnostic, "InstrumentedCameraPanel", FailingConversionPanel)
+    elif fault == "first_restore":
+
+        def fail_first_restore(camera, snapshot, changed):
+            restored = real_restore(camera, snapshot, changed)
+            if camera is cameras["DEV_TOP"]:
+                restored["errors"].append("injected first-camera restoration failure")
+            return restored
+
+        monkeypatch.setattr(
+            diagnostic,
+            "_restore_settings",
+            lambda camera, snapshot, changed: (
+                restore_calls.append(camera) or fail_first_restore(camera, snapshot, changed)
+            ),
+        )
+    elif fault == "first_thread_cleanup":
+
+        def fail_close(panel):
+            if getattr(panel, "camera", None) is not None and panel.camera.identifier == "DEV_TOP":
+                raise RuntimeError("injected conversion thread cleanup failure")
+            return QWidget.close(panel)
+
+        monkeypatch.setattr(FakeDiagnosticPanel, "close", fail_close)
+    if fail_second_roi:
+        real_apply = diagnostic.apply_roi
+
+        def fail_side(camera, roi):
+            if camera is cameras["DEV_SIDE"]:
+                raise RuntimeError("injected second-camera configuration failure")
+            real_apply(camera, roi)
+
+        monkeypatch.setattr(diagnostic, "apply_roi", fail_side)
+    output = tmp_path / "dual-main.json"
+    status = diagnostic.main(
+        [
+            "--camera-id",
+            "DEV_TOP",
+            "DEV_SIDE",
+            "--camera-roi",
+            "DEV_TOP=1292x480",
+            "--camera-roi",
+            "DEV_SIDE=1292x240",
+            "--maximize-frame-rate-for-roi",
+            "--authorize-settings-changes",
+            "--duration",
+            "0.01",
+            "--output",
+            str(output),
+        ]
+    )
+    return status, json.loads(output.read_text(encoding="utf-8")), system, discoveries, restore_calls
+
+
+def test_dual_main_uses_shared_discovery_independent_configuration_and_common_metrics(monkeypatch, tmp_path, qtbot):
+    top, side = FakeGenICamCamera(), FakeGenICamCamera()
+
+    def side_rate_maximum():
+        height = side.features["Height"].get()
+        side.rate_range_heights.append(height)
+        return 80.0 if height < 964 else 120.0
+
+    side.rate_maximum = side_rate_maximum
+    status, result, system, discoveries, restore_calls = _run_fake_dual_main(
+        monkeypatch, tmp_path, {"DEV_TOP": top, "DEV_SIDE": side}
+    )
+
+    assert status == 0, result
+    assert discoveries == [("DEV_TOP", "DEV_SIDE"), ("DEV_TOP",), ("DEV_SIDE",)]
+    assert len(restore_calls) == 2
+    assert system.exited
+    assert result["measurement_error"] is None
+    assert result["cameras"]["DEV_TOP"]["configuration_readback"]["roi"]["height"] == 480
+    assert result["cameras"]["DEV_SIDE"]["configuration_readback"]["roi"]["height"] == 240
+    assert ("AcquisitionFrameRateAbs", 120.0) in top.operation_log
+    assert ("AcquisitionFrameRateAbs", 80.0) in side.operation_log
+    assert 480 in top.rate_range_heights and 240 in side.rate_range_heights
+    assert result["aggregate"]["combined_conversion_fps"] == pytest.approx(
+        sum(result["cameras"][key]["metrics"]["conversion"]["converted"] for key in ("DEV_TOP", "DEV_SIDE"))
+        / result["aggregate"]["wall_seconds"]
+    )
+    assert all(result["cameras"][key]["cleanup"]["camera_closed"] for key in ("DEV_TOP", "DEV_SIDE"))
+
+
+def test_dual_configuration_failure_restores_both_cameras_and_exits_system(monkeypatch, tmp_path, qtbot):
+    top, side = FakeGenICamCamera(), FakeGenICamCamera()
+    status, result, system, _discoveries, restore_calls = _run_fake_dual_main(
+        monkeypatch, tmp_path, {"DEV_TOP": top, "DEV_SIDE": side}, fail_second_roi=True
+    )
+
+    assert status != 0
+    assert "injected second-camera configuration failure" in result["measurement_error"]
+    assert len(restore_calls) == 2
+    assert all(result["cameras"][key]["restoration"]["roi_confirmed"] for key in ("DEV_TOP", "DEV_SIDE"))
+    assert system.exited
+
+
+@pytest.mark.parametrize(
+    ("fault", "message"),
+    [
+        ("second_open", "injected second VimbaCam open failure"),
+        ("second_conversion", "injected second conversion path failure"),
+        ("first_restore", "injected first-camera restoration failure"),
+        ("first_thread_cleanup", "injected conversion thread cleanup failure"),
+    ],
+)
+def test_dual_partial_failures_keep_attempting_peer_restore_and_cleanup(monkeypatch, tmp_path, qtbot, fault, message):
+    top, side = FakeGenICamCamera(), FakeGenICamCamera()
+    status, result, system, _discoveries, restore_calls = _run_fake_dual_main(
+        monkeypatch, tmp_path, {"DEV_TOP": top, "DEV_SIDE": side}, fault=fault
+    )
+
+    assert status != 0
+    assert system.exited
+    assert len(restore_calls) == 2
+    if fault in {"second_open", "second_conversion"}:
+        assert message in result["measurement_error"]
+    if fault == "first_restore":
+        assert message in result["cameras"]["DEV_TOP"]["restoration"]["errors"]
+        assert result["cameras"]["DEV_SIDE"]["restoration"]["roi_confirmed"] is True
+    if fault == "first_thread_cleanup":
+        assert any(message in error for error in result["cleanup_errors"])
+        assert result["cameras"]["DEV_SIDE"]["cleanup"]["camera_closed"] is True
 
 
 @pytest.mark.parametrize(

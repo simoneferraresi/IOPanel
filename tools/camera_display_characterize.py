@@ -20,7 +20,7 @@ from typing import Any
 
 import numpy as np
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Slot
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QHBoxLayout, QWidget
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -144,8 +144,9 @@ def parse_size(value: str) -> tuple[int, int]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--camera-id", required=True, help="Exact physical Vimba camera ID")
+    parser.add_argument("--camera-id", required=True, nargs="+", help="One or two exact physical Vimba camera IDs")
     parser.add_argument("--roi", type=parse_size, help="Centered ROI WIDTHxHEIGHT (writes camera settings)")
+    parser.add_argument("--camera-roi", action="append", default=[], metavar="ID=WIDTHxHEIGHT")
     parser.add_argument("--maximize-frame-rate-for-roi", action="store_true")
     parser.add_argument("--authorize-settings-changes", action="store_true")
     parser.add_argument("--window-size", type=parse_size, default=(960, 720))
@@ -155,14 +156,41 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    camera_ids = args.camera_id if isinstance(args.camera_id, list) else [args.camera_id]
+    if not 1 <= len(camera_ids) <= 2 or any(not item for item in camera_ids):
+        parser.error("--camera-id requires one or two non-empty IDs")
+    if len(set(camera_ids)) != len(camera_ids):
+        parser.error("--camera-id values must be distinct")
+    mappings: dict[str, tuple[int, int]] = {}
+    for mapping in getattr(args, "camera_roi", []):
+        camera_id, separator, size = mapping.partition("=")
+        if not separator or not camera_id or camera_id not in camera_ids or camera_id in mappings:
+            parser.error("--camera-roi must uniquely map a requested camera ID to WIDTHxHEIGHT")
+        try:
+            mappings[camera_id] = parse_size(size)
+        except argparse.ArgumentTypeError as exc:
+            parser.error(f"invalid --camera-roi {mapping!r}: {exc}")
+    args.camera_roi_map = mappings
+    if len(camera_ids) == 2 and args.roi and mappings:
+        parser.error("use --camera-roi for both cameras; --roi cannot be mixed with per-camera mappings")
+    if len(camera_ids) == 2 and mappings and set(mappings) != set(camera_ids):
+        parser.error("dual-camera --camera-roi must map both requested cameras")
+    if len(camera_ids) == 2 and not mappings and args.roi:
+        mappings.update((camera_id, args.roi) for camera_id in camera_ids)
+    if len(camera_ids) == 1 and mappings and args.roi:
+        parser.error("choose either --roi or --camera-roi")
+    if len(camera_ids) == 1 and mappings and set(mappings) != set(camera_ids):
+        parser.error("--camera-roi must map the requested camera")
+    if len(camera_ids) == 1 and mappings:
+        args.roi = mappings[camera_ids[0]]
+    if args.maximize_frame_rate_for_roi and not (args.roi or mappings):
+        parser.error("--maximize-frame-rate-for-roi requires an ROI")
+    if (args.authorize_settings_changes or args.maximize_frame_rate_for_roi) and not (args.roi or mappings):
+        parser.error("settings-change options require an ROI")
     if args.duration <= 0:
         parser.error("--duration must be positive")
-    if args.maximize_frame_rate_for_roi and not args.roi:
-        parser.error("--maximize-frame-rate-for-roi requires --roi")
-    if args.roi and not args.authorize_settings_changes:
+    if (args.roi or mappings) and not args.authorize_settings_changes:
         parser.error("--roi requires --authorize-settings-changes")
-    if (args.authorize_settings_changes or args.maximize_frame_rate_for_roi) and not args.roi:
-        parser.error("settings-change options require --roi")
 
 
 def _set_feature(camera: Any, logical: str, value: Any) -> Any:
@@ -487,9 +515,10 @@ def _collect_metrics(
     }
 
 
-def main(argv: list[str] | None = None) -> int:
+def _main_single(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    args.camera_id = args.camera_id[0] if isinstance(args.camera_id, list) else args.camera_id
     validate_args(parser, args)
     try:
         from vmbpy import VmbSystem
@@ -698,9 +727,315 @@ def main(argv: list[str] | None = None) -> int:
     return diagnostic_exit_status(result)
 
 
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    validate_args(parser, args)
+    ids = args.camera_id if isinstance(args.camera_id, list) else [args.camera_id]
+    if len(ids) == 1:
+        return _main_single(argv)
+    return _main_dual(args)
+
+
+def _main_dual(args: argparse.Namespace) -> int:
+    """Run both real camera pipelines against one window and measurement clock."""
+    try:
+        from vmbpy import VmbSystem
+    except Exception as exc:  # noqa: BLE001
+        print(f"VmbPy unavailable: {exc}", file=sys.stderr)
+        return 2
+    app = QApplication.instance() or QApplication(sys.argv[:1])
+    ids = list(args.camera_id)
+    system = VmbSystem.get_instance()
+    result: dict[str, Any] = {
+        "repository_sha": _git_sha(),
+        "timestamp": datetime.now(UTC).isoformat(),
+        "camera_ids": ids,
+        "measurement_error": None,
+        "cameras": {},
+        "aggregate": {},
+        "event_loop": {},
+        "cleanup": {"VmbSystem_exited": False},
+    }
+    handles: dict[str, Any] = {}
+    snapshots: dict[str, dict[str, Any]] = {}
+    changed_rates = {camera_id: False for camera_id in ids}
+    cameras: dict[str, VimbaCam] = {}
+    panels: dict[str, InstrumentedCameraPanel] = {}
+    paints: dict[str, PaintCounter] = {}
+    counters: dict[str, AcquisitionCounter] = {}
+    fps_samples: dict[str, list[float]] = {camera_id: [] for camera_id in ids}
+    system_entered = False
+    outer: QWidget | None = None
+    timer: QTimer | None = None
+    try:
+        system.__enter__()
+        system_entered = True
+        handles = wait_for_cameras_by_id(
+            system,
+            ids,
+            on_wait=lambda: print(
+                f"Waiting up to {DISCOVERY_TIMEOUT_SECONDS:g}s for exact camera IDs {', '.join(ids)}", file=sys.stderr
+            ),
+        )
+        # Snapshot both devices before the first requested setting is changed.
+        for camera_id in ids:
+            handle = handles[camera_id]
+            handle.__enter__()
+            try:
+                snapshots[camera_id] = _snapshot_settings(handle)
+                result["cameras"][camera_id] = {
+                    "model": handle.get_model(),
+                    "original_configuration": snapshots[camera_id],
+                    "restoration": None,
+                    "cleanup": {"camera_closed": False, "conversion_thread_stopped": False},
+                }
+            finally:
+                handle.__exit__(None, None, None)
+        configured: dict[str, ROI] = {}
+        for camera_id in ids:
+            roi_size = args.camera_roi_map.get(camera_id)
+            handle = handles[camera_id]
+            handle.__enter__()
+            try:
+                if roi_size:
+                    target = _centered_roi(handle, roi_size, snapshots[camera_id]["roi"])
+                    apply_roi(handle, target)
+                    if read_roi(handle) != target:
+                        raise RuntimeError(f"{camera_id}: ROI readback mismatch")
+                    if args.maximize_frame_rate_for_roi:
+                        enable_snapshot = snapshots[camera_id]["frame_rate_enable"]
+                        if enable_snapshot["available"]:
+                            enable = inspect_feature(handle, FEATURE_ALIASES["frame_rate_enable"])
+                            if not enable_snapshot["readable"] or not enable.readable:
+                                raise RuntimeError(f"{camera_id}: frame-rate enable state is not readable")
+                            if not _feature_is_enabled(enable.value):
+                                _set_feature(handle, "frame_rate_enable", _enabled_feature_value(enable))
+                        # Re-query independently after this camera's ROI write.
+                        cap = inspect_feature(handle, FEATURE_ALIASES["frame_rate"])
+                        if not cap.available or not cap.writable or cap.maximum is None:
+                            raise RuntimeError(f"{camera_id}: ROI-dependent maximum frame rate unavailable")
+                        changed_rates[camera_id] = True
+                        _set_feature(handle, "frame_rate", float(cap.maximum))
+                configured[camera_id] = read_roi(handle)
+                rate_cap = inspect_feature(handle, FEATURE_ALIASES["frame_rate"])
+                result["cameras"][camera_id]["configuration_readback"] = {
+                    "roi": configured[camera_id].__dict__,
+                    "reported_acquisition_frame_rate": report_value(rate_cap.value),
+                    "frame_rate_enable": _feature_snapshot(handle, "frame_rate_enable"),
+                }
+            finally:
+                handle.__exit__(None, None, None)
+        for camera_id in ids:
+            model = result["cameras"][camera_id]["model"]
+            camera = VimbaCam(camera_id, camera_name=str(model))
+            cameras[camera_id] = camera
+            if not camera.open():
+                raise RuntimeError(f"{camera_id}: VimbaCam could not open")
+            rate = camera.get_frame_rate_capability()
+            expected_rate = result["cameras"][camera_id]["configuration_readback"]["reported_acquisition_frame_rate"]
+            if camera.get_roi() != configured[camera_id] or (
+                rate and not np.isclose(float(rate["feature"].value), float(expected_rate), rtol=1e-6, atol=1e-6)
+            ):
+                raise RuntimeError(f"{camera_id}: VimbaCam readback differs from configuration")
+            panel = InstrumentedCameraPanel(None, str(model), CameraConfig(identifier=camera_id, name=str(model)))
+            panels[camera_id] = panel
+            panel.set_camera(camera)
+            paint = PaintCounter()
+            paints[camera_id] = paint
+            panel.video_label.installEventFilter(paint)
+            counter = AcquisitionCounter()
+            counters[camera_id] = counter
+            camera.new_frame.connect(counter.record, Qt.ConnectionType.DirectConnection)
+            camera.fps_updated.connect(lambda fps, dest=fps_samples[camera_id]: dest.append(float(fps)))
+        outer = QWidget()
+        layout = QHBoxLayout(outer)
+        for panel in panels.values():
+            layout.addWidget(panel)
+        outer.resize(*args.window_size)
+        outer.show()
+        heartbeat: list[float] = []
+        timer = QTimer(outer)
+        timer.setInterval(16)
+        timer.timeout.connect(lambda: heartbeat.append(time.monotonic()))
+        timer.start()
+
+        def panel_has_valid_pixmap(panel: CameraPanel) -> bool:
+            pixmap = panel._latest_pixmap
+            return panel.isVisible() and pixmap is not None and (not hasattr(pixmap, "isNull") or not pixmap.isNull())
+
+        deadline = time.monotonic() + 30.0
+        while time.monotonic() < deadline and any(
+            cameras[camera_id].frame_monitor.get_fps() <= 0
+            or not panel_has_valid_pixmap(panels[camera_id])
+            or panels[camera_id].conversion_worker is None
+            for camera_id in ids
+        ):
+            app.processEvents()
+            time.sleep(0.005)
+        for camera_id in ids:
+            if (
+                cameras[camera_id].frame_monitor.get_fps() <= 0
+                or not panel_has_valid_pixmap(panels[camera_id])
+                or panels[camera_id].conversion_worker is None
+            ):
+                raise RuntimeError(f"{camera_id}: warmup did not observe acquisition, converter, and pixmap")
+        before: dict[str, dict[str, int]] = {}
+        for camera_id in ids:
+            worker, panel = panels[camera_id].conversion_worker, panels[camera_id]
+            before[camera_id] = {
+                "submitted": worker.submitted_frames,
+                "converted": worker.converted_frames,
+                "coalesced": worker.coalesced_frames,
+                "coalesced_images": panel.coalesced_images,
+                "accepted_images": len(panel.accepted_image_timestamps),
+            }
+            panel.presentation_timestamps.clear()
+            paints[camera_id].timestamps.clear()
+            counters[camera_id].timestamps.clear()
+            fps_samples[camera_id].clear()
+        heartbeat.clear()
+        wall_start, cpu_start = time.monotonic(), time.process_time()
+        end = wall_start + args.duration
+        while time.monotonic() < end:
+            app.processEvents()
+            time.sleep(0.001)
+        wall, cpu = time.monotonic() - wall_start, time.process_time() - cpu_start
+        for camera_id in ids:
+            panel = panels[camera_id]
+            roi = configured[camera_id]
+            dims = {
+                "requested_outer_window_size": list(args.window_size),
+                "actual_outer_window_size": [outer.width(), outer.height()],
+                "actual_camera_panel_size": [panel.width(), panel.height()],
+                "actual_video_label_size": [panel.video_label.width(), panel.video_label.height()],
+                "acquired_image_dimensions": [roi.width, roi.height],
+            }
+            metrics = _collect_metrics(
+                panel,
+                paints[camera_id],
+                heartbeat,
+                before[camera_id],
+                counters[camera_id].timestamps,
+                fps_samples[camera_id],
+                wall_start,
+                wall,
+                cpu,
+                dims,
+            )
+            metrics.pop("event_loop", None)
+            acquisition_rate = metrics["acquisition"]["camera_acquisition_fps"]
+            conversion_rate = metrics["conversion"]["conversion_fps"]
+            presentation_rate = metrics["presentation"]["presentation_call_fps"]
+            metrics["efficiency"] = {
+                "conversion_fps_per_acquisition_fps": conversion_rate / acquisition_rate if acquisition_rate else 0.0,
+                "presentation_fps_per_acquisition_fps": presentation_rate / acquisition_rate
+                if acquisition_rate
+                else 0.0,
+            }
+            result["cameras"][camera_id]["metrics"] = metrics
+        values = [result["cameras"][camera_id].get("metrics", {}) for camera_id in ids]
+        result["aggregate"] = {
+            "wall_seconds": wall,
+            "acquisition_signals": sum(m.get("acquisition", {}).get("camera_frame_signals", 0) for m in values),
+            "conversion_submitted": sum(m.get("conversion", {}).get("submitted", 0) for m in values),
+            "conversion_converted": sum(m.get("conversion", {}).get("converted", 0) for m in values),
+            "conversion_coalesced": sum(m.get("conversion", {}).get("coalesced", 0) for m in values),
+            "presentation_accepted_images": sum(m.get("presentation", {}).get("accepted_images", 0) for m in values),
+            "presentation_coalesced_images": sum(m.get("presentation", {}).get("coalesced_images", 0) for m in values),
+            "presentation_calls": sum(m.get("presentation", {}).get("presentation_calls", 0) for m in values),
+            "paint_events": sum(m.get("paint", {}).get("count", 0) for m in values),
+            "combined_conversion_fps": sum(m.get("conversion", {}).get("converted", 0) for m in values) / wall
+            if wall
+            else 0,
+            "combined_presentation_call_fps": sum(
+                m.get("presentation", {}).get("presentation_calls", 0) for m in values
+            )
+            / wall
+            if wall
+            else 0,
+            "combined_cpu_seconds": cpu,
+            "combined_cpu_wall_ratio": cpu / wall if wall else 0.0,
+            "cpu_interpretation": "Process CPU time divided by wall time; not a machine-wide profiler.",
+        }
+        result["event_loop"] = {"heartbeat": timing_stats(heartbeat)}
+        timer.stop()
+    except Exception as exc:  # noqa: BLE001 - retain evidence and attempt every restore/cleanup
+        result["measurement_error"] = str(exc)
+    finally:
+        if timer is not None:
+            timer.stop()
+        for camera_id in ids:
+            panel = panels.get(camera_id)
+            if panel is not None:
+                try:
+                    thread = panel.conversion_thread
+                    panel.close()
+                    app.processEvents()
+                    stopped = thread is None or not thread.isRunning()
+                    result["cameras"][camera_id]["cleanup"]["conversion_thread_stopped"] = stopped
+                    if not stopped:
+                        result.setdefault("cleanup_errors", []).append(f"{camera_id}: conversion thread did not stop")
+                except Exception as exc:  # noqa: BLE001
+                    result.setdefault("cleanup_errors", []).append(f"{camera_id} panel cleanup: {exc}")
+            camera = cameras.get(camera_id)
+            if camera is not None:
+                try:
+                    camera.close()
+                    closed = camera.device is None and not camera.is_streaming
+                    result["cameras"][camera_id]["cleanup"]["camera_closed"] = closed
+                    if not closed:
+                        result.setdefault("cleanup_errors", []).append(f"{camera_id}: VimbaCam remained open")
+                except Exception as exc:  # noqa: BLE001
+                    result.setdefault("cleanup_errors", []).append(f"{camera_id} VimbaCam cleanup: {exc}")
+        if outer is not None:
+            outer.close()
+        for camera_id in ids:
+            if camera_id not in snapshots:
+                continue
+            try:
+                restored = wait_for_cameras_by_id(system, [camera_id])[camera_id]
+                restored.__enter__()
+                try:
+                    result["cameras"][camera_id]["restoration"] = _restore_settings(
+                        restored, snapshots[camera_id], changed_rates[camera_id]
+                    )
+                finally:
+                    restored.__exit__(None, None, None)
+            except Exception as exc:  # noqa: BLE001
+                result["cameras"][camera_id]["restoration"] = restoration_failure(f"restoration handle: {exc}")
+        if system_entered:
+            try:
+                system.__exit__(None, None, None)
+                result["cleanup"]["VmbSystem_exited"] = True
+            except Exception as exc:  # noqa: BLE001
+                result.setdefault("cleanup_errors", []).append(f"VmbSystem exit: {exc}")
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(json.dumps(result, indent=2, default=report_value), encoding="utf-8")
+    return diagnostic_exit_status(result)
+
+
 def diagnostic_exit_status(result: dict[str, Any]) -> int:
     """Return success only when measurement, restoration, and cleanup all passed."""
     cleanup = result.get("cleanup", {})
+    camera_results = result.get("cameras")
+    if isinstance(camera_results, dict):
+        per_camera_ok = all(
+            item.get("restoration") is not None
+            and not item["restoration"].get("errors")
+            and item.get("cleanup", {}).get("camera_closed") is True
+            and item.get("cleanup", {}).get("conversion_thread_stopped") is True
+            for item in camera_results.values()
+        )
+        return (
+            0
+            if result.get("measurement_error") is None
+            and not result.get("cleanup_errors")
+            and per_camera_ok
+            and cleanup.get("VmbSystem_exited") is True
+            else 1
+        )
     return (
         0
         if (
