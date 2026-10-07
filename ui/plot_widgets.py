@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 
 from app_settings import AppSettings
 from hardware.ct400_types import Detector
+from logic.power_monitor_display import DEFAULT_DISPLAY_POINT_LIMIT, PowerMonitorDisplayHistory
 from logic.power_monitor_export import (
     build_power_monitor_export_v1,
     default_power_monitor_export_name,
@@ -281,6 +282,7 @@ class PowerMonitorTraceWidget(QWidget):
         self._user_hidden = False
         self.elapsed_values: list[float] = []
         self.detector_values: dict[Detector, list[float]] = {}
+        self.display_history: PowerMonitorDisplayHistory | None = None
         self.curve_items: dict[Detector, pg.PlotDataItem] = {}
         self.legend: pg.LegendItem | None = None
 
@@ -341,6 +343,16 @@ class PowerMonitorTraceWidget(QWidget):
         layout.addWidget(self.plot_container, stretch=1)
         self._set_status("")
 
+    @property
+    def raw_elapsed_values(self) -> list[float]:
+        """Full-resolution sample timestamps mirrored from the recorder."""
+        return self.elapsed_values
+
+    @property
+    def raw_detector_values(self) -> dict[Detector, list[float]]:
+        """Full-resolution detector samples mirrored from the recorder."""
+        return self.detector_values
+
     def start_recording(self, settings: PowerMonitorAcquisitionSettings) -> None:
         self._user_hidden = False
         self._reset_trace(settings)
@@ -353,6 +365,8 @@ class PowerMonitorTraceWidget(QWidget):
         self.recording_active = True
         self.elapsed_values = []
         self.detector_values = {detector: [] for detector in settings.detectors}
+        self.display_history = PowerMonitorDisplayHistory(len(settings.detectors), DEFAULT_DISPLAY_POINT_LIMIT)
+        self.display_history.bind_raw_values([self.detector_values[detector] for detector in settings.detectors])
         self.plot_widget.clear()
         self.legend = self.plot_widget.addLegend(
             pen=pg.mkPen(_PLOT_LEGEND_BORDER, width=1),
@@ -385,9 +399,23 @@ class PowerMonitorTraceWidget(QWidget):
         self.elapsed_values.append(sample.elapsed_s)
         for detector, value in zip(sample.detectors, sample.detector_values, strict=True):
             self.detector_values[detector].append(value)
-        for detector, curve in self.curve_items.items():
-            curve.setData(self.elapsed_values, self.detector_values[detector], connect="finite")
+        if self.display_history is not None:
+            self.display_history.append(sample.detector_values)
+        if self.isVisible():
+            self._render_display_history()
         self._set_status("No detector channels selected" if not sample.detectors else "")
+
+    def _render_display_history(self) -> None:
+        display = self.display_history
+        if display is None:
+            return
+        for channel, (detector, curve) in enumerate(self.curve_items.items()):
+            indices = display.indices(channel)
+            curve.setData(
+                [self.elapsed_values[int(index)] for index in indices],
+                [self.detector_values[detector][int(index)] for index in indices],
+                connect="finite",
+            )
 
     def set_completed_recording(self, recording: PowerMonitorRecording) -> None:
         self._reset_trace(recording.settings)
@@ -398,8 +426,11 @@ class PowerMonitorTraceWidget(QWidget):
         self.detector_values = {
             detector: recording.detector_data[row].tolist() for row, detector in enumerate(recording.detectors)
         }
-        for detector, curve in self.curve_items.items():
-            curve.setData(self.elapsed_values, self.detector_values[detector], connect="finite")
+        self.display_history = PowerMonitorDisplayHistory(len(recording.detectors), DEFAULT_DISPLAY_POINT_LIMIT)
+        self.display_history.bind_raw_values([self.detector_values[detector] for detector in recording.detectors])
+        self.display_history.rebuild_from_raw()
+        if self.isVisible():
+            self._render_display_history()
         if not recording.detectors:
             self._set_status("No detector channels selected")
         elif not len(recording.elapsed_s):
@@ -414,11 +445,16 @@ class PowerMonitorTraceWidget(QWidget):
         self.recording_active = False
         self.elapsed_values = []
         self.detector_values = {}
+        self.display_history = None
         self.curve_items = {}
         self.legend = None
         self.plot_widget.clear()
         self._set_status("")
         self.hide()
+
+    def showEvent(self, event: QtGui.QShowEvent) -> None:
+        super().showEvent(event)
+        self._render_display_history()
 
     def _hide_by_user(self) -> None:
         self._user_hidden = True
