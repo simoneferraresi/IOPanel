@@ -29,6 +29,7 @@ from hardware.camera_capabilities import (
     inspect_camera,
     inspect_feature,
     read_roi,
+    report_value,
 )
 from hardware.camera_discovery import DISCOVERY_TIMEOUT_SECONDS, CameraNotFoundError, wait_for_cameras_by_id
 
@@ -61,8 +62,16 @@ def _set(camera: Any, logical_name: str, value: Any) -> None:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         if not np.isclose(float(actual), float(value), rtol=1e-6, atol=1e-6):
             raise RuntimeError(f"{name} readback {actual} differs from requested {value}")
-    elif actual != value:
-        raise RuntimeError(f"{name} readback {actual!r} differs from requested {value!r}")
+    else:
+        requested_value = report_value(value)
+        actual_value = report_value(actual)
+        if actual_value != requested_value:
+            raise RuntimeError(f"{name} readback {actual_value!r} differs from requested {requested_value!r}")
+
+
+def _restorable_value(value: Any) -> Any:
+    """Replace native enum wrappers in setting snapshots with stable values."""
+    return report_value(value)
 
 
 def _parse_values(text: str, label: str) -> list[float]:
@@ -382,7 +391,8 @@ def main() -> int:
             names = {}
             snapshot = {}
             for logical in ("gain", "exposure", "gain_auto", "exposure_auto"):
-                names[logical], snapshot[logical] = _read(camera, logical)
+                names[logical], value = _read(camera, logical)
+                snapshot[logical] = _restorable_value(value)
             print("Planned writes (after validation against actual queried ranges):")
             for exposure in exposures:
                 for gain in gains:
@@ -427,7 +437,8 @@ def main() -> int:
             _verify_continuous_untriggered(camera)
             snapshot = {}
             for logical in ("gain", "exposure", "gain_auto", "exposure_auto"):
-                _, snapshot[logical] = _read(camera, logical)
+                _, value = _read(camera, logical)
+                snapshot[logical] = _restorable_value(value)
             results["initial_settings"] = {"gain": snapshot["gain"], "exposure_us": snapshot["exposure"]}
             selected_auto = "exposure_auto" if args.auto_once == "exposure" else "gain_auto"
             print(
