@@ -1230,12 +1230,14 @@ def _silence_export_messages(monkeypatch):
 
 def test_csv_mat_formats_never_start_matlab_and_write_both(qtbot, monkeypatch, tmp_path):
     widget = _prepare_export_widget(qtbot)
+    assert widget.has_unsaved_acquisition()
     _stub_save_dialog(monkeypatch, tmp_path, formats=(True, True, False))
     _silence_export_messages(monkeypatch)
     monkeypatch.setattr(plot_widgets, "MATLAB_ENGINE_AVAILABLE", True)
     widget.save_scan_data()
     assert (tmp_path / "scan.csv").exists() and (tmp_path / "scan.mat").exists()
     assert not (tmp_path / "scan.fig").exists()
+    assert not widget.has_unsaved_acquisition()
 
 
 @pytest.mark.parametrize(
@@ -1292,6 +1294,7 @@ def test_overwrite_decline_writes_nothing_and_lists_only_selected_conflict(qtbot
         lambda *args: questions.append(args[2]) or plot_widgets.QMessageBox.StandardButton.No,
     )
     widget.save_scan_data()
+    assert widget.has_unsaved_acquisition()
     assert conflict.read_bytes() == b"original"
     assert not (tmp_path / "scan.csv").exists()
     assert str(conflict) in questions[0] and "scan.fig" not in questions[0]
@@ -1326,12 +1329,14 @@ def test_dialog_cancel_does_not_write_or_persist(qtbot, monkeypatch, tmp_path):
 
     settings = AppSettings(QSettings(str(tmp_path / "prefs.ini"), QSettings.Format.IniFormat))
     widget = _prepare_export_widget(qtbot, settings)
+    assert widget.has_unsaved_acquisition()
     _stub_save_dialog(monkeypatch, tmp_path, accepted=False)
     widget.save_scan_data()
     assert not list(tmp_path.glob("*.csv"))
     assert settings.scan_export_formats() == (True, True, False)
     assert settings._settings.value("Paths/scan_export") is None
     assert widget.save_btn.isEnabled()
+    assert widget.has_unsaved_acquisition()
 
 
 def test_multidetector_csv_mat_preserve_schema_v2_identity(qtbot, monkeypatch, tmp_path):
@@ -1383,6 +1388,7 @@ def test_partial_export_failure_keeps_successful_format(qtbot, monkeypatch, tmp_
     assert (tmp_path / "scan.mat").exists()
     assert warnings and "CSV: disk full" in warnings[0]
     assert widget.save_btn.isEnabled()
+    assert not widget.has_unsaved_acquisition()  # The MAT file was successfully written.
 
 
 def test_payload_validation_error_writes_nothing_and_restores_button(qtbot, monkeypatch, tmp_path):
@@ -1399,6 +1405,7 @@ def test_payload_validation_error_writes_nothing_and_restores_button(qtbot, monk
     assert not list(tmp_path.iterdir())
     assert warnings and "bad payload" in warnings[0]
     assert widget.save_btn.isEnabled()
+    assert widget.has_unsaved_acquisition()
 
 
 def test_unavailable_matlab_preserves_saved_fig_preference(qtbot, monkeypatch, tmp_path):

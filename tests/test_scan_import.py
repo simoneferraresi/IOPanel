@@ -116,6 +116,52 @@ def test_imported_plot_uses_detector_traces_reference_and_disables_reexport(tmp_
     widget.close()
 
 
+def test_late_fig_completion_keeps_imported_plot_and_save_state(tmp_path, qtbot, monkeypatch):
+    from PySide6.QtWidgets import QDialog
+
+    from ui import plot_widgets
+    from ui.scan_export_dialog import ScanExportRequest
+
+    payload = build_scan_export_v2(_measurement())
+    csv_path = tmp_path / "saved.csv"
+    _write_csv(csv_path, payload)
+    imported = load_scan(csv_path)
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    original = _measurement()
+    widget.set_measurement(original)
+    widget.freeze_current_trace()
+    frozen = widget.reference_measurement
+
+    class FigDialog:
+        DialogCode = QDialog.DialogCode
+
+        export_request = ScanExportRequest(tmp_path, "pending", False, False, True, True, "")
+
+        def __init__(self, *_args):
+            pass
+
+        def exec(self):
+            return self.DialogCode.Accepted
+
+    monkeypatch.setattr(plot_widgets, "ScanExportDialog", FigDialog)
+    monkeypatch.setattr(widget, "_queue_matlab_fig", lambda _request: setattr(widget, "pending_saves", 1))
+    monkeypatch.setattr(plot_widgets.QMessageBox, "information", lambda *_args: None)
+    widget.save_scan_data()
+    assert widget.pending_saves == 1
+    assert widget.has_unsaved_acquisition()
+
+    widget.set_imported_scan(imported)
+    assert not widget.save_btn.isEnabled()
+    widget._handle_matlab_save_finished("fig", True, str(tmp_path / "pending.fig"))
+
+    assert widget.current_imported_scan is imported
+    assert widget.reference_measurement is frozen
+    assert not widget.save_btn.isEnabled()
+    assert not widget.has_unsaved_acquisition()
+    widget.close()
+
+
 @pytest.mark.parametrize(
     ("replace", "message"),
     [

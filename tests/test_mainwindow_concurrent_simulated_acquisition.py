@@ -278,6 +278,18 @@ def test_scan_owns_ct400_and_blocks_monitor_and_detector_writes(qtbot, monkeypat
         window.ct400_connect_action.setEnabled(True)
         _start_scan_during_stream(qtbot, window, frame_spy)
         assert window._ct400_operation_state.name == "SCANNING"
+        file_menu = next(action.menu() for action in window.menuBar().actions() if action.text() == "&File")
+        open_scan_action = next(action for action in file_menu.actions() if action.objectName() == "openScanAction")
+        assert not open_scan_action.isEnabled()
+        assert not window.plot_widget.load_btn.isEnabled()
+        dialog_attempts = []
+        monkeypatch.setattr(
+            main_window_module.QFileDialog,
+            "getOpenFileName",
+            lambda *_args, **_kwargs: dialog_attempts.append(True) or ("unused.csv", ""),
+        )
+        window._open_scan_file()
+        assert dialog_attempts == []
         assert not monitor.monitor_btn.isEnabled()
         assert not window.ct400_connect_action.isEnabled()
         assert scan.scan_btn.isEnabled()
@@ -295,6 +307,8 @@ def test_scan_owns_ct400_and_blocks_monitor_and_detector_writes(qtbot, monkeypat
         qtbot.waitUntil(lambda: not scan.scanning, timeout=2500)
         qtbot.waitUntil(lambda: window._ct400_operation_state.name == "IDLE", timeout=1000)
         qtbot.waitUntil(lambda: _qt_thread_stopped(scan_thread), timeout=1500)
+        assert open_scan_action.isEnabled()
+        assert window.plot_widget.load_btn.isEnabled()
         assert monitor.monitor_btn.isEnabled()
     finally:
         gate.set()
