@@ -92,6 +92,7 @@ include = [
     "hardware/piezo_init_worker.py",
     "logic/task_runner.py",
     "ui/control_panel.py",
+    "tools/check_environment.py",
 ]
 pythonVersion = "3.12"
 pythonPlatform = "Windows"
