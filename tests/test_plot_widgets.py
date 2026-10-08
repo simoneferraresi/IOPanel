@@ -529,6 +529,38 @@ def _imported_overlay(path, wavelengths=(1.0, 2.0), detectors=(Detector.DE_1,)):
     )
 
 
+def _large_imported_overlay(path, points, detector_count):
+    wavelengths = np.linspace(1500.0, 1600.0, points)
+    resonance_center = wavelengths[points // 2 + 7]
+    resonance = -15.0 * np.exp(-(((wavelengths - resonance_center) / (100.0 / points * 2.0)) ** 2))
+    detectors = tuple(Detector(index + 1) for index in range(detector_count))
+    values = np.vstack(
+        [-22.0 + detector_index + np.sin(wavelengths * 0.2) + resonance for detector_index in range(detector_count)]
+    )
+    values[:, 13] = np.nan
+    values[:, 19] = np.inf
+    return ImportedScan(
+        wavelengths,
+        values,
+        detectors,
+        Path(path),
+        "CSV",
+        2,
+        datetime.now(UTC),
+        1,
+        1.0,
+        5.0,
+        "mW",
+        LaserInput.LI_2,
+        "large deterministic fixture",
+        "hardware.dummy_ct400.DummyCT400",
+        True,
+        CT400ScanResultKind.SUCCESS,
+        0,
+        None,
+    )
+
+
 def test_imported_overlays_are_independent_bounded_and_managed(qtbot, tmp_path, monkeypatch):
     widget = PlotWidget(ScanSettings())
     qtbot.addWidget(widget)
@@ -574,6 +606,110 @@ def test_imported_overlays_are_independent_bounded_and_managed(qtbot, tmp_path, 
         assert widget.add_imported_overlay(scan)
     assert not widget.add_imported_overlay(_imported_overlay(tmp_path / "too-many.csv"))
     assert len(widget.scan_overlays) == plot_widgets.MAX_OVERLAY_SCANS
+
+
+def test_overlay_crosshair_inspects_only_the_focused_overlay(qtbot, tmp_path):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    widget.set_measurement(_detector_measurement([1.0, 2.1, 3.0], [[10, 20, 30]], (Detector.DE_1,)))
+    first = _imported_overlay(tmp_path / "first.csv", [1.0, 2.0, 3.0], (Detector.DE_1, Detector.DE_3))
+    second = _imported_overlay(tmp_path / "second.csv", [1.5, 2.5, 3.5], (Detector.DE_2,))
+    widget.add_imported_overlay(first)
+    widget.add_imported_overlay(second)
+
+    widget.set_focused_overlay(widget.scan_overlays[0].identity)
+    _move_plot_cursor(widget, 2.1, 10.0)
+    text = widget.cursor_label.toPlainText()
+    assert "first.csv" in text
+    assert "second.csv" not in text
+    assert "Det 3:" in text
+
+    widget.set_focused_overlay(widget.scan_overlays[1].identity)
+    _move_plot_cursor(widget, 2.1, 10.0)
+    text = widget.cursor_label.toPlainText()
+    assert "second.csv" in text
+    assert "first.csv" not in text
+    assert "@ 2.500 nm" in text
+
+
+def test_crosshair_mouse_burst_keeps_only_latest_position_and_stops_on_cleanup(qtbot, monkeypatch):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    positions = []
+    monkeypatch.setattr(widget, "_on_mouse_moved", positions.append)
+    for x in range(10):
+        widget._queue_mouse_moved(QPointF(float(x), 1.0))
+    assert widget._crosshair_refresh_timer.isActive()
+    assert widget._latest_mouse_position == QPointF(9.0, 1.0)
+    qtbot.waitUntil(lambda: len(positions) == 1, timeout=250)
+    assert positions == [QPointF(9.0, 1.0)]
+    widget._queue_mouse_moved(QPointF(10.0, 1.0))
+    widget.cleanup()
+    assert not widget._crosshair_refresh_timer.isActive()
+    assert widget._latest_mouse_position is None
+
+
+@pytest.mark.parametrize("points", [10_000, 50_000, 100_000])
+@pytest.mark.parametrize("detector_count", [1, 4])
+def test_large_overlays_preserve_samples_and_peak_extrema(qtbot, tmp_path, points, detector_count):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    widget.resize(1000, 650)
+    widget.show()
+    scans = [_large_imported_overlay(tmp_path / f"scan-{index}.csv", points, detector_count) for index in range(4)]
+    originals = [scan.detector_data.copy() for scan in scans]
+
+    for scan in scans:
+        assert widget.add_imported_overlay(scan)
+    assert len(widget.scan_overlays) == 4
+    assert all(scan.wavelengths_nm.size == points for scan in scans)
+    for scan, original, overlay in zip(scans, originals, widget.scan_overlays, strict=True):
+        assert scan.wavelengths_nm.flags.writeable is False
+        assert scan.detector_data.flags.writeable is False
+        np.testing.assert_array_equal(scan.detector_data, original)
+        for row, detector in enumerate(scan.detectors):
+            item = overlay.items[detector]
+            assert item.opts["downsampleMethod"] == "peak"
+            assert len(item.xData) == points
+            _display_x, display_y = item.getData()
+            finite = display_y[np.isfinite(display_y)]
+            assert finite.min() == pytest.approx(original[row, np.isfinite(original[row])].min())
+            assert finite.max() == pytest.approx(original[row, np.isfinite(original[row])].max())
+
+    for offset in range(3):
+        widget.plot_widget.plotItem.vb.setRange(xRange=[1540.0 + offset, 1550.0 + offset])
+        QCoreApplication.processEvents()
+    selected = widget.scan_overlays[1]
+    widget.set_overlay_visible(selected.identity, False)
+    assert all(not item.isVisible() for item in selected.items.values())
+    widget.set_overlay_visible(selected.identity, True)
+    widget.remove_overlay(selected.identity)
+    assert len(widget.scan_overlays) == 3
+    widget.clear_overlays()
+    assert not widget.scan_overlays
+
+
+def test_overlay_manager_selects_the_focused_crosshair_scan(qtbot, tmp_path):
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QDialog, QRadioButton
+
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    widget.add_imported_overlay(_imported_overlay(tmp_path / "first.csv"))
+    widget.add_imported_overlay(_imported_overlay(tmp_path / "second.csv"))
+    expected_identity = widget.scan_overlays[0].identity
+
+    def select_first_overlay():
+        dialog = widget.findChild(QDialog)
+        assert dialog is not None
+        radio_buttons = dialog.findChildren(QRadioButton)
+        radio_buttons[0].setChecked(True)
+        assert widget.focused_overlay_id == expected_identity
+        dialog.accept()
+
+    QTimer.singleShot(0, select_first_overlay)
+    widget.manage_overlays()
+    assert widget.focused_overlay_id == expected_identity
 
 
 @pytest.mark.parametrize(
@@ -684,6 +820,7 @@ def test_detector_curves_clip_and_downsample_display_without_changing_measuremen
     for item in (*widget.detector_plot_items.values(), *widget.reference_detector_plot_items.values()):
         assert item.opts["clipToView"] is True
         assert item.opts["autoDownsample"] is True
+        assert item.opts["autoDownsampleFactor"] == 1.0
         assert item.opts["downsampleMethod"] == "peak"
         assert len(item.xData) == point_count
         assert len(item.yData) == point_count
