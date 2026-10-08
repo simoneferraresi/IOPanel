@@ -48,6 +48,18 @@ def test_schema_v1_typed_values_round_trip(tmp_path):
     assert settings.power_monitor_export_formats() == (False, True)
 
 
+def test_log_level_preferences_migrate_and_reject_unknown_values(tmp_path):
+    settings = make_settings(tmp_path / "log-level.ini")
+    for legacy, expected in (("DEBUG", "All"), ("INFO", "INFO+"), ("WARNING", "WARNING+"), ("ERROR", "ERROR+")):
+        settings._settings.setValue("MainWindow/log_console_level", legacy)
+        assert settings.log_console_level() == expected
+
+    settings._settings.setValue("MainWindow/log_console_level", "broken")
+    assert settings.log_console_level() == "All"
+    settings.set_log_console_level("INFO+")
+    assert settings.log_console_level() == "INFO+"
+
+
 def test_future_schema_is_left_untouched_and_uses_defaults(tmp_path):
     backend = QSettings(str(tmp_path / "future.ini"), QSettings.Format.IniFormat)
     backend.setValue("_meta/schema_version", 2)

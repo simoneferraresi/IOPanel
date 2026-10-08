@@ -88,6 +88,7 @@ config.local.ini
 *.csv
 *.mat
 *.png
+!docs/screenshots/*.png
 *.svg
 !resources/icons/*.svg
 *.fig

@@ -81,6 +81,50 @@ class AppSettings:
     def set_active_tab(self, index: int) -> None:
         self._write("MainWindow/active_tab", int(index))
 
+    def log_console_visible(self, fallback: bool = False) -> bool:
+        value = self._read("MainWindow/log_console_visible", None)
+        return value if isinstance(value, bool) else fallback
+
+    def set_log_console_visible(self, visible: bool) -> None:
+        self._write("MainWindow/log_console_visible", bool(visible))
+
+    def log_console_state(self) -> QByteArray | None:
+        value = self._read("MainWindow/log_console_state", None)
+        return QByteArray(value) if isinstance(value, (QByteArray, bytes, bytearray)) else None
+
+    def set_log_console_state(self, value: QByteArray) -> None:
+        self._write("MainWindow/log_console_state", value)
+
+    def log_console_layout_version(self) -> int | None:
+        return self._as_int(self._read("MainWindow/log_console_layout_version", None))
+
+    def set_log_console_layout_version(self, version: int) -> None:
+        self._write("MainWindow/log_console_layout_version", int(version))
+
+    def log_console_geometry(self) -> QByteArray | None:
+        value = self._read("MainWindow/log_console_geometry", None)
+        return QByteArray(value) if isinstance(value, (QByteArray, bytes, bytearray)) else None
+
+    def set_log_console_geometry(self, value: QByteArray) -> None:
+        self._write("MainWindow/log_console_geometry", value)
+
+    def log_console_level(self, fallback: str = "All") -> str:
+        value = self._read("MainWindow/log_console_level", fallback)
+        # Map preferences saved by the earlier exact-level selector to the new
+        # minimum-severity choices. DEBUG meant no filtering, so All is safest.
+        migrated = {"DEBUG": "All", "INFO": "INFO+", "WARNING": "WARNING+", "ERROR": "ERROR+"}
+        if isinstance(value, str):
+            value = migrated.get(value, value)
+        return (
+            value
+            if isinstance(value, str) and value in {"All", "INFO+", "WARNING+", "ERROR+", "CRITICAL"}
+            else fallback
+        )
+
+    def set_log_console_level(self, level: str) -> None:
+        if level in {"All", "INFO+", "WARNING+", "ERROR+", "CRITICAL"}:
+            self._write("MainWindow/log_console_level", level)
+
     def camera_controls_visible(self, camera_id: str, fallback: bool = False) -> bool:
         value = self._read(f"CameraPanels/{camera_id}/controls_visible", None)
         return value if isinstance(value, bool) else fallback

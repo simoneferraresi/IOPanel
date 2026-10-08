@@ -1,9 +1,10 @@
 import numpy as np
 import shiboken6
-from PySide6.QtCore import QCoreApplication, QEvent, QObject, QThread
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, QSettings, Qt, QThread
 from PySide6.QtTest import QSignalSpy
 
 import app
+from app_settings import AppSettings
 from config_model import AppConfig
 from hardware import camera_init_worker, ct400_init_worker
 from hardware.camera_capabilities import ROI
@@ -79,7 +80,8 @@ simulation_height = 12
 
         monkeypatch.setattr(camera_init_worker, "SimulatedCamera", FailureInjectedCamera)
 
-    window = main_window_module.MainWindow(config)
+    settings = AppSettings(QSettings(str(tmp_path / "simulation-ui.ini"), QSettings.Format.IniFormat))
+    window = main_window_module.MainWindow(config, settings=settings)
     window._integration_observed_errors = observed_errors
     qtbot.addWidget(window)
     window.show()
@@ -130,7 +132,26 @@ def test_mainwindow_loads_simulation_config_and_displays_camera_frames(qtbot, mo
     assert isinstance(camera_instance, SimulatedCamera)
     assert "[SIMULATED]" in panel.title_label.text()
     menu_titles = [action.text().replace("&", "") for action in window.menuBar().actions()]
-    assert menu_titles == ["File", "Instruments", "Cameras", "Help"]
+    assert menu_titles == ["File", "Instruments", "Cameras", "Help", "View"]
+    assert not window.log_console_dock.isVisible()
+    assert window.log_console_dock.isFloating()
+    splitter_sizes = window.main_splitter.sizes()
+    qtbot.keyClick(window, Qt.Key.Key_F12)
+    assert window.log_console_dock.isVisible()
+    assert window.log_console_action.isChecked()
+    assert window.main_splitter.sizes() == splitter_sizes
+    window.log_console_dock.setFloating(False)
+    assert not window.log_console_dock.isFloating()
+    qtbot.keyClick(window, Qt.Key.Key_F12)
+    assert not window.log_console_dock.isVisible()
+    qtbot.keyClick(window, Qt.Key.Key_F12)
+    assert window.log_console_dock.isVisible()
+    window.log_console_dock.setFloating(True)
+    assert window.log_console_dock.isFloating()
+    window.log_console_dock.close()
+    assert not window.log_console_action.isChecked()
+    qtbot.keyClick(window, Qt.Key.Key_F12)
+    assert window.log_console_dock.isVisible()
     cameras_menu = next(
         action.menu() for action in window.menuBar().actions() if action.text().replace("&", "") == "Cameras"
     )
@@ -153,6 +174,8 @@ def test_mainwindow_loads_simulation_config_and_displays_camera_frames(qtbot, mo
     assert not panel.video_label.pixmap().isNull()
 
     _close_window_and_check_cleanup(window, qtbot)
+    assert not window.log_console._timer.isActive()
+    assert not window.log_console_dock.isVisible()
 
 
 def test_camera_gear_controls_are_independent_and_do_not_stop_frames(qtbot, monkeypatch, tmp_path):

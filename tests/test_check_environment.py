@@ -173,14 +173,16 @@ def test_json_schema_and_cli_outputs(tmp_path):
         check=False,
     )
     assert result.returncode == 0
-    assert json.loads(result.stdout)["schema_version"] == 1
+    assert json.loads(result.stdout) == report
     human = subprocess.run(
         [sys.executable, "-m", "tools.check_environment", "--config", str(config)],
         capture_output=True,
         text=True,
         check=False,
     )
+    assert human.stdout.startswith("IOPanel environment diagnostics\n")
     assert "Overall assessment:" in human.stdout
+    assert human.stdout.rstrip().endswith("Static diagnostics do not qualify physical hardware.")
 
 
 def test_hardware_entry_points_are_never_imported_or_called(monkeypatch, tmp_path):
