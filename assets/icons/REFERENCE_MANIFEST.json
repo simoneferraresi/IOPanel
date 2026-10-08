@@ -1,0 +1,166 @@
+{
+  "optical_burst": {
+    "sha256": "c0d0e0509c5246ac7eb3f4ab72005d6bca648787762a4e82f7632af22a7dc136",
+    "dimensions": [
+      1254,
+      1254
+    ],
+    "format": "PNG",
+    "mode": "RGB",
+    "embedded_profile": null,
+    "has_alpha": false,
+    "metadata": {},
+    "bytes": 1369554,
+    "most_frequent_rgb": [
+      {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "pixels": 133884
+      },
+      {
+        "rgb": [
+          9,
+          13,
+          23
+        ],
+        "pixels": 50923
+      },
+      {
+        "rgb": [
+          8,
+          12,
+          22
+        ],
+        "pixels": 36250
+      },
+      {
+        "rgb": [
+          8,
+          12,
+          21
+        ],
+        "pixels": 31022
+      },
+      {
+        "rgb": [
+          10,
+          14,
+          24
+        ],
+        "pixels": 28318
+      },
+      {
+        "rgb": [
+          9,
+          13,
+          24
+        ],
+        "pixels": 27899
+      },
+      {
+        "rgb": [
+          9,
+          13,
+          22
+        ],
+        "pixels": 25854
+      },
+      {
+        "rgb": [
+          8,
+          13,
+          23
+        ],
+        "pixels": 24082
+      }
+    ],
+    "bit_depth_per_channel": 8,
+    "byte_identical_original_copy": true,
+    "original_attachment_filename": "image-gen-3(1).png"
+  },
+  "prism_spectrum": {
+    "sha256": "ac953fa5170d99bac3f264b764a93dfbe98943f787b968cf95d3d5ea041bd25c",
+    "dimensions": [
+      1254,
+      1254
+    ],
+    "format": "PNG",
+    "mode": "RGB",
+    "embedded_profile": null,
+    "has_alpha": false,
+    "metadata": {},
+    "bytes": 1130092,
+    "most_frequent_rgb": [
+      {
+        "rgb": [
+          1,
+          4,
+          12
+        ],
+        "pixels": 160276
+      },
+      {
+        "rgb": [
+          2,
+          5,
+          12
+        ],
+        "pixels": 159522
+      },
+      {
+        "rgb": [
+          2,
+          4,
+          12
+        ],
+        "pixels": 135586
+      },
+      {
+        "rgb": [
+          1,
+          4,
+          11
+        ],
+        "pixels": 125885
+      },
+      {
+        "rgb": [
+          2,
+          5,
+          13
+        ],
+        "pixels": 112521
+      },
+      {
+        "rgb": [
+          0,
+          0,
+          0
+        ],
+        "pixels": 84657
+      },
+      {
+        "rgb": [
+          2,
+          4,
+          11
+        ],
+        "pixels": 75087
+      },
+      {
+        "rgb": [
+          1,
+          5,
+          12
+        ],
+        "pixels": 70867
+      }
+    ],
+    "bit_depth_per_channel": 8,
+    "byte_identical_original_copy": true,
+    "original_attachment_filename": "image-gen-2(1).png"
+  }
+}

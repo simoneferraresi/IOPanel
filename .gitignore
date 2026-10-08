@@ -109,3 +109,11 @@ ENV/
 
 # Generated laboratory camera reports
 camera-validation-results/
+
+# Reviewed app-icon candidates: retain references, masters, and Windows assets.
+!assets/icons/source/*_reference.png
+!assets/icons/svg/*.svg
+# PNG exports and visual diagnostics are reproducible and remain available locally.
+/assets/icons/png/
+/assets/icons/validation/
+/.icon-tools/

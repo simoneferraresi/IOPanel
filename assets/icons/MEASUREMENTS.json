@@ -1,0 +1,1162 @@
+{
+  "reference_manifest": {
+    "optical_burst": {
+      "sha256": "c0d0e0509c5246ac7eb3f4ab72005d6bca648787762a4e82f7632af22a7dc136",
+      "dimensions": [
+        1254,
+        1254
+      ],
+      "format": "PNG",
+      "mode": "RGB",
+      "embedded_profile": null,
+      "has_alpha": false,
+      "metadata": {},
+      "bytes": 1369554,
+      "most_frequent_rgb": [
+        {
+          "rgb": [
+            0,
+            0,
+            0
+          ],
+          "pixels": 133884
+        },
+        {
+          "rgb": [
+            9,
+            13,
+            23
+          ],
+          "pixels": 50923
+        },
+        {
+          "rgb": [
+            8,
+            12,
+            22
+          ],
+          "pixels": 36250
+        },
+        {
+          "rgb": [
+            8,
+            12,
+            21
+          ],
+          "pixels": 31022
+        },
+        {
+          "rgb": [
+            10,
+            14,
+            24
+          ],
+          "pixels": 28318
+        },
+        {
+          "rgb": [
+            9,
+            13,
+            24
+          ],
+          "pixels": 27899
+        },
+        {
+          "rgb": [
+            9,
+            13,
+            22
+          ],
+          "pixels": 25854
+        },
+        {
+          "rgb": [
+            8,
+            13,
+            23
+          ],
+          "pixels": 24082
+        }
+      ],
+      "bit_depth_per_channel": 8,
+      "byte_identical_original_copy": true,
+      "original_attachment_filename": "image-gen-3(1).png"
+    },
+    "prism_spectrum": {
+      "sha256": "ac953fa5170d99bac3f264b764a93dfbe98943f787b968cf95d3d5ea041bd25c",
+      "dimensions": [
+        1254,
+        1254
+      ],
+      "format": "PNG",
+      "mode": "RGB",
+      "embedded_profile": null,
+      "has_alpha": false,
+      "metadata": {},
+      "bytes": 1130092,
+      "most_frequent_rgb": [
+        {
+          "rgb": [
+            1,
+            4,
+            12
+          ],
+          "pixels": 160276
+        },
+        {
+          "rgb": [
+            2,
+            5,
+            12
+          ],
+          "pixels": 159522
+        },
+        {
+          "rgb": [
+            2,
+            4,
+            12
+          ],
+          "pixels": 135586
+        },
+        {
+          "rgb": [
+            1,
+            4,
+            11
+          ],
+          "pixels": 125885
+        },
+        {
+          "rgb": [
+            2,
+            5,
+            13
+          ],
+          "pixels": 112521
+        },
+        {
+          "rgb": [
+            0,
+            0,
+            0
+          ],
+          "pixels": 84657
+        },
+        {
+          "rgb": [
+            2,
+            4,
+            11
+          ],
+          "pixels": 75087
+        },
+        {
+          "rgb": [
+            1,
+            5,
+            12
+          ],
+          "pixels": 70867
+        }
+      ],
+      "bit_depth_per_channel": 8,
+      "byte_identical_original_copy": true,
+      "original_attachment_filename": "image-gen-2(1).png"
+    }
+  },
+  "export_validation": {
+    "optical_burst": {
+      "icon": "optical_burst",
+      "source": "assets\\icons\\source\\optical_burst_reference.png",
+      "source_sha256": "c0d0e0509c5246ac7eb3f4ab72005d6bca648787762a4e82f7632af22a7dc136",
+      "svg": "assets\\icons\\svg\\optical_burst.svg",
+      "svg_sha256": "99d2491386d28024f01bb370242dc72da6464694d458d562c7fe6f50fb574812",
+      "svg_checks": {
+        "viewBox": [
+          0.0,
+          0.0,
+          1254.0,
+          1254.0
+        ],
+        "square_viewBox": true,
+        "embedded_raster": false,
+        "external_reference": false,
+        "unique_ids": true,
+        "all_internal_references_resolve": true,
+        "vector_element_count": 234
+      },
+      "native_size": 1254,
+      "exports": [
+        16,
+        24,
+        32,
+        48,
+        64,
+        128,
+        256,
+        512,
+        1024
+      ],
+      "ico": {
+        "path": "assets\\icons\\windows\\optical_burst.ico",
+        "entries": [
+          {
+            "size": 16,
+            "height": 16,
+            "bits_per_pixel": 32,
+            "planes": 1,
+            "payload_bytes": 695,
+            "png_signature": true
+          },
+          {
+            "size": 24,
+            "height": 24,
+            "bits_per_pixel": 32,
+            "planes": 1,
+            "payload_bytes": 1251,
+            "png_signature": true
+          },
+          {
+            "size": 32,
+            "height": 32,
+            "bits_per_pixel": 32,
+            "planes": 1,
+            "payload_bytes": 1888,
+            "png_signature": true
+          },
+          {
+            "size": 48,
+            "height": 48,
+            "bits_per_pixel": 32,
+            "planes": 1,
+            "payload_bytes": 3036,
+            "png_signature": true
+          },
+          {
+            "size": 64,
+            "height": 64,
+            "bits_per_pixel": 32,
+            "planes": 1,
+            "payload_bytes": 4502,
+            "png_signature": true
+          },
+          {
+            "size": 128,
+            "height": 128,
+            "bits_per_pixel": 32,
+            "planes": 1,
+            "payload_bytes": 10381,
+            "png_signature": true
+          },
+          {
+            "size": 256,
+            "height": 256,
+            "bits_per_pixel": 32,
+            "planes": 1,
+            "payload_bytes": 24434,
+            "png_signature": true
+          }
+        ]
+      },
+      "alpha_validation": {
+        "corner_alpha": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "center_alpha": 255,
+        "central_square_min_alpha": 255,
+        "partial_alpha_interior_count": 0
+      },
+      "rendering": {
+        "renderer": "resvg-py",
+        "primary": "4x raster render followed by Pillow BOX area integration",
+        "direct_native_metric_is_supplemental": true
+      },
+      "deterministic_repeat_render": true,
+      "metrics": {
+        "comparison": "RGB after alpha compositing both images over black; original bytes unchanged",
+        "mae": 0.9122005753836527,
+        "rmse": 1.8920667313688435,
+        "max_channel_difference": 89,
+        "ssim": 0.9859845953760872,
+        "percent_pixels_exceeding_channel_threshold": {
+          "1": 34.56028428327597,
+          "5": 2.384522637607503,
+          "10": 0.803235070422177,
+          "25": 0.2349101694354779
+        },
+        "downsample_ssim_not_multiscale_ssim": {
+          "627": 0.9877637416191242,
+          "314": 0.9909963864857407,
+          "157": 0.9933556341090757
+        },
+        "edge_geometry": {
+          "edge_pixels_reference": 12362,
+          "edge_pixels_render": 12328,
+          "symmetric_chamfer_px": 0.11321355369328145,
+          "max95_chamfer_px": 1.0
+        },
+        "region_color": {
+          "sample_pixels": 300341,
+          "deltaE2000_mean": 0.8533140524936905,
+          "deltaE2000_p95": 2.23202452039355,
+          "deltaE2000_max": 26.14276290634734,
+          "includes_geometry_at_region_edges": true
+        },
+        "foreground_interior_color": {
+          "sample_pixels": 273526,
+          "edge_exclusion_radius_px": 3,
+          "deltaE2000_mean": 0.5996962670479079,
+          "deltaE2000_p95": 1.4591297059006145
+        }
+      },
+      "direct_native_metrics_supplemental": {
+        "comparison": "RGB after alpha compositing both images over black; original bytes unchanged",
+        "mae": 0.9035573140962212,
+        "rmse": 1.9602073457149265,
+        "max_channel_difference": 119,
+        "ssim": 0.985738703060591,
+        "percent_pixels_exceeding_channel_threshold": {
+          "1": 33.661406306835666,
+          "5": 2.4177814406975826,
+          "10": 0.8109933380646047,
+          "25": 0.2592024500863584
+        },
+        "downsample_ssim_not_multiscale_ssim": {
+          "627": 0.9878005865573676,
+          "314": 0.991118419002361,
+          "157": 0.9935834614942839
+        },
+        "edge_geometry": {
+          "edge_pixels_reference": 12362,
+          "edge_pixels_render": 12331,
+          "symmetric_chamfer_px": 0.11591311872543308,
+          "max95_chamfer_px": 1.0
+        },
+        "region_color": {
+          "sample_pixels": 300341,
+          "deltaE2000_mean": 0.8673159389087961,
+          "deltaE2000_p95": 2.2588202249397398,
+          "deltaE2000_max": 27.56048366510161,
+          "includes_geometry_at_region_edges": true
+        },
+        "foreground_interior_color": {
+          "sample_pixels": 273508,
+          "edge_exclusion_radius_px": 3,
+          "deltaE2000_mean": 0.5998855640261465,
+          "deltaE2000_p95": 1.4640547809331308
+        }
+      },
+      "visuals": {
+        "original": "original_reference_copy.png",
+        "render": "rendered_1254.png",
+        "side_by_side": "side_by_side.png",
+        "overlay": "overlay_50pct.png",
+        "heatmap": "absolute_difference_heatmap.png",
+        "edge_overlay": "edge_overlay.png"
+      }
+    },
+    "prism_spectrum": {
+      "icon": "prism_spectrum",
+      "source": "assets\\icons\\source\\prism_spectrum_reference.png",
+      "source_sha256": "ac953fa5170d99bac3f264b764a93dfbe98943f787b968cf95d3d5ea041bd25c",
+      "svg": "assets\\icons\\svg\\prism_spectrum.svg",
+      "svg_sha256": "987b60e040168b2d17f91995a80fccf3cb26c44ca87bc5dbb108aae124971c65",
+      "svg_checks": {
+        "viewBox": [
+          0.0,
+          0.0,
+          1254.0,
+          1254.0
+        ],
+        "square_viewBox": true,
+        "embedded_raster": false,
+        "external_reference": false,
+        "unique_ids": true,
+        "all_internal_references_resolve": true,
+        "vector_element_count": 82
+      },
+      "native_size": 1254,
+      "exports": [
+        16,
+        24,
+        32,
+        48,
+        64,
+        128,
+        256,
+        512,
+        1024
+      ],
+      "ico": {
+        "path": "assets\\icons\\windows\\prism_spectrum.ico",
+        "entries": [
+          {
+            "size": 16,
+            "height": 16,
+            "bits_per_pixel": 32,
+            "planes": 1,
+            "payload_bytes": 504,
+            "png_signature": true
+          },
+          {
+            "size": 24,
+            "height": 24,
+            "bits_per_pixel": 32,
+            "planes": 1,
+            "payload_bytes": 796,
+            "png_signature": true
+          },
+          {
+            "size": 32,
+            "height": 32,
+            "bits_per_pixel": 32,
+            "planes": 1,
+            "payload_bytes": 1205,
+            "png_signature": true
+          },
+          {
+            "size": 48,
+            "height": 48,
+            "bits_per_pixel": 32,
+            "planes": 1,
+            "payload_bytes": 2025,
+            "png_signature": true
+          },
+          {
+            "size": 64,
+            "height": 64,
+            "bits_per_pixel": 32,
+            "planes": 1,
+            "payload_bytes": 2936,
+            "png_signature": true
+          },
+          {
+            "size": 128,
+            "height": 128,
+            "bits_per_pixel": 32,
+            "planes": 1,
+            "payload_bytes": 6081,
+            "png_signature": true
+          },
+          {
+            "size": 256,
+            "height": 256,
+            "bits_per_pixel": 32,
+            "planes": 1,
+            "payload_bytes": 11347,
+            "png_signature": true
+          }
+        ]
+      },
+      "alpha_validation": {
+        "corner_alpha": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "center_alpha": 255,
+        "central_square_min_alpha": 255,
+        "partial_alpha_interior_count": 0
+      },
+      "rendering": {
+        "renderer": "resvg-py",
+        "primary": "4x raster render followed by Pillow BOX area integration",
+        "direct_native_metric_is_supplemental": true
+      },
+      "deterministic_repeat_render": true,
+      "metrics": {
+        "comparison": "RGB after alpha compositing both images over black; original bytes unchanged",
+        "mae": 1.3482427735764426,
+        "rmse": 3.873695995370393,
+        "max_channel_difference": 172,
+        "ssim": 0.9681177505594954,
+        "percent_pixels_exceeding_channel_threshold": {
+          "1": 32.424344172014784,
+          "5": 6.405721785978648,
+          "10": 3.118442038109628,
+          "25": 0.86161285481356
+        },
+        "downsample_ssim_not_multiscale_ssim": {
+          "627": 0.9802125654290951,
+          "314": 0.986294131871403,
+          "157": 0.9897769846645428
+        },
+        "edge_geometry": {
+          "edge_pixels_reference": 22105,
+          "edge_pixels_render": 22087,
+          "symmetric_chamfer_px": 0.033762648229267146,
+          "max95_chamfer_px": 0.0
+        },
+        "region_color": {
+          "sample_pixels": 285870,
+          "deltaE2000_mean": 1.1887077203794638,
+          "deltaE2000_p95": 5.749000275555415,
+          "deltaE2000_max": 40.42768247640294,
+          "includes_geometry_at_region_edges": true
+        },
+        "foreground_interior_color": {
+          "sample_pixels": 216012,
+          "edge_exclusion_radius_px": 3,
+          "deltaE2000_mean": 0.43428633745850537,
+          "deltaE2000_p95": 1.1876255326911513
+        }
+      },
+      "direct_native_metrics_supplemental": {
+        "comparison": "RGB after alpha compositing both images over black; original bytes unchanged",
+        "mae": 1.3955359860673384,
+        "rmse": 4.479989510579724,
+        "max_channel_difference": 172,
+        "ssim": 0.9665854044111986,
+        "percent_pixels_exceeding_channel_threshold": {
+          "1": 31.599424107608442,
+          "5": 6.351223135408479,
+          "10": 3.0070918197334717,
+          "25": 0.999608271076415
+        },
+        "downsample_ssim_not_multiscale_ssim": {
+          "627": 0.9800911500561851,
+          "314": 0.9863316120201463,
+          "157": 0.9904709296108632
+        },
+        "edge_geometry": {
+          "edge_pixels_reference": 22105,
+          "edge_pixels_render": 22110,
+          "symmetric_chamfer_px": 0.08217364503080886,
+          "max95_chamfer_px": 1.0
+        },
+        "region_color": {
+          "sample_pixels": 285870,
+          "deltaE2000_mean": 1.2645018708773867,
+          "deltaE2000_p95": 6.240048183735911,
+          "deltaE2000_max": 41.377464387717325,
+          "includes_geometry_at_region_edges": true
+        },
+        "foreground_interior_color": {
+          "sample_pixels": 215475,
+          "edge_exclusion_radius_px": 3,
+          "deltaE2000_mean": 0.433920207682792,
+          "deltaE2000_p95": 1.1676979813116655
+        }
+      },
+      "visuals": {
+        "original": "original_reference_copy.png",
+        "render": "rendered_1254.png",
+        "side_by_side": "side_by_side.png",
+        "overlay": "overlay_50pct.png",
+        "heatmap": "absolute_difference_heatmap.png",
+        "edge_overlay": "edge_overlay.png"
+      }
+    }
+  },
+  "localized_geometry": {
+    "optical_burst": {
+      "squircle_estimated_boundary": {
+        "method": "RGB-projection threshold compared with rendered alpha; estimated source edge, not original alpha ground truth",
+        "distance": {
+          "mean_px": 0.24465411221506392,
+          "p95_px": 1.1915774675364519,
+          "maximum_px": 2.0718018643378757
+        }
+      },
+      "five_components_including_all_cut_boundaries": [
+        {
+          "reference_bounds_xywh": [
+            402,
+            219,
+            484,
+            560
+          ],
+          "colored_area_px": 125900,
+          "contour_distance": {
+            "mean_px": 0.11102102238382877,
+            "p95_px": 0.27621076475031714,
+            "maximum_px": 0.5730602050850955
+          }
+        },
+        {
+          "reference_bounds_xywh": [
+            237,
+            368,
+            521,
+            500
+          ],
+          "colored_area_px": 121320,
+          "contour_distance": {
+            "mean_px": 0.11147911370359118,
+            "p95_px": 0.26784591998231233,
+            "maximum_px": 0.7424207886938916
+          }
+        },
+        {
+          "reference_bounds_xywh": [
+            945,
+            410,
+            66,
+            367
+          ],
+          "colored_area_px": 17340,
+          "contour_distance": {
+            "mean_px": 0.06541121061455277,
+            "p95_px": 0.17710084033613427,
+            "maximum_px": 0.5001417032761905
+          }
+        },
+        {
+          "reference_bounds_xywh": [
+            758,
+            808,
+            183,
+            154
+          ],
+          "colored_area_px": 14174,
+          "contour_distance": {
+            "mean_px": 0.0794654116845697,
+            "p95_px": 0.22721496005810593,
+            "maximum_px": 0.49001686150119816
+          }
+        },
+        {
+          "reference_bounds_xywh": [
+            401,
+            914,
+            318,
+            75
+          ],
+          "colored_area_px": 18082,
+          "contour_distance": {
+            "mean_px": 0.06994077341024937,
+            "p95_px": 0.20504100185533838,
+            "maximum_px": 0.5387254563725378
+          }
+        }
+      ]
+    },
+    "prism_spectrum": {
+      "squircle_estimated_boundary": {
+        "method": "RGB-projection threshold compared with rendered alpha; estimated source edge, not original alpha ground truth",
+        "distance": {
+          "mean_px": 0.16653420967750324,
+          "p95_px": 0.38816924046140205,
+          "maximum_px": 7.970078444507294
+        }
+      },
+      "reference_triangle": {
+        "side_lines_x_equals_m_y_plus_b": [
+          [
+            -0.5504319668906512,
+            800.684251048079
+          ],
+          [
+            -0.5520910666854817,
+            839.574641069706
+          ],
+          [
+            0.530493371832638,
+            423.3786075225632
+          ],
+          [
+            0.5288736206484173,
+            462.20983067044483
+          ]
+        ],
+        "extrapolated_sharp_outer_apex_xy": [
+          628.0666503410963,
+          313.60388038886356
+        ],
+        "visible_rounded_apex_y": 324,
+        "base_bottom_threshold_y": 875
+      },
+      "rendered_triangle": {
+        "side_lines_x_equals_m_y_plus_b": [
+          [
+            -0.5504873287600284,
+            800.6617803649843
+          ],
+          [
+            -0.5521797519393989,
+            839.6532535719193
+          ],
+          [
+            0.5307418801093107,
+            423.2665120847652
+          ],
+          [
+            0.5290339156225169,
+            462.0579115286597
+          ]
+        ],
+        "extrapolated_sharp_outer_apex_xy": [
+          627.9952948896262,
+          313.66114432513666
+        ],
+        "visible_rounded_apex_y": 324,
+        "base_bottom_threshold_y": 875
+      },
+      "eight_ray_edges": [
+        {
+          "x": 100,
+          "reference_edges_y": [
+            463.6906474820144,
+            485.15343915343914,
+            500.887417218543,
+            523.3557046979865,
+            539.1324503311258,
+            561.4959016393443,
+            577.3664122137404,
+            599.4471544715448,
+            615.1448863636364,
+            637.4440298507462,
+            653.7834394904459,
+            675.9248554913295,
+            692.0819672131148,
+            714.2138554216867,
+            731.0416666666666,
+            752.9689440993789
+          ],
+          "rendered_edges_y": [
+            463.80494505494505,
+            485.09669811320754,
+            500.9407894736842,
+            523.2634730538922,
+            539.0448113207547,
+            561.5450819672132,
+            577.1976047904192,
+            599.4233576642335,
+            615.0934343434343,
+            637.3322368421053,
+            653.8578680203045,
+            675.9911894273127,
+            692.0469483568075,
+            714.1454081632653,
+            730.9774590163935,
+            752.9912663755458
+          ],
+          "absolute_edge_error_px": [
+            0.11429757293063858,
+            0.05674104023159998,
+            0.053372255141198366,
+            0.09223164409434048,
+            0.08763901037116284,
+            0.04918032786883941,
+            0.16880742332125465,
+            0.023796807311214252,
+            0.05145202020207762,
+            0.11179300864091601,
+            0.07442852985866466,
+            0.0663339359832662,
+            0.03501885630726065,
+            0.06844725842142907,
+            0.06420765027314701,
+            0.022322276166960364
+          ],
+          "maximum_edge_error_px": 0.16880742332125465
+        },
+        {
+          "x": 1100,
+          "reference_edges_y": [
+            462.1295336787565,
+            486.48046875,
+            499.91503267973854,
+            524.4883720930233,
+            538.0738255033557,
+            562.4251968503937,
+            576.1677631578947,
+            600.6891025641025,
+            614.3345070422536,
+            638.6870748299319,
+            652.609022556391,
+            677.2122905027933,
+            690.9940119760479,
+            715.6139705882352,
+            729.3333333333334,
+            753.5766423357665
+          ],
+          "rendered_edges_y": [
+            462.0984455958549,
+            486.38928571428573,
+            499.9794238683128,
+            524.5042372881356,
+            538.0340909090909,
+            562.4631147540983,
+            576.1151832460733,
+            600.7114093959732,
+            614.4710743801653,
+            638.6174242424242,
+            652.5766423357665,
+            677.1421319796955,
+            690.9792531120332,
+            715.7284768211921,
+            729.2649006622516,
+            753.7284768211921
+          ],
+          "absolute_edge_error_px": [
+            0.03108808290159004,
+            0.09118303571426623,
+            0.06439118857423409,
+            0.015865195112382935,
+            0.039734594264814405,
+            0.03791790370462422,
+            0.05257991182133992,
+            0.022306831870650967,
+            0.13656733791174247,
+            0.06965058750768094,
+            0.03238022062453183,
+            0.07015852309780257,
+            0.014758864014652318,
+            0.11450623295684181,
+            0.06843267108172313,
+            0.15183448542563838
+          ],
+          "maximum_edge_error_px": 0.15183448542563838
+        }
+      ]
+    }
+  },
+  "windows_native": {
+    "method": "LoadImageW IMAGE_ICON LR_LOADFROMFILE; DrawIconEx into offscreen 32-bit DIB",
+    "taskbar_or_explorer_tested": false,
+    "records": [
+      {
+        "icon": "optical_burst",
+        "size": 16,
+        "background": [
+          255,
+          255,
+          255
+        ],
+        "mae": 0.14322916666666666,
+        "max_channel_difference": 1
+      },
+      {
+        "icon": "optical_burst",
+        "size": 16,
+        "background": [
+          48,
+          48,
+          48
+        ],
+        "mae": 0.13932291666666666,
+        "max_channel_difference": 1
+      },
+      {
+        "icon": "optical_burst",
+        "size": 24,
+        "background": [
+          255,
+          255,
+          255
+        ],
+        "mae": 0.11284722222222222,
+        "max_channel_difference": 1
+      },
+      {
+        "icon": "optical_burst",
+        "size": 24,
+        "background": [
+          48,
+          48,
+          48
+        ],
+        "mae": 0.11631944444444445,
+        "max_channel_difference": 1
+      },
+      {
+        "icon": "optical_burst",
+        "size": 32,
+        "background": [
+          255,
+          255,
+          255
+        ],
+        "mae": 0.08919270833333333,
+        "max_channel_difference": 1
+      },
+      {
+        "icon": "optical_burst",
+        "size": 32,
+        "background": [
+          48,
+          48,
+          48
+        ],
+        "mae": 0.08235677083333333,
+        "max_channel_difference": 1
+      },
+      {
+        "icon": "optical_burst",
+        "size": 48,
+        "background": [
+          255,
+          255,
+          255
+        ],
+        "mae": 0.06640625,
+        "max_channel_difference": 1
+      },
+      {
+        "icon": "optical_burst",
+        "size": 48,
+        "background": [
+          48,
+          48,
+          48
+        ],
+        "mae": 0.055844907407407406,
+        "max_channel_difference": 1
+      },
+      {
+        "icon": "optical_burst",
+        "size": 64,
+        "background": [
+          255,
+          255,
+          255
+        ],
+        "mae": 0.048746744791666664,
+        "max_channel_difference": 1
+      },
+      {
+        "icon": "optical_burst",
+        "size": 64,
+        "background": [
+          48,
+          48,
+          48
+        ],
+        "mae": 0.047444661458333336,
+        "max_channel_difference": 1
+      },
+      {
+        "icon": "optical_burst",
+        "size": 128,
+        "background": [
+          255,
+          255,
+          255
+        ],
+        "mae": 0.025288899739583332,
+        "max_channel_difference": 1
+      },
+      {
+        "icon": "optical_burst",
+        "size": 128,
+        "background": [
+          48,
+          48,
+          48
+        ],
+        "mae": 0.01580810546875,
+        "max_channel_difference": 1
+      },
+      {
+        "icon": "optical_burst",
+        "size": 256,
+        "background": [
+          255,
+          255,
+          255
+        ],
+        "mae": 0.009740193684895834,
+        "max_channel_difference": 1
+      },
+      {
+        "icon": "optical_burst",
+        "size": 256,
+        "background": [
+          48,
+          48,
+          48
+        ],
+        "mae": 0.009312947591145834,
+        "max_channel_difference": 1
+      },
+      {
+        "icon": "prism_spectrum",
+        "size": 16,
+        "background": [
+          255,
+          255,
+          255
+        ],
+        "mae": 0.06640625,
+        "max_channel_difference": 1
+      },
+      {
+        "icon": "prism_spectrum",
+        "size": 16,
+        "background": [
+          48,
+          48,
+          48
+        ],
+        "mae": 0.08984375,
+        "max_channel_difference": 1
+      },
+      {
+        "icon": "prism_spectrum",
+        "size": 24,
+        "background": [
+          255,
+          255,
+          255
+        ],
+        "mae": 0.05555555555555555,
+        "max_channel_difference": 1
+      },
+      {
+        "icon": "prism_spectrum",
+        "size": 24,
+        "background": [
+          48,
+          48,
+          48
+        ],
+        "mae": 0.03761574074074074,
+        "max_channel_difference": 1
+      },
+      {
+        "icon": "prism_spectrum",
+        "size": 32,
+        "background": [
+          255,
+          255,
+          255
+        ],
+        "mae": 0.043294270833333336,
+        "max_channel_difference": 1
+      },
+      {
+        "icon": "prism_spectrum",
+        "size": 32,
+        "background": [
+          48,
+          48,
+          48
+        ],
+        "mae": 0.0390625,
+        "max_channel_difference": 1
+      },
+      {
+        "icon": "prism_spectrum",
+        "size": 48,
+        "background": [
+          255,
+          255,
+          255
+        ],
+        "mae": 0.03414351851851852,
+        "max_channel_difference": 1
+      },
+      {
+        "icon": "prism_spectrum",
+        "size": 48,
+        "background": [
+          48,
+          48,
+          48
+        ],
+        "mae": 0.02662037037037037,
+        "max_channel_difference": 1
+      },
+      {
+        "icon": "prism_spectrum",
+        "size": 64,
+        "background": [
+          255,
+          255,
+          255
+        ],
+        "mae": 0.021077473958333332,
+        "max_channel_difference": 1
+      },
+      {
+        "icon": "prism_spectrum",
+        "size": 64,
+        "background": [
+          48,
+          48,
+          48
+        ],
+        "mae": 0.017171223958333332,
+        "max_channel_difference": 1
+      },
+      {
+        "icon": "prism_spectrum",
+        "size": 128,
+        "background": [
+          255,
+          255,
+          255
+        ],
+        "mae": 0.009765625,
+        "max_channel_difference": 1
+      },
+      {
+        "icon": "prism_spectrum",
+        "size": 128,
+        "background": [
+          48,
+          48,
+          48
+        ],
+        "mae": 0.008687337239583334,
+        "max_channel_difference": 1
+      },
+      {
+        "icon": "prism_spectrum",
+        "size": 256,
+        "background": [
+          255,
+          255,
+          255
+        ],
+        "mae": 0.005198160807291667,
+        "max_channel_difference": 1
+      },
+      {
+        "icon": "prism_spectrum",
+        "size": 256,
+        "background": [
+          48,
+          48,
+          48
+        ],
+        "mae": 0.004582722981770833,
+        "max_channel_difference": 1
+      }
+    ]
+  },
+  "environment": {
+    "python": "3.12.14",
+    "platform": "Windows-11-10.0.26100-SP0"
+  },
+  "production_sha256": {
+    "assets/icons/svg/optical_burst.svg": "99d2491386d28024f01bb370242dc72da6464694d458d562c7fe6f50fb574812",
+    "assets/icons/svg/prism_spectrum.svg": "987b60e040168b2d17f91995a80fccf3cb26c44ca87bc5dbb108aae124971c65",
+    "assets/icons/png/optical_burst/1024.png": "dd4d6eaebe2da329c75e8bb1f6858ce2feeb3f308deceb44a5fdee991419acdb",
+    "assets/icons/png/optical_burst/128.png": "9c38efac955eacbe44703d739a3f4d43a39ebf9db379768af1d79516350e823b",
+    "assets/icons/png/optical_burst/16.png": "3ad9d6618fb42f9b3be129569192c7da1090ecad6607ed944734efe4b732586a",
+    "assets/icons/png/optical_burst/24.png": "02dc9cd0701104585c6872dd4d99cc00e343d76ddb943369e61526c5b769731d",
+    "assets/icons/png/optical_burst/256.png": "7990842ad753fd59675bb36592ade97b15992eae4ca8a5294bf32199d6548d95",
+    "assets/icons/png/optical_burst/32.png": "0dd0410ac9fc2531ce8fa7d716cf8ef6e8f19d1647d7b0c4b93e07ba56ae3248",
+    "assets/icons/png/optical_burst/48.png": "941b82b2f9bff9f387b532413866cc2c4a85b58245b5f1f396dcb15fac7f782d",
+    "assets/icons/png/optical_burst/512.png": "ad24f805081421c8bc430d1911a3a7c59cfea8302399ac320d8f1e913c735690",
+    "assets/icons/png/optical_burst/64.png": "bc78440a3953015dd7955a527c41f21dbac68a5d36e01e2f0541730375d627ed",
+    "assets/icons/png/prism_spectrum/1024.png": "d835fedaede6c6e4ab5b51cc7372fbdcb6955064b8233934a27f09cecb177497",
+    "assets/icons/png/prism_spectrum/128.png": "95550748d266eb36a78057cc6376c994f53940ac8033898d461c5218c465de42",
+    "assets/icons/png/prism_spectrum/16.png": "4193ddd76ca5d3b571353b1b7cebde23925b18364832746ca0331f8480c56a3a",
+    "assets/icons/png/prism_spectrum/24.png": "84b5c3ec5327866fc26967ccf78255608db000456fdfc23e8e4f794c0b89746a",
+    "assets/icons/png/prism_spectrum/256.png": "91b835ebbbbda7d02cd5020b352bac67d68de89c68d7b46f6ae3c19e9da32e14",
+    "assets/icons/png/prism_spectrum/32.png": "ebea8a39bbfd730a9e76f0ad56276263a7be4960a9dfd0bca8797395e0eae154",
+    "assets/icons/png/prism_spectrum/48.png": "ccac614c91b2840832c322d16dfca0669fe339cceb0dae6d7681addc4051e8c2",
+    "assets/icons/png/prism_spectrum/512.png": "90ee837edc7087f309f7be8252867a97a92e3ced8f03e5143d21f813f0981745",
+    "assets/icons/png/prism_spectrum/64.png": "6e537ab17e0ca89b9c40795dca81a00b9d869118549be4e886325cf50ffc21bd",
+    "assets/icons/windows/optical_burst.ico": "a1615997a19ca0f184e48378323dff5f49aa831ad4c46f63abd6e93327c2c956",
+    "assets/icons/windows/prism_spectrum.ico": "68b381c50c6056631272f28ce9d58460cc260e1a1bf32aef96489386de5a6df7"
+  }
+}
