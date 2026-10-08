@@ -130,7 +130,15 @@ def test_mainwindow_loads_simulation_config_and_displays_camera_frames(qtbot, mo
     assert isinstance(camera_instance, SimulatedCamera)
     assert "[SIMULATED]" in panel.title_label.text()
     menu_titles = [action.text().replace("&", "") for action in window.menuBar().actions()]
-    assert menu_titles == ["File", "Instruments", "Cameras", "Help"]
+    assert menu_titles == ["File", "Instruments", "Cameras", "Help", "View"]
+    assert not window.log_console_dock.isVisible()
+    window.log_console_action.trigger()
+    assert window.log_console_dock.isVisible()
+    assert window.log_console_action.isChecked()
+    window.log_console_dock.hide()
+    assert not window.log_console_action.isChecked()
+    window.log_console_action.trigger()
+    assert window.log_console_dock.isVisible()
     cameras_menu = next(
         action.menu() for action in window.menuBar().actions() if action.text().replace("&", "") == "Cameras"
     )

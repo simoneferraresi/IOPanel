@@ -26,6 +26,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 
 from app_settings import AppSettings
 from config_model import AppConfig, ConfigSemanticError
+from ui.log_console import install_log_handler
 from ui.main_window import MainWindow
 from ui.typography import install_application_fonts
 
@@ -263,6 +264,8 @@ def main() -> int:
         max_bytes=app_config.logging.max_bytes,
         backup_count=app_config.logging.backup_count,
     )
+    # Install before startup messages so the in-app console can replay them.
+    install_log_handler(logger)
 
     # Set the global exception hook AFTER the logger is fully configured
     sys.excepthook = global_exception_hook
@@ -277,6 +280,7 @@ def main() -> int:
         configure_qt_application(app, app_config.app_name)
 
         window = MainWindow(config=app_config, settings=AppSettings())
+        window.log_console.log_file = log_file_path
         window.show()
         window.plot_widget.schedule_matlab_prewarm()
 

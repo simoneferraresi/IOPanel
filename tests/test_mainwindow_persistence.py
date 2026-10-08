@@ -75,6 +75,9 @@ def test_mainwindow_restores_and_saves_preferences_without_hardware_operations(t
         restoreGeometry=lambda geometry: setattr(window, "restored_geometry", geometry),
         isFullScreen=lambda: False,
         saveGeometry=lambda: QByteArray(b"new-geometry"),
+        saveState=lambda: QByteArray(b"dock-state"),
+        log_console_dock=SimpleNamespace(isVisible=lambda: True),
+        log_console=SimpleNamespace(level_filter=SimpleNamespace(currentText=lambda: "WARNING")),
     )
 
     main_window_module.MainWindow._restore_ui_preferences(window)
@@ -90,6 +93,9 @@ def test_mainwindow_restores_and_saves_preferences_without_hardware_operations(t
     assert settings.scan_detectors() == [1, 3, 4]
     assert settings.camera_controls_visible("CAM-A") is True
     assert settings.camera_controls_visible("CAM-B") is False
+    assert settings.log_console_visible() is True
+    assert settings.log_console_state() == QByteArray(b"dock-state")
+    assert settings.log_console_level() == "WARNING"
     assert settings.camera_screenshot_directory("CAM-A") == camera_directory.resolve()
 
 

@@ -28,6 +28,7 @@ from PySide6.QtCore import QObject, QRunnable, QSize, Qt, QThreadPool, QTimer, S
 from PySide6.QtGui import QAction, QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication,
+    QDockWidget,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -88,6 +89,7 @@ from ui.control_panel import (
     HistogramControlPanel,
     ScanSettings,
 )
+from ui.log_console import LogConsole
 from ui.plot_widgets import HistogramWidget, PlotWidget, PowerMonitorTraceWidget
 
 logger = logging.getLogger("LabApp.main_window")
@@ -222,6 +224,7 @@ class MainWindow(QMainWindow):
 
         # --- UI and deferred initialization ---
         self._init_ui()
+        self._restore_log_console_preferences()
         self._restore_ui_preferences()
         self._load_defaults_from_config()
         self._connect_signals()
@@ -249,6 +252,14 @@ class MainWindow(QMainWindow):
         saved_detectors = set(self.settings.scan_detectors())
         for detector, checkbox in self.control_panel.scan_detector_cbs.items():
             checkbox.setChecked(detector.value in saved_detectors)
+
+    def _restore_log_console_preferences(self) -> None:
+        state = self.settings.log_console_state()
+        if state is not None:
+            self.restoreState(state)
+        self.log_console.level_filter.setCurrentText(self.settings.log_console_level())
+        self.log_console_dock.setVisible(self.settings.log_console_visible(False))
+        self.log_console_action.setChecked(self.log_console_dock.isVisible())
 
     piezo_connection_succeeded = Signal(str)
     piezo_connection_failed = Signal(str, str)
@@ -683,6 +694,22 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Ready.")
 
         self._create_menus()
+
+        self.log_console = LogConsole(parent=self)
+        self.log_console.log_file = self.config.logging.file
+        self.log_console_dock = QDockWidget("Log Console", self)
+        self.log_console_dock.setObjectName("LogConsoleDock")
+        self.log_console_dock.setWidget(self.log_console)
+        self.log_console_dock.setMinimumHeight(150)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.log_console_dock)
+        self.log_console_dock.hide()
+        self.view_menu = self.menuBar().addMenu("&View")
+        self.log_console_action = QAction("Log Console", self)
+        self.log_console_action.setCheckable(True)
+        self.log_console_action.setShortcut("F12")
+        self.log_console_action.triggered.connect(lambda checked=False: self.log_console_dock.setVisible(checked))
+        self.log_console_dock.visibilityChanged.connect(self.log_console_action.setChecked)
+        self.view_menu.addAction(self.log_console_action)
 
         self._update_ct400_visuals(state=CT400Status.UNKNOWN, message="Initializing...")
         logger.debug("UI Initialization finished.")
@@ -1604,6 +1631,7 @@ class MainWindow(QMainWindow):
         self._pending_init_close = False
         self._pending_camera_lifecycle_close = False
         self._pending_piezo_operation_close = False
+        self.log_console.stop_updates()
         event.accept()
         logger.info("MainWindow.closeEvent cleanup returned after %.2f s.", time.perf_counter() - close_started_at)
 
@@ -1614,6 +1642,9 @@ class MainWindow(QMainWindow):
         if self.control_container.isVisible():
             self.settings.set_splitter_sizes(self.main_splitter.sizes())
         self.settings.set_active_tab(self.tab_widget.currentIndex())
+        self.settings.set_log_console_visible(self.log_console_dock.isVisible())
+        self.settings.set_log_console_state(self.saveState())
+        self.settings.set_log_console_level(self.log_console.level_filter.currentText())
         self.settings.set_scan_detectors([detector.value for detector in self.control_panel._selected_scan_detectors()])
         for camera_id, panel in self.camera_panels.items():
             self.settings.set_camera_controls_visible(camera_id, panel.get_controls_visible())

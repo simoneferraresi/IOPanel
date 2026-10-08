@@ -122,6 +122,29 @@ for that. For example, a missing VmbPy package is expected in a driver-free
 development environment, while a missing configured CT400 DLL is actionable
 when the physical CT400 backend is selected.
 
+### In-app Log Console
+
+Open **View → Log Console** or press **F12** to show the dockable console at the
+bottom of the main window. Its controls filter by severity, search messages,
+pause and resume the view, clear only the displayed history, copy selected or
+visible text, open the configured log file, and run read-only environment
+diagnostics on demand. The dock visibility, layout and severity selection are
+saved with the other harmless UI preferences.
+
+The viewer retains up to 5,000 recent Python logging records in memory. Pausing
+does not stop logging; if the buffer fills, older viewer records are discarded
+and the console reports the loss. The existing rotating file log (normally
+`lab_app.log` in the working directory, or the path selected with `--log-file`)
+continues to follow its configured rotation and retention policy and remains
+the source for older history. The console shows IOPanel Python logging records;
+it does not necessarily capture arbitrary native DLL stdout/stderr output.
+
+The GUI diagnostics action uses the same read-only `tools.check_environment`
+API as the command-line report. It inspects static environment and configuration
+details only; a report does not establish that physical hardware has been
+validated. This console supports future terminal-free Windows launches, but
+does not itself package or install IOPanel.
+
 ---
 
 ## Configuration
