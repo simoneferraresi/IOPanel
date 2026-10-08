@@ -45,6 +45,9 @@ def test_mainwindow_starts_offline_with_all_cameras_disabled(qtbot, monkeypatch,
 
     open_scan = next(action for action in window.menuBar().actions() if action.text() == "&File")
     open_scan_action = next(action for action in open_scan.menu().actions() if action.objectName() == "openScanAction")
+    add_scan_action = next(
+        action for action in open_scan.menu().actions() if action.objectName() == "addScanToPlotAction"
+    )
     assert open_scan_action.text() == "Open Scan..."
     before = window.plot_widget.current_measurement
     dialog_calls = []
@@ -56,20 +59,24 @@ def test_mainwindow_starts_offline_with_all_cameras_disabled(qtbot, monkeypatch,
     monkeypatch.setattr(main_window_module.QFileDialog, "getOpenFileName", cancel_dialog)
     open_scan_action.trigger()
     assert len(dialog_calls) == 1
-    window.plot_widget.load_btn.click()
+    add_scan_action.trigger()
     assert len(dialog_calls) == 2
+    window.plot_widget.load_btn.click()
+    assert len(dialog_calls) == 3
     assert window.plot_widget.current_measurement is before
     assert open_scan_action.isEnabled()
     assert window.plot_widget.load_btn.isEnabled()
 
     window._handle_ct400_scan_started()
     assert not open_scan_action.isEnabled()
+    assert not add_scan_action.isEnabled()
     assert not window.plot_widget.load_btn.isEnabled()
     window._open_scan_file()  # Defensive guard also covers direct slot invocation.
     window.plot_widget.load_btn.click()
-    assert len(dialog_calls) == 2
+    assert len(dialog_calls) == 3
     window._handle_ct400_scan_finished()
     assert open_scan_action.isEnabled()
+    assert add_scan_action.isEnabled()
     assert window.plot_widget.load_btn.isEnabled()
 
     def start_scan_during_dialog(*_args, **_kwargs):
@@ -85,7 +92,7 @@ def test_mainwindow_starts_offline_with_all_cameras_disabled(qtbot, monkeypatch,
     )
     window._open_scan_file()
     assert window.plot_widget.current_measurement is before
-    assert len(dialog_calls) == 3
+    assert len(dialog_calls) == 4
     window._handle_ct400_scan_finished()
 
     qtbot.waitUntil(
@@ -174,10 +181,16 @@ def test_import_confirms_unsaved_acquisition_and_preserves_reference(qtbot, monk
     window.plot_widget.pending_saves = 1
     window.plot_widget._handle_matlab_save_finished("fig", True, str(tmp_path / "acquired.fig"))
     assert window.plot_widget.has_unsaved_acquisition()
+    window._add_scan_to_plot()
+    assert window.plot_widget.current_measurement is acquired
+    assert window.plot_widget.reference_measurement is frozen
+    assert len(window.plot_widget.scan_overlays) == 1
+    assert prompts == []
+    assert settings.directory("Paths/scan_import") == scan_directory.resolve()
     window._open_scan_file()
     assert window.plot_widget.current_measurement is acquired
     assert window.plot_widget.reference_measurement is frozen
-    assert settings._settings.value("Paths/scan_import") is None
+    assert settings.directory("Paths/scan_import") == scan_directory.resolve()
 
     window._open_scan_file()
     imported = window.plot_widget.current_imported_scan

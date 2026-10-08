@@ -4,11 +4,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QPointF, Qt
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QPainterPath
 from PySide6.QtTest import QSignalSpy
 from PySide6.QtWidgets import QToolButton
 
 from hardware.ct400_types import CT400ScanResultKind, Detector, LaserInput
+from logic.scan_import import ImportedScan
 from logic.scan_measurement import ScanAcquisitionSettings, ScanMeasurement
 from ui import plot_widgets
 from ui.alignment_panel import AlignmentPanel
@@ -505,6 +506,313 @@ def _detector_measurement(wavelengths, detector_data, detectors, *, final_pout=N
     )
 
 
+def _imported_overlay(path, wavelengths=(1.0, 2.0), detectors=(Detector.DE_1,)):
+    return ImportedScan(
+        np.asarray(wavelengths),
+        np.asarray([[float(index) for index in range(len(wavelengths))] for _ in detectors]),
+        tuple(detectors),
+        Path(path),
+        "CSV",
+        2,
+        datetime.now(UTC),
+        20,
+        1.0,
+        2.0,
+        "mW",
+        LaserInput.LI_2,
+        "fixture",
+        "hardware.dummy_ct400.DummyCT400",
+        True,
+        CT400ScanResultKind.SUCCESS,
+        0,
+        None,
+    )
+
+
+def _large_imported_overlay(path, points, detector_count, nonfinite_pattern="mixed"):
+    wavelengths = np.linspace(1500.0, 1600.0, points)
+    resonance_center = wavelengths[points // 2 + 7]
+    resonance = -15.0 * np.exp(-(((wavelengths - resonance_center) / (100.0 / points * 2.0)) ** 2))
+    detectors = tuple(Detector(index + 1) for index in range(detector_count))
+    values = np.vstack(
+        [-22.0 + detector_index + np.sin(wavelengths * 0.2) + resonance for detector_index in range(detector_count)]
+    )
+    if nonfinite_pattern in {"nan", "mixed"}:
+        values[:, 13::257] = np.nan
+    if nonfinite_pattern in {"inf", "mixed"}:
+        values[:, 19::509] = np.inf
+    if nonfinite_pattern == "interval":
+        gap_start = max(2, points // 3)
+        values[:, gap_start : min(points - 2, gap_start + max(10, points // 20))] = np.nan
+    return ImportedScan(
+        wavelengths,
+        values,
+        detectors,
+        Path(path),
+        "CSV",
+        2,
+        datetime.now(UTC),
+        1,
+        1.0,
+        5.0,
+        "mW",
+        LaserInput.LI_2,
+        "large deterministic fixture",
+        "hardware.dummy_ct400.DummyCT400",
+        True,
+        CT400ScanResultKind.SUCCESS,
+        0,
+        None,
+    )
+
+
+def test_imported_overlays_are_independent_bounded_and_managed(qtbot, tmp_path, monkeypatch):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    current = _detector_measurement([1.0, 2.0], [[4.0, 5.0]], (Detector.DE_1,))
+    widget.set_measurement(current)
+    widget.freeze_current_trace()
+    reference = widget.reference_measurement
+    first = _imported_overlay(tmp_path / "a" / "scan.csv", (1.0, 2.0))
+    first.source_path.parent.mkdir()
+    second = _imported_overlay(tmp_path / "b" / "scan.csv", (1.5, 2.5))
+    second.source_path.parent.mkdir()
+
+    assert widget.add_imported_overlay(first)
+    assert widget.add_imported_overlay(second)
+    assert not widget.add_imported_overlay(first)
+    assert widget.current_measurement is current
+    assert widget.reference_measurement is reference
+    assert len(widget.scan_overlays) == 2
+    assert widget.scan_overlays[0].label != widget.scan_overlays[1].label
+    assert len(widget.scan_overlays[0].items) == 1
+    assert len(widget.detector_legend.items) == 3
+
+    first_overlay = widget.scan_overlays[0]
+    widget.set_overlay_visible(first_overlay.identity, False)
+    assert not first_overlay.items[Detector.DE_1].isVisible()
+    widget.set_overlay_visible(first_overlay.identity, True)
+    widget.remove_overlay(first_overlay.identity)
+    assert len(widget.scan_overlays) == 1
+    assert widget.current_measurement is current
+    assert widget.reference_measurement is reference
+
+    widget.clear_overlays()
+    assert not widget.scan_overlays
+    assert widget.current_measurement is current
+    assert widget.reference_measurement is reference
+    monkeypatch.setattr(
+        plot_widgets.QMessageBox,
+        "question",
+        lambda *_args: plot_widgets.QMessageBox.StandardButton.No,
+    )
+    for index in range(plot_widgets.MAX_OVERLAY_SCANS):
+        scan = _imported_overlay(tmp_path / f"{index}.csv")
+        assert widget.add_imported_overlay(scan)
+    assert not widget.add_imported_overlay(_imported_overlay(tmp_path / "too-many.csv"))
+    assert len(widget.scan_overlays) == plot_widgets.MAX_OVERLAY_SCANS
+
+
+def test_overlay_crosshair_inspects_only_the_focused_overlay(qtbot, tmp_path):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    widget.set_measurement(_detector_measurement([1.0, 2.1, 3.0], [[10, 20, 30]], (Detector.DE_1,)))
+    first = _imported_overlay(tmp_path / "first.csv", [1.0, 2.0, 3.0], (Detector.DE_1, Detector.DE_3))
+    second = _imported_overlay(tmp_path / "second.csv", [1.5, 2.5, 3.5], (Detector.DE_2,))
+    widget.add_imported_overlay(first)
+    widget.add_imported_overlay(second)
+
+    widget.set_focused_overlay(widget.scan_overlays[0].identity)
+    _move_plot_cursor(widget, 2.1, 10.0)
+    text = widget.cursor_label.toPlainText()
+    assert "first.csv" in text
+    assert "second.csv" not in text
+    assert "Det 3:" in text
+
+    widget.set_focused_overlay(widget.scan_overlays[1].identity)
+    _move_plot_cursor(widget, 2.1, 10.0)
+    text = widget.cursor_label.toPlainText()
+    assert "second.csv" in text
+    assert "first.csv" not in text
+    assert "@ 2.500 nm" in text
+
+
+def test_crosshair_mouse_burst_keeps_only_latest_position_and_stops_on_cleanup(qtbot, monkeypatch):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    positions = []
+    monkeypatch.setattr(widget, "_on_mouse_moved", positions.append)
+    for x in range(10):
+        widget._queue_mouse_moved(QPointF(float(x), 1.0))
+    assert widget._crosshair_refresh_timer.isActive()
+    assert widget._latest_mouse_position == QPointF(9.0, 1.0)
+    qtbot.waitUntil(lambda: len(positions) == 1, timeout=250)
+    assert positions == [QPointF(9.0, 1.0)]
+    widget._queue_mouse_moved(QPointF(10.0, 1.0))
+    widget.cleanup()
+    assert not widget._crosshair_refresh_timer.isActive()
+    assert widget._latest_mouse_position is None
+
+
+@pytest.mark.parametrize("points", [10_000, 50_000, 100_000])
+@pytest.mark.parametrize("detector_count", [1, 4])
+def test_large_overlays_preserve_samples_and_peak_extrema(qtbot, tmp_path, points, detector_count):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    widget.resize(1000, 650)
+    widget.show()
+    scans = [_large_imported_overlay(tmp_path / f"scan-{index}.csv", points, detector_count) for index in range(4)]
+    originals = [scan.detector_data.copy() for scan in scans]
+
+    for scan in scans:
+        assert widget.add_imported_overlay(scan)
+    assert len(widget.scan_overlays) == 4
+    assert all(scan.wavelengths_nm.size == points for scan in scans)
+    for scan, original, overlay in zip(scans, originals, widget.scan_overlays, strict=True):
+        assert scan.wavelengths_nm.flags.writeable is False
+        assert scan.detector_data.flags.writeable is False
+        np.testing.assert_array_equal(scan.detector_data, original)
+        for row, detector in enumerate(scan.detectors):
+            item = overlay.items[detector]
+            assert item.opts["downsampleMethod"] == "peak"
+            assert len(item.xData) == points
+            _display_x, display_y = item.getData()
+            finite = display_y[np.isfinite(display_y)]
+            assert finite.min() == pytest.approx(original[row, np.isfinite(original[row])].min())
+            assert finite.max() == pytest.approx(original[row, np.isfinite(original[row])].max())
+
+    for offset in range(3):
+        widget.plot_widget.plotItem.vb.setRange(xRange=[1540.0 + offset, 1550.0 + offset])
+        QCoreApplication.processEvents()
+    selected = widget.scan_overlays[1]
+    widget.set_overlay_visible(selected.identity, False)
+    assert all(not item.isVisible() for item in selected.items.values())
+    widget.set_overlay_visible(selected.identity, True)
+    widget.remove_overlay(selected.identity)
+    assert len(widget.scan_overlays) == 3
+    widget.clear_overlays()
+    assert not widget.scan_overlays
+
+
+def test_overlay_manager_selects_the_focused_crosshair_scan(qtbot, tmp_path):
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QDialog, QRadioButton
+
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    widget.add_imported_overlay(_imported_overlay(tmp_path / "first.csv"))
+    widget.add_imported_overlay(_imported_overlay(tmp_path / "second.csv"))
+    expected_identity = widget.scan_overlays[0].identity
+
+    def select_first_overlay():
+        dialog = widget.findChild(QDialog)
+        assert dialog is not None
+        radio_buttons = dialog.findChildren(QRadioButton)
+        radio_buttons[0].setChecked(True)
+        assert widget.focused_overlay_id == expected_identity
+        dialog.accept()
+
+    QTimer.singleShot(0, select_first_overlay)
+    widget.manage_overlays()
+    assert widget.focused_overlay_id == expected_identity
+
+
+@pytest.mark.parametrize("nonfinite_pattern", ["none", "nan", "inf", "mixed", "interval"])
+def test_overlay_finite_handling_preserves_gaps_and_source_data(qtbot, tmp_path, nonfinite_pattern):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    scan = _large_imported_overlay(tmp_path / f"finite-{nonfinite_pattern}.csv", 4096, 1, nonfinite_pattern)
+    original_wavelengths = scan.wavelengths_nm.copy()
+    original_values = scan.detector_data.copy()
+
+    assert widget.add_imported_overlay(scan)
+    item = widget.scan_overlays[0].items[Detector.DE_1]
+    assert item.opts["connect"] == "auto"
+    assert item.opts["skipFiniteCheck"] is False
+    np.testing.assert_array_equal(scan.wavelengths_nm, original_wavelengths)
+    np.testing.assert_array_equal(scan.detector_data, original_values)
+    assert not scan.wavelengths_nm.flags.writeable
+    assert not scan.detector_data.flags.writeable
+
+    item.setClipToView(False)
+    item.setDownsampling(ds=1, auto=False, method="peak")
+    path = item.curve.getPath()
+    path_x_values = [path.elementAt(index).x for index in range(path.elementCount())]
+    finite_indices = np.flatnonzero(np.isfinite(original_values[0]))
+    assert min(path_x_values) == pytest.approx(original_wavelengths[finite_indices[0]])
+    assert max(path_x_values) == pytest.approx(original_wavelengths[finite_indices[-1]])
+    if nonfinite_pattern == "none":
+        assert (
+            sum(
+                path.elementAt(index).type == QPainterPath.ElementType.MoveToElement
+                for index in range(path.elementCount())
+            )
+            == 1
+        )
+    else:
+        assert item.curve.opts["skipFiniteCheck"] is False
+        assert item.curve.opts["connect"] == "finite"
+        gap = np.flatnonzero(~np.isfinite(original_values[0]))
+        assert gap.size
+        first_gap_x = original_wavelengths[gap[0]]
+        last_gap_x = original_wavelengths[gap[-1]]
+        previous_x = None
+        for index in range(path.elementCount()):
+            element = path.elementAt(index)
+            if element.type == QPainterPath.ElementType.MoveToElement:
+                previous_x = element.x
+                continue
+            if previous_x is not None:
+                assert not (previous_x < first_gap_x and element.x > last_gap_x)
+                assert not (previous_x > last_gap_x and element.x < first_gap_x)
+            previous_x = element.x
+
+
+def test_overlay_pen_is_cosmetic_opaque_and_keeps_scan_patterns(qtbot, tmp_path):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    overlays = [
+        _imported_overlay(tmp_path / f"pen-{index}.csv", [1.0, 2.0, 3.0], (Detector.DE_1,)) for index in range(8)
+    ]
+
+    for scan in overlays:
+        assert widget.add_imported_overlay(scan)
+
+    for index, overlay in enumerate(widget.scan_overlays):
+        pen = overlay.items[Detector.DE_1].opts["pen"]
+        assert pen.widthF() == pytest.approx(1.0)
+        assert pen.isCosmetic()
+        assert pen.color().alpha() == 255
+        if index < len(plot_widgets._OVERLAY_LINE_STYLES):
+            assert pen.style() == plot_widgets._OVERLAY_LINE_STYLES[index]
+        else:
+            pattern_index = index - len(plot_widgets._OVERLAY_LINE_STYLES)
+            assert pen.style() == Qt.PenStyle.CustomDashLine
+            assert tuple(pen.dashPattern()) == pytest.approx(plot_widgets._OVERLAY_CUSTOM_DASH_PATTERNS[pattern_index])
+
+
+def test_overlay_pan_zoom_does_not_resubmit_source_data(qtbot, tmp_path, monkeypatch):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    widget.show()
+    for index in range(4):
+        scan = _large_imported_overlay(tmp_path / f"pan-{index}.csv", 50_000, 2)
+        assert widget.add_imported_overlay(scan)
+    calls = []
+    original_set_data = plot_widgets.pg.PlotDataItem.setData
+
+    def count_set_data(item, *args, **kwargs):
+        calls.append(item)
+        return original_set_data(item, *args, **kwargs)
+
+    monkeypatch.setattr(plot_widgets.pg.PlotDataItem, "setData", count_set_data)
+    for offset in range(8):
+        widget.plot_widget.plotItem.vb.setRange(xRange=[1540.0 + offset * 0.1, 1550.0 + offset * 0.1], padding=0)
+        QCoreApplication.processEvents()
+
+    assert calls == []
+
+
 @pytest.mark.parametrize(
     ("wavelengths", "target", "expected"),
     [
@@ -613,6 +921,7 @@ def test_detector_curves_clip_and_downsample_display_without_changing_measuremen
     for item in (*widget.detector_plot_items.values(), *widget.reference_detector_plot_items.values()):
         assert item.opts["clipToView"] is True
         assert item.opts["autoDownsample"] is True
+        assert item.opts["autoDownsampleFactor"] == 1.0
         assert item.opts["downsampleMethod"] == "peak"
         assert len(item.xData) == point_count
         assert len(item.yData) == point_count

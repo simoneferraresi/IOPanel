@@ -4,6 +4,7 @@ import io
 import json
 import logging
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from weakref import ReferenceType, ref
@@ -75,6 +76,10 @@ logger = logging.getLogger("LabApp.plot_widgets")
 
 _GENERIC_SCAN_Y_LABEL = "Power (dB)"
 _MEASUREMENT_SCAN_Y_LABEL = "Transfer function (dB)"
+MAX_OVERLAY_SCANS = 8
+_OVERLAY_LINE_STYLES = (Qt.PenStyle.DashLine, Qt.PenStyle.DotLine, Qt.PenStyle.DashDotLine, Qt.PenStyle.DashDotDotLine)
+_OVERLAY_CUSTOM_DASH_PATTERNS = ((8, 3), (2, 2, 1, 2), (10, 2, 1, 2, 1, 2), (1, 2, 1, 2, 5, 2, 1, 2))
+_SCAN_AUTO_DOWNSAMPLE_FACTOR = 1.0
 
 _POWER_MONITOR_DETECTOR_BORDER_COLOR_BY_ID = {
     Detector.DE_1: "#1b9e77",
@@ -119,6 +124,20 @@ class _WavelengthLookup:
     direction: int
     minimum: float | None
     maximum: float | None
+
+
+@dataclass
+class ScanOverlay:
+    """One imported historical scan and its plot-owned presentation state."""
+
+    identity: str
+    scan: ImportedScan
+    source_path: Path
+    label: str
+    visible: bool
+    style_index: int
+    items: dict[Detector, pg.PlotDataItem]
+    wavelength_lookup: _WavelengthLookup
 
 
 def _build_wavelength_lookup(wavelengths: np.ndarray | None) -> _WavelengthLookup:
@@ -199,18 +218,41 @@ def _configure_plot_legend(legend: pg.LegendItem) -> pg.LegendItem:
 
     family = make_font("sans", _PLOT_LEGEND_POINT_SIZE).family()
     for sample, label in legend.items:
-        label_style: dict[str, str] = {
-            "color": _PLOT_LEGEND_TEXT_COLOR,
-            "size": f"{_PLOT_LEGEND_POINT_SIZE}pt",
-        }
-        if family:
-            label_style["family"] = family
-        label.setText(label.text, **label_style)
-        label.setToolTip("Click the colored sample to hide or show this trace")
-        sample.setCursor(Qt.CursorShape.PointingHandCursor)
-        sample.setToolTip("Click to hide or show this trace")
-        label.setOpacity(1.0 if sample.item.isVisible() else 0.45)
+        _configure_plot_legend_entry(sample, label, family)
     return legend
+
+
+def _configure_plot_legend_entry(sample, label, family: str | None = None) -> None:
+    """Style one new legend row without relaying out all existing rows."""
+    if family is None:
+        family = make_font("sans", _PLOT_LEGEND_POINT_SIZE).family()
+    label_style: dict[str, str] = {
+        "color": _PLOT_LEGEND_TEXT_COLOR,
+        "size": f"{_PLOT_LEGEND_POINT_SIZE}pt",
+    }
+    if family:
+        label_style["family"] = family
+    label.setText(label.text, **label_style)
+    label.setToolTip("Click the colored sample to hide or show this trace")
+    sample.setCursor(Qt.CursorShape.PointingHandCursor)
+    sample.setToolTip("Click to hide or show this trace")
+    label.setOpacity(1.0 if sample.item.isVisible() else 0.45)
+
+
+def _overlay_pen(color: str, style_index: int) -> QtGui.QPen:
+    """Keep all eight same-color scan traces visually distinct at one pixel."""
+    if style_index < len(_OVERLAY_LINE_STYLES):
+        return pg.mkPen(color, width=1.0, style=_OVERLAY_LINE_STYLES[style_index], cosmetic=True)
+    pen = pg.mkPen(color, width=1.0, cosmetic=True)
+    pen.setStyle(Qt.PenStyle.CustomDashLine)
+    pen.setDashPattern(
+        list(
+            _OVERLAY_CUSTOM_DASH_PATTERNS[
+                (style_index - len(_OVERLAY_LINE_STYLES)) % len(_OVERLAY_CUSTOM_DASH_PATTERNS)
+            ]
+        )
+    )
+    return pen
 
 
 def _update_plot_legend_hidden_state(legend: pg.LegendItem, item: pg.PlotDataItem) -> None:
@@ -1283,6 +1325,7 @@ class PlotWidget(QWidget):
     matlab_save_status_update = Signal(str)  # Message for status bar or dialog
     _matlab_save_thread_finished = Signal(object, object)
     open_scan_requested = Signal()
+    add_scan_requested = Signal()
 
     def __init__(self, shared_settings, parent: QWidget | None = None, settings: AppSettings | None = None):
         super().__init__(parent)
@@ -1303,6 +1346,11 @@ class PlotWidget(QWidget):
         self._reference_wavelength_lookup = _build_wavelength_lookup(None)
         self.detector_plot_items: dict[Detector, pg.PlotDataItem] = {}
         self.reference_detector_plot_items: dict[Detector, pg.PlotDataItem] = {}
+        self.scan_overlays: list[ScanOverlay] = []
+        self.focused_overlay_id: str | None = None
+        self._latest_mouse_position: QtCore.QPointF | None = None
+        self._last_crosshair_text: str | None = None
+        self._user_adjusted_view = False
         self.detector_legend: pg.LegendItem | None = None
         self._saved_measurement_ref: ReferenceType[ScanMeasurement] | None = None
         self._export_measurement: ScanMeasurement | None = None
@@ -1364,6 +1412,7 @@ class PlotWidget(QWidget):
         # PlotDataItem for the main scan data
         self.plot_data_item = self.plot_widget.plot(
             pen=pg.mkPen(color="#1f78b4", width=2.0),
+            autoDownsampleFactor=_SCAN_AUTO_DOWNSAMPLE_FACTOR,
             # symbol="o",
             # symbolPen=None,  # No outline for symbol
             # symbolBrush=pg.mkBrush("#1f78b4"),
@@ -1398,6 +1447,12 @@ class PlotWidget(QWidget):
         self.load_btn.setAutoRaise(True)
         self.load_btn.setFixedSize(28, 28)
         self.load_btn.clicked.connect(lambda: self.open_scan_requested.emit())
+        self.load_menu = QtWidgets.QMenu(self.load_btn)
+        self.load_menu.addAction("Open / Replace Scan...", self.open_scan_requested.emit)
+        self.load_menu.addAction("Add Scan to Plot...", self.add_scan_requested.emit)
+        self.load_menu.addAction("Manage Overlays...", self.manage_overlays)
+        self.load_btn.setMenu(self.load_menu)
+        self.load_btn.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
 
         # Configure axes, title, grid
         tick_font = make_font("sans", 11)
@@ -1424,7 +1479,12 @@ class PlotWidget(QWidget):
         self.plot_widget.addItem(self.cursor_label)
 
         # Connect mouse move event
-        self.plot_widget.scene().sigMouseMoved.connect(self._on_mouse_moved)
+        self._crosshair_refresh_timer = QTimer(self)
+        self._crosshair_refresh_timer.setSingleShot(True)
+        self._crosshair_refresh_timer.setInterval(40)
+        self._crosshair_refresh_timer.timeout.connect(self._process_latest_mouse_position)
+        self.plot_widget.scene().sigMouseMoved.connect(self._queue_mouse_moved)
+        self.plot_widget.plotItem.vb.sigRangeChangedManually.connect(self._on_manual_view_range_changed)
         # ----------------------------
 
         self.save_btn = QToolButton()
@@ -1525,6 +1585,58 @@ class PlotWidget(QWidget):
                 logger.error(f"Failed to export image: {e}")
                 QMessageBox.warning(self, "Export Error", f"Could not save image:\n{e}")
 
+    @Slot(object)
+    def _queue_mouse_moved(self, pos) -> None:
+        """Coalesce a burst of scene mouse events into at most 25 cursor refreshes/s."""
+        self._latest_mouse_position = QtCore.QPointF(pos)
+        if not self._crosshair_refresh_timer.isActive():
+            self._crosshair_refresh_timer.start()
+
+    @Slot()
+    def _process_latest_mouse_position(self) -> None:
+        pos = self._latest_mouse_position
+        if pos is not None and not self._cleaned_up:
+            self._on_mouse_moved(pos)
+
+    @Slot(object)
+    def _on_manual_view_range_changed(self, _axes) -> None:
+        self._user_adjusted_view = True
+
+    def set_focused_overlay(self, identity: str | None) -> None:
+        """Choose which one imported overlay contributes to cursor inspection."""
+        if identity is None or any(overlay.identity == identity for overlay in self.scan_overlays):
+            self.focused_overlay_id = identity
+            self._last_crosshair_text = None
+
+    def _overlay_readout_lines(self, wavelength: float) -> list[str]:
+        overlay = next(
+            (entry for entry in self.scan_overlays if entry.identity == self.focused_overlay_id and entry.visible), None
+        )
+        if overlay is None:
+            return []
+        lookup = overlay.wavelength_lookup
+        if (
+            lookup.minimum is None
+            or lookup.maximum is None
+            or wavelength < lookup.minimum
+            or wavelength > lookup.maximum
+        ):
+            return [f"{overlay.label}: out of range"]
+        index = _nearest_wavelength_index(lookup, wavelength)
+        if index is None:
+            return [f"{overlay.label}: n/a"]
+        lines = [f"{overlay.label} @ {overlay.scan.wavelengths_nm[index]:.3f} nm:"]
+        for detector, value in zip(overlay.scan.detectors, overlay.scan.detector_data[:, index], strict=True):
+            lines.append(
+                f"Det {detector.value}: {float(value):.2f} dB" if np.isfinite(value) else f"Det {detector.value}: n/a"
+            )
+        return lines
+
+    def _set_cursor_text(self, text: str) -> None:
+        if text != self._last_crosshair_text:
+            self.cursor_label.setText(text)
+            self._last_crosshair_text = text
+
     def _on_mouse_moved(self, pos):
         """Updates the crosshair position and label text."""
         if self.plot_widget.sceneBoundingRect().contains(pos):
@@ -1551,7 +1663,7 @@ class PlotWidget(QWidget):
                 label_lines = [f"λ: {x:.3f} nm"]
                 reference = self.reference_measurement
                 if reference is not None:
-                    label_lines.append("Live:")
+                    label_lines.append("Imported:" if isinstance(measurement, ImportedScan) else "Live:")
                 finite_values = []
                 for detector, value in zip(measurement.detectors, values, strict=True):
                     if np.isfinite(value):
@@ -1583,6 +1695,8 @@ class PlotWidget(QWidget):
                                 else:
                                     label_lines.append(f"Det {detector.value}: n/a")
 
+                label_lines.extend(self._overlay_readout_lines(x))
+
                 self.v_line.setPos(x)
                 self.v_line.setVisible(True)
                 if len(measurement.detectors) == 1 and finite_values:
@@ -1593,7 +1707,7 @@ class PlotWidget(QWidget):
                 else:
                     self.h_line.setVisible(False)
                     label_y = mouse_y
-                self.cursor_label.setText("\n".join(label_lines))
+                self._set_cursor_text("\n".join(label_lines))
                 self.cursor_label.setPos(x, label_y)
                 self.cursor_label.setVisible(True)
                 return
@@ -1607,7 +1721,9 @@ class PlotWidget(QWidget):
             self.h_line.setVisible(bool(np.isfinite(y)))
             if np.isfinite(y):
                 self.h_line.setPos(y)
-            self.cursor_label.setText(f"λ: {x:.3f} nm\nP: {y:.2f} dBm")
+            cursor_lines = [f"\u03bb: {x:.3f} nm", f"P: {y:.2f} dBm"]
+            cursor_lines.extend(self._overlay_readout_lines(x))
+            self._set_cursor_text("\n".join(cursor_lines))
             self.cursor_label.setPos(x, y if np.isfinite(y) else mouse_y)
             self.cursor_label.setVisible(True)
         else:
@@ -1745,8 +1861,9 @@ class PlotWidget(QWidget):
         self.current_imported_scan = None
         self._clear_detector_live_items()
         if self.detector_legend is not None:
-            self.detector_legend.clear()
-            self.detector_legend.setVisible(False)
+            for item in self.detector_plot_items.values():
+                self.detector_legend.removeItem(item)
+            self.detector_legend.setVisible(bool(self.detector_legend.items))
         try:
             x_data_np = x_data
             y_data_np = y_data
@@ -1845,7 +1962,13 @@ class PlotWidget(QWidget):
             item.setDownsampling(auto=True, method="peak")
 
     def _enable_detector_display_optimizations(self) -> None:
-        for item in (*self.detector_plot_items.values(), *self.reference_detector_plot_items.values()):
+        overlay_items = [item for overlay in self.scan_overlays for item in overlay.items.values()]
+        for item in (
+            self.plot_data_item,
+            *self.detector_plot_items.values(),
+            *self.reference_detector_plot_items.values(),
+            *overlay_items,
+        ):
             self._configure_detector_display_item(item)
 
     def _detector_item(self, detector: Detector) -> pg.PlotDataItem:
@@ -1853,6 +1976,7 @@ class PlotWidget(QWidget):
         if item is None:
             item = self.plot_widget.plot(
                 pen=pg.mkPen(self._DETECTOR_COLORS[detector], width=2.0),
+                autoDownsampleFactor=_SCAN_AUTO_DOWNSAMPLE_FACTOR,
                 skipFiniteCheck=True,
             )
             self._configure_detector_display_item(item)
@@ -1865,6 +1989,7 @@ class PlotWidget(QWidget):
         if item is None:
             item = self.plot_widget.plot(
                 pen=pg.mkPen(_DETECTOR_REFERENCE_COLOR_BY_ID[detector], width=1.25),
+                autoDownsampleFactor=_SCAN_AUTO_DOWNSAMPLE_FACTOR,
                 skipFiniteCheck=True,
             )
             self._configure_detector_display_item(item)
@@ -1884,9 +2009,185 @@ class PlotWidget(QWidget):
             self.detector_legend.sigSampleClicked.connect(
                 lambda item, legend=self.detector_legend: _update_plot_legend_hidden_state(legend, item)
             )
-        self.detector_legend.clear()
         self.detector_legend.setVisible(True)
         return self.detector_legend
+
+    def _refresh_scan_legend(self) -> None:
+        legend = self._ensure_detector_legend()
+        legend.clear()
+        measurement = self.current_measurement
+        if measurement is not None:
+            prefix = "Imported · " if isinstance(measurement, ImportedScan) else ""
+            for detector in measurement.detectors:
+                item = self.detector_plot_items.get(detector)
+                if item is not None and item.isVisible():
+                    legend.addItem(item, f"{prefix}Det {detector.value}")
+        for overlay in self.scan_overlays:
+            for detector, item in overlay.items.items():
+                legend.addItem(item, f"{overlay.label} · Det {detector.value}")
+        _configure_plot_legend(legend)
+        legend.setVisible(bool(legend.items))
+
+    def add_imported_overlay(self, scan: ImportedScan) -> bool:
+        """Add an imported scan as a bounded, independently managed overlay."""
+        canonical = scan.source_path.resolve()
+        for overlay in self.scan_overlays:
+            if overlay.source_path == canonical:
+                self.set_overlay_visible(overlay.identity, True)
+                return False
+        if len(self.scan_overlays) >= MAX_OVERLAY_SCANS:
+            answer = QMessageBox.question(
+                self,
+                "Overlay Limit Reached",
+                f"The plot supports up to {MAX_OVERLAY_SCANS} imported overlays. Manage existing overlays now?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if answer == QMessageBox.StandardButton.Yes:
+                self.manage_overlays()
+            return False
+        style_index = len(self.scan_overlays)
+        items: dict[Detector, pg.PlotDataItem] = {}
+        label = scan.source_path.name
+        duplicate_label = any(overlay.label == label for overlay in self.scan_overlays)
+        if duplicate_label:
+            label = f"{scan.source_path.parent.name}/{label}"
+            for overlay in self.scan_overlays:
+                if overlay.label == scan.source_path.name:
+                    overlay.label = f"{overlay.source_path.parent.name}/{overlay.label}"
+        for row_index, detector in enumerate(scan.detectors):
+            color = self._DETECTOR_COLORS[detector]
+            item = self.plot_widget.plot(
+                scan.wavelengths_nm,
+                scan.detector_data[row_index],
+                pen=_overlay_pen(color, style_index),
+                autoDownsampleFactor=_SCAN_AUTO_DOWNSAMPLE_FACTOR,
+                connect="auto",
+            )
+            item.setClipToView(True)
+            item.setDownsampling(auto=True, method="peak")
+            item.setZValue(2 + style_index)
+            item.setToolTip(f"{label} · Det {detector.value}")
+            items[detector] = item
+        overlay = ScanOverlay(
+            uuid.uuid4().hex,
+            scan,
+            canonical,
+            label,
+            True,
+            style_index,
+            items,
+            _build_wavelength_lookup(scan.wavelengths_nm),
+        )
+        self.scan_overlays.append(overlay)
+        self.focused_overlay_id = overlay.identity
+        legend = self._ensure_detector_legend()
+        if duplicate_label:
+            self._refresh_scan_legend()
+        else:
+            for detector, item in items.items():
+                legend.addItem(item, f"{label} · Det {detector.value}")
+                _configure_plot_legend_entry(*legend.items[-1])
+            legend.setVisible(bool(legend.items))
+        visible_items = [item for entry in self.scan_overlays if entry.visible for item in entry.items.values()]
+        visible_items.extend(item for item in self.detector_plot_items.values() if item.isVisible())
+        if self.current_measurement is None and self.plot_data_item.isVisible():
+            visible_items.append(self.plot_data_item)
+        if visible_items and not self._user_adjusted_view:
+            self.plot_widget.plotItem.vb.autoRange(items=visible_items)
+        return True
+
+    def set_overlay_visible(self, identity: str, visible: bool) -> None:
+        for overlay in self.scan_overlays:
+            if overlay.identity == identity:
+                overlay.visible = visible
+                for item in overlay.items.values():
+                    item.setVisible(visible)
+                    if self.detector_legend is not None:
+                        _update_plot_legend_hidden_state(self.detector_legend, item)
+                if not visible and self.focused_overlay_id == identity:
+                    self.focused_overlay_id = next(
+                        (entry.identity for entry in reversed(self.scan_overlays) if entry.visible), None
+                    )
+                self._last_crosshair_text = None
+                return
+
+    def remove_overlay(self, identity: str) -> None:
+        for index, overlay in enumerate(self.scan_overlays):
+            if overlay.identity == identity:
+                for item in overlay.items.values():
+                    if self.detector_legend is not None:
+                        self.detector_legend.removeItem(item)
+                    self.plot_widget.removeItem(item)
+                del self.scan_overlays[index]
+                if self.focused_overlay_id == identity:
+                    self.focused_overlay_id = next(
+                        (entry.identity for entry in reversed(self.scan_overlays) if entry.visible), None
+                    )
+                if self.detector_legend is not None:
+                    self.detector_legend.setVisible(bool(self.detector_legend.items))
+                return
+
+    def clear_overlays(self) -> None:
+        for overlay in self.scan_overlays:
+            for item in overlay.items.values():
+                self.plot_widget.removeItem(item)
+        self.scan_overlays.clear()
+        self.focused_overlay_id = None
+        self._refresh_scan_legend()
+
+    def manage_overlays(self) -> None:
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle("Manage Scan Overlays")
+        dialog.setMinimumWidth(440)
+        layout = QVBoxLayout(dialog)
+        table = QtWidgets.QTableWidget(len(self.scan_overlays), 4, dialog)
+        table.setHorizontalHeaderLabels(["Show", "Inspect", "Saved scan", "Provenance"])
+        table.horizontalHeader().setStretchLastSection(True)
+        table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
+        focus_group = QtWidgets.QButtonGroup(table)
+        focus_group.setExclusive(True)
+        for row, overlay in enumerate(self.scan_overlays):
+            checkbox = QtWidgets.QCheckBox(table)
+            checkbox.setChecked(overlay.visible)
+            checkbox.toggled.connect(lambda shown, identity=overlay.identity: self.set_overlay_visible(identity, shown))
+            table.setCellWidget(row, 0, checkbox)
+            focus_button = QtWidgets.QRadioButton(table)
+            focus_button.setChecked(overlay.identity == self.focused_overlay_id)
+            focus_button.toggled.connect(
+                lambda focused, identity=overlay.identity: self.set_focused_overlay(identity) if focused else None
+            )
+            focus_group.addButton(focus_button)
+            table.setCellWidget(row, 1, focus_button)
+            label_item = QtWidgets.QTableWidgetItem(overlay.label)
+            label_item.setData(Qt.ItemDataRole.UserRole, overlay.identity)
+            table.setItem(row, 2, label_item)
+            table.item(row, 2).setToolTip(str(overlay.source_path))
+            provenance = "Simulated" if overlay.scan.simulated else "Saved acquisition"
+            table.setItem(row, 3, QtWidgets.QTableWidgetItem(provenance))
+        layout.addWidget(table)
+        buttons = QHBoxLayout()
+        remove = QtWidgets.QPushButton("Remove Selected", dialog)
+        clear = QtWidgets.QPushButton("Clear Overlays", dialog)
+        close = QtWidgets.QPushButton("Close", dialog)
+        buttons.addWidget(remove)
+        buttons.addWidget(clear)
+        buttons.addStretch(1)
+        buttons.addWidget(close)
+        layout.addLayout(buttons)
+
+        def remove_selected() -> None:
+            row = table.currentRow()
+            item = table.item(row, 2) if row >= 0 else None
+            if item is None:
+                return
+            self.remove_overlay(item.data(Qt.ItemDataRole.UserRole))
+            table.removeRow(row)
+
+        remove.clicked.connect(remove_selected)
+        clear.clicked.connect(self.clear_overlays)
+        close.clicked.connect(dialog.accept)
+        dialog.exec()
 
     def set_measurement(self, measurement: ScanMeasurement | ImportedScan) -> bool:
         """Display every detector row and retain the completed acquisition."""
@@ -1901,7 +2202,6 @@ class PlotWidget(QWidget):
         self._clear_detector_live_items()
         self.save_btn.setEnabled(False)
 
-        legend = self._ensure_detector_legend()
         finite_live_items: list[pg.PlotDataItem] = []
         wavelengths = measurement.wavelengths_nm
         for row_index, detector in enumerate(measurement.detectors):
@@ -1910,11 +2210,10 @@ class PlotWidget(QWidget):
             item = self._detector_item(detector)
             item.setData(wavelengths[finite_mask], row[finite_mask])
             item.setVisible(bool(np.any(finite_mask)))
-            legend.addItem(item, f"Det {detector.value}")
             if np.any(finite_mask):
                 finite_live_items.append(item)
 
-        _configure_plot_legend(legend)
+        self._refresh_scan_legend()
 
         if finite_live_items:
             self.plot_widget.plotItem.vb.autoRange(items=finite_live_items)
@@ -1966,6 +2265,7 @@ class PlotWidget(QWidget):
     def clear_plot(self):
         """Clears all traces and resets internal data."""
         self._hide_crosshair()
+        self.clear_overlays()
         self.plot_widget.setLabel("left", _GENERIC_SCAN_Y_LABEL)
         # 1. Clear the visual plot items
         self.plot_data_item.setData([], [])
@@ -2239,6 +2539,8 @@ class PlotWidget(QWidget):
         if self._cleaned_up:
             return
         self._cleaned_up = True
+        self._crosshair_refresh_timer.stop()
+        self._latest_mouse_position = None
         logger.debug("PlotWidget cleanup: Cleaning up resources.")
         self._status_clear_timer.stop()
         thread = self.matlab_save_thread
