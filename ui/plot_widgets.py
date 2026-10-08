@@ -6,6 +6,7 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from weakref import ReferenceType, ref
 
 import numpy as np
 import pyqtgraph as pg
@@ -49,6 +50,7 @@ from logic.power_monitor_recording import (
     PowerMonitorRecordingSample,
 )
 from logic.scan_export import build_scan_export_v2
+from logic.scan_import import ImportedScan
 from logic.scan_measurement import ScanMeasurement
 from ui.power_monitor_export_dialog import PowerMonitorExportDialog
 from ui.scan_export_dialog import ScanExportDialog
@@ -1280,6 +1282,7 @@ class PlotWidget(QWidget):
     # Signal to update UI from worker, e.g., re-enable button, show status
     matlab_save_status_update = Signal(str)  # Message for status bar or dialog
     _matlab_save_thread_finished = Signal(object, object)
+    open_scan_requested = Signal()
 
     def __init__(self, shared_settings, parent: QWidget | None = None, settings: AppSettings | None = None):
         super().__init__(parent)
@@ -1293,13 +1296,17 @@ class PlotWidget(QWidget):
         self.current_wavelengths: np.ndarray | None = None
         self.current_powers: np.ndarray | None = None
         self.current_output_power: float | None = None
-        self.current_measurement: ScanMeasurement | None = None
-        self.reference_measurement: ScanMeasurement | None = None
+        self.current_measurement: ScanMeasurement | ImportedScan | None = None
+        self.current_imported_scan: ImportedScan | None = None
+        self.reference_measurement: ScanMeasurement | ImportedScan | None = None
         self._current_wavelength_lookup = _build_wavelength_lookup(None)
         self._reference_wavelength_lookup = _build_wavelength_lookup(None)
         self.detector_plot_items: dict[Detector, pg.PlotDataItem] = {}
         self.reference_detector_plot_items: dict[Detector, pg.PlotDataItem] = {}
         self.detector_legend: pg.LegendItem | None = None
+        self._saved_measurement_ref: ReferenceType[ScanMeasurement] | None = None
+        self._export_measurement: ScanMeasurement | None = None
+        self.pending_saves = 0
 
         # --- Worker Thread Setup for MATLAB Saving ---
         # We'll create the thread and worker on-demand when saving to .fig
@@ -1383,6 +1390,15 @@ class PlotWidget(QWidget):
         self.freeze_btn.clicked.connect(self.freeze_current_trace)
         self.freeze_btn.setEnabled(False)
 
+        self.load_btn = QToolButton()
+        self.load_btn.setIcon(QIcon(":/icons/folder-open.svg"))
+        self.load_btn.setToolTip("Open saved scan (CSV/MAT)")
+        self.load_btn.setAccessibleName("Open wavelength scan data")
+        self.load_btn.setObjectName("scanPlotLoadButton")
+        self.load_btn.setAutoRaise(True)
+        self.load_btn.setFixedSize(28, 28)
+        self.load_btn.clicked.connect(lambda: self.open_scan_requested.emit())
+
         # Configure axes, title, grid
         tick_font = make_font("sans", 11)
         label_style = {"color": "black", "font-size": "12pt"}
@@ -1447,6 +1463,7 @@ class PlotWidget(QWidget):
         controls_layout.setSpacing(2)
         controls_layout.addWidget(self.clear_btn)
         controls_layout.addWidget(self.freeze_btn)
+        controls_layout.addWidget(self.load_btn)
         controls_layout.addWidget(self.save_btn)
         controls_layout.addWidget(self.screenshot_btn)
         plot_layout.addWidget(
@@ -1725,6 +1742,7 @@ class PlotWidget(QWidget):
         # not exportable as a completed acquisition without its snapshot.
         self.plot_widget.setLabel("left", _GENERIC_SCAN_Y_LABEL)
         self.current_measurement = None
+        self.current_imported_scan = None
         self._clear_detector_live_items()
         if self.detector_legend is not None:
             self.detector_legend.clear()
@@ -1870,10 +1888,11 @@ class PlotWidget(QWidget):
         self.detector_legend.setVisible(True)
         return self.detector_legend
 
-    def set_measurement(self, measurement: ScanMeasurement) -> bool:
+    def set_measurement(self, measurement: ScanMeasurement | ImportedScan) -> bool:
         """Display every detector row and retain the completed acquisition."""
         self.plot_widget.setLabel("left", _MEASUREMENT_SCAN_Y_LABEL)
         self.current_measurement = measurement
+        self.current_imported_scan = None
         self.current_wavelengths = measurement.wavelengths_nm
         self._current_wavelength_lookup = _build_wavelength_lookup(measurement.wavelengths_nm)
         self.current_powers = measurement.detector_data[0] if measurement.detectors else np.array([])
@@ -1908,9 +1927,40 @@ class PlotWidget(QWidget):
         else:
             self.set_plot_title("Wavelength Scan")
 
-        self.save_btn.setEnabled(True)
+        self.save_btn.setEnabled(isinstance(measurement, ScanMeasurement) and self.pending_saves == 0)
         self.freeze_btn.setEnabled(bool(measurement.detectors))
         return True
+
+    def has_unsaved_acquisition(self) -> bool:
+        """Whether the displayed acquisition lacks a successful export."""
+        measurement = self.current_measurement
+        saved = self._saved_measurement_ref() if self._saved_measurement_ref is not None else None
+        return isinstance(measurement, ScanMeasurement) and saved is not measurement
+
+    def _mark_measurement_saved(self, measurement: ScanMeasurement) -> None:
+        self._saved_measurement_ref = ref(measurement)
+
+    def _update_save_button_state(self) -> None:
+        self.save_btn.setEnabled(isinstance(self.current_measurement, ScanMeasurement) and self.pending_saves == 0)
+
+    def set_imported_scan(self, scan: ImportedScan) -> bool:
+        """Display an offline scan through the shared detector plotting path."""
+        result = self.set_measurement(scan)
+        if result:
+            self.current_imported_scan = scan
+            provenance = "simulated acquisition" if scan.simulated else "saved acquisition"
+            title = f"Imported Scan — {scan.source_path.name} ({provenance})"
+            self.set_plot_title(title)
+            self.plot_widget.setToolTip(
+                f"Imported from: {scan.source_path}\n"
+                f"Completed: {scan.completed_at_utc.isoformat()}\n"
+                f"Backend: {scan.backend}; {provenance}\n"
+                f"Comment: {scan.comment}"
+            )
+            self.save_btn.setEnabled(False)
+        else:
+            self.current_imported_scan = None
+        return result
 
     @Slot()
     def clear_plot(self):
@@ -1935,6 +1985,7 @@ class PlotWidget(QWidget):
         self.current_powers = None
         self.current_output_power = None
         self.current_measurement = None
+        self.current_imported_scan = None
         self.reference_measurement = None
         self._current_wavelength_lookup = _build_wavelength_lookup(None)
         self._reference_wavelength_lookup = _build_wavelength_lookup(None)
@@ -1985,6 +2036,15 @@ class PlotWidget(QWidget):
     @Slot()
     def save_scan_data(self):
         measurement = self.current_measurement
+        if self.pending_saves:
+            return
+        if isinstance(measurement, ImportedScan):
+            QMessageBox.information(
+                self,
+                "Imported Scan",
+                "Imported files do not contain all acquisition fields needed to export a scan measurement.",
+            )
+            return
         if measurement is None or self.current_wavelengths is None or self.current_powers is None:
             QMessageBox.warning(self, "No Data", "No scan data available to save.")
             return
@@ -2012,11 +2072,11 @@ class PlotWidget(QWidget):
         dialog = ScanExportDialog(self.last_scan_save_dir, default_filename, formats, MATLAB_ENGINE_AVAILABLE, self)
         if dialog.exec() != dialog.DialogCode.Accepted:
             logger.info("Save Scan dialog cancelled by user.")
-            self.save_btn.setEnabled(True)
+            self._update_save_button_state()
             return
         request = dialog.export_request
         if request is None or not (request.csv or request.mat or request.fig):
-            self.save_btn.setEnabled(True)
+            self._update_save_button_state()
             return
 
         targets = derive_scan_export_targets(
@@ -2026,7 +2086,7 @@ class PlotWidget(QWidget):
             include_fig=request.fig,
         )
         if not targets:
-            self.save_btn.setEnabled(True)
+            self._update_save_button_state()
             return
 
         # Accepted valid requests become the next preferences, even if the
@@ -2049,19 +2109,20 @@ class PlotWidget(QWidget):
             )
             if answer != QMessageBox.StandardButton.Yes:
                 logger.info("Scan export cancelled because overwrite was declined.")
-                self.save_btn.setEnabled(True)
+                self._update_save_button_state()
                 return
 
         try:
             export_payload = build_scan_export_v2(measurement, comment=request.comment)
         except (TypeError, ValueError) as error:
             QMessageBox.warning(self, "Scan Export Not Supported", str(error))
-            self.save_btn.setEnabled(True)
+            self._update_save_button_state()
             return
 
         self.saved_files_list: list[Path] = []
         self.error_list: list[str] = []
         self.pending_saves = 0
+        self._export_measurement = measurement
         self._completion_reported = False
 
         if request.csv:
@@ -2079,6 +2140,7 @@ class PlotWidget(QWidget):
                 with csv_path.resolve().open("w", encoding="utf-8", newline="") as csv_file:
                     csv_file.write(csv_buffer.getvalue())
                 self.saved_files_list.append(csv_path)
+                self._mark_measurement_saved(measurement)
                 logger.info(f"Saved CSV: {csv_path}")
             except Exception as e:
                 self.error_list.append(f"CSV: {e}")
@@ -2091,6 +2153,7 @@ class PlotWidget(QWidget):
                 mat_path = targets["MAT"]
                 sio.savemat(str(mat_path.resolve()), export_payload.mat_data, do_compression=True)
                 self.saved_files_list.append(mat_path)
+                self._mark_measurement_saved(measurement)
                 logger.info(f"Saved MAT: {mat_path}")
             except Exception as e:
                 self.error_list.append(f"MAT: {e}")
@@ -2122,6 +2185,8 @@ class PlotWidget(QWidget):
             # ... (append to saved_files_list, update status_label) ...
             logger.info(f"Successfully saved {filetype}: {message_or_filename}")
             self.saved_files_list.append(message_or_filename)
+            # FIG is a useful MATLAB plot, but it does not preserve the
+            # schema-v2 measurement needed to count the acquisition as saved.
             self._set_matlab_status(f"{Path(message_or_filename).name} saved.")
         else:
             # ... (append to error_list, update status_label) ...
@@ -2136,7 +2201,8 @@ class PlotWidget(QWidget):
     def _check_all_saves_done(self):
         if self.pending_saves != 0:
             return
-        self.save_btn.setEnabled(True)
+        self._update_save_button_state()
+        self._export_measurement = None
         if not self.matlab_status_label.text() or "Saving" not in self.matlab_status_label.text():
             self._status_clear_timer.start(self._STATUS_CLEAR_TIMEOUT_MS)
         if getattr(self, "_completion_reported", False):

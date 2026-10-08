@@ -1230,12 +1230,14 @@ def _silence_export_messages(monkeypatch):
 
 def test_csv_mat_formats_never_start_matlab_and_write_both(qtbot, monkeypatch, tmp_path):
     widget = _prepare_export_widget(qtbot)
+    assert widget.has_unsaved_acquisition()
     _stub_save_dialog(monkeypatch, tmp_path, formats=(True, True, False))
     _silence_export_messages(monkeypatch)
     monkeypatch.setattr(plot_widgets, "MATLAB_ENGINE_AVAILABLE", True)
     widget.save_scan_data()
     assert (tmp_path / "scan.csv").exists() and (tmp_path / "scan.mat").exists()
     assert not (tmp_path / "scan.fig").exists()
+    assert not widget.has_unsaved_acquisition()
 
 
 @pytest.mark.parametrize(
@@ -1249,6 +1251,82 @@ def test_csv_or_mat_only_writes_selected_file(qtbot, monkeypatch, tmp_path, form
     widget.save_scan_data()
     assert {path.name for path in tmp_path.iterdir()} == expected
     assert widget.save_btn.isEnabled()
+    assert not widget.has_unsaved_acquisition()
+
+
+@pytest.mark.parametrize(
+    ("formats", "fig_success", "fail_csv", "fail_mat", "expected_saved"),
+    [
+        ((False, False, True), True, False, False, False),
+        ((False, False, True), False, False, False, False),
+        ((True, True, True), True, True, True, False),
+        ((True, False, True), False, False, False, True),
+        ((False, True, True), False, False, False, True),
+    ],
+    ids=[
+        "fig-only-success",
+        "fig-only-failure",
+        "fig-success-data-failures",
+        "csv-success-fig-failure",
+        "mat-success-fig-failure",
+    ],
+)
+def test_fig_completion_never_marks_schema_v2_data_saved(
+    qtbot, monkeypatch, tmp_path, formats, fig_success, fail_csv, fail_mat, expected_saved
+):
+    import scipy.io as scipy_io
+
+    widget = _prepare_export_widget(qtbot)
+    _stub_save_dialog(monkeypatch, tmp_path, formats=formats)
+    reports = []
+    monkeypatch.setattr(plot_widgets.QMessageBox, "information", lambda *args: reports.append((args[1], args[2])))
+    monkeypatch.setattr(plot_widgets.QMessageBox, "warning", lambda *args: reports.append((args[1], args[2])))
+    monkeypatch.setattr(plot_widgets, "MATLAB_ENGINE_AVAILABLE", True)
+
+    if fail_csv:
+        monkeypatch.setattr(
+            plot_widgets.np, "savetxt", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("CSV failed"))
+        )
+    if fail_mat:
+        monkeypatch.setattr(scipy_io, "savemat", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("MAT failed")))
+
+    def queue_fig(_request):
+        widget.pending_saves += 1
+
+    monkeypatch.setattr(widget, "_queue_matlab_fig", queue_fig)
+    widget.save_scan_data()
+    assert widget.pending_saves == 1
+
+    widget._handle_matlab_save_finished("fig", fig_success, str(tmp_path / "scan.fig"))
+
+    assert widget.pending_saves == 0
+    assert widget.has_unsaved_acquisition() is (not expected_saved)
+    if fig_success:
+        assert any("scan.fig" in body for _title, body in reports)
+    else:
+        assert not any(title == "Save Successful" for title, _body in reports)
+    widget.close()
+
+
+def test_late_fig_completion_does_not_change_current_acquisition_persistence(qtbot, monkeypatch, tmp_path):
+    widget = _prepare_export_widget(qtbot)
+    original = widget.current_measurement
+    _stub_save_dialog(monkeypatch, tmp_path, formats=(False, False, True))
+    _silence_export_messages(monkeypatch)
+    monkeypatch.setattr(plot_widgets, "MATLAB_ENGINE_AVAILABLE", True)
+    monkeypatch.setattr(widget, "_queue_matlab_fig", lambda _request: setattr(widget, "pending_saves", 1))
+
+    widget.save_scan_data()
+    assert widget._export_measurement is original
+    replacement = _detector_measurement([1510.0, 1520.0], [[-22.0, -23.0]], (Detector.DE_1,))
+    widget.set_measurement(replacement)
+    assert widget.has_unsaved_acquisition()
+
+    widget._handle_matlab_save_finished("fig", True, str(tmp_path / "scan.fig"))
+
+    assert widget.current_measurement is replacement
+    assert widget.has_unsaved_acquisition()
+    widget.close()
 
 
 def test_fig_only_startup_waits_without_failure(qtbot, monkeypatch, tmp_path):
@@ -1292,6 +1370,7 @@ def test_overwrite_decline_writes_nothing_and_lists_only_selected_conflict(qtbot
         lambda *args: questions.append(args[2]) or plot_widgets.QMessageBox.StandardButton.No,
     )
     widget.save_scan_data()
+    assert widget.has_unsaved_acquisition()
     assert conflict.read_bytes() == b"original"
     assert not (tmp_path / "scan.csv").exists()
     assert str(conflict) in questions[0] and "scan.fig" not in questions[0]
@@ -1326,12 +1405,14 @@ def test_dialog_cancel_does_not_write_or_persist(qtbot, monkeypatch, tmp_path):
 
     settings = AppSettings(QSettings(str(tmp_path / "prefs.ini"), QSettings.Format.IniFormat))
     widget = _prepare_export_widget(qtbot, settings)
+    assert widget.has_unsaved_acquisition()
     _stub_save_dialog(monkeypatch, tmp_path, accepted=False)
     widget.save_scan_data()
     assert not list(tmp_path.glob("*.csv"))
     assert settings.scan_export_formats() == (True, True, False)
     assert settings._settings.value("Paths/scan_export") is None
     assert widget.save_btn.isEnabled()
+    assert widget.has_unsaved_acquisition()
 
 
 def test_multidetector_csv_mat_preserve_schema_v2_identity(qtbot, monkeypatch, tmp_path):
@@ -1383,6 +1464,7 @@ def test_partial_export_failure_keeps_successful_format(qtbot, monkeypatch, tmp_
     assert (tmp_path / "scan.mat").exists()
     assert warnings and "CSV: disk full" in warnings[0]
     assert widget.save_btn.isEnabled()
+    assert not widget.has_unsaved_acquisition()  # The MAT file was successfully written.
 
 
 def test_payload_validation_error_writes_nothing_and_restores_button(qtbot, monkeypatch, tmp_path):
@@ -1399,6 +1481,7 @@ def test_payload_validation_error_writes_nothing_and_restores_button(qtbot, monk
     assert not list(tmp_path.iterdir())
     assert warnings and "bad payload" in warnings[0]
     assert widget.save_btn.isEnabled()
+    assert widget.has_unsaved_acquisition()
 
 
 def test_unavailable_matlab_preserves_saved_fig_preference(qtbot, monkeypatch, tmp_path):

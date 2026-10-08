@@ -1,5 +1,8 @@
 import threading
 
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QIcon
+from PySide6.QtTest import QSignalSpy
 from PySide6.QtWidgets import QRadioButton, QToolButton
 
 from config_model import CameraConfig
@@ -19,19 +22,32 @@ def test_wavelength_scan_actions_are_compact_top_right_plot_overlays(qtbot):
     qtbot.waitExposed(widget)
     qtbot.wait(20)
 
-    buttons = (widget.clear_btn, widget.freeze_btn, widget.save_btn, widget.screenshot_btn)
+    buttons = (widget.clear_btn, widget.freeze_btn, widget.load_btn, widget.save_btn, widget.screenshot_btn)
     assert all(isinstance(button, QToolButton) for button in buttons)
     assert all(button.parentWidget() is widget.overlay_controls for button in buttons)
     assert widget.overlay_controls.parentWidget() is widget.plot_container
     assert all(button.icon().isNull() is False for button in buttons)
     assert all(button.autoRaise() for button in buttons)
     assert all(button.width() <= 32 and button.height() <= 32 for button in buttons)
+    assert [widget.overlay_controls.layout().itemAt(index).widget() for index in range(5)] == list(buttons)
     assert [button.objectName() for button in buttons] == [
         "scanPlotClearButton",
         "scanPlotFreezeButton",
+        "scanPlotLoadButton",
         "scanPlotSaveButton",
         "scanPlotExportImageButton",
     ]
+    assert widget.load_btn.toolTip() == "Open saved scan (CSV/MAT)"
+    assert widget.load_btn.accessibleName() == "Open wavelength scan data"
+    assert widget.load_btn.width() == widget.save_btn.width() == 28
+    load_icon = widget.load_btn.icon().pixmap(widget.load_btn.iconSize()).toImage()
+    expected_icon = QIcon(":/icons/folder-open.svg").pixmap(widget.load_btn.iconSize()).toImage()
+    assert not load_icon.isNull()
+    assert load_icon == expected_icon
+    assert widget.load_btn.focusPolicy() != Qt.FocusPolicy.NoFocus
+    load_requests = QSignalSpy(widget.open_scan_requested)
+    widget.load_btn.click()
+    assert load_requests.count() == 1
 
     overlay_center = widget.overlay_controls.mapTo(widget.plot_container, widget.overlay_controls.rect().center())
     assert overlay_center.x() > widget.plot_container.width() * 0.7

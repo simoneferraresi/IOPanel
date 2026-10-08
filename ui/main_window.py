@@ -29,6 +29,7 @@ from PySide6.QtGui import QAction, QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QDockWidget,
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -49,6 +50,7 @@ from hardware.ct400_init_worker import CT400InitWorker
 from hardware.dummy_ct400 import DummyCT400
 from hardware.piezo import PiezoController
 from hardware.piezo_init_worker import PiezoInitWorker
+from logic.scan_import import ScanImportError, load_scan
 from logic.task_runner import TaskRunner
 from ui.alignment_panel import AlignmentPanel
 from ui.discovery_dialog import CameraDiscoveryDialog
@@ -218,6 +220,7 @@ class MainWindow(QMainWindow):
         self._ct400_error_reset_timer.setSingleShot(True)
         self._ct400_error_reset_timer.timeout.connect(self._reset_ct400_error_visuals)
         self.cameras_menu: QMenu | None = None
+        self.open_scan_action: QAction | None = None
 
         self.piezo_connection_succeeded.connect(self._on_piezo_connection_success)
         self.piezo_connection_failed.connect(self._on_piezo_connection_failed)
@@ -884,6 +887,12 @@ class MainWindow(QMainWindow):
         menu_bar = self.menuBar()
 
         file_menu = menu_bar.addMenu("&File")
+        self.open_scan_action = QAction("Open Scan...", self)
+        self.open_scan_action.setObjectName("openScanAction")
+        self.open_scan_action.setStatusTip("Open a saved IOPanel schema-v2 scan for offline plotting")
+        self.open_scan_action.triggered.connect(self._open_scan_file)
+        file_menu.addAction(self.open_scan_action)
+        file_menu.addSeparator()
         exit_action = QAction(QIcon(":/icons/exit.svg"), "E&xit", self)
         exit_action.setStatusTip("Exit the application")
         exit_action.triggered.connect(self.close)
@@ -920,6 +929,7 @@ class MainWindow(QMainWindow):
         self.instrument_menu.addAction(self.piezo_connect_right_action)
         self._update_piezo_action("left")
         self._update_piezo_action("right")
+        self._update_scan_import_actions()
 
         help_menu = menu_bar.addMenu("&Help")
         about_action = QAction("&About", self)
@@ -927,6 +937,101 @@ class MainWindow(QMainWindow):
         about_action.triggered.connect(self._show_about_dialog)
         help_menu.addAction(about_action)
         logger.debug("Menus created.")
+
+    @Slot()
+    def _open_scan_file(self) -> None:
+        """Choose, validate, then display a saved scan without touching hardware."""
+        if self._scan_import_shutdown_in_progress():
+            return
+        if self._scan_import_is_blocked():
+            self.statusBar().showMessage("Wait for the CT400 scan to finish before opening a saved scan.", 5000)
+            return
+        filename, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "Open Scan",
+            str(self.settings.directory("Paths/scan_import")),
+            "IOPanel CSV (*.csv);;IOPanel MATLAB Data (*.mat)",
+        )
+        if not filename:
+            return
+        if self._scan_import_shutdown_in_progress():
+            return
+        if self._scan_import_is_blocked():
+            self.statusBar().showMessage(
+                "The CT400 scan started while the file dialog was open; import cancelled.", 5000
+            )
+            return
+        try:
+            scan = load_scan(filename)
+        except ScanImportError as error:
+            logger.warning("Rejected imported scan %s: %s", filename, error)
+            QMessageBox.warning(self, "Could Not Open Scan", str(error))
+            return
+        except Exception as error:  # Defensive boundary for damaged third-party MAT files.
+            logger.exception("Unexpected error importing scan %s", filename)
+            QMessageBox.warning(self, "Could Not Open Scan", f"The scan could not be read: {error}")
+            return
+        if self._scan_import_is_blocked():
+            self.statusBar().showMessage("The CT400 scan is still completing; import cancelled.", 5000)
+            return
+        while self.plot_widget.has_unsaved_acquisition():
+            existing_measurement = self.plot_widget.current_measurement
+            answer = QMessageBox.question(
+                self,
+                "Replace Unsaved Scan?",
+                "The current acquired scan has not been successfully saved. Replace it with this imported scan?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            if self._scan_import_is_blocked():
+                self.statusBar().showMessage("The CT400 scan started during confirmation; import cancelled.", 5000)
+                return
+            if self.plot_widget.current_measurement is not existing_measurement:
+                continue
+            break
+        if self._scan_import_is_blocked():
+            self.statusBar().showMessage("The CT400 scan is still completing; import cancelled.", 5000)
+            return
+        if self._scan_import_shutdown_in_progress():
+            return
+        if not self.plot_widget.set_imported_scan(scan):
+            QMessageBox.warning(self, "Could Not Plot Scan", "The scan was read but its traces could not be plotted.")
+            return
+        self.settings.set_directory("Paths/scan_import", scan.source_path.parent)
+        self.statusBar().showMessage(f"Imported {scan.source_path.name}", 5000)
+
+    def _scan_import_is_blocked(self) -> bool:
+        """Keep imports blocked until the scan worker lifecycle has fully unwound."""
+        panel = getattr(self, "control_panel", None)
+        return (
+            getattr(self, "_ct400_operation_state", None) is CT400OperationState.SCANNING
+            or bool(getattr(panel, "scanning", False))
+            or getattr(panel, "scan_thread", None) is not None
+        )
+
+    def _update_scan_import_actions(self) -> None:
+        enabled = not self._scan_import_is_blocked() and not self._scan_import_shutdown_in_progress()
+        action = getattr(self, "open_scan_action", None)
+        if action is not None:
+            action.setEnabled(enabled)
+        plot_widget = getattr(self, "plot_widget", None)
+        if plot_widget is not None and hasattr(plot_widget, "load_btn"):
+            plot_widget.load_btn.setEnabled(enabled)
+
+    def _scan_import_shutdown_in_progress(self) -> bool:
+        return any(
+            bool(getattr(self, name, False))
+            for name in (
+                "_pending_scan_close",
+                "_pending_init_close",
+                "_pending_camera_lifecycle_close",
+                "_pending_ct400_operation_close",
+                "_pending_piezo_operation_close",
+                "_camera_cleanup_complete",
+            )
+        )
 
     @Slot()
     def _on_refresh_instruments_triggered(self):
@@ -1061,6 +1166,7 @@ class MainWindow(QMainWindow):
                 action.setEnabled(enabled and isinstance(self.ct400_device, CT400))
             else:
                 action.setEnabled(False)
+        self._update_scan_import_actions()
 
     @Slot()
     def _handle_ct400_scan_started(self):
@@ -1722,6 +1828,9 @@ class MainWindow(QMainWindow):
 
     def _connect_signals(self):
         """Connects signals between different components of the application."""
+        if getattr(self, "plot_widget", None) is not None:
+            self.plot_widget.open_scan_requested.connect(self._open_scan_file)
+
         if hasattr(self, "control_panel") and self.control_panel:
             logger.debug("Connecting control_panel signals")
             self.control_panel.scan_data_ready.connect(self._handle_scan_data)
