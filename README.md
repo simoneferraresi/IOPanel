@@ -90,6 +90,10 @@ MATLAB Engine is not required to run IOPanel. Without it, CSV and MAT scan
 exports and PNG/JPG plot-image exports remain available; only MATLAB `.fig`
 export is unavailable. For MATLAB Engine installation details, see the
 [official MATLAB documentation](https://www.mathworks.com/help/matlab/matlab_external/install-the-matlab-engine-for-python.html).
+When the MATLAB extra is installed, IOPanel asynchronously prewarms one Engine
+350 ms after the main window is shown and reuses it for `.fig` exports. Startup
+failure leaves the rest of the application available, and the Engine is shut
+down when IOPanel exits.
 
 These commands are for manual lab diagnostics only; CI does not require MATLAB
 or the MATLAB extra. In PowerShell, check the Engine import and runtime with:

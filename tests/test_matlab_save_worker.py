@@ -19,6 +19,9 @@ class _FakeMatlabEngine:
         if name == self.fail_on:
             raise RuntimeError(f"{name} failed")
 
+    def eval(self, *args, **kwargs):
+        self._record("eval", *args, **kwargs)
+
     def figure(self, **kwargs):
         self._record("figure", **kwargs)
         return "worker-figure"
@@ -131,16 +134,19 @@ def test_worker_keeps_single_detector_fig_supported(qapp, monkeypatch):
     assert not any(call[0] == "quit" for call in engine.calls)
 
 
-def test_worker_quits_only_a_locally_started_matlab_engine(qapp, monkeypatch):
-    local_engine = _FakeMatlabEngine()
-    widget, worker = _setup_worker(monkeypatch, local_engine)
+def test_worker_does_not_start_local_engine_without_shared_engine(qapp, monkeypatch):
+    engine = _FakeMatlabEngine()
+    widget, worker = _setup_worker(monkeypatch, engine)
     widget.get_matlab_engine = lambda: None
-    plot_widgets.matlab.engine.start_matlab = lambda: local_engine
+    starts = []
+    plot_widgets.matlab.engine.start_matlab = lambda **kwargs: starts.append(kwargs)
 
     result = _call(worker, widget, _payload([_trace(1, [1.0, 2.0])]))
 
-    assert result[1] is True
-    assert [call[0] for call in local_engine.calls].count("quit") == 1
+    assert result[1] is False
+    assert "refusing to start a second Engine" in result[2]
+    assert starts == []
+    assert engine.calls == []
 
 
 def test_worker_passes_nan_and_infinities_through_to_matlab(qapp, monkeypatch):

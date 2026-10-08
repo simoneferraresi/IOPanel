@@ -1233,7 +1233,6 @@ def test_csv_mat_formats_never_start_matlab_and_write_both(qtbot, monkeypatch, t
     _stub_save_dialog(monkeypatch, tmp_path, formats=(True, True, False))
     _silence_export_messages(monkeypatch)
     monkeypatch.setattr(plot_widgets, "MATLAB_ENGINE_AVAILABLE", True)
-    monkeypatch.setattr(widget, "_ensure_matlab_engine_started", lambda: pytest.fail("CSV+MAT must not start MATLAB"))
     widget.save_scan_data()
     assert (tmp_path / "scan.csv").exists() and (tmp_path / "scan.mat").exists()
     assert not (tmp_path / "scan.fig").exists()
@@ -1247,27 +1246,25 @@ def test_csv_or_mat_only_writes_selected_file(qtbot, monkeypatch, tmp_path, form
     _stub_save_dialog(monkeypatch, tmp_path, formats=formats)
     _silence_export_messages(monkeypatch)
     monkeypatch.setattr(plot_widgets, "MATLAB_ENGINE_AVAILABLE", True)
-    monkeypatch.setattr(
-        widget, "_ensure_matlab_engine_started", lambda: pytest.fail("non-FIG save must not start MATLAB")
-    )
     widget.save_scan_data()
     assert {path.name for path in tmp_path.iterdir()} == expected
     assert widget.save_btn.isEnabled()
 
 
-def test_fig_only_startup_failure_saves_nothing_and_restores_button(qtbot, monkeypatch, tmp_path):
+def test_fig_only_startup_waits_without_failure(qtbot, monkeypatch, tmp_path):
+    monkeypatch.setattr(plot_widgets, "MATLAB_ENGINE_AVAILABLE", True)
     widget = _prepare_export_widget(qtbot)
     _stub_save_dialog(monkeypatch, tmp_path, formats=(False, False, True))
-    monkeypatch.setattr(plot_widgets, "MATLAB_ENGINE_AVAILABLE", True)
-    calls = []
-    monkeypatch.setattr(widget, "_ensure_matlab_engine_started", lambda: calls.append(True) or False)
+    monkeypatch.setattr(widget.matlab_engine_manager, "request_engine", lambda: plot_widgets.MatlabEngineState.STARTING)
     warnings = []
     monkeypatch.setattr(plot_widgets.QMessageBox, "warning", lambda *args: warnings.append(args[-1]))
     widget.save_scan_data()
-    assert calls == [True]
+    assert widget.pending_saves == 1
+    assert widget._pending_matlab_fig is not None
+    assert widget.matlab_status_label.text() == "Waiting for MATLAB…"
     assert not list(tmp_path.iterdir())
-    assert warnings and "FIG:" in warnings[0]
-    assert widget.save_btn.isEnabled()
+    assert warnings == []
+    assert not widget.save_btn.isEnabled()
 
 
 def test_all_formats_writes_csv_mat_and_queues_selected_fig(qtbot, monkeypatch, tmp_path):
@@ -1275,48 +1272,12 @@ def test_all_formats_writes_csv_mat_and_queues_selected_fig(qtbot, monkeypatch, 
     _stub_save_dialog(monkeypatch, tmp_path, formats=(True, True, True))
     _silence_export_messages(monkeypatch)
     monkeypatch.setattr(plot_widgets, "MATLAB_ENGINE_AVAILABLE", True)
-    monkeypatch.setattr(widget, "_ensure_matlab_engine_started", lambda: True)
-    invoked = {}
-
-    class Signal:
-        def connect(self, _slot):
-            pass
-
-    class Thread:
-        started = Signal()
-        finished = Signal()
-
-        def __init__(self, *_args):
-            pass
-
-        def start(self):
-            pass
-
-        def isRunning(self):
-            return False
-
-        def deleteLater(self):
-            pass
-
-    class Worker:
-        finished_saving = Signal()
-
-        def moveToThread(self, _thread):
-            pass
-
-        def deleteLater(self):
-            pass
-
-    monkeypatch.setattr(plot_widgets, "QThread", Thread)
-    monkeypatch.setattr(plot_widgets, "MatlabSaveWorker", Worker)
-    monkeypatch.setattr(plot_widgets, "Q_ARG", lambda _type, value: value)
-    monkeypatch.setattr(
-        plot_widgets.QMetaObject, "invokeMethod", lambda _worker, _method, _connection, *args: invoked.update(args=args)
-    )
+    queued = []
+    monkeypatch.setattr(widget, "_queue_matlab_fig", lambda request: queued.append(request))
     widget.save_scan_data()
     assert {path.name for path in tmp_path.iterdir()} == {"scan.csv", "scan.mat"}
-    assert str(tmp_path / "scan.fig") in [arg for arg in invoked["args"] if isinstance(arg, str)]
-    assert widget.pending_saves == 1
+    assert str(tmp_path / "scan.fig") == queued[0][1]
+    assert widget.pending_saves == 0
 
 
 def test_overwrite_decline_writes_nothing_and_lists_only_selected_conflict(qtbot, monkeypatch, tmp_path):
@@ -1348,7 +1309,6 @@ def test_comment_and_settings_are_recorded_for_accepted_request(qtbot, monkeypat
     widget = _prepare_export_widget(qtbot, settings)
     _stub_save_dialog(monkeypatch, output, "event.csv", formats=(True, True, False), comment="first\r\nsecond")
     _silence_export_messages(monkeypatch)
-    monkeypatch.setattr(widget, "_ensure_matlab_engine_started", lambda: pytest.fail("CSV must not start MATLAB"))
     widget.save_scan_data()
     assert settings.scan_export_directory() == output.resolve()
     assert settings.scan_export_formats() == (True, True, False)
@@ -1388,7 +1348,6 @@ def test_multidetector_csv_mat_preserve_schema_v2_identity(qtbot, monkeypatch, t
     widget.set_measurement(measurement)
     _stub_save_dialog(monkeypatch, tmp_path, "multi.detector.v2", formats=(True, True, False))
     _silence_export_messages(monkeypatch)
-    monkeypatch.setattr(widget, "_ensure_matlab_engine_started", lambda: pytest.fail("CSV+MAT must not start MATLAB"))
 
     widget.save_scan_data()
 
@@ -1447,6 +1406,7 @@ def test_unavailable_matlab_preserves_saved_fig_preference(qtbot, monkeypatch, t
 
     from app_settings import AppSettings
 
+    monkeypatch.setattr(plot_widgets, "MATLAB_ENGINE_AVAILABLE", False)
     settings = AppSettings(QSettings(str(tmp_path / "prefs.ini"), QSettings.Format.IniFormat))
     settings.set_scan_export_formats(csv=True, mat=True, fig=True)
     output = tmp_path / "out"
@@ -1454,10 +1414,6 @@ def test_unavailable_matlab_preserves_saved_fig_preference(qtbot, monkeypatch, t
     widget = _prepare_export_widget(qtbot, settings)
     _stub_save_dialog(monkeypatch, output, formats=(True, True, True))
     _silence_export_messages(monkeypatch)
-    monkeypatch.setattr(plot_widgets, "MATLAB_ENGINE_AVAILABLE", False)
-    monkeypatch.setattr(
-        widget, "_ensure_matlab_engine_started", lambda: pytest.fail("unavailable FIG cannot start MATLAB")
-    )
 
     widget.save_scan_data()
 

@@ -1,4 +1,6 @@
 import numpy as np
+import shiboken6
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, QThread
 from PySide6.QtTest import QSignalSpy
 
 import app
@@ -7,6 +9,7 @@ from hardware import camera_init_worker, ct400_init_worker
 from hardware.camera_capabilities import ROI
 from hardware.dummy_ct400 import DummyCT400
 from hardware.simulated_camera import SimulatedCamera
+from logic.matlab_engine_manager import MatlabEngineState
 from ui import main_window as main_window_module
 
 
@@ -210,6 +213,42 @@ def test_mainwindow_closes_each_panel_once_after_stopping_its_camera(qtbot, monk
     assert top._conversion_shutdown_complete and side._conversion_shutdown_complete
     assert not top.conversion_thread.isRunning()
     assert not side.conversion_thread.isRunning()
+
+
+def test_mainwindow_close_after_fig_thread_deletion_shuts_down_fake_matlab(qtbot, monkeypatch, tmp_path):
+    window = _start_main_window(qtbot, monkeypatch, tmp_path)
+
+    class FakeMatlabEngine:
+        quit_calls = 0
+
+        def quit(self):
+            self.quit_calls += 1
+
+    engine = FakeMatlabEngine()
+    manager = window.plot_widget.matlab_engine_manager
+    manager._engine = engine
+    manager._set_state(MatlabEngineState.READY)
+
+    thread = QThread(window.plot_widget)
+    worker = QObject()
+    thread.start()
+    thread.quit()
+    assert thread.wait(1000)
+    thread.deleteLater()
+    worker.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    QCoreApplication.processEvents()
+    assert not shiboken6.isValid(thread)
+    assert not shiboken6.isValid(worker)
+    window.plot_widget.matlab_save_thread = thread
+    window.plot_widget.matlab_save_worker = worker
+
+    window.close()
+    window.close()
+
+    assert engine.quit_calls == 1
+    assert window.plot_widget.matlab_save_thread is None
+    assert window.plot_widget.matlab_save_worker is None
 
 
 def test_camera_cleanup_attempts_peer_after_one_close_failure(qtbot, monkeypatch, tmp_path):
