@@ -2185,8 +2185,8 @@ class PlotWidget(QWidget):
             # ... (append to saved_files_list, update status_label) ...
             logger.info(f"Successfully saved {filetype}: {message_or_filename}")
             self.saved_files_list.append(message_or_filename)
-            if self._export_measurement is not None:
-                self._mark_measurement_saved(self._export_measurement)
+            # FIG is a useful MATLAB plot, but it does not preserve the
+            # schema-v2 measurement needed to count the acquisition as saved.
             self._set_matlab_status(f"{Path(message_or_filename).name} saved.")
         else:
             # ... (append to error_list, update status_label) ...

@@ -165,6 +165,14 @@ def test_import_confirms_unsaved_acquisition_and_preserves_reference(qtbot, monk
     window.plot_widget.set_measurement(acquired)
     window.plot_widget.freeze_current_trace()
     frozen = window.plot_widget.reference_measurement
+    # A completed FIG is usable as a plot but does not contain the full
+    # measurement data required to suppress the replacement warning.
+    monkeypatch.setattr(main_window_module.QMessageBox, "information", lambda *_args: None)
+    window.plot_widget.saved_files_list = []
+    window.plot_widget.error_list = []
+    window.plot_widget._export_measurement = acquired
+    window.plot_widget.pending_saves = 1
+    window.plot_widget._handle_matlab_save_finished("fig", True, str(tmp_path / "acquired.fig"))
     assert window.plot_widget.has_unsaved_acquisition()
     window._open_scan_file()
     assert window.plot_widget.current_measurement is acquired
