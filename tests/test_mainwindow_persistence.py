@@ -1,7 +1,9 @@
 from pathlib import Path
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 
-from PySide6.QtCore import QByteArray, QSettings
+import pytest
+from PySide6.QtCore import QByteArray, QSettings, Qt
+from PySide6.QtWidgets import QApplication, QDockWidget, QMainWindow
 
 from app_settings import AppSettings
 from config_model import CameraConfig
@@ -76,7 +78,9 @@ def test_mainwindow_restores_and_saves_preferences_without_hardware_operations(t
         isFullScreen=lambda: False,
         saveGeometry=lambda: QByteArray(b"new-geometry"),
         saveState=lambda: QByteArray(b"dock-state"),
-        log_console_dock=SimpleNamespace(isVisible=lambda: True),
+        log_console_dock=SimpleNamespace(
+            isVisible=lambda: True, isFloating=lambda: True, saveGeometry=lambda: QByteArray(b"floating-geometry")
+        ),
         log_console=SimpleNamespace(level_filter=SimpleNamespace(currentText=lambda: "WARNING")),
     )
 
@@ -95,6 +99,8 @@ def test_mainwindow_restores_and_saves_preferences_without_hardware_operations(t
     assert settings.camera_controls_visible("CAM-B") is False
     assert settings.log_console_visible() is True
     assert settings.log_console_state() == QByteArray(b"dock-state")
+    assert settings.log_console_layout_version() == 2
+    assert settings.log_console_geometry() == QByteArray(b"floating-geometry")
     assert settings.log_console_level() == "WARNING"
     assert settings.camera_screenshot_directory("CAM-A") == camera_directory.resolve()
 
@@ -202,3 +208,124 @@ def test_create_camera_panel_applies_saved_visibility_with_lightweight_double(tm
     assert configured.visibility is True
     assert defaulted.config.identifier == "CAM-B"
     assert defaulted.visibility is False
+
+
+def test_log_console_migrates_old_bottom_dock_state_to_floating_default(tmp_path):
+    settings = make_settings(tmp_path / "console-migration.ini")
+    settings.set_log_console_state(QByteArray(b"legacy-bottom-dock"))
+    settings.set_log_console_visible(False)
+    placements = []
+
+    class Dock:
+        floating = False
+        visible = False
+
+        def setFloating(self, value):
+            self.floating = value
+
+        def isFloating(self):
+            return self.floating
+
+        def setVisible(self, value):
+            self.visible = value
+
+        def isVisible(self):
+            return self.visible
+
+    class Action:
+        def setChecked(self, value):
+            self.checked = value
+
+    dock = Dock()
+    console = SimpleNamespace(
+        level_filter=SimpleNamespace(setCurrentText=lambda value: setattr(console, "level", value))
+    )
+    window = SimpleNamespace(
+        settings=settings,
+        log_console_dock=dock,
+        log_console=console,
+        log_console_action=Action(),
+        restoreState=lambda _state: pytest.fail("Legacy dock state must be migrated, not restored"),
+        _place_log_console_on_primary_screen=lambda: placements.append("placed"),
+    )
+
+    main_window_module.MainWindow._restore_log_console_preferences(window)
+
+    assert dock.isFloating()
+    assert not dock.isVisible()
+    assert window.log_console_action.checked is False
+    assert console.level == "All"
+    assert placements == ["placed"]
+
+
+def test_log_console_restores_new_floating_geometry_and_layout(tmp_path):
+    settings = make_settings(tmp_path / "console-layout-v2.ini")
+    settings.set_log_console_layout_version(2)
+    settings.set_log_console_state(QByteArray(b"floating-state"))
+    settings.set_log_console_geometry(QByteArray(b"floating-geometry"))
+    settings.set_log_console_visible(True)
+    calls = []
+
+    class Dock:
+        def isFloating(self):
+            return True
+
+        def restoreGeometry(self, geometry):
+            calls.append(("geometry", geometry))
+            return True
+
+        def setVisible(self, value):
+            self.visible = value
+
+        def isVisible(self):
+            return self.visible
+
+    class Action:
+        def setChecked(self, value):
+            self.checked = value
+
+    console = SimpleNamespace(
+        level_filter=SimpleNamespace(setCurrentText=lambda value: setattr(console, "level", value))
+    )
+    window = SimpleNamespace(
+        settings=settings,
+        log_console_dock=Dock(),
+        log_console=console,
+        log_console_action=Action(),
+        restoreState=lambda state: calls.append(("state", state)),
+        _keep_log_console_on_available_screen=lambda: calls.append(("screen", None)),
+        _place_log_console_on_primary_screen=lambda: pytest.fail("Valid floating geometry should be restored"),
+    )
+
+    main_window_module.MainWindow._restore_log_console_preferences(window)
+
+    assert calls == [
+        ("state", QByteArray(b"floating-state")),
+        ("geometry", QByteArray(b"floating-geometry")),
+        ("screen", None),
+    ]
+    assert window.log_console_dock.visible is True
+    assert window.log_console_action.checked is True
+
+
+def test_floating_console_geometry_is_recovered_when_off_screen(qtbot):
+    owner = SimpleNamespace()
+    window = QMainWindow()
+    dock = QDockWidget("Log Console", window)
+    window.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, dock)
+    dock.setFloating(True)
+    dock.resize(480, 300)
+    dock.move(100_000, 100_000)
+    dock.show()
+    window.show()
+    qtbot.addWidget(window)
+    qtbot.wait(20)
+
+    owner.log_console_dock = dock
+    owner._place_log_console_on_primary_screen = MethodType(
+        main_window_module.MainWindow._place_log_console_on_primary_screen, owner
+    )
+    main_window_module.MainWindow._keep_log_console_on_available_screen(owner)
+
+    frame = dock.frameGeometry()
+    assert any(screen.availableGeometry().intersects(frame) for screen in QApplication.screens())

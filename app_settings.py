@@ -95,6 +95,19 @@ class AppSettings:
     def set_log_console_state(self, value: QByteArray) -> None:
         self._write("MainWindow/log_console_state", value)
 
+    def log_console_layout_version(self) -> int | None:
+        return self._as_int(self._read("MainWindow/log_console_layout_version", None))
+
+    def set_log_console_layout_version(self, version: int) -> None:
+        self._write("MainWindow/log_console_layout_version", int(version))
+
+    def log_console_geometry(self) -> QByteArray | None:
+        value = self._read("MainWindow/log_console_geometry", None)
+        return QByteArray(value) if isinstance(value, (QByteArray, bytes, bytearray)) else None
+
+    def set_log_console_geometry(self, value: QByteArray) -> None:
+        self._write("MainWindow/log_console_geometry", value)
+
     def log_console_level(self, fallback: str = "All") -> str:
         value = self._read("MainWindow/log_console_level", fallback)
         return (

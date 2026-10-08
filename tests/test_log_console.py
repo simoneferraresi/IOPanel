@@ -2,9 +2,10 @@ import logging
 import threading
 from pathlib import Path
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
-from ui.log_console import BoundedLogHandler, LogConsole, install_log_handler
+from ui.log_console import LEVEL_COLORS, BoundedLogHandler, LogConsole, install_log_handler
 
 
 def test_bounded_handler_formats_levels_and_tracebacks():
@@ -21,9 +22,15 @@ def test_bounded_handler_formats_levels_and_tracebacks():
     entries, latest = handler.snapshot()
     assert latest == 5
     assert len(entries) == 3
+    assert entries[-1].levelno == logging.ERROR
+    assert entries[-1].levelname == "ERROR"
+    assert entries[-1].logger_name == "LabApp.test"
+    assert entries[-1].timestamp
     assert "operation failed" in entries[-1].text
     assert "Traceback" in entries[-1].text
     assert "ValueError: trace detail" in entries[-1].text
+    assert LEVEL_COLORS["DEBUG"] == "#64748b"
+    assert LEVEL_COLORS["WARNING"] != LEVEL_COLORS["ERROR"]
 
 
 def test_handler_installed_only_once():
@@ -46,6 +53,33 @@ def test_console_handler_does_not_interfere_with_file_logging(tmp_path: Path):
     file_handler.close()
     assert "file remains authoritative" in log_path.read_text(encoding="utf-8")
     assert "file remains authoritative" in bridge.snapshot()[0][-1].text
+
+
+def test_concurrent_burst_keeps_only_recent_bounded_records():
+    logger = logging.Logger("LabApp.test.burst")  # noqa: LOG001
+    handler = BoundedLogHandler(capacity=2500)
+    logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
+
+    def emit_range(start: int) -> None:
+        for index in range(1500):
+            logger.log(
+                (logging.DEBUG, logging.INFO, logging.WARNING, logging.ERROR)[index % 4], "record %d", start + index
+            )
+
+    workers = [threading.Thread(target=emit_range, args=(worker * 1500,)) for worker in range(4)]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(timeout=5)
+        assert not worker.is_alive()
+
+    entries, total = handler.snapshot()
+    assert total == 6000
+    assert len(entries) == 2500
+    assert entries[0].sequence == 3501
+    assert entries[-1].sequence == 6000
+    assert {entry.levelname for entry in entries} == {"DEBUG", "INFO", "WARNING", "ERROR"}
 
 
 def test_concurrent_delivery_and_gui_filter_search_pause_clear(qtbot):
@@ -93,9 +127,15 @@ def test_concurrent_delivery_and_gui_filter_search_pause_clear(qtbot):
 def test_copy_visible_uses_qt_clipboard(qtbot):
     console = LogConsole(logging.Logger("LabApp.test.copy"))  # noqa: LOG001
     qtbot.addWidget(console)
-    console.text.setPlainText("visible message")
+    console.text.setPlainText("first visible line\nsecond visible line")
     console.copy_visible()
-    assert QApplication.clipboard().text() == "visible message"
+    assert QApplication.clipboard().text() == "first visible line\nsecond visible line"
+    cursor = console.text.textCursor()
+    cursor.movePosition(cursor.MoveOperation.Start)
+    cursor.select(cursor.SelectionType.LineUnderCursor)
+    console.text.setTextCursor(cursor)
+    qtbot.keyClick(console.text, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
+    assert QApplication.clipboard().text() == "first visible line"
 
 
 def test_console_stops_gui_polling_during_teardown(qtbot):
@@ -104,6 +144,21 @@ def test_console_stops_gui_polling_during_teardown(qtbot):
     assert console._timer.isActive()
     console.stop_updates()
     assert not console._timer.isActive()
+
+
+def test_compact_toolbar_icons_have_accessible_actions(qtbot):
+    console = LogConsole(logging.Logger("LabApp.test.icons"))  # noqa: LOG001
+    qtbot.addWidget(console)
+    buttons = (console.pause_button, console.clear_button, console.copy_button, console.open_button)
+    assert all(not button.icon().isNull() for button in buttons)
+    assert [button.iconSize().width() for button in buttons] == [18, 18, 18, 18]
+    assert [button.accessibleName() for button in buttons] == [
+        "Pause logging display",
+        "Clear displayed logs (file unaffected)",
+        "Copy visible logs",
+        "Open application log file",
+    ]
+    assert console.run_diagnostics_button.text() == "Run Diagnostics"
 
 
 def test_diagnostics_action_uses_api_and_displays_report(qtbot, monkeypatch):
@@ -120,5 +175,24 @@ def test_diagnostics_action_uses_api_and_displays_report(qtbot, monkeypatch):
     qtbot.addWidget(console)
     console.run_diagnostics()
     assert calls == ["collect"]
-    qtbot.waitUntil(lambda: "MISSING_OPTIONAL" in console.text.toPlainText(), timeout=2000)
-    assert "NOT_CHECKED" in console.text.toPlainText()
+    assert "MISSING_OPTIONAL" in console.diagnostics_text.toPlainText()
+    assert "NOT_CHECKED" in console.diagnostics_text.toPlainText()
+    qtbot.waitUntil(lambda: "diagnostics completed" in console.text.toPlainText(), timeout=2000)
+    assert "MISSING_OPTIONAL" not in console.text.toPlainText()
+    console.copy_diagnostics()
+    assert "MISSING_OPTIONAL" in QApplication.clipboard().text()
+
+
+def test_diagnostics_failure_is_visible_and_logged(qtbot, monkeypatch):
+    from tools import check_environment
+
+    def fail_collection():
+        raise RuntimeError("static inspection failed")
+
+    monkeypatch.setattr(check_environment, "collect_diagnostics", fail_collection)
+    logger = logging.Logger("LabApp.test.diagnostics.failure")  # noqa: LOG001
+    console = LogConsole(logger)
+    qtbot.addWidget(console)
+    console.run_diagnostics()
+    assert "static inspection failed" in console.diagnostics_text.toPlainText()
+    assert "Environment diagnostics failed" in console.handler.snapshot()[0][-1].formatted_text

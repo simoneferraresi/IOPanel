@@ -254,12 +254,62 @@ class MainWindow(QMainWindow):
             checkbox.setChecked(detector.value in saved_detectors)
 
     def _restore_log_console_preferences(self) -> None:
-        state = self.settings.log_console_state()
-        if state is not None:
-            self.restoreState(state)
+        layout_version = self.settings.log_console_layout_version()
+        if layout_version != 2:
+            # Version 1 stored a bottom-docked state. Give existing users the
+            # floating-first layout once, while retaining their visibility.
+            self.log_console_dock.setFloating(True)
+            self._place_log_console_on_primary_screen()
+        else:
+            state = self.settings.log_console_state()
+            if state is not None:
+                self.restoreState(state)
+            if self.log_console_dock.isFloating():
+                geometry = self.settings.log_console_geometry()
+                if geometry is None or not self.log_console_dock.restoreGeometry(geometry):
+                    self._place_log_console_on_primary_screen()
+                else:
+                    self._keep_log_console_on_available_screen()
         self.log_console.level_filter.setCurrentText(self.settings.log_console_level())
-        self.log_console_dock.setVisible(self.settings.log_console_visible(False))
-        self.log_console_action.setChecked(self.log_console_dock.isVisible())
+        console_visible = self.settings.log_console_visible(False)
+        self.log_console_dock.setVisible(console_visible)
+        self.log_console_action.setChecked(console_visible)
+
+    def _place_log_console_on_primary_screen(self) -> None:
+        screen = QApplication.primaryScreen()
+        if screen is None:
+            self.log_console_dock.resize(900, 380)
+            return
+        available = screen.availableGeometry()
+        width = min(920, max(1, available.width() - 32))
+        height = min(380, max(1, available.height() - 64))
+        self.log_console_dock.resize(width, height)
+        self.log_console_dock.move(
+            available.x() + max(0, (available.width() - width) // 2),
+            available.y() + max(0, (available.height() - height) // 2),
+        )
+
+    def _keep_log_console_on_available_screen(self) -> None:
+        frame = self.log_console_dock.frameGeometry()
+        screens = QApplication.screens()
+        intersecting = [screen for screen in screens if screen.availableGeometry().intersects(frame)]
+        if not intersecting:
+            self._place_log_console_on_primary_screen()
+            return
+        screen = max(
+            intersecting,
+            key=lambda candidate: (
+                candidate.availableGeometry().intersected(frame).width()
+                * candidate.availableGeometry().intersected(frame).height()
+            ),
+        )
+        available = screen.availableGeometry()
+        width = min(frame.width(), available.width())
+        height = min(frame.height(), available.height())
+        x = min(max(frame.x(), available.left()), available.right() - width + 1)
+        y = min(max(frame.y(), available.top()), available.bottom() - height + 1)
+        self.log_console_dock.resize(width, height)
+        self.log_console_dock.move(x, y)
 
     piezo_connection_succeeded = Signal(str)
     piezo_connection_failed = Signal(str, str)
@@ -700,14 +750,16 @@ class MainWindow(QMainWindow):
         self.log_console_dock = QDockWidget("Log Console", self)
         self.log_console_dock.setObjectName("LogConsoleDock")
         self.log_console_dock.setWidget(self.log_console)
-        self.log_console_dock.setMinimumHeight(150)
+        self.log_console_dock.setMinimumHeight(100)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.log_console_dock)
+        self.log_console_dock.setFloating(True)
         self.log_console_dock.hide()
         self.view_menu = self.menuBar().addMenu("&View")
         self.log_console_action = QAction("Log Console", self)
         self.log_console_action.setCheckable(True)
         self.log_console_action.setShortcut("F12")
-        self.log_console_action.triggered.connect(lambda checked=False: self.log_console_dock.setVisible(checked))
+        self.log_console_action.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+        self.log_console_action.triggered.connect(self._toggle_log_console)
         self.log_console_dock.visibilityChanged.connect(self.log_console_action.setChecked)
         self.view_menu.addAction(self.log_console_action)
 
@@ -746,6 +798,13 @@ class MainWindow(QMainWindow):
         self.statusBar().setVisible(not is_visible)
 
         logger.debug(f"Cinema Mode {'Enabled' if is_visible else 'Disabled'}")
+
+    @Slot(bool)
+    def _toggle_log_console(self, visible: bool) -> None:
+        self.log_console_dock.setVisible(visible)
+        if visible:
+            self.log_console_dock.raise_()
+            self.log_console_dock.activateWindow()
 
     @Slot(str)
     def _on_piezo_init_failed(self, error_message: str):
@@ -1632,6 +1691,7 @@ class MainWindow(QMainWindow):
         self._pending_camera_lifecycle_close = False
         self._pending_piezo_operation_close = False
         self.log_console.stop_updates()
+        self.log_console_dock.hide()
         event.accept()
         logger.info("MainWindow.closeEvent cleanup returned after %.2f s.", time.perf_counter() - close_started_at)
 
@@ -1644,6 +1704,9 @@ class MainWindow(QMainWindow):
         self.settings.set_active_tab(self.tab_widget.currentIndex())
         self.settings.set_log_console_visible(self.log_console_dock.isVisible())
         self.settings.set_log_console_state(self.saveState())
+        self.settings.set_log_console_layout_version(2)
+        if self.log_console_dock.isFloating():
+            self.settings.set_log_console_geometry(self.log_console_dock.saveGeometry())
         self.settings.set_log_console_level(self.log_console.level_filter.currentText())
         self.settings.set_scan_detectors([detector.value for detector in self.control_panel._selected_scan_detectors()])
         for camera_id, panel in self.camera_panels.items():
