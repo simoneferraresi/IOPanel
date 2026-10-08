@@ -11,7 +11,16 @@ from pathlib import Path
 from typing import ClassVar, override
 
 from PySide6.QtCore import QSize, Qt, QTimer
-from PySide6.QtGui import QCloseEvent, QColor, QFont, QIcon, QSyntaxHighlighter, QTextCharFormat, QTextCursor
+from PySide6.QtGui import (
+    QCloseEvent,
+    QColor,
+    QFont,
+    QFontMetricsF,
+    QIcon,
+    QSyntaxHighlighter,
+    QTextCharFormat,
+    QTextCursor,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -40,6 +49,12 @@ LEVEL_COLORS = {
     "ERROR": "#b42318",
     "CRITICAL": "#7f1d1d",
 }
+LEVEL_THRESHOLDS = {
+    "INFO+": logging.INFO,
+    "WARNING+": logging.WARNING,
+    "ERROR+": logging.ERROR,
+    "CRITICAL": logging.CRITICAL,
+}
 
 
 @dataclass(frozen=True)
@@ -57,12 +72,16 @@ class LogEntry:
 
     @property
     def formatted_text(self) -> str:
-        header = f"{self.timestamp} | {self.levelname:<8} | {self.logger_name} | {self.message}"
+        message_lines = self.message.splitlines() or [""]
+        header = f"{self.timestamp}\t{self.levelname}\t{message_lines[0]}"
+        continuation = message_lines[1:]
         extra = self.exception_text or self.stack_text
         if self.exception_text and self.stack_text:
             extra = f"{self.exception_text}\n{self.stack_text}"
         if extra:
-            header += "\n" + "\n".join(f"    {line}" for line in extra.splitlines())
+            continuation.extend(f"    {line}" for line in extra.splitlines())
+        if continuation:
+            header += "\n" + "\n".join(f"\t\t{line}" for line in continuation)
         return header
 
     @property
@@ -134,7 +153,6 @@ class LogHighlighter(QSyntaxHighlighter):
     def __init__(self, document) -> None:
         super().__init__(document)
         self.timestamp_format = self._format("#64748b")
-        self.source_format = self._format("#475569")
         self.message_format = self._format("#1f2937")
         self.traceback_format = self._format("#64748b")
         self.severity_formats = {name: self._format(color, bold=True) for name, color in LEVEL_COLORS.items()}
@@ -149,20 +167,20 @@ class LogHighlighter(QSyntaxHighlighter):
 
     @override
     def highlightBlock(self, text: str) -> None:
-        if text.startswith("    "):
-            self.setFormat(0, len(text), self.traceback_format)
+        if text.startswith("\t\t"):
+            self.setFormat(0, len(text), self.message_format)
+            if "Traceback (most recent call last):" in text or text.lstrip("\t ").startswith(('File "', "^", "~")):
+                self.setFormat(0, len(text), self.traceback_format)
             return
-        first = text.find(" | ")
-        second = text.find(" | ", first + 3) if first >= 0 else -1
-        third = text.find(" | ", second + 3) if second >= 0 else -1
-        if first < 0 or second < 0 or third < 0:
+        first = text.find("\t")
+        second = text.find("\t", first + 1) if first >= 0 else -1
+        if first < 0 or second < 0:
             self.setFormat(0, len(text), self.message_format)
             return
         self.setFormat(0, first, self.timestamp_format)
-        level = text[first + 3 : second].strip()
-        self.setFormat(first + 3, second - first - 3, self.severity_formats.get(level, self.message_format))
-        self.setFormat(second + 3, third - second - 3, self.source_format)
-        self.setFormat(third + 3, len(text) - third - 3, self.message_format)
+        level = text[first + 1 : second].strip()
+        self.setFormat(first + 1, second - first - 1, self.severity_formats.get(level, self.message_format))
+        self.setFormat(second + 1, len(text) - second - 1, self.message_format)
 
 
 class DiagnosticsHighlighter(QSyntaxHighlighter):
@@ -208,14 +226,18 @@ class LogConsole(QWidget):
         self._cursor = 0
         self._paused = False
         self._visible_entries: deque[LogEntry] = deque(maxlen=MAX_LOG_RECORDS)
-        self._displayed_count = 0
         self._dropped_records = 0
-        self._total_retained = 0
 
+        font = make_font("sans", 10)
+        self.setFont(font)
+        control_font = make_font("sans", 10, QFont.Weight.Medium)
         self.level_filter = QComboBox(self)
-        self.level_filter.addItems(["All", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
-        self.level_filter.setMinimumWidth(105)
+        self.level_filter.setFont(control_font)
+        self.level_filter.addItems(["All", "INFO+", "WARNING+", "ERROR+", "CRITICAL"])
+        self.level_filter.setMinimumWidth(96)
+        self.level_filter.setToolTip("Show records at or above this severity")
         self.search = QLineEdit(self)
+        self.search.setFont(control_font)
         self.search.setPlaceholderText("Search logs…")
         self.search.setClearButtonEnabled(True)
         self.pause_button = self._icon_button(":/icons/pause.svg", "Pause logging display")
@@ -224,38 +246,46 @@ class LogConsole(QWidget):
         self.open_button = self._icon_button(":/icons/folder-open.svg", "Open application log file")
 
         self.run_diagnostics_button = QPushButton("Run Diagnostics", self)
+        self.run_diagnostics_button.setFont(control_font)
         self.run_diagnostics_button.setObjectName("RunDiagnosticsButton")
         self.run_diagnostics_button.setToolTip("Run read-only environment diagnostics")
         self.run_diagnostics_button.setAccessibleName("Run environment diagnostics")
-
-        toolbar = QHBoxLayout()
-        toolbar.setSpacing(6)
-        toolbar.setContentsMargins(0, 0, 0, 0)
-        toolbar.addWidget(QLabel("Level", self))
-        toolbar.addWidget(self.level_filter)
-        toolbar.addWidget(self.search, 1)
-        toolbar.addWidget(self.pause_button)
-        toolbar.addWidget(self.clear_button)
-        toolbar.addWidget(self.copy_button)
-        toolbar.addWidget(self.open_button)
-        toolbar.addSpacing(4)
-        toolbar.addWidget(self.run_diagnostics_button)
 
         self.tabs = QTabWidget(self)
         self.log_page = QWidget(self.tabs)
         log_layout = QVBoxLayout(self.log_page)
         log_layout.setContentsMargins(0, 6, 0, 0)
+        log_layout.setSpacing(5)
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(5)
+        toolbar.setContentsMargins(0, 0, 0, 0)
+        toolbar.addWidget(QLabel("Level", self.log_page))
+        toolbar.addWidget(self.level_filter)
+        toolbar.addWidget(self.search, 1)
+        for button in (self.pause_button, self.clear_button, self.copy_button, self.open_button):
+            toolbar.addWidget(button)
+        toolbar.addWidget(self.run_diagnostics_button)
+        log_layout.addLayout(toolbar)
+        self.overflow_notice = QLabel(self.log_page)
+        self.overflow_notice.setStyleSheet("color: #8a4b08; padding: 0 3px;")
+        self.overflow_notice.setAccessibleName("Log viewer buffer warning")
+        self.overflow_notice.hide()
+        log_layout.addWidget(self.overflow_notice)
         self.text = QPlainTextEdit(self.log_page)
         self.text.setReadOnly(True)
-        self.text.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.text.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
         self.text.document().setDocumentMargin(10)
         self.text.setStyleSheet(
             "QPlainTextEdit { background: #ffffff; color: #1f2937; border: 1px solid #e2e8f0; "
             "selection-background-color: #dbeafe; selection-color: #0f172a; }"
         )
-        font = make_font("mono", 10)
-        font.setStyleHint(QFont.StyleHint.Monospace)
         self.text.setFont(font)
+        metrics = QFontMetricsF(font)
+        timestamp_stop = metrics.horizontalAdvance("00:00:00") + metrics.horizontalAdvance("  ")
+        message_stop = timestamp_stop + metrics.horizontalAdvance("CRITICAL") + metrics.horizontalAdvance("  ")
+        option = self.text.document().defaultTextOption()
+        option.setTabArray([timestamp_stop, message_stop])
+        self.text.document().setDefaultTextOption(option)
         self.highlighter = LogHighlighter(self.text.document())
         log_layout.addWidget(self.text, 1)
         self.tabs.addTab(self.log_page, "Logs")
@@ -263,14 +293,23 @@ class LogConsole(QWidget):
         self.diagnostics_page = QWidget(self.tabs)
         diagnostics_layout = QVBoxLayout(self.diagnostics_page)
         diagnostics_layout.setContentsMargins(10, 8, 10, 8)
+        diagnostics_toolbar = QHBoxLayout()
+        diagnostics_toolbar.setContentsMargins(0, 0, 0, 0)
+        self.refresh_diagnostics_button = QPushButton("Run Diagnostics", self.diagnostics_page)
+        self.refresh_diagnostics_button.setFont(control_font)
+        self.refresh_diagnostics_button.setToolTip("Run read-only environment diagnostics")
+        diagnostics_toolbar.addWidget(self.refresh_diagnostics_button)
+        diagnostics_toolbar.addStretch(1)
+        self.copy_diagnostics_button = QPushButton("Copy Report", self.diagnostics_page)
+        self.copy_diagnostics_button.setFont(control_font)
+        self.copy_diagnostics_button.setToolTip("Copy the complete diagnostics report as plain text")
+        diagnostics_toolbar.addWidget(self.copy_diagnostics_button)
+        diagnostics_layout.addLayout(diagnostics_toolbar)
         diagnostics_header = QHBoxLayout()
         diagnostics_title = QLabel("Environment Diagnostics", self.diagnostics_page)
         diagnostics_title.setStyleSheet("font-weight: 600; color: #334155;")
-        self.copy_diagnostics_button = QPushButton("Copy Diagnostics", self.diagnostics_page)
-        self.copy_diagnostics_button.setToolTip("Copy the complete diagnostics report as plain text")
         diagnostics_header.addWidget(diagnostics_title)
         diagnostics_header.addStretch(1)
-        diagnostics_header.addWidget(self.copy_diagnostics_button)
         diagnostics_layout.addLayout(diagnostics_header)
         diagnostics_note = QLabel(
             "Static environment checks only. Results do not qualify physical hardware.", self.diagnostics_page
@@ -290,14 +329,10 @@ class LogConsole(QWidget):
         diagnostics_layout.addWidget(self.diagnostics_text, 1)
         self.tabs.addTab(self.diagnostics_page, "Diagnostics")
 
-        self.status = QLabel("", self)
-        self.status.setStyleSheet("color: #64748b; padding: 2px 3px;")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 8, 10, 7)
         layout.setSpacing(6)
-        layout.addLayout(toolbar)
         layout.addWidget(self.tabs, 1)
-        layout.addWidget(self.status)
         self.setStyleSheet(
             "QWidget { background: #f8fafc; } QComboBox, QLineEdit { background: #ffffff; "
             "border: 1px solid #cbd5e1; border-radius: 4px; padding: 4px 6px; color: #1f2937; } "
@@ -314,11 +349,11 @@ class LogConsole(QWidget):
         self.open_button.clicked.connect(self.open_log_file)
         self.copy_diagnostics_button.clicked.connect(self.copy_diagnostics)
         self.run_diagnostics_button.clicked.connect(self.run_diagnostics)
+        self.refresh_diagnostics_button.clicked.connect(self.run_diagnostics)
 
         self._timer = QTimer(self)
         self._timer.setInterval(100)
         self._timer.timeout.connect(self._drain)
-        self._refresh_footer()
         self._timer.start()
         self._drain()
 
@@ -337,33 +372,27 @@ class LogConsole(QWidget):
 
     def _matches(self, entry: LogEntry) -> bool:
         level = self.level_filter.currentText()
-        if level != "All" and entry.levelname != level:
+        if level in LEVEL_THRESHOLDS and entry.levelno < LEVEL_THRESHOLDS[level]:
+            return False
+        if level == "CRITICAL" and entry.levelno != logging.CRITICAL:
             return False
         query = self.search.text().casefold()
-        return not query or query in entry.formatted_text.casefold()
-
-    def _refresh_footer(self) -> None:
-        state = "Paused" if self._paused else "Live"
-        suffix = (
-            f" · {self._dropped_records} older viewer records dropped; file log unaffected"
-            if self._dropped_records
-            else ""
-        )
-        self.status.setText(f"{state}  ·  {self._displayed_count} visible  ·  {self._total_retained} retained{suffix}")
+        searchable = (
+            f"{entry.timestamp} {entry.levelname} {entry.logger_name} {entry.message} "
+            f"{entry.exception_text} {entry.stack_text}"
+        ).casefold()
+        return not query or query in searchable
 
     def _update_display(self, new_entries: list[LogEntry], *, rebuild: bool, at_bottom: bool) -> None:
         if rebuild:
             matches = [entry for entry in self._visible_entries if self._matches(entry)]
-            self._displayed_count = len(matches)
             self.text.setPlainText("\n".join(entry.formatted_text for entry in matches))
         else:
             matches = [entry for entry in new_entries if self._matches(entry)]
             if matches:
                 self.text.appendPlainText("\n".join(entry.formatted_text for entry in matches))
-                self._displayed_count += len(matches)
         if at_bottom:
             self.text.moveCursor(QTextCursor.MoveOperation.End)
-        self._refresh_footer()
 
     def _drain(self) -> None:
         if self._paused:
@@ -376,7 +405,6 @@ class LogConsole(QWidget):
         if dropped:
             self._dropped_records += dropped
         if not new_entries:
-            self._total_retained = len(self._visible_entries)
             return
         at_bottom = self.text.verticalScrollBar().value() >= self.text.verticalScrollBar().maximum() - 1
         overflowed = False
@@ -385,10 +413,17 @@ class LogConsole(QWidget):
                 overflowed = True
                 self._dropped_records += 1
             self._visible_entries.append(entry)
-        self._total_retained = len(self._visible_entries)
         self._update_display(new_entries, rebuild=overflowed, at_bottom=at_bottom)
         if dropped:
-            self._refresh_footer()
+            self._show_overflow_notice()
+        if overflowed:
+            self._show_overflow_notice()
+
+    def _show_overflow_notice(self) -> None:
+        self.overflow_notice.setText(
+            f"Viewer buffer full: older records were dropped ({self._dropped_records:,}); file logging is unaffected."
+        )
+        self.overflow_notice.show()
 
     def _filter_changed(self, *_args) -> None:
         self._update_display([], rebuild=True, at_bottom=True)
@@ -398,17 +433,16 @@ class LogConsole(QWidget):
         self.pause_button.setIcon(QIcon(":/icons/play.svg" if self._paused else ":/icons/pause.svg"))
         self.pause_button.setAccessibleName("Resume logging display" if self._paused else "Pause logging display")
         self.pause_button.setToolTip(self.pause_button.accessibleName())
-        self._refresh_footer()
         if not self._paused:
             self._drain()
 
     def clear_display(self) -> None:
         self._visible_entries.clear()
         _entries, self._cursor = self.handler.snapshot()
-        self._total_retained = 0
-        self._displayed_count = 0
+        self._dropped_records = 0
+        self.overflow_notice.clear()
+        self.overflow_notice.hide()
         self.text.clear()
-        self._refresh_footer()
 
     def copy_selected(self) -> None:
         QApplication.clipboard().setText(self.text.textCursor().selectedText().replace("\u2029", "\n"))

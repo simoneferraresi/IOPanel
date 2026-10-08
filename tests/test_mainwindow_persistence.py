@@ -81,7 +81,7 @@ def test_mainwindow_restores_and_saves_preferences_without_hardware_operations(t
         log_console_dock=SimpleNamespace(
             isVisible=lambda: True, isFloating=lambda: True, saveGeometry=lambda: QByteArray(b"floating-geometry")
         ),
-        log_console=SimpleNamespace(level_filter=SimpleNamespace(currentText=lambda: "WARNING")),
+        log_console=SimpleNamespace(level_filter=SimpleNamespace(currentText=lambda: "WARNING+")),
     )
 
     main_window_module.MainWindow._restore_ui_preferences(window)
@@ -101,7 +101,7 @@ def test_mainwindow_restores_and_saves_preferences_without_hardware_operations(t
     assert settings.log_console_state() == QByteArray(b"dock-state")
     assert settings.log_console_layout_version() == 2
     assert settings.log_console_geometry() == QByteArray(b"floating-geometry")
-    assert settings.log_console_level() == "WARNING"
+    assert settings.log_console_level() == "WARNING+"
     assert settings.camera_screenshot_directory("CAM-A") == camera_directory.resolve()
 
 

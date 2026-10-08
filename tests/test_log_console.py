@@ -55,6 +55,20 @@ def test_console_handler_does_not_interfere_with_file_logging(tmp_path: Path):
     assert "file remains authoritative" in bridge.snapshot()[0][-1].text
 
 
+def test_log_record_format_hides_source_and_uses_proportional_columns():
+    handler = BoundedLogHandler()
+    logger = logging.Logger("LabApp.internal.source")  # noqa: LOG001
+    logger.addHandler(handler)
+    logger.warning("a message\nwith a second line")
+    entry = handler.snapshot()[0][0]
+
+    assert entry.logger_name == "LabApp.internal.source"
+    assert entry.formatted_text.startswith(f"{entry.timestamp}\tWARNING\ta message")
+    assert "\t\twith a second line" in entry.formatted_text
+    assert "LabApp.internal.source" not in entry.formatted_text
+    assert " | " not in entry.formatted_text
+
+
 def test_concurrent_burst_keeps_only_recent_bounded_records():
     logger = logging.Logger("LabApp.test.burst")  # noqa: LOG001
     handler = BoundedLogHandler(capacity=2500)
@@ -64,7 +78,9 @@ def test_concurrent_burst_keeps_only_recent_bounded_records():
     def emit_range(start: int) -> None:
         for index in range(1500):
             logger.log(
-                (logging.DEBUG, logging.INFO, logging.WARNING, logging.ERROR)[index % 4], "record %d", start + index
+                (logging.DEBUG, logging.INFO, logging.WARNING, logging.ERROR, logging.CRITICAL)[index % 5],
+                "record %d",
+                start + index,
             )
 
     workers = [threading.Thread(target=emit_range, args=(worker * 1500,)) for worker in range(4)]
@@ -79,7 +95,7 @@ def test_concurrent_burst_keeps_only_recent_bounded_records():
     assert len(entries) == 2500
     assert entries[0].sequence == 3501
     assert entries[-1].sequence == 6000
-    assert {entry.levelname for entry in entries} == {"DEBUG", "INFO", "WARNING", "ERROR"}
+    assert {entry.levelname for entry in entries} == {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 
 
 def test_concurrent_delivery_and_gui_filter_search_pause_clear(qtbot):
@@ -100,13 +116,29 @@ def test_concurrent_delivery_and_gui_filter_search_pause_clear(qtbot):
     qtbot.waitUntil(lambda: "worker record 1999" in console.text.toPlainText(), timeout=3000)
     assert len(console._visible_entries) <= 5000
 
-    logger.warning("filter candidate warning")
-    logger.error("filter candidate error")
-    qtbot.waitUntil(lambda: "filter candidate error" in console.text.toPlainText(), timeout=2000)
-    console.level_filter.setCurrentText("ERROR")
-    assert "filter candidate error" in console.text.toPlainText()
-    assert "filter candidate warning" not in console.text.toPlainText()
+    for level, message in (
+        (logging.DEBUG, "filter debug"),
+        (logging.INFO, "filter info"),
+        (logging.WARNING, "filter warning"),
+        (logging.ERROR, "filter error"),
+        (logging.CRITICAL, "filter critical"),
+    ):
+        logger.log(level, message)
+    qtbot.waitUntil(lambda: "filter critical" in console.text.toPlainText(), timeout=2000)
+    for selector, expected, hidden in (
+        ("All", ("debug", "info", "warning", "error", "critical"), ()),
+        ("INFO+", ("info", "warning", "error", "critical"), ("debug",)),
+        ("WARNING+", ("warning", "error", "critical"), ("debug", "info")),
+        ("ERROR+", ("error", "critical"), ("debug", "info", "warning")),
+        ("CRITICAL", ("critical",), ("debug", "info", "warning", "error")),
+    ):
+        console.level_filter.setCurrentText(selector)
+        displayed = console.text.toPlainText().casefold()
+        assert all(f"filter {word}" in displayed for word in expected)
+        assert all(f"filter {word}" not in displayed for word in hidden)
     console.level_filter.setCurrentText("All")
+    assert "filter debug" in console.text.toPlainText()
+    assert any(entry.levelno == logging.DEBUG for entry in console._visible_entries)
 
     console.search.setText("worker record 19")
     assert "worker record 19" in console.text.toPlainText()
@@ -122,6 +154,25 @@ def test_concurrent_delivery_and_gui_filter_search_pause_clear(qtbot):
     assert "paused error" not in console.text.toPlainText()
     console._toggle_pause()
     assert "paused error" in console.text.toPlainText()
+
+
+def test_overflow_notice_appears_only_after_viewer_records_are_dropped(qtbot):
+    logger = logging.Logger("LabApp.test.overflow")  # noqa: LOG001
+    logger.setLevel(logging.DEBUG)
+    console = LogConsole(logger)
+    qtbot.addWidget(console)
+    assert console.overflow_notice.isHidden()
+
+    for index in range(5001):
+        logger.log(
+            (logging.DEBUG, logging.INFO, logging.WARNING, logging.ERROR, logging.CRITICAL)[index % 5], "item %d", index
+        )
+    console._drain()
+
+    assert len(console._visible_entries) == 5000
+    assert not console.overflow_notice.isHidden()
+    assert "older records were dropped (1)" in console.overflow_notice.text()
+    assert "file logging is unaffected" in console.overflow_notice.text()
 
 
 def test_copy_visible_uses_qt_clipboard(qtbot):
@@ -149,6 +200,7 @@ def test_console_stops_gui_polling_during_teardown(qtbot):
 def test_compact_toolbar_icons_have_accessible_actions(qtbot):
     console = LogConsole(logging.Logger("LabApp.test.icons"))  # noqa: LOG001
     qtbot.addWidget(console)
+    console.show()
     buttons = (console.pause_button, console.clear_button, console.copy_button, console.open_button)
     assert all(not button.icon().isNull() for button in buttons)
     assert [button.iconSize().width() for button in buttons] == [18, 18, 18, 18]
@@ -159,6 +211,28 @@ def test_compact_toolbar_icons_have_accessible_actions(qtbot):
         "Open application log file",
     ]
     assert console.run_diagnostics_button.text() == "Run Diagnostics"
+    assert console.text.toPlainText() == ""
+    assert not hasattr(console, "status")
+    assert console.overflow_notice.isHidden()
+    console.tabs.setCurrentWidget(console.diagnostics_page)
+    assert console.refresh_diagnostics_button.isVisible()
+    assert console.copy_diagnostics_button.isVisible()
+    assert not console.pause_button.isVisible()
+    assert not console.search.isVisible()
+
+
+def test_console_uses_regular_geist_and_font_aware_tab_columns(qtbot):
+    from ui.typography import install_application_fonts, make_font
+
+    install_application_fonts(QApplication.instance())
+    console = LogConsole(logging.Logger("LabApp.test.typography"))  # noqa: LOG001
+    qtbot.addWidget(console)
+
+    assert console.text.font().family() == make_font("sans", 10).family()
+    assert console.text.font().family() != make_font("mono", 10).family()
+    tabs = console.text.document().defaultTextOption().tabArray()
+    assert len(tabs) == 2
+    assert tabs[0] < tabs[1]
 
 
 def test_diagnostics_action_uses_api_and_displays_report(qtbot, monkeypatch):

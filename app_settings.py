@@ -110,14 +110,19 @@ class AppSettings:
 
     def log_console_level(self, fallback: str = "All") -> str:
         value = self._read("MainWindow/log_console_level", fallback)
+        # Map preferences saved by the earlier exact-level selector to the new
+        # minimum-severity choices. DEBUG meant no filtering, so All is safest.
+        migrated = {"DEBUG": "All", "INFO": "INFO+", "WARNING": "WARNING+", "ERROR": "ERROR+"}
+        if isinstance(value, str):
+            value = migrated.get(value, value)
         return (
             value
-            if isinstance(value, str) and value in {"All", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+            if isinstance(value, str) and value in {"All", "INFO+", "WARNING+", "ERROR+", "CRITICAL"}
             else fallback
         )
 
     def set_log_console_level(self, level: str) -> None:
-        if level in {"All", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+        if level in {"All", "INFO+", "WARNING+", "ERROR+", "CRITICAL"}:
             self._write("MainWindow/log_console_level", level)
 
     def camera_controls_visible(self, camera_id: str, fallback: bool = False) -> bool:

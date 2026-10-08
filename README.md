@@ -126,17 +126,23 @@ when the physical CT400 backend is selected.
 
 Open **View → Log Console** or press **F12** to show the floating Log Console.
 It can be resized and moved to another monitor, then docked back into the main
-window if preferred. The compact toolbar filters by severity, searches
-messages, pauses and resumes the view, clears only the displayed history, copies
-visible text, opens the configured log file, and runs read-only environment
-diagnostics on demand. The log and diagnostics report use separate tabs. The
-console visibility, floating or docked layout, floating geometry and severity
-selection are saved with the other harmless UI preferences.
+window if preferred. The toolbar uses tab-specific controls. In Logs, the
+severity selector uses minimum levels (INFO+, WARNING+, ERROR+, or CRITICAL),
+with search, pause/resume, clear, copy, and open-file actions. The Diagnostics
+tab has its own run and copy actions. Logs and the diagnostics report use Geist
+Sans; timestamps, severity labels, and messages align with font-aware tab stops.
+Multiline messages and tracebacks continue under the message column. Logger
+names remain available in structured records and search but are omitted from
+visible rows. The console visibility, floating or docked layout, floating
+geometry and severity selection are saved with the other harmless UI
+preferences. Previously saved exact-level selections migrate to their matching
+minimum level.
 
 The white-background viewer uses colored severity labels and retains up to
-5,000 recent Python logging records in memory. Pausing
-does not stop logging; if the buffer fills, older viewer records are discarded
-and the console reports the loss. The existing rotating file log (normally
+5,000 recent Python logging records in memory. Pausing does not stop logging; if
+the buffer fills, older viewer records are discarded and a warning appears only
+after records are dropped. There is no permanent status footer. The existing
+rotating file log (normally
 `lab_app.log` in the working directory, or the path selected with `--log-file`)
 continues to follow its configured rotation and retention policy and remains
 the source for older history. The console shows IOPanel Python logging records;
