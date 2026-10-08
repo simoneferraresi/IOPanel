@@ -50,26 +50,60 @@ def test_appearance_dialog_cards_preview_and_confirm_selection(qapp, qtbot):
 
     assert dialog.windowTitle() == "Appearance"
     assert dialog.accessibleName() == "Appearance settings"
+    heading = dialog.findChild(type(dialog.card_labels["optical_burst"]), "appearanceDialogHeading")
+    assert heading is not None
+    assert heading.text() == "Choose the application icon"
+    assert dialog.findChild(type(heading), "applicationIconSectionTitle") is None
+    assert dialog.findChild(type(heading), "appearanceDialogTitle") is None
+    assert dialog.findChild(type(heading), "appearanceDialogDescription").text() == (
+        "This changes the icon displayed while IOPanel is running."
+    )
+    assert (
+        len([label for label in dialog.findChildren(type(heading)) if label.text() == "Choose the application icon"])
+        == 1
+    )
     assert dialog.minimumSize().height() >= dialog.layout().sizeHint().height()
     assert dialog.selected_icon_id == "prism_spectrum"
     assert dialog.selection_buttons["prism_spectrum"].isChecked()
     assert not dialog.selection_buttons["optical_burst"].isChecked()
-    assert dialog.selection_buttons["prism_spectrum"].text() == "Selected: Prism Spectrum"
+    assert dialog.selection_indicators["prism_spectrum"].isChecked()
+    assert not dialog.selection_indicators["optical_burst"].isChecked()
+    assert dialog.card_labels["prism_spectrum"].text() == "Prism Spectrum"
+    dialog.show()
+    qtbot.wait(10)
+    card_sizes = {button.size() for button in dialog.selection_buttons.values()}
+    assert len(card_sizes) == 1
+    card_geometries = {icon_id: button.geometry() for icon_id, button in dialog.selection_buttons.items()}
     for icon_id, display_name in APPLICATION_ICONS:
         button = dialog.selection_buttons[icon_id]
         assert button.isCheckable()
         assert button.accessibleName() == display_name
+        assert button.accessibleDescription() == (
+            "Currently selected" if icon_id == "prism_spectrum" else "Not selected"
+        )
         assert button.toolTip()
-        assert button.iconSize() == QSize(dialog.PREVIEW_SIZE, dialog.PREVIEW_SIZE)
-        preview = button.icon().pixmap(QSize(dialog.PREVIEW_SIZE, dialog.PREVIEW_SIZE))
-        assert not preview.isNull()
-        assert preview.toImage().pixelColor(0, 0).alpha() == 0
+        preview = dialog.card_previews[icon_id]
+        assert preview.size() == QSize(dialog.PREVIEW_SIZE, dialog.PREVIEW_SIZE)
+        assert not preview.pixmap().isNull()
+        assert preview.pixmap().toImage().pixelColor(0, 0).alpha() == 0
+        label_row = dialog.card_label_rows[icon_id]
+        assert label_row is not None
+        assert abs(preview.geometry().center().x() - button.rect().center().x()) <= 1
+        assert abs(label_row.geometry().center().x() - button.rect().center().x()) <= 1
+        label_gap = label_row.geometry().top() - preview.geometry().bottom() - 1
+        assert 12 <= label_gap <= 20
+        assert "QToolButton:checked" in button.styleSheet()
+        assert "keyboardFocus='true'" in dialog.card_label_rows[icon_id].styleSheet()
 
     dialog.selection_buttons["optical_burst"].click()
     assert dialog.selected_icon_id == "optical_burst"
     assert dialog.selection_buttons["optical_burst"].isChecked()
     assert not dialog.selection_buttons["prism_spectrum"].isChecked()
-    assert dialog.selection_buttons["optical_burst"].text() == "Selected: Optical Burst"
+    assert dialog.card_labels["optical_burst"].text() == "Optical Burst"
+    assert dialog.card_labels["prism_spectrum"].text() == "Prism Spectrum"
+    assert dialog.selection_indicators["optical_burst"].isChecked()
+    assert not dialog.selection_indicators["prism_spectrum"].isChecked()
+    assert {icon_id: button.geometry() for icon_id, button in dialog.selection_buttons.items()} == card_geometries
     dialog.apply_button.click()
     assert dialog.result() == QDialog.DialogCode.Accepted
     assert dialog.selected_icon_id == "optical_burst"
@@ -82,8 +116,12 @@ def test_appearance_dialog_supports_keyboard_navigation(qapp, qtbot):
     optical = dialog.selection_buttons["optical_burst"]
     prism = dialog.selection_buttons["prism_spectrum"]
     optical.setFocus()
+    assert dialog.card_label_rows["optical_burst"].property("keyboardFocus") is True
     qtbot.keyClick(optical, Qt.Key.Key_Tab)
     assert dialog.focusWidget() is prism
+    qtbot.waitUntil(lambda: dialog.card_label_rows["optical_burst"].property("keyboardFocus") is False)
+    assert dialog.card_label_rows["prism_spectrum"].property("keyboardFocus") is True
+    assert prism.focusPolicy() != Qt.FocusPolicy.NoFocus
     qtbot.keyClick(prism, Qt.Key.Key_Space)
     assert prism.isChecked()
     assert dialog.selected_icon_id == "prism_spectrum"
