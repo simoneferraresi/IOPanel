@@ -26,7 +26,8 @@ This application is architected for stability during long-running experiments, w
     -   Live, throttled histogram for smooth power monitoring without overwhelming the CPU.
 -   **Robust Data Export:**
     -   Save scan data in multiple formats simultaneously with a single click.
-    -   Supported formats: **CSV**, **MATLAB (.mat)**.
+-   Supported formats: **CSV**, **MATLAB (.mat)**.
+-   Saved schema-v2 scan CSV and MAT files can be reopened with **File > Open Scan...** for offline plotting and detector comparison.
     -   **(Optional)** **MATLAB Figure (.fig)** export is available if the MATLAB Engine for Python is installed.
 -   **Engineered for Stability:**
     -   **Asynchronous Architecture:** All hardware communication and long-running tasks are executed on background threads, ensuring the GUI remains responsive at all times.
@@ -90,6 +91,7 @@ MATLAB Engine is not required to run IOPanel. Without it, CSV and MAT scan
 exports and PNG/JPG plot-image exports remain available; only MATLAB `.fig`
 export is unavailable. For MATLAB Engine installation details, see the
 [official MATLAB documentation](https://www.mathworks.com/help/matlab/matlab_external/install-the-matlab-engine-for-python.html).
+
 When the MATLAB extra is installed, IOPanel asynchronously prewarms one Engine
 350 ms after the main window is shown and reuses it for `.fig` exports. Startup
 failure leaves the rest of the application available, and the Engine is shut
@@ -103,6 +105,12 @@ or the MATLAB extra. In PowerShell, check the Engine import and runtime with:
 .\.venv\Scripts\python.exe -c "import matlab.engine; eng=matlab.engine.start_matlab(); print(eng.version()); print(eng.matlabroot()); eng.quit()"
 & "C:\Program Files\MATLAB\R2024b\bin\matlab.exe" -batch "disp(version('-release')); disp(matlabroot)"
 ```
+
+### Reopen saved wavelength scans
+
+Use **File > Open Scan...** to open an IOPanel schema-v2 `.csv` or `.mat` scan. The plot labels the trace as imported and identifies the saved acquisition as simulated or saved from an instrument. Hovering the plot shows its source path and available provenance. Use the snowflake button to freeze an imported trace as a reference, then open another saved scan to compare its detector traces against that reference. Import works without CT400, cameras, piezos, or MATLAB.
+
+The importer retains wavelength samples, active optical detector identities in acquisition order, detector samples, UTC completion time, resolution, speed, entered laser power and unit, laser input, comment, backend, simulation flag, result kind and code, and optional final Pout. Requested wavelength limits, the original result message, and other fields omitted by schema v2 remain unavailable. Imported data cannot be re-exported as a new acquisition because those fields and the original acquisition snapshot are incomplete. Legacy exports and unrelated CSV/MAT files are rejected; only the documented IOPanel schema-v2 layout is supported. Nonfinite detector measurements are preserved on import and filtered by the plot for display.
 
 ### Read-only environment diagnostics
 

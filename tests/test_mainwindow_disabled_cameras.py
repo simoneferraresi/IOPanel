@@ -33,6 +33,14 @@ def test_mainwindow_starts_offline_with_all_cameras_disabled(qtbot, monkeypatch,
     assert window.histogram_plot_layout.stretch(0) == 1
     window.show()
 
+    open_scan = next(action for action in window.menuBar().actions() if action.text() == "&File")
+    open_scan_action = next(action for action in open_scan.menu().actions() if action.objectName() == "openScanAction")
+    assert open_scan_action.text() == "Open Scan..."
+    before = window.plot_widget.current_measurement
+    monkeypatch.setattr(main_window_module.QFileDialog, "getOpenFileName", lambda *_args, **_kwargs: ("", ""))
+    open_scan_action.trigger()
+    assert window.plot_widget.current_measurement is before
+
     qtbot.waitUntil(
         lambda: any(action.text() == "No enabled cameras found in config" for action in window.cameras_menu.actions()),
         timeout=2000,

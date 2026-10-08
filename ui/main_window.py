@@ -29,6 +29,7 @@ from PySide6.QtGui import QAction, QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QDockWidget,
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -49,6 +50,7 @@ from hardware.ct400_init_worker import CT400InitWorker
 from hardware.dummy_ct400 import DummyCT400
 from hardware.piezo import PiezoController
 from hardware.piezo_init_worker import PiezoInitWorker
+from logic.scan_import import ScanImportError, load_scan
 from logic.task_runner import TaskRunner
 from ui.alignment_panel import AlignmentPanel
 from ui.discovery_dialog import CameraDiscoveryDialog
@@ -884,6 +886,12 @@ class MainWindow(QMainWindow):
         menu_bar = self.menuBar()
 
         file_menu = menu_bar.addMenu("&File")
+        open_scan_action = QAction("Open Scan...", self)
+        open_scan_action.setObjectName("openScanAction")
+        open_scan_action.setStatusTip("Open a saved IOPanel schema-v2 scan for offline plotting")
+        open_scan_action.triggered.connect(self._open_scan_file)
+        file_menu.addAction(open_scan_action)
+        file_menu.addSeparator()
         exit_action = QAction(QIcon(":/icons/exit.svg"), "E&xit", self)
         exit_action.setStatusTip("Exit the application")
         exit_action.triggered.connect(self.close)
@@ -927,6 +935,32 @@ class MainWindow(QMainWindow):
         about_action.triggered.connect(self._show_about_dialog)
         help_menu.addAction(about_action)
         logger.debug("Menus created.")
+
+    @Slot()
+    def _open_scan_file(self) -> None:
+        """Choose, validate, then display a saved scan without touching hardware."""
+        filename, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "Open Scan",
+            str(self.settings.directory("Paths/scan_import")),
+            "IOPanel CSV (*.csv);;IOPanel MATLAB Data (*.mat)",
+        )
+        if not filename:
+            return
+        try:
+            scan = load_scan(filename)
+        except ScanImportError as error:
+            QMessageBox.warning(self, "Could Not Open Scan", str(error))
+            return
+        except Exception as error:  # Defensive boundary for damaged third-party MAT files.
+            logger.exception("Unexpected error importing scan %s", filename)
+            QMessageBox.warning(self, "Could Not Open Scan", f"The scan could not be read: {error}")
+            return
+        if not self.plot_widget.set_imported_scan(scan):
+            QMessageBox.warning(self, "Could Not Plot Scan", "The scan was read but its traces could not be plotted.")
+            return
+        self.settings.set_directory("Paths/scan_import", scan.source_path.parent)
+        self.statusBar().showMessage(f"Imported {scan.source_path.name}", 5000)
 
     @Slot()
     def _on_refresh_instruments_triggered(self):

@@ -49,6 +49,7 @@ from logic.power_monitor_recording import (
     PowerMonitorRecordingSample,
 )
 from logic.scan_export import build_scan_export_v2
+from logic.scan_import import ImportedScan
 from logic.scan_measurement import ScanMeasurement
 from ui.power_monitor_export_dialog import PowerMonitorExportDialog
 from ui.scan_export_dialog import ScanExportDialog
@@ -1293,8 +1294,9 @@ class PlotWidget(QWidget):
         self.current_wavelengths: np.ndarray | None = None
         self.current_powers: np.ndarray | None = None
         self.current_output_power: float | None = None
-        self.current_measurement: ScanMeasurement | None = None
-        self.reference_measurement: ScanMeasurement | None = None
+        self.current_measurement: ScanMeasurement | ImportedScan | None = None
+        self.current_imported_scan: ImportedScan | None = None
+        self.reference_measurement: ScanMeasurement | ImportedScan | None = None
         self._current_wavelength_lookup = _build_wavelength_lookup(None)
         self._reference_wavelength_lookup = _build_wavelength_lookup(None)
         self.detector_plot_items: dict[Detector, pg.PlotDataItem] = {}
@@ -1725,6 +1727,7 @@ class PlotWidget(QWidget):
         # not exportable as a completed acquisition without its snapshot.
         self.plot_widget.setLabel("left", _GENERIC_SCAN_Y_LABEL)
         self.current_measurement = None
+        self.current_imported_scan = None
         self._clear_detector_live_items()
         if self.detector_legend is not None:
             self.detector_legend.clear()
@@ -1870,10 +1873,11 @@ class PlotWidget(QWidget):
         self.detector_legend.setVisible(True)
         return self.detector_legend
 
-    def set_measurement(self, measurement: ScanMeasurement) -> bool:
+    def set_measurement(self, measurement: ScanMeasurement | ImportedScan) -> bool:
         """Display every detector row and retain the completed acquisition."""
         self.plot_widget.setLabel("left", _MEASUREMENT_SCAN_Y_LABEL)
         self.current_measurement = measurement
+        self.current_imported_scan = None
         self.current_wavelengths = measurement.wavelengths_nm
         self._current_wavelength_lookup = _build_wavelength_lookup(measurement.wavelengths_nm)
         self.current_powers = measurement.detector_data[0] if measurement.detectors else np.array([])
@@ -1912,6 +1916,25 @@ class PlotWidget(QWidget):
         self.freeze_btn.setEnabled(bool(measurement.detectors))
         return True
 
+    def set_imported_scan(self, scan: ImportedScan) -> bool:
+        """Display an offline scan through the shared detector plotting path."""
+        result = self.set_measurement(scan)
+        if result:
+            self.current_imported_scan = scan
+            provenance = "simulated acquisition" if scan.simulated else "saved acquisition"
+            title = f"Imported Scan — {scan.source_path.name} ({provenance})"
+            self.set_plot_title(title)
+            self.plot_widget.setToolTip(
+                f"Imported from: {scan.source_path}\n"
+                f"Completed: {scan.completed_at_utc.isoformat()}\n"
+                f"Backend: {scan.backend}; {provenance}\n"
+                f"Comment: {scan.comment}"
+            )
+            self.save_btn.setEnabled(False)
+        else:
+            self.current_imported_scan = None
+        return result
+
     @Slot()
     def clear_plot(self):
         """Clears all traces and resets internal data."""
@@ -1935,6 +1958,7 @@ class PlotWidget(QWidget):
         self.current_powers = None
         self.current_output_power = None
         self.current_measurement = None
+        self.current_imported_scan = None
         self.reference_measurement = None
         self._current_wavelength_lookup = _build_wavelength_lookup(None)
         self._reference_wavelength_lookup = _build_wavelength_lookup(None)
@@ -1985,6 +2009,13 @@ class PlotWidget(QWidget):
     @Slot()
     def save_scan_data(self):
         measurement = self.current_measurement
+        if isinstance(measurement, ImportedScan):
+            QMessageBox.information(
+                self,
+                "Imported Scan",
+                "Imported files do not contain all acquisition fields needed to export a scan measurement.",
+            )
+            return
         if measurement is None or self.current_wavelengths is None or self.current_powers is None:
             QMessageBox.warning(self, "No Data", "No scan data available to save.")
             return

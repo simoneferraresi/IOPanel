@@ -91,6 +91,7 @@ include = [
     "hardware/camera_recovery_worker.py",
     "hardware/piezo_init_worker.py",
     "logic/task_runner.py",
+    "logic/scan_import.py",
     "ui/control_panel.py",
     "ui/log_console.py",
     "tools/check_environment.py",
