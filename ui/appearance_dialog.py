@@ -7,13 +7,13 @@ from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
-    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QRadioButton,
     QSizePolicy,
     QToolButton,
     QVBoxLayout,
@@ -61,7 +61,7 @@ class AppearanceDialog(QDialog):
         self.card_previews: dict[str, QLabel] = {}
         self.card_labels: dict[str, QLabel] = {}
         self.card_label_rows: dict[str, QFrame] = {}
-        self.selection_indicators: dict[str, QCheckBox] = {}
+        self.selection_indicators: dict[str, QRadioButton] = {}
         for icon_id, display_name in APPLICATION_ICONS:
             button = QToolButton(self)
             button.setObjectName(f"applicationIconCard_{icon_id}")
@@ -111,8 +111,9 @@ class AppearanceDialog(QDialog):
             label_row.setContentsMargins(8, 3, 8, 3)
             label_row.setSpacing(8)
             label_row.addStretch(1)
-            indicator = QCheckBox(button)
+            indicator = QRadioButton(button)
             indicator.setObjectName(f"applicationIconSelected_{icon_id}")
+            indicator.setAutoExclusive(False)
             indicator.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             indicator.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
             indicator.setAccessibleName(f"{display_name} selection indicator")

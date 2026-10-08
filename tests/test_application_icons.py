@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 from PySide6.QtCore import QFile, QIODevice, QSettings, QSize, Qt
-from PySide6.QtWidgets import QApplication, QDialog, QMenu
+from PySide6.QtWidgets import QApplication, QDialog, QMenu, QRadioButton
 
 from app_settings import AppSettings
 from config_model import AppConfig
@@ -68,6 +68,9 @@ def test_appearance_dialog_cards_preview_and_confirm_selection(qapp, qtbot):
     assert not dialog.selection_buttons["optical_burst"].isChecked()
     assert dialog.selection_indicators["prism_spectrum"].isChecked()
     assert not dialog.selection_indicators["optical_burst"].isChecked()
+    assert all(isinstance(indicator, QRadioButton) for indicator in dialog.selection_indicators.values())
+    assert all(not indicator.autoExclusive() for indicator in dialog.selection_indicators.values())
+    assert sum(indicator.isChecked() for indicator in dialog.selection_indicators.values()) == 1
     assert dialog.card_labels["prism_spectrum"].text() == "Prism Spectrum"
     dialog.show()
     qtbot.wait(10)
@@ -103,6 +106,7 @@ def test_appearance_dialog_cards_preview_and_confirm_selection(qapp, qtbot):
     assert dialog.card_labels["prism_spectrum"].text() == "Prism Spectrum"
     assert dialog.selection_indicators["optical_burst"].isChecked()
     assert not dialog.selection_indicators["prism_spectrum"].isChecked()
+    assert sum(indicator.isChecked() for indicator in dialog.selection_indicators.values()) == 1
     assert {icon_id: button.geometry() for icon_id, button in dialog.selection_buttons.items()} == card_geometries
     dialog.apply_button.click()
     assert dialog.result() == QDialog.DialogCode.Accepted
