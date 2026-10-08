@@ -104,6 +104,24 @@ or the MATLAB extra. In PowerShell, check the Engine import and runtime with:
 & "C:\Program Files\MATLAB\R2024b\bin\matlab.exe" -batch "disp(version('-release')); disp(matlabroot)"
 ```
 
+### Read-only environment diagnostics
+
+Run `python -m tools.check_environment` from the project root for a concise
+report, or add `--json` for schema-versioned JSON suitable for bug reports.
+Use `--config path\to\config.ini` to inspect a different configuration file.
+The command reports Python details, core and optional package metadata,
+configuration validation, and static CT400 DLL existence/PE architecture.
+Configuration validation reuses `AppConfig` without importing the GUI or
+hardware adapters. VmbPy and MATLAB Engine are detected through package
+metadata only; missing optional packages mean their features are unavailable,
+not that IOPanel itself is broken. Installed metadata does not verify native
+SDK loading or runtime compatibility. The command never starts MATLAB, loads a
+DLL, initializes Vimba, or contacts hardware. It cannot qualify physical
+camera or CT400 operation; follow the [laboratory validation protocol](docs/laboratory-hardware-validation.md)
+for that. For example, a missing VmbPy package is expected in a driver-free
+development environment, while a missing configured CT400 DLL is actionable
+when the physical CT400 backend is selected.
+
 ---
 
 ## Configuration
