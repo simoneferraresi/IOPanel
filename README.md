@@ -258,10 +258,12 @@ uv run pyside6-rcc resources/resources.qrc -o resources/resources_rc.py
 
 ### Application icon
 
-Choose **View → Application Icon** to switch between Optical Burst and Prism
-Spectrum. The selection applies to the running application and is saved in
-Qt `QSettings` under `Appearance/application_icon`; Optical Burst is the
-default. It is independent of `config.ini`.
+Open **View → Application Icon…** to preview Optical Burst and Prism Spectrum
+in the Appearance dialog. Select a card and choose **Apply** to switch the
+running application icon; **Cancel**, Escape, and closing the dialog discard a
+provisional choice. The applied selection is saved in Qt `QSettings` under
+`Appearance/application_icon`; Optical Burst is the default. It is independent
+of `config.ini`.
 
 Qt updates the running app and window icon, which Windows uses for the running
 window, taskbar, and Alt+Tab where supported. This does not change an executable's
