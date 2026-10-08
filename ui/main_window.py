@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import time
 from enum import Enum, auto
 
 from PySide6 import QtGui, QtWidgets
@@ -1473,6 +1474,7 @@ class MainWindow(QMainWindow):
         Handles the user closing the window. Ensures all hardware and threads
         are shut down gracefully. This is the single source of truth for cleanup.
         """
+        close_started_at = time.perf_counter()
         logger.info("Application close requested. Initiating shutdown sequence...")
         scan_panel = getattr(self, "control_panel", None)
         scan_thread = getattr(scan_panel, "scan_thread", None)
@@ -1603,6 +1605,7 @@ class MainWindow(QMainWindow):
         self._pending_camera_lifecycle_close = False
         self._pending_piezo_operation_close = False
         event.accept()
+        logger.info("MainWindow.closeEvent cleanup returned after %.2f s.", time.perf_counter() - close_started_at)
 
     def _save_ui_preferences(self) -> None:
         """Save only presentation state and the selected scan detector IDs."""

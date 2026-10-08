@@ -17,6 +17,7 @@ This script is responsible for:
 import argparse
 import logging
 import sys
+import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -279,18 +280,23 @@ def main() -> int:
         window.show()
         window.plot_widget.schedule_matlab_prewarm()
 
+        about_to_quit_at: float | None = None
+
         def on_shutdown():
             """A closure to be called when the application is about to quit."""
-            logger.info("Application shutting down...")
-            logger.info("Shutdown complete.")
-            logging.shutdown()
+            nonlocal about_to_quit_at
+            about_to_quit_at = time.perf_counter()
+            logger.info("Qt aboutToQuit received; interpreter cleanup follows.")
 
         # Connect the cleanup function to the application's exit signal
         app.aboutToQuit.connect(on_shutdown)
 
         logger.info("Application started successfully. Entering event loop.")
 
-        return app.exec()
+        exit_code = app.exec()
+        if about_to_quit_at is not None:
+            logger.info("Qt event loop returned %.2f s after aboutToQuit.", time.perf_counter() - about_to_quit_at)
+        return exit_code
     except Exception:  # noqa: BLE001  # Preserve the application error-to-exit-code fallback.
         # The global exception hook will log this exception.
         # We return 1 to indicate an error to the operating system.

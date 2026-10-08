@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import threading
+import time
 from types import SimpleNamespace
 
 import shiboken6
@@ -53,6 +55,35 @@ class BlockingFuture(FakeFuture):
     def result(self):
         self.result_calls += 1
         self.completed.wait()
+        if self.error is not None:
+            raise self.error
+        return self.value
+
+
+class ControlledFuture(FakeFuture):
+    def __init__(self, *, cancel_result: bool, block_cancel: bool = False, block_result: bool = False) -> None:
+        super().__init__(cancel_result=cancel_result)
+        self.block_cancel = block_cancel
+        self.block_result = block_result
+        self.cancel_started = threading.Event()
+        self.release_cancel = threading.Event()
+        self.result_started = threading.Event()
+        self.release_result = threading.Event()
+        if not block_cancel:
+            self.release_cancel.set()
+        if not block_result:
+            self.release_result.set()
+
+    def cancel(self) -> bool:
+        self.cancel_calls += 1
+        self.cancel_started.set()
+        self.release_cancel.wait()
+        return self.cancel_result
+
+    def result(self):
+        self.result_calls += 1
+        self.result_started.set()
+        self.release_result.wait()
         if self.error is not None:
             raise self.error
         return self.value
@@ -352,6 +383,126 @@ def test_startup_shutdown_disposes_late_engine_off_the_qt_thread(qtbot):
     qtbot.waitUntil(lambda: engine.quit_calls == 1, timeout=1000)
     assert manager.state is MatlabEngineState.SHUTTING_DOWN
     assert manager.engine is None
+
+
+def test_starting_shutdown_does_not_wait_for_blocking_cancel(qtbot, caplog):
+    caplog.set_level(logging.INFO, logger="LabApp.matlab_engine")
+    future = ControlledFuture(cancel_result=True, block_cancel=True)
+    manager = MatlabEngineManager(available=True, start_engine=lambda **_kwargs: future)
+    manager.prewarm()
+
+    started = time.perf_counter()
+    manager.shutdown()
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 0.2
+    assert future.cancel_started.wait(1)
+    assert future.cancel_calls == 1
+    assert manager._startup_disposal_thread is not None
+    assert manager._startup_disposal_thread.daemon
+    assert manager.state is MatlabEngineState.SHUTTING_DOWN
+    future.release_cancel.set()
+    manager._startup_disposal_thread.join(timeout=1)
+    assert not manager._startup_disposal_thread.is_alive()
+    assert future.result_calls == 0
+    assert "MATLAB startup shutdown requested." in caplog.text
+    assert "MATLAB startup cancellation returned True after" in caplog.text
+
+
+def test_starting_shutdown_does_not_wait_for_blocking_result_and_disposes_engine_once(qtbot, caplog):
+    caplog.set_level(logging.INFO, logger="LabApp.matlab_engine")
+    future = ControlledFuture(cancel_result=False, block_result=True)
+    engine = FakeEngine()
+    future.value = engine
+    manager = MatlabEngineManager(available=True, start_engine=lambda **_kwargs: future)
+    manager.prewarm()
+
+    started = time.perf_counter()
+    manager.shutdown()
+    elapsed = time.perf_counter() - started
+    assert elapsed < 0.2
+    assert future.result_started.wait(1)
+    disposal_thread = manager._startup_disposal_thread
+    manager.shutdown()
+    assert manager._startup_disposal_thread is disposal_thread
+    assert future.cancel_calls == 1
+    assert future.result_calls == 1
+    assert engine.quit_calls == 0
+
+    future.release_result.set()
+    disposal_thread.join(timeout=1)
+    assert not disposal_thread.is_alive()
+    assert engine.quit_calls == 1
+    assert manager.state is MatlabEngineState.SHUTTING_DOWN
+    assert "Waiting for in-progress MATLAB startup to finish before disposal." in caplog.text
+    assert "Late MATLAB startup disposed after" in caplog.text
+
+
+def test_startup_shutdown_cancellation_success_skips_result(qtbot):
+    future = ControlledFuture(cancel_result=True)
+    manager = MatlabEngineManager(available=True, start_engine=lambda **_kwargs: future)
+    manager.prewarm()
+
+    manager.shutdown()
+    disposal_thread = manager._startup_disposal_thread
+    assert disposal_thread is not None
+    disposal_thread.join(timeout=1)
+
+    assert not disposal_thread.is_alive()
+    assert future.cancel_calls == 1
+    assert future.result_calls == 0
+    assert manager.state is MatlabEngineState.SHUTTING_DOWN
+
+
+def test_startup_shutdown_future_exception_is_contained(qtbot, caplog):
+    caplog.set_level(logging.INFO, logger="LabApp.matlab_engine")
+    future = ControlledFuture(cancel_result=False)
+    future.error = RuntimeError("startup failed during shutdown")
+    manager = MatlabEngineManager(available=True, start_engine=lambda **_kwargs: future)
+    manager.prewarm()
+
+    manager.shutdown()
+    disposal_thread = manager._startup_disposal_thread
+    assert disposal_thread is not None
+    disposal_thread.join(timeout=1)
+
+    assert not disposal_thread.is_alive()
+    assert future.cancel_calls == 1
+    assert future.result_calls == 1
+    assert manager.state is MatlabEngineState.SHUTTING_DOWN
+    assert "MATLAB startup disposal completed with exception" in caplog.text
+
+
+def test_starting_disposal_never_emits_qt_callbacks_after_owner_destroyed(qtbot, monkeypatch):
+    future = ControlledFuture(cancel_result=False, block_result=True)
+    engine = FakeEngine()
+    future.value = engine
+    monkeypatch.setattr(plot_widgets, "MATLAB_ENGINE_AVAILABLE", True)
+    monkeypatch.setattr(
+        plot_widgets,
+        "matlab",
+        SimpleNamespace(engine=SimpleNamespace(start_matlab=lambda **_kwargs: future)),
+        raising=False,
+    )
+    widget = PlotWidget(ScanSettings())
+    manager = widget.matlab_engine_manager
+    manager.prewarm()
+    future.result_started.wait(1)
+    state_changes = QSignalSpy(manager.state_changed)
+
+    widget.cleanup()
+    changes_after_shutdown = state_changes.count()
+    widget.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    QCoreApplication.processEvents()
+    assert not shiboken6.isValid(widget)
+    assert not shiboken6.isValid(manager)
+
+    future.release_result.set()
+    manager._startup_disposal_thread.join(timeout=1)
+    assert not manager._startup_disposal_thread.is_alive()
+    assert engine.quit_calls == 1
+    assert state_changes.count() == changes_after_shutdown
 
 
 def test_plotwidget_queues_fig_while_starting_and_reuses_ready_engine(qtbot, monkeypatch):

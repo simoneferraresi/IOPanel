@@ -48,6 +48,7 @@ class MatlabEngineManager(QObject):
         self._future: Any | None = None
         self._started_at: float | None = None
         self._shutdown = False
+        self._startup_disposal_thread: Thread | None = None
         self._prewarm_timer: QTimer | None = None
         self._poll_timer: QTimer | None = None
 
@@ -189,18 +190,42 @@ class MatlabEngineManager(QObject):
         except Exception:
             logger.warning("Could not quit MATLAB Engine cleanly.", exc_info=True)
 
-    @staticmethod
-    def _dispose_future_result(future: Any) -> None:
-        """Wait off the GUI thread for uncancellable startup and dispose of late engines."""
+    def _dispose_startup_future(self, future: Any, shutdown_requested_at: float) -> None:
+        """Dispose of an in-progress startup without blocking Qt or Python exit."""
+        cancel_started_at = time.perf_counter()
+        cancel = getattr(future, "cancel", None)
+        try:
+            cancelled = bool(cancel()) if callable(cancel) else False
+        except Exception:
+            logger.info("MATLAB startup cancellation raised; waiting for startup disposal.", exc_info=True)
+            cancelled = False
+        logger.info(
+            "MATLAB startup cancellation returned %s after %.2f s.",
+            cancelled,
+            time.perf_counter() - cancel_started_at,
+        )
+        if cancelled:
+            return
+
+        logger.info("Waiting for in-progress MATLAB startup to finish before disposal.")
         try:
             engine = future.result()
-        except Exception:  # noqa: BLE001 - a failed late startup has no UI consumer during shutdown.
+        except Exception as error:
+            logger.info(
+                "MATLAB startup disposal completed with exception after %.2f s: %s",
+                time.perf_counter() - shutdown_requested_at,
+                error,
+                exc_info=True,
+            )
             return
-        MatlabEngineManager._quit_engine(engine)
+        if engine is not None:
+            self._quit_engine(engine)
+        logger.info("Late MATLAB startup disposed after %.2f s.", time.perf_counter() - shutdown_requested_at)
 
     def shutdown(self) -> None:
         if self._shutdown:
             return
+        shutdown_requested_at = time.perf_counter()
         self._shutdown = True
         if self._prewarm_timer is not None:
             self._prewarm_timer.stop()
@@ -210,19 +235,25 @@ class MatlabEngineManager(QObject):
         if self._state is MatlabEngineState.UNAVAILABLE:
             return
 
+        was_starting = self._state is MatlabEngineState.STARTING
         engine, self._engine = self._engine, None
         future, self._future = self._future, None
+        if was_starting:
+            logger.info("MATLAB startup shutdown requested.")
         self._set_state(MatlabEngineState.SHUTTING_DOWN)
         if engine is not None:
             self._quit_engine(engine)
         if future is not None:
-            cancel = getattr(future, "cancel", None)
+            disposal_thread = Thread(
+                target=self._dispose_startup_future,
+                args=(future, shutdown_requested_at),
+                name="MatlabEngineStartupDisposal",
+                # Do not let an unresolvable FutureResult hold Python exit forever; if it resolves while
+                # the process remains alive, this worker acquires and quits the late Engine.
+                daemon=True,
+            )
+            self._startup_disposal_thread = disposal_thread
             try:
-                cancelled = bool(cancel()) if callable(cancel) else False
-            except Exception:
-                logger.info(
-                    "MATLAB startup cancellation failed; disposing any late result in background.", exc_info=True
-                )
-                cancelled = False
-            if not cancelled:
-                Thread(target=self._dispose_future_result, args=(future,), daemon=True).start()
+                disposal_thread.start()
+            except RuntimeError:
+                logger.exception("Could not start MATLAB startup disposal worker.")
