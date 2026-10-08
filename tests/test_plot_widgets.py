@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QPointF, Qt
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QPainterPath
 from PySide6.QtTest import QSignalSpy
 from PySide6.QtWidgets import QToolButton
 
@@ -529,7 +529,7 @@ def _imported_overlay(path, wavelengths=(1.0, 2.0), detectors=(Detector.DE_1,)):
     )
 
 
-def _large_imported_overlay(path, points, detector_count):
+def _large_imported_overlay(path, points, detector_count, nonfinite_pattern="mixed"):
     wavelengths = np.linspace(1500.0, 1600.0, points)
     resonance_center = wavelengths[points // 2 + 7]
     resonance = -15.0 * np.exp(-(((wavelengths - resonance_center) / (100.0 / points * 2.0)) ** 2))
@@ -537,8 +537,13 @@ def _large_imported_overlay(path, points, detector_count):
     values = np.vstack(
         [-22.0 + detector_index + np.sin(wavelengths * 0.2) + resonance for detector_index in range(detector_count)]
     )
-    values[:, 13] = np.nan
-    values[:, 19] = np.inf
+    if nonfinite_pattern in {"nan", "mixed"}:
+        values[:, 13::257] = np.nan
+    if nonfinite_pattern in {"inf", "mixed"}:
+        values[:, 19::509] = np.inf
+    if nonfinite_pattern == "interval":
+        gap_start = max(2, points // 3)
+        values[:, gap_start : min(points - 2, gap_start + max(10, points // 20))] = np.nan
     return ImportedScan(
         wavelengths,
         values,
@@ -710,6 +715,102 @@ def test_overlay_manager_selects_the_focused_crosshair_scan(qtbot, tmp_path):
     QTimer.singleShot(0, select_first_overlay)
     widget.manage_overlays()
     assert widget.focused_overlay_id == expected_identity
+
+
+@pytest.mark.parametrize("nonfinite_pattern", ["none", "nan", "inf", "mixed", "interval"])
+def test_overlay_finite_handling_preserves_gaps_and_source_data(qtbot, tmp_path, nonfinite_pattern):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    scan = _large_imported_overlay(tmp_path / f"finite-{nonfinite_pattern}.csv", 4096, 1, nonfinite_pattern)
+    original_wavelengths = scan.wavelengths_nm.copy()
+    original_values = scan.detector_data.copy()
+
+    assert widget.add_imported_overlay(scan)
+    item = widget.scan_overlays[0].items[Detector.DE_1]
+    assert item.opts["connect"] == "auto"
+    assert item.opts["skipFiniteCheck"] is False
+    np.testing.assert_array_equal(scan.wavelengths_nm, original_wavelengths)
+    np.testing.assert_array_equal(scan.detector_data, original_values)
+    assert not scan.wavelengths_nm.flags.writeable
+    assert not scan.detector_data.flags.writeable
+
+    item.setClipToView(False)
+    item.setDownsampling(ds=1, auto=False, method="peak")
+    path = item.curve.getPath()
+    path_x_values = [path.elementAt(index).x for index in range(path.elementCount())]
+    finite_indices = np.flatnonzero(np.isfinite(original_values[0]))
+    assert min(path_x_values) == pytest.approx(original_wavelengths[finite_indices[0]])
+    assert max(path_x_values) == pytest.approx(original_wavelengths[finite_indices[-1]])
+    if nonfinite_pattern == "none":
+        assert (
+            sum(
+                path.elementAt(index).type == QPainterPath.ElementType.MoveToElement
+                for index in range(path.elementCount())
+            )
+            == 1
+        )
+    else:
+        assert item.curve.opts["skipFiniteCheck"] is False
+        assert item.curve.opts["connect"] == "finite"
+        gap = np.flatnonzero(~np.isfinite(original_values[0]))
+        assert gap.size
+        first_gap_x = original_wavelengths[gap[0]]
+        last_gap_x = original_wavelengths[gap[-1]]
+        previous_x = None
+        for index in range(path.elementCount()):
+            element = path.elementAt(index)
+            if element.type == QPainterPath.ElementType.MoveToElement:
+                previous_x = element.x
+                continue
+            if previous_x is not None:
+                assert not (previous_x < first_gap_x and element.x > last_gap_x)
+                assert not (previous_x > last_gap_x and element.x < first_gap_x)
+            previous_x = element.x
+
+
+def test_overlay_pen_is_cosmetic_opaque_and_keeps_scan_patterns(qtbot, tmp_path):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    overlays = [
+        _imported_overlay(tmp_path / f"pen-{index}.csv", [1.0, 2.0, 3.0], (Detector.DE_1,)) for index in range(8)
+    ]
+
+    for scan in overlays:
+        assert widget.add_imported_overlay(scan)
+
+    for index, overlay in enumerate(widget.scan_overlays):
+        pen = overlay.items[Detector.DE_1].opts["pen"]
+        assert pen.widthF() == pytest.approx(1.0)
+        assert pen.isCosmetic()
+        assert pen.color().alpha() == 255
+        if index < len(plot_widgets._OVERLAY_LINE_STYLES):
+            assert pen.style() == plot_widgets._OVERLAY_LINE_STYLES[index]
+        else:
+            pattern_index = index - len(plot_widgets._OVERLAY_LINE_STYLES)
+            assert pen.style() == Qt.PenStyle.CustomDashLine
+            assert tuple(pen.dashPattern()) == pytest.approx(plot_widgets._OVERLAY_CUSTOM_DASH_PATTERNS[pattern_index])
+
+
+def test_overlay_pan_zoom_does_not_resubmit_source_data(qtbot, tmp_path, monkeypatch):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    widget.show()
+    for index in range(4):
+        scan = _large_imported_overlay(tmp_path / f"pan-{index}.csv", 50_000, 2)
+        assert widget.add_imported_overlay(scan)
+    calls = []
+    original_set_data = plot_widgets.pg.PlotDataItem.setData
+
+    def count_set_data(item, *args, **kwargs):
+        calls.append(item)
+        return original_set_data(item, *args, **kwargs)
+
+    monkeypatch.setattr(plot_widgets.pg.PlotDataItem, "setData", count_set_data)
+    for offset in range(8):
+        widget.plot_widget.plotItem.vb.setRange(xRange=[1540.0 + offset * 0.1, 1550.0 + offset * 0.1], padding=0)
+        QCoreApplication.processEvents()
+
+    assert calls == []
 
 
 @pytest.mark.parametrize(

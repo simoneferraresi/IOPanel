@@ -78,6 +78,7 @@ _GENERIC_SCAN_Y_LABEL = "Power (dB)"
 _MEASUREMENT_SCAN_Y_LABEL = "Transfer function (dB)"
 MAX_OVERLAY_SCANS = 8
 _OVERLAY_LINE_STYLES = (Qt.PenStyle.DashLine, Qt.PenStyle.DotLine, Qt.PenStyle.DashDotLine, Qt.PenStyle.DashDotDotLine)
+_OVERLAY_CUSTOM_DASH_PATTERNS = ((8, 3), (2, 2, 1, 2), (10, 2, 1, 2, 1, 2), (1, 2, 1, 2, 5, 2, 1, 2))
 _SCAN_AUTO_DOWNSAMPLE_FACTOR = 1.0
 
 _POWER_MONITOR_DETECTOR_BORDER_COLOR_BY_ID = {
@@ -236,6 +237,22 @@ def _configure_plot_legend_entry(sample, label, family: str | None = None) -> No
     sample.setCursor(Qt.CursorShape.PointingHandCursor)
     sample.setToolTip("Click to hide or show this trace")
     label.setOpacity(1.0 if sample.item.isVisible() else 0.45)
+
+
+def _overlay_pen(color: str, style_index: int) -> QtGui.QPen:
+    """Keep all eight same-color scan traces visually distinct at one pixel."""
+    if style_index < len(_OVERLAY_LINE_STYLES):
+        return pg.mkPen(color, width=1.0, style=_OVERLAY_LINE_STYLES[style_index], cosmetic=True)
+    pen = pg.mkPen(color, width=1.0, cosmetic=True)
+    pen.setStyle(Qt.PenStyle.CustomDashLine)
+    pen.setDashPattern(
+        list(
+            _OVERLAY_CUSTOM_DASH_PATTERNS[
+                (style_index - len(_OVERLAY_LINE_STYLES)) % len(_OVERLAY_CUSTOM_DASH_PATTERNS)
+            ]
+        )
+    )
+    return pen
 
 
 def _update_plot_legend_hidden_state(legend: pg.LegendItem, item: pg.PlotDataItem) -> None:
@@ -2043,14 +2060,9 @@ class PlotWidget(QWidget):
             item = self.plot_widget.plot(
                 scan.wavelengths_nm,
                 scan.detector_data[row_index],
-                pen=pg.mkPen(
-                    color,
-                    width=1.4 if style_index < len(_OVERLAY_LINE_STYLES) else 1.8,
-                    style=_OVERLAY_LINE_STYLES[style_index % len(_OVERLAY_LINE_STYLES)],
-                ),
+                pen=_overlay_pen(color, style_index),
                 autoDownsampleFactor=_SCAN_AUTO_DOWNSAMPLE_FACTOR,
-                connect="finite",
-                skipFiniteCheck=True,
+                connect="auto",
             )
             item.setClipToView(True)
             item.setDownsampling(auto=True, method="peak")
