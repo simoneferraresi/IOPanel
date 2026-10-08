@@ -3,7 +3,8 @@ import threading
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QFontMetricsF, QIcon, QTextOption
+from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QToolButton
 
 from ui.log_console import LEVEL_COLORS, BoundedLogHandler, LogConsole, install_log_handler
 
@@ -63,10 +64,34 @@ def test_log_record_format_hides_source_and_uses_proportional_columns():
     entry = handler.snapshot()[0][0]
 
     assert entry.logger_name == "LabApp.internal.source"
-    assert entry.formatted_text.startswith(f"{entry.timestamp}\tWARNING\ta message")
-    assert "\t\twith a second line" in entry.formatted_text
+    assert entry.formatted_text.startswith(f"{entry.timestamp}\t\tWARNING\ta message")
+    assert "\t\t\twith a second line" in entry.formatted_text
     assert "LabApp.internal.source" not in entry.formatted_text
     assert " | " not in entry.formatted_text
+
+
+def test_message_tabs_and_vertical_bars_do_not_confuse_column_formatting():
+    handler = BoundedLogHandler()
+    logger = logging.Logger("LabApp.test.message-columns")  # noqa: LOG001
+    logger.addHandler(handler)
+    logger.error("first\tsecond | third\ncontinuation\tcolumn")
+    entry = handler.snapshot()[0][0]
+
+    assert entry.formatted_text == (f"{entry.timestamp}\t\tERROR\tfirst\\tsecond | third\n\t\t\tcontinuation\\tcolumn")
+
+
+def test_gui_report_removes_only_exact_cli_boundary_lines():
+    from ui.log_console import _gui_diagnostics_report
+
+    report = (
+        "\nIOPanel environment diagnostics\n\nHardware diagnostics\n---------------------\n"
+        "[NOT_CHECKED] Hardware diagnostics were not performed.\n\n"
+        "Overall assessment: REVIEW\nStatic diagnostics do not qualify physical hardware.\n"
+    )
+    assert _gui_diagnostics_report(report) == (
+        "Hardware diagnostics\n---------------------\n[NOT_CHECKED] Hardware diagnostics were not performed.\n\n"
+        "Overall assessment: REVIEW"
+    )
 
 
 def test_concurrent_burst_keeps_only_recent_bounded_records():
@@ -210,13 +235,27 @@ def test_compact_toolbar_icons_have_accessible_actions(qtbot):
         "Copy visible logs",
         "Open application log file",
     ]
-    assert console.run_diagnostics_button.text() == "Run Diagnostics"
     assert console.text.toPlainText() == ""
     assert not hasattr(console, "status")
     assert console.overflow_notice.isHidden()
+    assert len([button for button in console.findChildren(QPushButton) if button.text() == "Run Diagnostics"]) == 1
     console.tabs.setCurrentWidget(console.diagnostics_page)
-    assert console.refresh_diagnostics_button.isVisible()
+    assert console.run_diagnostics_button.isVisible()
+    assert console.run_diagnostics_button.accessibleName() == "Run environment diagnostics"
+    assert console.run_diagnostics_button.toolTip() == "Run read-only environment diagnostics"
+    assert "#eff6ff" in console.styleSheet()
+    assert "#dbeafe" in console.styleSheet()
+    assert not console.diagnostics_page.findChildren(QLabel)
+    assert isinstance(console.copy_diagnostics_button, QToolButton)
     assert console.copy_diagnostics_button.isVisible()
+    assert not console.copy_diagnostics_button.icon().pixmap(18, 18).isNull()
+    copy_icon = QIcon(":/icons/copy.svg")
+    assert not copy_icon.isNull()
+    assert console.copy_diagnostics_button.icon().pixmap(18, 18).toImage() == copy_icon.pixmap(18, 18).toImage()
+    assert console.copy_diagnostics_button.iconSize().width() == 18
+    assert console.copy_diagnostics_button.accessibleName() == "Copy diagnostics report"
+    assert console.copy_diagnostics_button.toolTip() == "Copy diagnostics report"
+    assert console.copy_diagnostics_button.focusPolicy() == Qt.FocusPolicy.StrongFocus
     assert not console.pause_button.isVisible()
     assert not console.search.isVisible()
 
@@ -227,34 +266,90 @@ def test_console_uses_regular_geist_and_font_aware_tab_columns(qtbot):
     install_application_fonts(QApplication.instance())
     console = LogConsole(logging.Logger("LabApp.test.typography"))  # noqa: LOG001
     qtbot.addWidget(console)
+    console.resize(900, 300)
+    console.show()
 
     assert console.text.font().family() == make_font("sans", 10).family()
     assert console.text.font().family() != make_font("mono", 10).family()
-    tabs = console.text.document().defaultTextOption().tabArray()
-    assert len(tabs) == 2
-    assert tabs[0] < tabs[1]
+    tab_stops = console.text.document().defaultTextOption().tabs()
+    assert len(tab_stops) == 3
+    assert [tab.type for tab in tab_stops] == [
+        QTextOption.TabType.LeftTab,
+        QTextOption.TabType.CenterTab,
+        QTextOption.TabType.LeftTab,
+    ]
+
+    levels = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+    for point_size in (10, 12, 14):
+        font = make_font("sans", point_size)
+        console.text.setFont(font)
+        console._set_log_tab_stops(font)
+        rows = [f"12:45:50\t\t{level}\t{level} sample message" for level in levels]
+        rows.append("12:45:51\t\tERROR\tfirst line\n\t\t\tcontinued message")
+        console.text.setPlainText("\n".join(rows))
+        QApplication.processEvents()
+        starts = []
+        centers = []
+        messages = []
+        line_offset = 0
+        severity_font = make_font("sans", point_size)
+        severity_font.setWeight(severity_font.Weight.DemiBold)
+        metrics = QFontMetricsF(severity_font)
+        for row, level in zip(rows[: len(levels)], levels, strict=True):
+            severity_offset = line_offset + len("12:45:50\t\t")
+            message_offset = severity_offset + len(level) + 1
+            cursor = console.text.textCursor()
+            cursor.setPosition(severity_offset)
+            severity_x = console.text.cursorRect(cursor).x()
+            cursor.setPosition(message_offset)
+            message_x = console.text.cursorRect(cursor).x()
+            starts.append(severity_x)
+            centers.append(severity_x + metrics.horizontalAdvance(level) / 2)
+            messages.append(message_x)
+            line_offset += len(row) + 1
+        assert max(centers) - min(centers) <= 1.5
+        assert len(set(messages)) == 1
+        for message, start, level in zip(messages, starts, levels, strict=True):
+            assert message - (start + metrics.horizontalAdvance(level)) >= 12
+
+        continuation_offset = sum(len(row) + 1 for row in rows[: len(levels)])
+        cursor = console.text.textCursor()
+        cursor.setPosition(continuation_offset + len("12:45:51\t\tERROR\tfirst line\n\t\t\t"))
+        assert console.text.cursorRect(cursor).x() == messages[-1]
 
 
 def test_diagnostics_action_uses_api_and_displays_report(qtbot, monkeypatch):
     from tools import check_environment
 
     calls = []
-    monkeypatch.setattr(check_environment, "collect_diagnostics", lambda: calls.append("collect") or {})
+    report_data = {"checks": [{"category": "Python environment"}]}
+    rendered_report = (
+        "IOPanel environment diagnostics\n\nPython environment\n------------------\n"
+        "[OK] Python version\n  Action: Keep the supported runtime installed.\n\n"
+        "Overall assessment: REVIEW\nStatic diagnostics do not qualify physical hardware.\n"
+    )
+    monkeypatch.setattr(check_environment, "collect_diagnostics", lambda: calls.append("collect") or report_data)
     monkeypatch.setattr(
         check_environment,
         "render_report",
-        lambda _report: "[MISSING_OPTIONAL] MATLAB Engine\n[NOT_CHECKED] camera runtime",
+        lambda _report: calls.append("render") or rendered_report,
     )
     console = LogConsole(logging.Logger("LabApp.test.diagnostics"))  # noqa: LOG001
     qtbot.addWidget(console)
-    console.run_diagnostics()
-    assert calls == ["collect"]
-    assert "MISSING_OPTIONAL" in console.diagnostics_text.toPlainText()
-    assert "NOT_CHECKED" in console.diagnostics_text.toPlainText()
+    console.tabs.setCurrentWidget(console.diagnostics_page)
+    console.run_diagnostics_button.click()
+    assert calls == ["collect", "render"]
+    displayed = console.diagnostics_text.toPlainText()
+    assert displayed.startswith("Python environment")
+    assert not displayed.startswith("IOPanel environment diagnostics")
+    assert not displayed.endswith("Static diagnostics do not qualify physical hardware.")
+    assert "[OK] Python version" in displayed
+    assert "Action: Keep the supported runtime installed." in displayed
+    assert "Overall assessment: REVIEW" in displayed
     qtbot.waitUntil(lambda: "diagnostics completed" in console.text.toPlainText(), timeout=2000)
-    assert "MISSING_OPTIONAL" not in console.text.toPlainText()
-    console.copy_diagnostics()
-    assert "MISSING_OPTIONAL" in QApplication.clipboard().text()
+    assert "Python version" not in console.text.toPlainText()
+    console.copy_diagnostics_button.click()
+    assert QApplication.clipboard().text() == displayed
 
 
 def test_diagnostics_failure_is_visible_and_logged(qtbot, monkeypatch):

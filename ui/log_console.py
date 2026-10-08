@@ -20,6 +20,7 @@ from PySide6.QtGui import (
     QSyntaxHighlighter,
     QTextCharFormat,
     QTextCursor,
+    QTextOption,
 )
 from PySide6.QtWidgets import (
     QApplication,
@@ -55,6 +56,26 @@ LEVEL_THRESHOLDS = {
     "ERROR+": logging.ERROR,
     "CRITICAL": logging.CRITICAL,
 }
+_CLI_REPORT_TITLE = "IOPanel environment diagnostics"
+_CLI_REPORT_DISCLAIMER = "Static diagnostics do not qualify physical hardware."
+
+
+def _gui_diagnostics_report(report: str) -> str:
+    """Hide only the CLI report's exact framing lines in the in-app view."""
+    lines = report.splitlines()
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    if lines and lines[0].strip() == _CLI_REPORT_TITLE:
+        lines.pop(0)
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    if lines and lines[-1].strip() == _CLI_REPORT_DISCLAIMER:
+        lines.pop()
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return "\n".join(lines).strip()
 
 
 @dataclass(frozen=True)
@@ -73,15 +94,17 @@ class LogEntry:
     @property
     def formatted_text(self) -> str:
         message_lines = self.message.splitlines() or [""]
-        header = f"{self.timestamp}\t{self.levelname}\t{message_lines[0]}"
-        continuation = message_lines[1:]
+        first_message_line = message_lines[0].replace("\t", "\\t")
+        header = f"{self.timestamp}\t\t{self.levelname}\t{first_message_line}"
+        continuation = [line.replace("\t", "\\t") for line in message_lines[1:]]
         extra = self.exception_text or self.stack_text
         if self.exception_text and self.stack_text:
             extra = f"{self.exception_text}\n{self.stack_text}"
         if extra:
             continuation.extend(f"    {line}" for line in extra.splitlines())
+        continuation = [line.replace("\t", "\\t") for line in continuation]
         if continuation:
-            header += "\n" + "\n".join(f"\t\t{line}" for line in continuation)
+            header += "\n" + "\n".join(f"\t\t\t{line}" for line in continuation)
         return header
 
     @property
@@ -167,20 +190,21 @@ class LogHighlighter(QSyntaxHighlighter):
 
     @override
     def highlightBlock(self, text: str) -> None:
-        if text.startswith("\t\t"):
+        if text.startswith("\t\t\t"):
             self.setFormat(0, len(text), self.message_format)
             if "Traceback (most recent call last):" in text or text.lstrip("\t ").startswith(('File "', "^", "~")):
                 self.setFormat(0, len(text), self.traceback_format)
             return
         first = text.find("\t")
         second = text.find("\t", first + 1) if first >= 0 else -1
-        if first < 0 or second < 0:
+        third = text.find("\t", second + 1) if second >= 0 else -1
+        if first < 0 or second < 0 or third < 0:
             self.setFormat(0, len(text), self.message_format)
             return
         self.setFormat(0, first, self.timestamp_format)
-        level = text[first + 1 : second].strip()
-        self.setFormat(first + 1, second - first - 1, self.severity_formats.get(level, self.message_format))
-        self.setFormat(second + 1, len(text) - second - 1, self.message_format)
+        level = text[second + 1 : third].strip()
+        self.setFormat(second + 1, third - second - 1, self.severity_formats.get(level, self.message_format))
+        self.setFormat(third + 1, len(text) - third - 1, self.message_format)
 
 
 class DiagnosticsHighlighter(QSyntaxHighlighter):
@@ -245,12 +269,6 @@ class LogConsole(QWidget):
         self.copy_button = self._icon_button(":/icons/copy.svg", "Copy visible logs")
         self.open_button = self._icon_button(":/icons/folder-open.svg", "Open application log file")
 
-        self.run_diagnostics_button = QPushButton("Run Diagnostics", self)
-        self.run_diagnostics_button.setFont(control_font)
-        self.run_diagnostics_button.setObjectName("RunDiagnosticsButton")
-        self.run_diagnostics_button.setToolTip("Run read-only environment diagnostics")
-        self.run_diagnostics_button.setAccessibleName("Run environment diagnostics")
-
         self.tabs = QTabWidget(self)
         self.log_page = QWidget(self.tabs)
         log_layout = QVBoxLayout(self.log_page)
@@ -264,7 +282,6 @@ class LogConsole(QWidget):
         toolbar.addWidget(self.search, 1)
         for button in (self.pause_button, self.clear_button, self.copy_button, self.open_button):
             toolbar.addWidget(button)
-        toolbar.addWidget(self.run_diagnostics_button)
         log_layout.addLayout(toolbar)
         self.overflow_notice = QLabel(self.log_page)
         self.overflow_notice.setStyleSheet("color: #8a4b08; padding: 0 3px;")
@@ -280,42 +297,27 @@ class LogConsole(QWidget):
             "selection-background-color: #dbeafe; selection-color: #0f172a; }"
         )
         self.text.setFont(font)
-        metrics = QFontMetricsF(font)
-        timestamp_stop = metrics.horizontalAdvance("00:00:00") + metrics.horizontalAdvance("  ")
-        message_stop = timestamp_stop + metrics.horizontalAdvance("CRITICAL") + metrics.horizontalAdvance("  ")
-        option = self.text.document().defaultTextOption()
-        option.setTabArray([timestamp_stop, message_stop])
-        self.text.document().setDefaultTextOption(option)
+        self._set_log_tab_stops(font)
         self.highlighter = LogHighlighter(self.text.document())
         log_layout.addWidget(self.text, 1)
         self.tabs.addTab(self.log_page, "Logs")
 
         self.diagnostics_page = QWidget(self.tabs)
         diagnostics_layout = QVBoxLayout(self.diagnostics_page)
-        diagnostics_layout.setContentsMargins(10, 8, 10, 8)
+        diagnostics_layout.setContentsMargins(10, 4, 10, 8)
         diagnostics_toolbar = QHBoxLayout()
         diagnostics_toolbar.setContentsMargins(0, 0, 0, 0)
-        self.refresh_diagnostics_button = QPushButton("Run Diagnostics", self.diagnostics_page)
-        self.refresh_diagnostics_button.setFont(control_font)
-        self.refresh_diagnostics_button.setToolTip("Run read-only environment diagnostics")
-        diagnostics_toolbar.addWidget(self.refresh_diagnostics_button)
+        self.run_diagnostics_button = QPushButton("Run Diagnostics", self.diagnostics_page)
+        self.run_diagnostics_button.setFont(control_font)
+        self.run_diagnostics_button.setObjectName("RunDiagnosticsButton")
+        self.run_diagnostics_button.setToolTip("Run read-only environment diagnostics")
+        self.run_diagnostics_button.setAccessibleName("Run environment diagnostics")
+        diagnostics_toolbar.addWidget(self.run_diagnostics_button)
         diagnostics_toolbar.addStretch(1)
-        self.copy_diagnostics_button = QPushButton("Copy Report", self.diagnostics_page)
-        self.copy_diagnostics_button.setFont(control_font)
-        self.copy_diagnostics_button.setToolTip("Copy the complete diagnostics report as plain text")
+        self.copy_diagnostics_button = self._icon_button(":/icons/copy.svg", "Copy diagnostics report")
+        self.copy_diagnostics_button.setParent(self.diagnostics_page)
         diagnostics_toolbar.addWidget(self.copy_diagnostics_button)
         diagnostics_layout.addLayout(diagnostics_toolbar)
-        diagnostics_header = QHBoxLayout()
-        diagnostics_title = QLabel("Environment Diagnostics", self.diagnostics_page)
-        diagnostics_title.setStyleSheet("font-weight: 600; color: #334155;")
-        diagnostics_header.addWidget(diagnostics_title)
-        diagnostics_header.addStretch(1)
-        diagnostics_layout.addLayout(diagnostics_header)
-        diagnostics_note = QLabel(
-            "Static environment checks only. Results do not qualify physical hardware.", self.diagnostics_page
-        )
-        diagnostics_note.setStyleSheet("color: #64748b;")
-        diagnostics_layout.addWidget(diagnostics_note)
         self.diagnostics_text = QPlainTextEdit(self.diagnostics_page)
         self.diagnostics_text.setReadOnly(True)
         self.diagnostics_text.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
@@ -338,7 +340,8 @@ class LogConsole(QWidget):
             "border: 1px solid #cbd5e1; border-radius: 4px; padding: 4px 6px; color: #1f2937; } "
             "QPushButton#RunDiagnosticsButton { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; "
             "border-radius: 4px; padding: 5px 10px; font-weight: 600; } "
-            "QPushButton#RunDiagnosticsButton:hover { background: #dbeafe; }"
+            "QPushButton#RunDiagnosticsButton:hover { background: #dbeafe; } "
+            "QPushButton#RunDiagnosticsButton:focus { border: 2px solid #60a5fa; }"
         )
 
         self.level_filter.currentTextChanged.connect(self._filter_changed)
@@ -349,13 +352,32 @@ class LogConsole(QWidget):
         self.open_button.clicked.connect(self.open_log_file)
         self.copy_diagnostics_button.clicked.connect(self.copy_diagnostics)
         self.run_diagnostics_button.clicked.connect(self.run_diagnostics)
-        self.refresh_diagnostics_button.clicked.connect(self.run_diagnostics)
 
         self._timer = QTimer(self)
         self._timer.setInterval(100)
         self._timer.timeout.connect(self._drain)
         self._timer.start()
         self._drain()
+
+    def _set_log_tab_stops(self, font: QFont) -> None:
+        """Align timestamp, centered level, and message using logical pixels."""
+        metrics = QFontMetricsF(font)
+        severity_font = QFont(font)
+        severity_font.setWeight(QFont.Weight.DemiBold)
+        severity_metrics = QFontMetricsF(severity_font)
+        timestamp_stop = metrics.horizontalAdvance("00:00:00") + metrics.horizontalAdvance("  ")
+        severity_width = max(severity_metrics.horizontalAdvance(level) for level in LEVEL_COLORS)
+        severity_center = timestamp_stop + severity_width / 2
+        message_stop = timestamp_stop + severity_width + 14
+        option = self.text.document().defaultTextOption()
+        option.setTabs(
+            [
+                QTextOption.Tab(timestamp_stop, QTextOption.TabType.LeftTab),
+                QTextOption.Tab(severity_center, QTextOption.TabType.CenterTab),
+                QTextOption.Tab(message_stop, QTextOption.TabType.LeftTab),
+            ]
+        )
+        self.text.document().setDefaultTextOption(option)
 
     @staticmethod
     def _icon_button(icon_path: str, accessible_name: str) -> QToolButton:
@@ -472,7 +494,7 @@ class LogConsole(QWidget):
             from tools.check_environment import collect_diagnostics, render_report
 
             report_data = collect_diagnostics()
-            report = render_report(report_data)
+            report = _gui_diagnostics_report(render_report(report_data))
         except Exception as error:
             report = f"Environment diagnostics failed: {type(error).__name__}: {error}"
             self.logger.exception("Environment diagnostics failed.")
