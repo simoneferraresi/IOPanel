@@ -256,6 +256,38 @@ Run the following command from the project root:
 uv run pyside6-rcc resources/resources.qrc -o resources/resources_rc.py
 ```
 
+### Application icon
+
+Choose **View → Application Icon** to switch between Optical Burst and Prism
+Spectrum. The selection applies to the running application and is saved in
+Qt `QSettings` under `Appearance/application_icon`; Optical Burst is the
+default. It is independent of `config.ini`.
+
+Qt updates the running app and window icon, which Windows uses for the running
+window, taskbar, and Alt+Tab where supported. This does not change an executable's
+embedded icon or existing pinned shortcuts. A separately configured executable
+or installer must use a build-time icon; Optical Burst is the proposed default,
+with Prism Spectrum available as an alternative. This repository does not
+currently define an executable packaging configuration.
+
+Runtime icons are pre-rendered transparent PNGs embedded in the Qt resource
+bundle, so launching or switching icons needs no external image packages or
+repository-relative paths. To regenerate them from the approved SVG masters,
+install `tools/icons/requirements-icon-tools.txt` in an isolated environment,
+then run:
+
+```powershell
+.icon-tools\Scripts\python tools\icons\build_icons.py
+.icon-tools\Scripts\python tools\icons\export_runtime_resources.py
+uv run pyside6-rcc resources/resources.qrc -o resources/resources_rc.py
+```
+
+The exporter copies the 16, 24, 32, 48, 64, 128, and 256 px RGBA outputs for
+both identifiers from the generator's ignored output directory. To add a future
+candidate, first approve its vector master and generated PNGs, then add its
+stable identifier and display name in `ui/application_icons.py`, its preference
+validation in `app_settings.py`, Qt resource aliases, and focused tests.
+
 ### Project Structure
 
 The codebase is organized into hardware abstractions, UI components, and a main application entry point.

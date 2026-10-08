@@ -15,6 +15,7 @@ class AppSettings:
 
     SCHEMA_VERSION = 1
     MAX_SPLITTER_SIZE = 1_000_000
+    APPLICATION_ICON_IDS = frozenset({"optical_burst", "prism_spectrum"})
 
     def __init__(self, backend: QSettings | None = None) -> None:
         self._settings = backend if backend is not None else QSettings()
@@ -107,6 +108,16 @@ class AppSettings:
 
     def set_log_console_geometry(self, value: QByteArray) -> None:
         self._write("MainWindow/log_console_geometry", value)
+
+    def application_icon(self) -> str:
+        """Return the selected application icon, falling back to Optical Burst."""
+        value = self._read("Appearance/application_icon", None)
+        return value if isinstance(value, str) and value in self.APPLICATION_ICON_IDS else "optical_burst"
+
+    def set_application_icon(self, icon_id: str) -> None:
+        """Persist a supported application icon identifier."""
+        if isinstance(icon_id, str) and icon_id in self.APPLICATION_ICON_IDS:
+            self._write("Appearance/application_icon", icon_id)
 
     def log_console_level(self, fallback: str = "All") -> str:
         value = self._read("MainWindow/log_console_level", fallback)
