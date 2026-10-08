@@ -9,6 +9,7 @@ from PySide6.QtTest import QSignalSpy
 from PySide6.QtWidgets import QToolButton
 
 from hardware.ct400_types import CT400ScanResultKind, Detector, LaserInput
+from logic.scan_import import ImportedScan
 from logic.scan_measurement import ScanAcquisitionSettings, ScanMeasurement
 from ui import plot_widgets
 from ui.alignment_panel import AlignmentPanel
@@ -503,6 +504,76 @@ def _detector_measurement(wavelengths, detector_data, detectors, *, final_pout=N
         True,
         completed_at_utc or datetime.now(UTC),
     )
+
+
+def _imported_overlay(path, wavelengths=(1.0, 2.0), detectors=(Detector.DE_1,)):
+    return ImportedScan(
+        np.asarray(wavelengths),
+        np.asarray([[float(index) for index in range(len(wavelengths))] for _ in detectors]),
+        tuple(detectors),
+        Path(path),
+        "CSV",
+        2,
+        datetime.now(UTC),
+        20,
+        1.0,
+        2.0,
+        "mW",
+        LaserInput.LI_2,
+        "fixture",
+        "hardware.dummy_ct400.DummyCT400",
+        True,
+        CT400ScanResultKind.SUCCESS,
+        0,
+        None,
+    )
+
+
+def test_imported_overlays_are_independent_bounded_and_managed(qtbot, tmp_path, monkeypatch):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    current = _detector_measurement([1.0, 2.0], [[4.0, 5.0]], (Detector.DE_1,))
+    widget.set_measurement(current)
+    widget.freeze_current_trace()
+    reference = widget.reference_measurement
+    first = _imported_overlay(tmp_path / "a" / "scan.csv", (1.0, 2.0))
+    first.source_path.parent.mkdir()
+    second = _imported_overlay(tmp_path / "b" / "scan.csv", (1.5, 2.5))
+    second.source_path.parent.mkdir()
+
+    assert widget.add_imported_overlay(first)
+    assert widget.add_imported_overlay(second)
+    assert not widget.add_imported_overlay(first)
+    assert widget.current_measurement is current
+    assert widget.reference_measurement is reference
+    assert len(widget.scan_overlays) == 2
+    assert widget.scan_overlays[0].label != widget.scan_overlays[1].label
+    assert len(widget.scan_overlays[0].items) == 1
+    assert len(widget.detector_legend.items) == 3
+
+    first_overlay = widget.scan_overlays[0]
+    widget.set_overlay_visible(first_overlay.identity, False)
+    assert not first_overlay.items[Detector.DE_1].isVisible()
+    widget.set_overlay_visible(first_overlay.identity, True)
+    widget.remove_overlay(first_overlay.identity)
+    assert len(widget.scan_overlays) == 1
+    assert widget.current_measurement is current
+    assert widget.reference_measurement is reference
+
+    widget.clear_overlays()
+    assert not widget.scan_overlays
+    assert widget.current_measurement is current
+    assert widget.reference_measurement is reference
+    monkeypatch.setattr(
+        plot_widgets.QMessageBox,
+        "question",
+        lambda *_args: plot_widgets.QMessageBox.StandardButton.No,
+    )
+    for index in range(plot_widgets.MAX_OVERLAY_SCANS):
+        scan = _imported_overlay(tmp_path / f"{index}.csv")
+        assert widget.add_imported_overlay(scan)
+    assert not widget.add_imported_overlay(_imported_overlay(tmp_path / "too-many.csv"))
+    assert len(widget.scan_overlays) == plot_widgets.MAX_OVERLAY_SCANS
 
 
 @pytest.mark.parametrize(
