@@ -1,0 +1,34 @@
+name: Windows one-folder package
+
+on:
+  push:
+    branches: ["feat/windows-onefolder-package"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  windows-x64:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.12"
+          architecture: x64
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          version: "0.12.21"
+      - run: uv sync --locked --extra dev --extra test
+      - run: uv run --no-sync pyinstaller --clean --noconfirm packaging/IOPanel.spec
+      - name: Add simulation-only sidecar configuration
+        run: Copy-Item packaging/config.simulation.ini dist/IOPanel/config.ini
+        shell: pwsh
+      - name: Launch packaged application and verify clean shutdown
+        run: uv run --no-sync python tools/smoke_frozen.py dist/IOPanel/IOPanel.exe --timeout 45
+      - uses: actions/upload-artifact@v7.0.0
+        with:
+          name: IOPanel-windows-x64-simulation
+          path: dist/IOPanel/
+          if-no-files-found: error
+          retention-days: 7

@@ -32,6 +32,7 @@ MANIFEST
 # PyInstaller
 # Usually these files are created by pyinstaller, if you ever use it
 *.spec
+!packaging/IOPanel.spec
 dist/
 build/
 

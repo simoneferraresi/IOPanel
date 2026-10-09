@@ -16,7 +16,9 @@ This script is responsible for:
 
 import argparse
 import logging
+import os
 import sys
+import tempfile
 import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -35,6 +37,49 @@ APP_NAME = "IOPanel"
 APP_VERSION = "0.3.0"
 DEFAULT_LOG_FILE = Path("lab_app.log")
 DEFAULT_CONFIG_FILE = Path("config.ini")
+
+
+def is_frozen() -> bool:
+    return bool(getattr(sys, "frozen", False))
+
+
+def application_data_dir() -> Path:
+    """Return a writable per-user directory for mutable application files."""
+    root = (
+        Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+        if sys.platform == "win32"
+        else Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state"))
+    )
+    try:
+        result = root / APP_NAME
+        result.mkdir(parents=True, exist_ok=True)
+        return result
+    except OSError:
+        result = Path(tempfile.gettempdir()) / APP_NAME
+        result.mkdir(parents=True, exist_ok=True)
+        return result
+
+
+def resolve_config_path(path: Path | None) -> Path:
+    """Resolve frozen relative configs beside the executable."""
+    configured = path or DEFAULT_CONFIG_FILE
+    if configured.is_absolute() or not is_frozen():
+        return configured
+    return Path(sys.executable).resolve().parent / configured
+
+
+def resolve_log_path(path: Path) -> Path:
+    """Resolve frozen relative logs into the writable user data directory."""
+    if path.is_absolute() or not is_frozen():
+        return path
+    return application_data_dir() / path
+
+
+def is_simulation_smoke_config(app_config: AppConfig) -> bool:
+    """Reject smoke configurations that could attempt native camera/CT400 startup."""
+    return app_config.instruments.ct400_backend == "simulation" and all(
+        not camera.enabled or camera.backend == "simulation" for camera in app_config.cameras.values()
+    )
 
 
 class ConfigLoadError(Exception):
@@ -188,7 +233,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--config",
         type=Path,
-        default=DEFAULT_CONFIG_FILE,
+        default=None,
         help=f"Path to the configuration file (default: {DEFAULT_CONFIG_FILE})",
     )
     parser.add_argument(
@@ -203,6 +248,7 @@ def parse_args() -> argparse.Namespace:
         help="Path to the log file (overrides config file setting)",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {APP_VERSION}")
+    parser.add_argument("--smoke-test", action="store_true", help=argparse.SUPPRESS)
     return parser.parse_args()
 
 
@@ -219,6 +265,7 @@ def main() -> int:
         The exit code of the application. 0 for success, 1 for failure.
     """
     args = parse_args()
+    config_path = resolve_config_path(args.config)
 
     # Temporarily configure basic logging to catch errors during config loading.
     # This will be replaced by the full-featured logger shortly.
@@ -226,9 +273,9 @@ def main() -> int:
 
     # Load the raw dictionary from the .ini file before schema validation.
     try:
-        raw_config_dict = load_raw_config_from_ini(args.config)
+        raw_config_dict = load_raw_config_from_ini(config_path)
     except ConfigLoadError as e:
-        error_msg = f"Configuration file '{args.config}' could not be loaded.\n\n{e}"
+        error_msg = f"Configuration file '{config_path}' could not be loaded.\n\n{e}"
         logging.critical(error_msg)  # noqa: LOG015 — bootstrap logging runs before the app logger is configured.
         _ = QApplication.instance() or QApplication(sys.argv)
         QMessageBox.critical(None, "Configuration Load Error", error_msg)
@@ -238,23 +285,29 @@ def main() -> int:
     try:
         app_config = AppConfig.from_ini_dict(raw_config_dict)
     except ConfigSemanticError as e:
-        error_msg = f"Configuration file '{args.config}' has an invalid structure.\n\n{e}"
+        error_msg = f"Configuration file '{config_path}' has an invalid structure.\n\n{e}"
         logging.critical(error_msg)  # noqa: LOG015 — bootstrap logging runs before the app logger is configured.
         _ = QApplication.instance() or QApplication(sys.argv)
         QMessageBox.critical(None, "Configuration Error", error_msg)
         return 1
     except ValidationError as e:
         # Pydantic gives beautiful, human-readable errors.
-        error_msg = f"Configuration file '{args.config}' is invalid.\n\nErrors:\n{e}"
+        error_msg = f"Configuration file '{config_path}' is invalid.\n\nErrors:\n{e}"
         logging.critical(error_msg)  # noqa: LOG015 — bootstrap logging runs before the app logger is configured.
         # Show a message box, creating a temporary QApplication if needed.
         _ = QApplication.instance() or QApplication(sys.argv)
         QMessageBox.critical(None, "Configuration Error", error_msg)
         return 1
 
+    if args.smoke_test and not is_simulation_smoke_config(app_config):
+        logging.getLogger("LabApp").critical(
+            "Smoke mode requires simulated CT400 and enabled cameras; refusing hardware startup."
+        )
+        return 2
+
     # Determine final logging settings (CLI args > config file > model defaults)
     log_level_str = args.log_level or app_config.logging.level
-    log_file_path = args.log_file or Path(app_config.logging.file)
+    log_file_path = resolve_log_path(args.log_file or Path(app_config.logging.file))
     log_level_int = getattr(logging, log_level_str, logging.INFO)
 
     # Set up the main application logger with the final settings
@@ -271,7 +324,7 @@ def main() -> int:
     sys.excepthook = global_exception_hook
 
     logger.info(f"--- Starting {app_config.app_name} v{APP_VERSION} ---")
-    logger.info(f"Using configuration from: {args.config.resolve()}")
+    logger.info(f"Using configuration from: {config_path.resolve()}")
     logger.info(f"Log level set to: {log_level_str}")
     logger.info(f"Logging to file: {log_file_path.resolve()}")
 
@@ -279,10 +332,39 @@ def main() -> int:
         app = QApplication(sys.argv)
         configure_qt_application(app, app_config.app_name)
 
+        if args.smoke_test:
+            from PySide6.QtCore import QTimer
+
+            from ui.application_icons import application_icon
+            from ui.typography import _FONT_FAMILIES
+
+            icon = application_icon("optical_burst")
+            if icon.isNull() or not _FONT_FAMILIES["sans"] or not _FONT_FAMILIES["mono"]:
+                logger.error("Smoke resource verification failed: bundled icon or fonts unavailable.")
+                return 3
+            logger.info("SMOKE_RESOURCES_OK icon=optical_burst fonts=%s,%s", *_FONT_FAMILIES.values())
+
         window = MainWindow(config=app_config, settings=AppSettings())
         window.log_console.log_file = log_file_path
         window.show()
-        window.plot_widget.schedule_matlab_prewarm()
+        if args.smoke_test:
+
+            def close_when_initialized():
+                if not window._lazy_init_started or window._init_tasks:
+                    QTimer.singleShot(100, close_when_initialized)
+                    return
+                else:
+                    expected_cameras = sum(cam.enabled for cam in app_config.cameras.values())
+                    actual_cameras = len(window.cameras)
+                    logger.info("SMOKE_SIMULATION_READY cameras=%d/%d", actual_cameras, expected_cameras)
+                    window.close()
+                    if actual_cameras != expected_cameras:
+                        logger.error("Smoke camera initialization incomplete.")
+                        app.exit(4)
+
+            QTimer.singleShot(100, close_when_initialized)
+        else:
+            window.plot_widget.schedule_matlab_prewarm()
 
         about_to_quit_at: float | None = None
 
