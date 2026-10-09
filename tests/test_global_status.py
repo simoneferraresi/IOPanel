@@ -11,8 +11,7 @@ from ui.main_window import CT400OperationState, CT400Status
 
 def test_ct400_status_separates_physical_simulated_and_uncertain_states():
     assert "Disconnected" in format_ct400_status(CT400Status.DISCONNECTED).text
-    assert format_ct400_status(CT400Status.CONNECTED, input_name="INPUT_2").text.endswith("INPUT_2")
-    assert "unknown" in format_ct400_status(CT400Status.CONNECTED).text
+    assert format_ct400_status(CT400Status.CONNECTED).text == "CT400: Connected"
     assert format_ct400_status(CT400Status.CONNECTED, simulated=True).text == "CT400: SIMULATED"
     assert "confirmation" in format_ct400_status(CT400Status.RECOVERY_CONFIRMATION_REQUIRED).tooltip
     assert format_ct400_status(CT400Status.SCAN_STATE_UNCERTAIN).state == "error"

@@ -1061,11 +1061,6 @@ class MainWindow(QMainWindow):
             format_ct400_status(
                 state,
                 simulated=isinstance(self.ct400_device, DummyCT400),
-                input_name=(
-                    self._ct400_connected_laser_input.name
-                    if self._ct400_connection_configured and self._ct400_connected_laser_input is not None
-                    else None
-                ),
                 operation=self._ct400_operation_state,
             ),
         )
@@ -1110,11 +1105,6 @@ class MainWindow(QMainWindow):
             format_ct400_status(
                 getattr(self, "_ct400_visual_state", CT400Status.UNKNOWN),
                 simulated=isinstance(self.ct400_device, DummyCT400),
-                input_name=(
-                    self._ct400_connected_laser_input.name
-                    if self._ct400_connection_configured and self._ct400_connected_laser_input is not None
-                    else None
-                ),
                 operation=self._ct400_operation_state,
             ),
         )

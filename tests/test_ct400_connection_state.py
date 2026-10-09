@@ -97,7 +97,7 @@ def test_physical_actions_follow_confirmed_input_and_connection_transitions(qtbo
         window._set_ct400_operation_state(CT400OperationState.IDLE)
 
         window._handle_ct400_connection_success("Connected", LaserInput.LI_3)
-        assert window.ct400_status_label.text() == "CT400: Connected · LI_3"
+        assert window.ct400_status_label.text() == "CT400: Connected"
         scan = window.control_panel
         monitor = window.histogram_control
         assert scan.scan_btn.isEnabled()
@@ -107,6 +107,7 @@ def test_physical_actions_follow_confirmed_input_and_connection_transitions(qtbo
         monitor.input_port.setCurrentIndex(monitor.input_port.findData(LaserInput.LI_2))
         assert not scan.scan_btn.isEnabled()
         assert not monitor.monitor_btn.isEnabled()
+        assert window.ct400_status_label.text() == "CT400: Connected"
 
         scan.input_port.setCurrentIndex(scan.input_port.findData(LaserInput.LI_3))
         monitor.input_port.setCurrentIndex(monitor.input_port.findData(LaserInput.LI_3))

@@ -26,7 +26,6 @@ def format_ct400_status(
     state: Enum,
     *,
     simulated: bool = False,
-    input_name: str | None = None,
     operation: Enum | None = None,
 ) -> StatusText:
     if simulated:
@@ -42,10 +41,8 @@ def format_ct400_status(
         "CONNECTING": ("Connecting", "CT400 laser connection is in progress", "busy"),
         "DISCONNECTING": ("Disconnecting", "CT400 laser disconnection is in progress", "busy"),
         "CONNECTED": (
-            f"Connected · {input_name}" if input_name else "Connected · input unknown",
-            "Laser connection is authorized for the recorded CT400 input"
-            if input_name
-            else "CT400 reports connected, but no authorized input is recorded",
+            "Connected",
+            "CT400 laser connection was confirmed by the explicit Connect operation",
             "connected",
         ),
         "ERROR": ("Error", "CT400 native operation failed; physical state may require recovery", "error"),
