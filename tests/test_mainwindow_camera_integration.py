@@ -188,6 +188,16 @@ def test_global_status_tracks_lifecycle_without_startup_or_hardware_commands(qtb
     assert window.ct400_status_label.text() == "CT400: SIMULATED"
     assert window.cameras_status_label.text() == "Cameras: Simulated"
     assert window.activity_status_label.text() == "Activity: Idle"
+    window.resize(1200, 800)
+    qtbot.waitUntil(lambda: window.statusBar().width() >= 1200)
+    indicators = (
+        window.ct400_status_label,
+        window.cameras_status_label,
+        window.matlab_status_label,
+        window.activity_status_label,
+    )
+    assert sum(label.sizeHint().width() for label in indicators) < window.statusBar().width()
+    assert all(not label.styleSheet() for label in indicators)
 
     manager._set_state(MatlabEngineState.STARTING)
     assert window.matlab_status_label.text() == "MATLAB: Starting"
