@@ -1,3 +1,5 @@
+import json
+import logging
 import threading
 
 import pytest
@@ -57,8 +59,8 @@ def test_scan_activity_is_indeterminate_and_elapsed_time_is_deterministic(qtbot,
 @pytest.mark.parametrize(
     ("elapsed", "expected"),
     [
-        (0, "Elapsed: 00:00    Estimated remaining: ~00:02"),
-        (1.01, "Elapsed: 00:01    Estimated remaining: ~00:01"),
+        (0, "Elapsed: 00:00    Estimated remaining: 00:02"),
+        (1.01, "Elapsed: 00:01    Estimated remaining: 00:01"),
         (2, "Elapsed: 00:02    Estimated duration exceeded"),
         (9, "Elapsed: 00:09    Estimated duration exceeded"),
     ],
@@ -123,19 +125,28 @@ def test_invalid_scan_validation_does_not_start_activity(qtbot, monkeypatch):
     assert not panel.scan_elapsed_label.isVisible()
 
 
-def test_simulated_scan_eta_is_unavailable_and_does_not_change_worker_timing(qtbot):
+def test_simulated_scan_eta_is_unavailable_and_logs_speed_source(qtbot, caplog):
     device = DummyCT400(scan_duration=0)
     panel = _panel(qtbot, device)
     panel.config.scan_defaults.speed_nm_s = 3
     panel.initial_wl.setText("1550")
     panel.final_wl.setText("1556")
 
-    panel._start_scan()
+    with caplog.at_level(logging.INFO, logger="LabApp.control_panel"):
+        panel._start_scan()
+        active_label_text = panel.scan_elapsed_label.text()
+        active_progress_range = (panel.progress_bar.minimum(), panel.progress_bar.maximum())
+        qtbot.waitUntil(lambda: not panel.scanning, timeout=3000)
 
-    assert panel.scan_elapsed_label.text().endswith("Estimated remaining: unavailable")
-    assert (panel.progress_bar.minimum(), panel.progress_bar.maximum()) == (0, 0)
-    qtbot.waitUntil(lambda: not panel.scanning, timeout=3000)
+    assert active_label_text.endswith("Estimated remaining: unavailable")
+    assert active_progress_range == (0, 0)
     assert device.scan_wait_end_calls == 1
+    record = next(record for record in caplog.records if record.getMessage().startswith("Scan timing summary: "))
+    timing = json.loads(record.getMessage().split(": ", 1)[1])
+    assert timing["configured_speed_nm_s_at_connect"] == 3
+    assert timing["scan_panel_speed_nm_s"] == "10"
+    assert timing["scan_panel_speed_differs_from_configured"] is True
+    assert timing["simulated"] is True
 
 
 def test_stop_request_keeps_busy_ui_until_cancelled_worker_finishes(qtbot):
