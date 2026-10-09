@@ -215,6 +215,7 @@ class MainWindow(QMainWindow):
         self.vmb_instance: VmbSystem | None = None
         self.is_ct400_connected_state: bool = False
         self._ct400_connected_laser_input: LaserInput | None = None
+        self._ct400_cleanup_laser_input: LaserInput | None = None
         self._ct400_connection_operation_token = 0
         self._pending_ct400_device_replacement: AbstractCT400 | None = None
         self._ct400_connection_configured: bool = False
@@ -486,6 +487,7 @@ class MainWindow(QMainWindow):
         if old_device is not device:
             self._ct400_connection_operation_token += 1
             self._ct400_connected_laser_input = None
+            self._ct400_cleanup_laser_input = None
             self._ct400_connection_configured = False
 
         # Now that the device exists, pass it to the control panels
@@ -1316,12 +1318,12 @@ class MainWindow(QMainWindow):
             self._pending_ct400_operation_close = False
             QTimer.singleShot(0, self.close)
 
-    @Slot()
     def _is_current_ct400_connection_callback(self, token: int | None, device: AbstractCT400 | None) -> bool:
         return (token is None or token == self._ct400_connection_operation_token) and (
             device is None or device is self.ct400_device
         )
 
+    @Slot(int, object)
     def _handle_ct400_connection_operation_finished(
         self, token: int | None = None, device: AbstractCT400 | None = None
     ):
@@ -1342,7 +1344,7 @@ class MainWindow(QMainWindow):
 
         self._resume_close_after_ct400_operation()
 
-    @Slot(str)
+    @Slot(str, object, int, object)
     def _handle_ct400_connection_success(
         self,
         message: str,
@@ -1354,14 +1356,16 @@ class MainWindow(QMainWindow):
         if not self._is_current_ct400_connection_callback(token, device):
             logger.info("Ignoring stale CT400 connection-success callback.")
             return
-        laser_input = laser_input or LaserInput(self.config.scan_defaults.input_port)
+        if laser_input is None:
+            laser_input = LaserInput(self.config.scan_defaults.input_port)
         self._ct400_connected_laser_input = laser_input
+        self._ct400_cleanup_laser_input = laser_input
         self._ct400_connection_configured = True
         self._update_ct400_visuals(state=CT400Status.CONNECTED, message=message)
         self.control_panel.set_connected_laser_input(laser_input)
         self.histogram_control.set_connected_laser_input(laser_input)
 
-    @Slot(str)
+    @Slot(str, int, object)
     def _handle_ct400_connection_failure(
         self, error_message: str, token: int | None = None, device: AbstractCT400 | None = None
     ):
@@ -1370,10 +1374,13 @@ class MainWindow(QMainWindow):
             logger.info("Ignoring stale CT400 connection-failure callback.")
             return
         self._update_ct400_visuals(state=CT400Status.ERROR, message=error_message)
+        # A failed operation revokes use authorization. Keep the last
+        # successfully configured input separately for shutdown cleanup.
+        self._ct400_connected_laser_input = None
         self.control_panel.set_connected_laser_input(None)
         self.histogram_control.set_connected_laser_input(None)
 
-    @Slot(str)
+    @Slot(str, int, object)
     def _handle_ct400_disconnection_success(
         self, message: str, token: int | None = None, device: AbstractCT400 | None = None
     ):
@@ -1383,6 +1390,7 @@ class MainWindow(QMainWindow):
             return
         self._ct400_connection_configured = False
         self._ct400_connected_laser_input = None
+        self._ct400_cleanup_laser_input = None
         self._update_ct400_visuals(state=CT400Status.DISCONNECTED, message=message)
         self.control_panel.set_connected_laser_input(None)
         self.histogram_control.set_connected_laser_input(None)
@@ -1782,7 +1790,7 @@ class MainWindow(QMainWindow):
 
     def _disable_configured_ct400_input_for_shutdown(self) -> bool:
         """Apply the connection-level selected-input cleanup before close."""
-        laser_input = LaserInput(self.config.scan_defaults.input_port)
+        laser_input = self._ct400_cleanup_laser_input or LaserInput(self.config.scan_defaults.input_port)
         try:
             self.ct400_device.cmd_laser(
                 laser_input=laser_input,
