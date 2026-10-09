@@ -174,6 +174,45 @@ def test_mainwindow_loads_simulation_config_and_displays_camera_frames(qtbot, mo
     assert not panel.video_label.pixmap().isNull()
 
     _close_window_and_check_cleanup(window, qtbot)
+
+
+def test_global_status_tracks_lifecycle_without_startup_or_hardware_commands(qtbot, monkeypatch, tmp_path):
+    window = _start_main_window(qtbot, monkeypatch, tmp_path, camera_count=2)
+    manager = window.plot_widget.matlab_engine_manager
+
+    def forbidden_startup():
+        raise AssertionError("status rendering must not request MATLAB startup")
+
+    monkeypatch.setattr(manager, "request_engine", forbidden_startup)
+    window._refresh_global_status()
+    assert window.ct400_status_label.text() == "CT400: Simulated"
+    assert window.cameras_status_label.text() == "Cameras: Simulated"
+    assert window.activity_status_label.text() == "Activity: Idle"
+
+    manager._set_state(MatlabEngineState.STARTING)
+    assert window.matlab_status_label.text() == "MATLAB: Starting"
+    manager._set_state(MatlabEngineState.FAILED)
+    assert window.matlab_status_label.text() == "MATLAB: Failed"
+
+    for operation, expected in (
+        (main_window_module.CT400OperationState.SCANNING, "Activity: Scanning"),
+        (main_window_module.CT400OperationState.MONITORING, "Activity: Monitoring"),
+        (main_window_module.CT400OperationState.ALIGNMENT, "Activity: Aligning"),
+        (main_window_module.CT400OperationState.IDLE, "Activity: Idle"),
+    ):
+        window._set_ct400_operation_state(operation)
+        assert window.activity_status_label.text() == expected
+
+    panel = next(iter(window.camera_panels.values()))
+    panel.recovery_started()
+    assert window.cameras_status_label.text() == "Cameras: Mixed"
+    panel.recovery_failed("test failure")
+    assert window.cameras_status_label.text() == "Cameras: Mixed"
+    panel.recovery_succeeded()
+    panel.process_new_frame_data()
+    assert window.cameras_status_label.text() == "Cameras: Simulated"
+
+    _close_window_and_check_cleanup(window, qtbot)
     assert not window.log_console._timer.isActive()
     assert not window.log_console_dock.isVisible()
 
