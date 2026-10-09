@@ -30,7 +30,7 @@ def format_ct400_status(
     operation: Enum | None = None,
 ) -> StatusText:
     if simulated:
-        return StatusText("CT400: Simulated", "CT400 simulation backend", "simulated")
+        return StatusText("CT400: SIMULATED", "CT400 simulation backend", "simulated")
     labels = {
         "UNKNOWN": ("Initializing", "CT400 initialization is in progress", "initializing"),
         "UNAVAILABLE": ("Unavailable", "CT400 backend is unavailable", "unavailable"),

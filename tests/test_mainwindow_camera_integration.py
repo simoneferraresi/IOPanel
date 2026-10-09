@@ -185,7 +185,7 @@ def test_global_status_tracks_lifecycle_without_startup_or_hardware_commands(qtb
 
     monkeypatch.setattr(manager, "request_engine", forbidden_startup)
     window._refresh_global_status()
-    assert window.ct400_status_label.text() == "CT400: Simulated"
+    assert window.ct400_status_label.text() == "CT400: SIMULATED"
     assert window.cameras_status_label.text() == "Cameras: Simulated"
     assert window.activity_status_label.text() == "Activity: Idle"
 
