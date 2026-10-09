@@ -214,6 +214,9 @@ class MainWindow(QMainWindow):
         self.shared_scan_settings = ScanSettings()
         self.vmb_instance: VmbSystem | None = None
         self.is_ct400_connected_state: bool = False
+        self._ct400_connected_laser_input: LaserInput | None = None
+        self._ct400_connection_operation_token = 0
+        self._pending_ct400_device_replacement: AbstractCT400 | None = None
         self._ct400_connection_configured: bool = False
         self._ct400_operation_state = CT400OperationState.IDLE
         self._pending_ct400_operation_close: bool = False
@@ -463,6 +466,13 @@ class MainWindow(QMainWindow):
         that depends on the CT400.
         """
         logger.info(f"CT400 initialization finished. Received device: {type(device)}")
+        if device is not self.ct400_device and self._ct400_operation_state in (
+            CT400OperationState.CONNECTING,
+            CT400OperationState.DISCONNECTING,
+        ):
+            logger.warning("Deferring CT400 replacement until the active connection worker releases its device.")
+            self._pending_ct400_device_replacement = device
+            return
         if self._alignment_hardware_transition_blocked() and device is not self.ct400_device:
             logger.warning("Ignoring CT400 replacement while alignment owns the current hardware.")
             if isinstance(device, CT400):
@@ -471,7 +481,12 @@ class MainWindow(QMainWindow):
                 except Exception:
                     logger.exception("Could not release rejected CT400 resources.")
             return
+        old_device = self.ct400_device
         self.ct400_device = device
+        if old_device is not device:
+            self._ct400_connection_operation_token += 1
+            self._ct400_connected_laser_input = None
+            self._ct400_connection_configured = False
 
         # Now that the device exists, pass it to the control panels
         self.control_panel.set_instrument(self.ct400_device)
@@ -483,8 +498,17 @@ class MainWindow(QMainWindow):
         # DummyCT400 exposes the same scan interface and is safe to operate in
         # development mode. Keep it unavailable to connection controls, but
         # allow scans and label their results as simulated below.
-        self.control_panel.on_instrument_connected(is_real_ct400 or is_simulated_ct400)
-        self.histogram_control.on_instrument_connected(is_real_ct400 or is_simulated_ct400)
+        self.control_panel.set_connected_laser_input(None)
+        self.histogram_control.set_connected_laser_input(None)
+        if is_simulated_ct400:
+            self.control_panel.on_instrument_connected(True)
+            self.histogram_control.on_instrument_connected(True)
+
+        if old_device is not None and old_device is not device and isinstance(old_device, CT400):
+            try:
+                old_device.close()
+            except Exception:
+                logger.exception("Could not close replaced CT400 device.")
 
         if is_real_ct400:
             self._update_ct400_visuals(state=CT400Status.DISCONNECTED, message="CT400 Ready (Disconnected)")
@@ -1208,7 +1232,17 @@ class MainWindow(QMainWindow):
                 action.setEnabled(False)
             return
 
-        worker = CT400ConnectionWorker(self.ct400_device, self.config, connect=checked)
+        laser_input = (
+            LaserInput(self.config.scan_defaults.input_port)
+            if checked
+            else self._ct400_connected_laser_input or LaserInput(self.config.scan_defaults.input_port)
+        )
+        self._ct400_connection_operation_token += 1
+        token = self._ct400_connection_operation_token
+        device = self.ct400_device
+        worker = CT400ConnectionWorker(
+            device, self.config, connect=checked, laser_input=laser_input, operation_token=token
+        )
         worker.signals.connection_succeeded.connect(self._handle_ct400_connection_success)
         worker.signals.connection_failed.connect(self._handle_ct400_connection_failure)
         worker.signals.disconnection_succeeded.connect(self._handle_ct400_disconnection_success)
@@ -1283,38 +1317,75 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self.close)
 
     @Slot()
-    def _handle_ct400_connection_operation_finished(self):
+    def _is_current_ct400_connection_callback(self, token: int | None, device: AbstractCT400 | None) -> bool:
+        return (token is None or token == self._ct400_connection_operation_token) and (
+            device is None or device is self.ct400_device
+        )
+
+    def _handle_ct400_connection_operation_finished(
+        self, token: int | None = None, device: AbstractCT400 | None = None
+    ):
         """Release connection-operation ownership and resume deferred shutdown."""
+        if not self._is_current_ct400_connection_callback(token, device):
+            logger.info("Ignoring stale CT400 connection completion callback.")
+            return
         if self._ct400_operation_state in (CT400OperationState.CONNECTING, CT400OperationState.DISCONNECTING):
             self._set_ct400_operation_state(CT400OperationState.IDLE)
         action = getattr(self, "ct400_connect_action", None)
         if action is not None:
             action.setEnabled(True)
 
+        if self._pending_ct400_device_replacement is not None:
+            replacement = self._pending_ct400_device_replacement
+            self._pending_ct400_device_replacement = None
+            self._on_ct400_initialized(replacement)
+
         self._resume_close_after_ct400_operation()
 
     @Slot(str)
-    def _handle_ct400_connection_success(self, message: str):
+    def _handle_ct400_connection_success(
+        self,
+        message: str,
+        laser_input: LaserInput | None = None,
+        token: int | None = None,
+        device: AbstractCT400 | None = None,
+    ):
         """Slot to handle a successful CT400 connection."""
+        if not self._is_current_ct400_connection_callback(token, device):
+            logger.info("Ignoring stale CT400 connection-success callback.")
+            return
+        laser_input = laser_input or LaserInput(self.config.scan_defaults.input_port)
+        self._ct400_connected_laser_input = laser_input
         self._ct400_connection_configured = True
         self._update_ct400_visuals(state=CT400Status.CONNECTED, message=message)
-        self.control_panel.on_instrument_connected(True)
-        self.histogram_control.on_instrument_connected(True)
+        self.control_panel.set_connected_laser_input(laser_input)
+        self.histogram_control.set_connected_laser_input(laser_input)
 
     @Slot(str)
-    def _handle_ct400_connection_failure(self, error_message: str):
+    def _handle_ct400_connection_failure(
+        self, error_message: str, token: int | None = None, device: AbstractCT400 | None = None
+    ):
         """Slot to handle a failed CT400 connection or disconnection."""
+        if not self._is_current_ct400_connection_callback(token, device):
+            logger.info("Ignoring stale CT400 connection-failure callback.")
+            return
         self._update_ct400_visuals(state=CT400Status.ERROR, message=error_message)
-        self.control_panel.on_instrument_connected(False)
-        self.histogram_control.on_instrument_connected(False)
+        self.control_panel.set_connected_laser_input(None)
+        self.histogram_control.set_connected_laser_input(None)
 
     @Slot(str)
-    def _handle_ct400_disconnection_success(self, message: str):
+    def _handle_ct400_disconnection_success(
+        self, message: str, token: int | None = None, device: AbstractCT400 | None = None
+    ):
         """Slot to handle a successful CT400 disconnection."""
+        if not self._is_current_ct400_connection_callback(token, device):
+            logger.info("Ignoring stale CT400 disconnection-success callback.")
+            return
         self._ct400_connection_configured = False
+        self._ct400_connected_laser_input = None
         self._update_ct400_visuals(state=CT400Status.DISCONNECTED, message=message)
-        self.control_panel.on_instrument_connected(False)
-        self.histogram_control.on_instrument_connected(False)
+        self.control_panel.set_connected_laser_input(None)
+        self.histogram_control.set_connected_laser_input(None)
 
     def _show_about_dialog(self):
         """Displays the 'About' message box with application info."""

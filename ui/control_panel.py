@@ -103,11 +103,11 @@ QPushButton#monitorButton[monitoring="true"]:disabled { background-color: #e0e0e
 class CT400ConnectionSignals(QObject):
     """Holds signals for the CT400ConnectionWorker."""
 
-    connection_succeeded = Signal(str)
-    connection_failed = Signal(str)
-    disconnection_succeeded = Signal(str)
-    disconnection_failed = Signal(str)
-    finished = Signal()
+    connection_succeeded = Signal(str, object, int, object)
+    connection_failed = Signal(str, int, object)
+    disconnection_succeeded = Signal(str, int, object)
+    disconnection_failed = Signal(str, int, object)
+    finished = Signal(int, object)
 
 
 class CT400ConnectionWorker(QRunnable):
@@ -115,11 +115,20 @@ class CT400ConnectionWorker(QRunnable):
     A QRunnable to handle connecting/disconnecting the CT400 in the thread pool.
     """
 
-    def __init__(self, ct400_device: AbstractCT400, config: AppConfig, connect: bool):
+    def __init__(
+        self,
+        ct400_device: AbstractCT400,
+        config: AppConfig,
+        connect: bool,
+        laser_input: LaserInput | None = None,
+        operation_token: int = 0,
+    ):
         super().__init__()
         self.ct400 = ct400_device
         self.config = config
         self.is_connect_operation = connect
+        self.laser_input = laser_input or LaserInput(config.scan_defaults.input_port)
+        self.operation_token = operation_token
         self.signals = CT400ConnectionSignals()
 
     @override
@@ -130,7 +139,7 @@ class CT400ConnectionWorker(QRunnable):
             if self.is_connect_operation:
                 logger.info("ConnectionWorker (Runnable): Starting connection.")
                 gpib = self.config.instruments.tunics_gpib_address
-                laser_input = LaserInput(self.config.scan_defaults.input_port)
+                laser_input = self.laser_input
                 min_wl = self.config.scan_defaults.min_wavelength_nm
                 max_wl = self.config.scan_defaults.max_wavelength_nm
                 speed = self.config.scan_defaults.speed_nm_s
@@ -147,31 +156,30 @@ class CT400ConnectionWorker(QRunnable):
                 )
                 success_msg = f"CT400 Connected (Input {laser_input.value})"
                 logger.info(f"ConnectionWorker: {success_msg}")
-                self.signals.connection_succeeded.emit(success_msg)
+                self.signals.connection_succeeded.emit(success_msg, self.laser_input, self.operation_token, self.ct400)
             else:
                 logger.info("ConnectionWorker (Runnable): Starting disconnection.")
-                laser_input_disconnect = LaserInput(self.config.scan_defaults.input_port)
                 safe_wl = self.config.scan_defaults.safe_parking_wavelength
                 safe_power = self.config.scan_defaults.laser_power
                 self.ct400.cmd_laser(
-                    laser_input=laser_input_disconnect,
+                    laser_input=self.laser_input,
                     enable=Enable.DISABLE,
                     wavelength=safe_wl,
                     power=safe_power,
                 )
                 success_msg = "CT400 Disconnected"
                 logger.info(f"ConnectionWorker: {success_msg}")
-                self.signals.disconnection_succeeded.emit(success_msg)
+                self.signals.disconnection_succeeded.emit(success_msg, self.operation_token, self.ct400)
 
         except (CT400Error, ValueError, KeyError, Exception) as e:
             error_msg = f"Operation Failed: {e}"
             logger.exception(f"ConnectionWorker: {error_msg}")
             if self.is_connect_operation:
-                self.signals.connection_failed.emit(error_msg)
+                self.signals.connection_failed.emit(error_msg, self.operation_token, self.ct400)
             else:
-                self.signals.disconnection_failed.emit(error_msg)
+                self.signals.disconnection_failed.emit(error_msg, self.operation_token, self.ct400)
         finally:
-            self.signals.finished.emit()
+            self.signals.finished.emit(self.operation_token, self.ct400)
 
 
 ###############################################################################
@@ -624,7 +632,9 @@ class BaseControlPanel(QWidget, ABC, metaclass=QABCMeta):
         super().__init__(parent)
         self.ct400 = ct400_device
         self.config = config
-        self.is_instrument_connected = self.ct400 is not None
+        self.is_simulated = isinstance(ct400_device, DummyCT400)
+        self.is_instrument_connected = self.is_simulated
+        self.connected_laser_input: LaserInput | None = None
         self.ct400_operation_state = "IDLE"
 
         # These will be created in _init_base_ui and used by subclasses
@@ -676,7 +686,23 @@ class BaseControlPanel(QWidget, ABC, metaclass=QABCMeta):
         """Assigns the live CT400 device and updates UI state."""
         logger.info(f"'{self.objectName()}' received instrument object: {ct400_device is not None}")
         self.ct400 = ct400_device
-        self.on_instrument_connected(self.ct400 is not None)
+        self.is_simulated = isinstance(ct400_device, DummyCT400)
+        self.connected_laser_input = None
+        self.on_instrument_connected(self.is_simulated)
+
+    def set_connected_laser_input(self, laser_input: LaserInput | None) -> None:
+        """Project MainWindow's confirmed physical input into this panel."""
+        self.connected_laser_input = laser_input
+        self.on_instrument_connected(self.is_simulated or laser_input is not None)
+
+    def _selected_input_is_authorized(self) -> bool:
+        if self.is_simulated:
+            return True
+        selected = self.input_port.currentData()
+        return isinstance(selected, LaserInput) and selected is self.connected_laser_input
+
+    def _refresh_action_state(self, *_args) -> None:
+        self.on_instrument_connected(self.is_simulated or self.connected_laser_input is not None)
 
     def on_instrument_connected(self, is_connected: bool):
         """
@@ -695,7 +721,9 @@ class BaseControlPanel(QWidget, ABC, metaclass=QABCMeta):
 
         owns_operation = self._owns_operation_state(self.ct400_operation_state)
         self._get_main_action_button().setEnabled(
-            is_connected and (self.ct400_operation_state == "IDLE" or owns_operation)
+            is_connected
+            and (self.ct400_operation_state == "IDLE" or owns_operation)
+            and (owns_operation or self._selected_input_is_authorized())
         )
 
         # If the instrument disconnects while the panel is busy, force a stop.
@@ -785,6 +813,7 @@ class CT400ControlPanel(BaseControlPanel):
 
         # Initialize subclass-specific UI
         self._init_subclass_ui()
+        self.input_port.currentIndexChanged.connect(self._refresh_action_state)
 
         self._connect_settings_signals()
         self.on_instrument_connected(self.is_instrument_connected)
@@ -963,7 +992,7 @@ class CT400ControlPanel(BaseControlPanel):
             logger.error(
                 "Inconsistent CT400 scan panel state: connected flag is true, but the device reference is unavailable."
             )
-        if not self.is_instrument_connected or ct400 is None:
+        if not self.is_instrument_connected or ct400 is None or not self._selected_input_is_authorized():
             QMessageBox.warning(self, "Not Connected", "CT400 device is not connected.")
             return
         if self.scanning:
@@ -1255,6 +1284,7 @@ class HistogramControlPanel(BaseControlPanel):
 
         # Initialize subclass-specific UI
         self._init_subclass_ui()
+        self.input_port.currentIndexChanged.connect(self._refresh_action_state)
 
         # Setup worker and timer
         self._setup_worker_and_timer()
@@ -1409,7 +1439,7 @@ class HistogramControlPanel(BaseControlPanel):
         ct400 = self.ct400
         if self.is_instrument_connected and ct400 is None:
             logger.error("Monitor Panel: Inconsistent connected state; CT400 device reference is unavailable.")
-        if not self.is_instrument_connected or ct400 is None:
+        if not self.is_instrument_connected or ct400 is None or not self._selected_input_is_authorized():
             logger.error("Monitor Panel: Cannot apply settings, instrument not connected.")
             return False
         try:
@@ -1452,7 +1482,7 @@ class HistogramControlPanel(BaseControlPanel):
         ct400 = self.ct400
         if self.is_instrument_connected and ct400 is None:
             logger.error("Monitor Panel: Inconsistent connected state; CT400 device reference is unavailable.")
-        if not self.is_instrument_connected or ct400 is None:
+        if not self.is_instrument_connected or ct400 is None or not self._selected_input_is_authorized():
             QMessageBox.warning(self, "Not Connected", "CT400 device is not connected.")
             return
         if self.monitoring:
