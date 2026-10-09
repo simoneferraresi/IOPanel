@@ -53,6 +53,7 @@ from logic.power_monitor_recording import (
     PowerMonitorRecordingSample,
     PowerMonitorRecordingStopReason,
 )
+from logic.scan_eta import estimate_sweep_seconds, format_duration
 from logic.scan_measurement import ScanAcquisitionSettings, ScanMeasurement
 from ui.constants import (
     ID_CT400_MONITOR_PANEL,
@@ -687,6 +688,8 @@ class CT400ControlPanel(BaseControlPanel):
         super().__init__(ct400_device, config, parent)
 
         self._scan_started_at: float | None = None
+        self._scan_estimated_duration_seconds: float | None = None
+        self._scan_stopping = False
         self._scan_elapsed_timer = QTimer(self)
         self._scan_elapsed_timer.setInterval(1000)
         self._scan_elapsed_timer.timeout.connect(self._update_scan_elapsed)
@@ -765,8 +768,8 @@ class CT400ControlPanel(BaseControlPanel):
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
         self.progress_bar.setTextVisible(False)
-        activity_layout = QHBoxLayout()
-        activity_layout.addWidget(self.progress_bar, 1)
+        activity_layout = QVBoxLayout()
+        activity_layout.addWidget(self.progress_bar)
         self.scan_elapsed_label = QLabel("Elapsed: 00:00")
         self.scan_elapsed_label.setVisible(False)
         activity_layout.addWidget(self.scan_elapsed_label)
@@ -891,6 +894,12 @@ class CT400ControlPanel(BaseControlPanel):
                 detectors=selected_detectors,
             )
 
+            # The scan panel speed is requested metadata. The physical laser speed is
+            # configured by ConnectionWorker from scan_defaults when Connect is used.
+            # DummyCT400 does not model that sweep timing, so avoid implying otherwise.
+            effective_speed = None if isinstance(ct400, DummyCT400) else self.config.scan_defaults.speed_nm_s
+            self._scan_estimated_duration_seconds = estimate_sweep_seconds(start_wl, end_wl, effective_speed)
+
             self.scanning = True
             self.operation_started.emit()
             operation_claimed = True
@@ -954,6 +963,8 @@ class CT400ControlPanel(BaseControlPanel):
         # Check both the worker and thread exist
         if self.scan_worker and self.scan_thread and self.scan_thread.isRunning():
             if cancelled:
+                self._scan_stopping = True
+                self._update_scan_elapsed()
                 self.scan_btn.setText("Stopping Scan…")
                 self.scan_btn.setEnabled(False)
                 self.scan_btn.setToolTip("Waiting for CT400_ScanWaitEnd to confirm the stop request.")
@@ -988,11 +999,16 @@ class CT400ControlPanel(BaseControlPanel):
 
     def _start_scan_activity_ui(self) -> None:
         self._scan_started_at = time.monotonic()
+        self._scan_stopping = False
         self.progress_bar.setRange(0, 0)
         self.progress_bar.setTextVisible(False)
         self.progress_bar.setVisible(True)
         self.scan_elapsed_label.setText("Elapsed: 00:00")
         self.scan_elapsed_label.setVisible(True)
+        self.scan_elapsed_label.setToolTip(
+            "Approximate wavelength sweep time only, using the speed configured at Connect. "
+            "Setup and data retrieval time are not included; actual duration may exceed this estimate."
+        )
         self._update_scan_elapsed()
         self._scan_elapsed_timer.start()
 
@@ -1000,17 +1016,31 @@ class CT400ControlPanel(BaseControlPanel):
     def _update_scan_elapsed(self) -> None:
         if self._scan_started_at is None:
             return
-        elapsed_seconds = max(0, int(time.monotonic() - self._scan_started_at))
-        minutes, seconds = divmod(elapsed_seconds, 60)
-        self.scan_elapsed_label.setText(f"Elapsed: {minutes:02d}:{seconds:02d}")
+        elapsed = max(0.0, time.monotonic() - self._scan_started_at)
+        elapsed_seconds = int(elapsed)
+        elapsed_minutes, elapsed_remainder = divmod(elapsed_seconds, 60)
+        elapsed_text = f"{elapsed_minutes:02d}:{elapsed_remainder:02d}"
+        if self._scan_stopping:
+            state = "Stopping…"
+        elif self._scan_estimated_duration_seconds is None:
+            state = "Estimated remaining: unavailable"
+        elif elapsed >= self._scan_estimated_duration_seconds:
+            state = "Estimated duration exceeded"
+        else:
+            remaining = self._scan_estimated_duration_seconds - elapsed
+            state = f"Estimated remaining: ~{format_duration(remaining)}"
+        self.scan_elapsed_label.setText(f"Elapsed: {elapsed_text}    {state}")
 
     def _stop_scan_activity_ui(self) -> None:
         self._scan_elapsed_timer.stop()
         self._scan_started_at = None
+        self._scan_estimated_duration_seconds = None
+        self._scan_stopping = False
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         self.progress_bar.setVisible(False)
         self.scan_elapsed_label.setText("Elapsed: 00:00")
+        self.scan_elapsed_label.setToolTip("")
         self.scan_elapsed_label.setVisible(False)
 
     @Slot(object)
