@@ -556,6 +556,7 @@ class CameraPanel(QFrame):
     maximize_requested = Signal()
     recovery_requested = Signal(str)
     auto_operation_finished = Signal()
+    status_changed = Signal()
     _display_image_ready = Signal()
 
     def __init__(
@@ -711,6 +712,7 @@ class CameraPanel(QFrame):
             return
 
         self.camera = camera
+        self.status_changed.emit()
         self.setObjectName(f"cameraPanel_{camera.identifier}")
 
         # --- START THE PERSISTENT WORKER ---
@@ -756,6 +758,7 @@ class CameraPanel(QFrame):
             self.video_label.setText("Camera unavailable: no frames after recovery")
             self.video_label.setStyleSheet("background-color: #333; color: #ffc107;")
             self._update_control_availability()
+            self.status_changed.emit()
             self.watchdog_timer.stop()
             return
         self._automatic_recovery_used = True
@@ -772,6 +775,7 @@ class CameraPanel(QFrame):
         self.video_label.setText("Recovering camera…")
         self.video_label.setStyleSheet("background-color: #333; color: #ffc107;")
         self._update_control_availability()
+        self.status_changed.emit()
 
     def recovery_succeeded(self):
         self._recovery_active = False
@@ -780,6 +784,7 @@ class CameraPanel(QFrame):
         self.video_label.setText("Camera reopened; waiting for frames…")
         self._refresh_view_mode_from_camera()
         self._update_control_availability()
+        self.status_changed.emit()
         self._arm_watchdog()
 
     def recovery_failed(self, message: str):
@@ -791,6 +796,7 @@ class CameraPanel(QFrame):
         self.video_label.setText(message or "Camera recovery failed")
         self.video_label.setStyleSheet("background-color: #333; color: #ffc107;")
         self._update_control_availability()
+        self.status_changed.emit()
 
     @property
     def auto_operation_active(self) -> bool:
@@ -1226,6 +1232,7 @@ class CameraPanel(QFrame):
         self.video_label.setPixmap(QPixmap())
         self.video_label.setText(message)
         self.video_label.setStyleSheet("background-color: #333; color: #ffc107;")
+        self.status_changed.emit()
 
     def set_controls_visibility(self, visible: bool):
         self.controls_visible = bool(visible)
@@ -1410,6 +1417,7 @@ class CameraPanel(QFrame):
             self._recovery_failed = False
             if state_changed:
                 self._update_control_availability()
+                self.status_changed.emit()
             self._arm_watchdog()
 
     @Slot(str)
