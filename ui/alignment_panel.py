@@ -1,4 +1,6 @@
 import logging
+from collections.abc import Callable
+from weakref import WeakMethod
 
 import numpy as np
 from PySide6.QtCore import Qt, QThread, Signal, Slot
@@ -72,6 +74,7 @@ class AlignmentPanel(QWidget):
         self._ct400_operation_state = "IDLE"
         self._active_mode: str | None = None
         self._stop_requested = False
+        self._start_authorizer: WeakMethod | None = None
 
         self._init_ui()
         # --- MODIFICATION: Don't initialize worker immediately ---
@@ -117,6 +120,7 @@ class AlignmentPanel(QWidget):
         self.input_port_combo = QComboBox()
         for i in range(1, 5):
             self.input_port_combo.addItem(f"Port {i}", userData=i)
+        self.input_port_combo.currentIndexChanged.connect(self._update_control_availability)
         laser_form.addRow("Input Port:", self.input_port_combo)
         self.laser_group.setLayout(laser_form)
         left_column_layout.addWidget(self.laser_group)
@@ -368,18 +372,43 @@ class AlignmentPanel(QWidget):
         self._ct400_operation_state = state
         self._update_control_availability()
 
+    def set_start_authorizer(self, authorizer: Callable[[], bool]):
+        """Set MainWindow's current CT400 authorization check for operation starts."""
+        self._start_authorizer = WeakMethod(authorizer)
+        self._update_control_availability()
+
+    def _is_start_authorized(self) -> bool:
+        authorizer = self._start_authorizer() if self._start_authorizer is not None else None
+        if self._start_authorizer is not None and authorizer is None:
+            return False
+        try:
+            return True if authorizer is None else bool(authorizer())
+        except Exception:
+            logger.exception("Alignment start authorization check failed; blocking operation.")
+            return False
+
     def _update_control_availability(self):
-        idle_ready = self._hardware_ready and self._ct400_operation_state == "IDLE" and self._active_mode is None
+        idle_ready = (
+            self._hardware_ready
+            and self._ct400_operation_state == "IDLE"
+            and self._active_mode is None
+            and self._is_start_authorized()
+        )
         self.laser_group.setEnabled(idle_ready)
         self.align_group.setEnabled(idle_ready)
         self.map_group.setEnabled(idle_ready)
-        self.power_group.setEnabled(self._hardware_ready)
+        self.power_group.setEnabled(self._hardware_ready and self._is_start_authorized())
         alignment_owned = self._ct400_operation_state == "ALIGNMENT" and self._active_mode is not None
         self.stop_operation_button.setEnabled(alignment_owned and not self._stop_requested)
         self.stop_operation_button.setText(f"Stop {self._active_mode.title()}" if alignment_owned else "Stop Alignment")
 
     def _can_start_operation(self) -> bool:
-        if not self._hardware_ready or self._ct400_operation_state != "IDLE" or self._active_mode is not None:
+        if (
+            not self._hardware_ready
+            or self._ct400_operation_state != "IDLE"
+            or self._active_mode is not None
+            or not self._is_start_authorized()
+        ):
             return False
         try:
             return (

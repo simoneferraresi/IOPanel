@@ -617,6 +617,11 @@ def test_scanstart_exception_revokes_authorization_and_requires_explicit_recover
             if operator_confirms_safe_state:
                 # This separate operator click asserts the approved lab safe-state
                 # check; the CmdLaser return alone leaves recovery unresolved.
+                monkeypatch.setattr(
+                    main_window_module.QMessageBox,
+                    "question",
+                    lambda *_args: main_window_module.QMessageBox.StandardButton.Yes,
+                )
                 window.ct400_connect_action.trigger()
         recovery_resolved = recovery_disconnect_succeeds and operator_confirms_safe_state
         if recovery_resolved:
@@ -665,5 +670,148 @@ def test_scan_failure_with_unknown_captured_input_blocks_recovery_command(qtbot,
         window._handle_ct400_connect_action_triggered(False)
         assert device.laser_calls == []
         assert window._ct400_scan_state_uncertain
+    finally:
+        window.close()
+
+
+class _ReadyAlignmentPiezo:
+    VOLTS_PER_NM = 0.001
+
+    def __init__(self, port):
+        self.port = port
+
+    def is_connected(self):
+        return True
+
+    def get_voltage(self, _axis):
+        return 0.0
+
+    def set_voltage(self, _axis, _value):
+        return None
+
+    def move_nm(self, _axis, _distance):
+        return None
+
+    def get_min_voltage(self, _axis):
+        return -100.0
+
+    def get_max_voltage(self, _axis):
+        return 100.0
+
+
+def _install_mock_alignment_hardware(panel, device):
+    panel.ct400 = device
+    panel.piezo_left = _ReadyAlignmentPiezo("left")
+    panel.piezo_right = _ReadyAlignmentPiezo("right")
+    panel.set_hardware_ready(True)
+
+
+@pytest.mark.parametrize("mode", ["fine", "spiral", "mapping"])
+def test_alignment_modes_fail_closed_during_scan_recovery_even_if_controls_are_reenabled(
+    qtbot, monkeypatch, tmp_path, mode
+):
+    window = _window(qtbot, monkeypatch, tmp_path)
+    device = _physical_device()
+    native_commands = []
+    device.cmd_laser = lambda **kwargs: native_commands.append(kwargs)
+    panel = window.alignment_tab
+    window._on_ct400_initialized(device)
+    _install_mock_alignment_hardware(panel, device)
+    panel.input_port_combo.setCurrentIndex(panel.input_port_combo.findData(4))
+    window._handle_ct400_connection_success("Connected", LaserInput.LI_4)
+    issue = control_panel_module.ScanSafetyIssue(
+        device=device,
+        laser_input=LaserInput.LI_4,
+        reason="OSError at start_scan_seconds.",
+        failed_stages=("start_scan_seconds",),
+        cleanup_failed=False,
+    )
+    window._handle_ct400_scan_safety_uncertain(issue)
+    window._set_ct400_operation_state(CT400OperationState.IDLE)
+    try:
+        assert panel._hardware_ready  # Both mocked piezos and CT400 remain bound and ready.
+        assert not panel.align_button.isEnabled()
+        assert not panel.spiral_align_button.isEnabled()
+        assert not panel.map_button.isEnabled()
+
+        # Simulate stale/forcibly re-enabled widgets: the start-time gate remains authoritative.
+        panel.align_group.setEnabled(True)
+        panel.map_group.setEnabled(True)
+        if mode == "fine":
+            panel.toggle_alignment(True)
+        elif mode == "spiral":
+            panel.toggle_spiral_alignment()
+        else:
+            panel.toggle_mapping(True)
+
+        assert native_commands == []
+        assert panel._active_mode is None
+        assert panel.alignment_worker is None
+        assert window._ct400_operation_state is CT400OperationState.IDLE
+        assert window._ct400_scan_state_uncertain
+        panel.operation_started.emit()
+        assert window._ct400_operation_state is CT400OperationState.IDLE
+    finally:
+        window.close()
+
+
+def test_physical_alignment_requires_explicit_connect_and_matching_input(qtbot, monkeypatch, tmp_path):
+    window = _window(qtbot, monkeypatch, tmp_path)
+    device = _physical_device()
+    panel = window.alignment_tab
+    window._on_ct400_initialized(device)
+    _install_mock_alignment_hardware(panel, device)
+    panel.input_port_combo.setCurrentIndex(panel.input_port_combo.findData(4))
+    try:
+        assert not window._is_alignment_operation_authorized()
+        assert not panel.align_button.isEnabled()
+
+        window._handle_ct400_connection_success("Connected", LaserInput.LI_3)
+        assert not window._is_alignment_operation_authorized()
+        assert not panel.align_button.isEnabled()
+
+        window._handle_ct400_connection_success("Connected", LaserInput.LI_4)
+        assert window._is_alignment_operation_authorized()
+        assert panel.align_button.isEnabled()
+
+        window._ct400_scan_state_uncertain = True
+        panel._update_control_availability()
+        assert not window._is_alignment_operation_authorized()
+        assert not panel.align_button.isEnabled()
+    finally:
+        window.close()
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [main_window_module.QMessageBox.StandardButton.No, main_window_module.QMessageBox.StandardButton.Cancel],
+    ids=["reject", "close-dialog"],
+)
+def test_safe_state_confirmation_rejection_preserves_uncertainty(qtbot, monkeypatch, tmp_path, answer):
+    window = _window(qtbot, monkeypatch, tmp_path)
+    device = _physical_device()
+    window._on_ct400_initialized(device)
+    window._ct400_scan_state_uncertain = True
+    window._ct400_recovery_disconnect_completed = True
+    window._ct400_connection_configured = True
+    window._ct400_cleanup_laser_input = LaserInput.LI_4
+    window._ct400_connected_laser_input = None
+    prompts = []
+
+    def reject_confirmation(*args):
+        prompts.append(args)
+        return answer
+
+    monkeypatch.setattr(main_window_module.QMessageBox, "question", reject_confirmation)
+    try:
+        window.ct400_connect_action.trigger()
+        assert len(prompts) == 1
+        assert "independently verifying" in prompts[0][2]
+        assert window._ct400_scan_state_uncertain
+        assert window._ct400_recovery_disconnect_completed
+        assert window._ct400_connection_configured
+        assert window._ct400_cleanup_laser_input is LaserInput.LI_4
+        assert window._ct400_visual_state.name == "RECOVERY_CONFIRMATION_REQUIRED"
+        assert not window._is_alignment_operation_authorized()
     finally:
         window.close()

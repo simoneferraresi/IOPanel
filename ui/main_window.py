@@ -402,7 +402,9 @@ class MainWindow(QMainWindow):
         panel = getattr(self, "alignment_tab", None)
         if panel is None:
             return
+        panel.set_start_authorizer(self._is_alignment_operation_authorized)
         if self._alignment_hardware_transition_blocked():
+            panel._update_control_availability()
             return
         ready = (
             self.ct400_device is not None
@@ -418,6 +420,30 @@ class MainWindow(QMainWindow):
             panel.set_hardware(self.ct400_device, self.piezo_left, self.piezo_right)
         else:
             panel.clear_hardware()
+
+    def _is_alignment_operation_authorized(self) -> bool:
+        """Authorize alignment only for simulation or the explicitly connected physical input."""
+        if self._ct400_operation_state is not CT400OperationState.IDLE:
+            return False
+        if self._ct400_scan_state_uncertain or self._ct400_recovery_disconnect_completed:
+            return False
+        device = self.ct400_device
+        if isinstance(device, DummyCT400):
+            return self.alignment_tab is not None and self.alignment_tab.ct400 is device
+        if not isinstance(device, CT400) or self.alignment_tab is None or self.alignment_tab.ct400 is not device:
+            return False
+        captured_input = self._ct400_connected_laser_input
+        if (
+            not self._ct400_connection_configured
+            or captured_input is None
+            or captured_input is not self._ct400_cleanup_laser_input
+        ):
+            return False
+        try:
+            selected_input = LaserInput(self.alignment_tab.input_port_combo.currentData())
+        except (TypeError, ValueError):
+            return False
+        return selected_input is captured_input
 
     @Slot(str)
     def _on_piezo_connection_success(self, side: str):
@@ -1015,6 +1041,10 @@ class MainWindow(QMainWindow):
             timeout = 5000 if state in [CT400Status.CONNECTED, CT400Status.DISCONNECTED, CT400Status.ERROR] else 0
             self.statusBar().showMessage(message, timeout)
 
+        alignment_panel = getattr(self, "alignment_tab", None)
+        if alignment_panel is not None:
+            alignment_panel._update_control_availability()
+
         if state == CT400Status.ERROR:
             self._ct400_error_reset_timer.start(3000)
         elif self._ct400_error_reset_timer.isActive():
@@ -1342,6 +1372,23 @@ class MainWindow(QMainWindow):
                     "The CmdLaser return alone is not confirmation.",
                 )
                 return
+            answer = QMessageBox.question(
+                self,
+                "Confirm CT400 Safe State",
+                "Only continue after completing the approved laboratory procedure and independently verifying "
+                "the CT400 and laser are in a safe state. A successful CmdLaser return is not physical "
+                "confirmation. Have you completed that procedure and verified the safe state?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                if action:
+                    action.setChecked(False)
+                self._update_ct400_visuals(
+                    CT400Status.RECOVERY_CONFIRMATION_REQUIRED,
+                    "Recovery remains unresolved. Complete the approved procedure before confirming safe-state.",
+                )
+                return
             logger.warning("Operator confirmed the approved safe-state procedure after scan recovery.")
             self._ct400_scan_state_uncertain = False
             self._ct400_recovery_disconnect_completed = False
@@ -1485,10 +1532,14 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _handle_alignment_operation_started(self):
-        if self._ct400_operation_state is CT400OperationState.IDLE:
+        if self._ct400_operation_state is CT400OperationState.IDLE and self._is_alignment_operation_authorized():
             self._set_ct400_operation_state(CT400OperationState.ALIGNMENT)
         else:
-            logger.error("Rejected alignment start while CT400 is owned by %s", self._ct400_operation_state.name)
+            logger.error(
+                "Rejected unauthorized alignment start while CT400 is %s (physical connection/input or "
+                "scan recovery requirement not satisfied).",
+                self._ct400_operation_state.name,
+            )
 
     @Slot()
     def _handle_alignment_operation_finished(self):

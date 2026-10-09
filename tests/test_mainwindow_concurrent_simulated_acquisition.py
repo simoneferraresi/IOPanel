@@ -530,6 +530,7 @@ def test_close_during_alignment_waits_for_cleanup_before_ct400_close(qtbot, monk
     device = _fake_physical_ct400(events)
     window.ct400_device = device
     alignment = _prepare_alignment_panel(window, device)
+    window._handle_ct400_connection_success("Connected", LaserInput.LI_3)
     release = threading.Event()
     started = threading.Event()
     _arm_blocking_alignment(alignment, release, started, events)
