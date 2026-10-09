@@ -5,6 +5,7 @@ import time
 import uuid
 from abc import ABC, ABCMeta, abstractmethod
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TypeVar, override
 
@@ -38,7 +39,7 @@ from PySide6.QtWidgets import (
 )
 
 from config_model import AppConfig
-from hardware.ct400 import CT400Error
+from hardware.ct400 import CT400, CT400Error
 from hardware.ct400_types import (
     CT400ScanResultKind,
     Detector,
@@ -103,11 +104,11 @@ QPushButton#monitorButton[monitoring="true"]:disabled { background-color: #e0e0e
 class CT400ConnectionSignals(QObject):
     """Holds signals for the CT400ConnectionWorker."""
 
-    connection_succeeded = Signal(str)
-    connection_failed = Signal(str)
-    disconnection_succeeded = Signal(str)
-    disconnection_failed = Signal(str)
-    finished = Signal()
+    connection_succeeded = Signal(str, object, int, object)
+    connection_failed = Signal(str, int, object)
+    disconnection_succeeded = Signal(str, int, object)
+    disconnection_failed = Signal(str, int, object)
+    finished = Signal(int, object)
 
 
 class CT400ConnectionWorker(QRunnable):
@@ -115,11 +116,20 @@ class CT400ConnectionWorker(QRunnable):
     A QRunnable to handle connecting/disconnecting the CT400 in the thread pool.
     """
 
-    def __init__(self, ct400_device: AbstractCT400, config: AppConfig, connect: bool):
+    def __init__(
+        self,
+        ct400_device: AbstractCT400,
+        config: AppConfig,
+        connect: bool,
+        laser_input: LaserInput | None = None,
+        operation_token: int = 0,
+    ):
         super().__init__()
         self.ct400 = ct400_device
         self.config = config
         self.is_connect_operation = connect
+        self.laser_input = laser_input or LaserInput(config.scan_defaults.input_port)
+        self.operation_token = operation_token
         self.signals = CT400ConnectionSignals()
 
     @override
@@ -130,7 +140,7 @@ class CT400ConnectionWorker(QRunnable):
             if self.is_connect_operation:
                 logger.info("ConnectionWorker (Runnable): Starting connection.")
                 gpib = self.config.instruments.tunics_gpib_address
-                laser_input = LaserInput(self.config.scan_defaults.input_port)
+                laser_input = self.laser_input
                 min_wl = self.config.scan_defaults.min_wavelength_nm
                 max_wl = self.config.scan_defaults.max_wavelength_nm
                 speed = self.config.scan_defaults.speed_nm_s
@@ -147,31 +157,30 @@ class CT400ConnectionWorker(QRunnable):
                 )
                 success_msg = f"CT400 Connected (Input {laser_input.value})"
                 logger.info(f"ConnectionWorker: {success_msg}")
-                self.signals.connection_succeeded.emit(success_msg)
+                self.signals.connection_succeeded.emit(success_msg, self.laser_input, self.operation_token, self.ct400)
             else:
                 logger.info("ConnectionWorker (Runnable): Starting disconnection.")
-                laser_input_disconnect = LaserInput(self.config.scan_defaults.input_port)
                 safe_wl = self.config.scan_defaults.safe_parking_wavelength
                 safe_power = self.config.scan_defaults.laser_power
                 self.ct400.cmd_laser(
-                    laser_input=laser_input_disconnect,
+                    laser_input=self.laser_input,
                     enable=Enable.DISABLE,
                     wavelength=safe_wl,
                     power=safe_power,
                 )
                 success_msg = "CT400 Disconnected"
                 logger.info(f"ConnectionWorker: {success_msg}")
-                self.signals.disconnection_succeeded.emit(success_msg)
+                self.signals.disconnection_succeeded.emit(success_msg, self.operation_token, self.ct400)
 
         except (CT400Error, ValueError, KeyError, Exception) as e:
             error_msg = f"Operation Failed: {e}"
             logger.exception(f"ConnectionWorker: {error_msg}")
             if self.is_connect_operation:
-                self.signals.connection_failed.emit(error_msg)
+                self.signals.connection_failed.emit(error_msg, self.operation_token, self.ct400)
             else:
-                self.signals.disconnection_failed.emit(error_msg)
+                self.signals.disconnection_failed.emit(error_msg, self.operation_token, self.ct400)
         finally:
-            self.signals.finished.emit()
+            self.signals.finished.emit(self.operation_token, self.ct400)
 
 
 ###############################################################################
@@ -183,6 +192,17 @@ class ScanSettings:
         self.motor_speed: str = "N/A"
         self.laser_power: str = "N/A"
         self.power_unit: str = ""
+
+
+@dataclass(frozen=True)
+class ScanSafetyIssue:
+    """Physical scan outcome that requires operator-controlled recovery."""
+
+    device: AbstractCT400
+    laser_input: LaserInput
+    reason: str
+    failed_stages: tuple[str, ...]
+    cleanup_failed: bool
 
 
 ###############################################################################
@@ -242,7 +262,12 @@ class ScanWorker(QtCore.QObject):
         self._stop_requested = False
         self._finished = False
         self._started = False
+        self._scan_start_in_progress = False
         self._final_kind: CT400ScanResultKind | None = None
+        self._stop_failed = False
+        self._failure_type: str | None = None
+        self._failure_stage: str | None = None
+        self.recovery_required = False
 
     def _is_cancel_requested(self) -> bool:
         with self._state_lock:
@@ -273,8 +298,10 @@ class ScanWorker(QtCore.QObject):
         started_at = time.perf_counter()
         try:
             return call()
-        except Exception:
+        except Exception as exc:
             self._failed_stages.append(stage)
+            self._failure_stage = stage
+            self._failure_type = type(exc).__name__
             raise
         finally:
             self._stage_timings_seconds[stage] = round(max(0.0, time.perf_counter() - started_at), 6)
@@ -308,6 +335,25 @@ class ScanWorker(QtCore.QObject):
             "worker_duration_seconds": worker_duration_seconds,
         }
 
+    def safety_issue(self) -> ScanSafetyIssue | None:
+        if not self.recovery_required or not isinstance(self.ct400, CT400):
+            return None
+        if self._timing_cleanup_failed:
+            reason = "The scan worker could not confirm completion of its final laser-disable command."
+        elif self._stop_failed:
+            reason = "The native ScanStop request failed."
+        elif self._failure_stage is not None:
+            reason = f"{self._failure_type or 'Unexpected failure'} at {self._failure_stage}."
+        else:
+            reason = f"The scan ended with unverified native result {self.final_kind!s}."
+        return ScanSafetyIssue(
+            device=self.ct400,
+            laser_input=self.input_port,
+            reason=reason,
+            failed_stages=tuple(self._failed_stages),
+            cleanup_failed=self._timing_cleanup_failed,
+        )
+
     def _issue_stop_once(self):
         with self._state_lock:
             if not self._started or self._stop_requested or self._finished:
@@ -316,6 +362,10 @@ class ScanWorker(QtCore.QObject):
         try:
             self.ct400.stop_scan()
         except Exception as e:  # noqa: BLE001  # Preserve CT400 worker recovery and cleanup behavior.
+            self._stop_failed = True
+            self._failure_stage = "stop_scan"
+            self._failure_type = type(e).__name__
+            self._failed_stages.append("stop_scan")
             message = f"CT400_ScanStop failed; scan remains active until ScanWaitEnd returns: {e}"
             logger.error(message)
             self.stop_failed_signal.emit(message)
@@ -380,9 +430,25 @@ class ScanWorker(QtCore.QObject):
                 self._report_cancelled()
                 return
 
-            self._timed_call("start_scan_seconds", self.ct400.start_scan)
             with self._state_lock:
-                self._started = True
+                self._scan_start_in_progress = True
+            scan_start_entered_at = time.perf_counter()
+            scan_start_returned = False
+            logger.info("ScanWorker: CT400_ScanStart entry (scan_id=%s).", self.scan_id)
+            try:
+                self._timed_call("start_scan_seconds", self.ct400.start_scan)
+                scan_start_returned = True
+                with self._state_lock:
+                    self._started = True
+            finally:
+                with self._state_lock:
+                    self._scan_start_in_progress = False
+                logger.info(
+                    "ScanWorker: CT400_ScanStart exit (scan_id=%s, returned=%s, elapsed_seconds=%.6f).",
+                    self.scan_id,
+                    scan_start_returned,
+                    max(0.0, time.perf_counter() - scan_start_entered_at),
+                )
             logger.info("ScanWorker: CT400 scan started.")
             if self._is_cancel_requested():
                 self._issue_stop_once()
@@ -460,13 +526,19 @@ class ScanWorker(QtCore.QObject):
             self._timing_outcome = "warning" if kind == CT400ScanResultKind.WARNING else "success"
         except CT400Error as e:
             self._timing_outcome = "error"
-            logger.error(f"ScanWorker: CT400 Error: {e}")
+            if self._failure_type is None:
+                self._failure_type = type(e).__name__
+                self._failure_stage = "ct400_operation"
+            logger.exception("ScanWorker: CT400 exception at stage %s (%s)", self._failure_stage, type(e).__name__)
             # Map the generic exception to our structured error type
             err = InstrumentError(code=None, message=str(e), source=self.__class__.__name__)
             self.error_signal.emit(err)
         except Exception as e:
             self._timing_outcome = "error"
-            logger.exception("ScanWorker: Unexpected error")
+            if self._failure_type is None:
+                self._failure_type = type(e).__name__
+                self._failure_stage = "application_processing"
+            logger.exception("ScanWorker: Unexpected exception at stage %s (%s)", self._failure_stage, type(e).__name__)
             err = InstrumentError(
                 code=None,
                 message=f"An unexpected error occurred: {e}",
@@ -484,9 +556,22 @@ class ScanWorker(QtCore.QObject):
                         power=float(self.disable_power),
                     ),
                 )
-            except Exception as e:  # noqa: BLE001  # Preserve CT400 worker recovery and cleanup behavior.
+            except Exception as e:  # Preserve CT400 worker recovery and cleanup behavior.
                 self._timing_cleanup_failed = True
-                logger.error(f"ScanWorker: Error during cleanup in finally block: {e}")
+                logger.exception(
+                    "ScanWorker: Laser cleanup failed at stage final_laser_disable_seconds (%s).", type(e).__name__
+                )
+            self.recovery_required = bool(
+                self._timing_cleanup_failed
+                or self._stop_failed
+                or self._failed_stages
+                or self.final_kind
+                not in (
+                    CT400ScanResultKind.SUCCESS,
+                    CT400ScanResultKind.USER_CANCELLED,
+                    CT400ScanResultKind.WARNING,
+                )
+            )
             worker_duration = round(max(0.0, time.perf_counter() - worker_started_at), 6)
             timing_summary = self._timing_summary(worker_duration)
             self.final_timing_summary = timing_summary.copy()
@@ -509,6 +594,12 @@ class ScanWorker(QtCore.QObject):
             if self._finished or self._cancel_requested:
                 return False
             self._cancel_requested = True
+            scan_start_in_progress = self._scan_start_in_progress
+        if scan_start_in_progress:
+            logger.warning(
+                "ScanWorker: Cancellation requested while CT400_ScanStart is in progress; "
+                "ScanStop will wait for successful ScanStart return."
+            )
         self._issue_stop_once()
         return True
 
@@ -624,7 +715,9 @@ class BaseControlPanel(QWidget, ABC, metaclass=QABCMeta):
         super().__init__(parent)
         self.ct400 = ct400_device
         self.config = config
-        self.is_instrument_connected = self.ct400 is not None
+        self.is_simulated = isinstance(ct400_device, DummyCT400)
+        self.is_instrument_connected = self.is_simulated
+        self.connected_laser_input: LaserInput | None = None
         self.ct400_operation_state = "IDLE"
 
         # These will be created in _init_base_ui and used by subclasses
@@ -676,7 +769,23 @@ class BaseControlPanel(QWidget, ABC, metaclass=QABCMeta):
         """Assigns the live CT400 device and updates UI state."""
         logger.info(f"'{self.objectName()}' received instrument object: {ct400_device is not None}")
         self.ct400 = ct400_device
-        self.on_instrument_connected(self.ct400 is not None)
+        self.is_simulated = isinstance(ct400_device, DummyCT400)
+        self.connected_laser_input = None
+        self.on_instrument_connected(self.is_simulated)
+
+    def set_connected_laser_input(self, laser_input: LaserInput | None) -> None:
+        """Project MainWindow's confirmed physical input into this panel."""
+        self.connected_laser_input = laser_input
+        self.on_instrument_connected(self.is_simulated or laser_input is not None)
+
+    def _selected_input_is_authorized(self) -> bool:
+        if self.is_simulated:
+            return True
+        selected = self.input_port.currentData()
+        return isinstance(selected, LaserInput) and selected is self.connected_laser_input
+
+    def _refresh_action_state(self, *_args) -> None:
+        self.on_instrument_connected(self.is_simulated or self.connected_laser_input is not None)
 
     def on_instrument_connected(self, is_connected: bool):
         """
@@ -695,7 +804,9 @@ class BaseControlPanel(QWidget, ABC, metaclass=QABCMeta):
 
         owns_operation = self._owns_operation_state(self.ct400_operation_state)
         self._get_main_action_button().setEnabled(
-            is_connected and (self.ct400_operation_state == "IDLE" or owns_operation)
+            is_connected
+            and (self.ct400_operation_state == "IDLE" or owns_operation)
+            and (owns_operation or self._selected_input_is_authorized())
         )
 
         # If the instrument disconnects while the panel is busy, force a stop.
@@ -751,6 +862,7 @@ class BaseControlPanel(QWidget, ABC, metaclass=QABCMeta):
 class CT400ControlPanel(BaseControlPanel):
     scan_data_ready = QtCore.Signal(object)
     scan_timing_ready = QtCore.Signal(object)
+    scan_safety_uncertain = QtCore.Signal(object)
     scan_warning = QtCore.Signal(str)
     operation_started = QtCore.Signal()
     operation_finished = QtCore.Signal()
@@ -785,6 +897,7 @@ class CT400ControlPanel(BaseControlPanel):
 
         # Initialize subclass-specific UI
         self._init_subclass_ui()
+        self.input_port.currentIndexChanged.connect(self._refresh_action_state)
 
         self._connect_settings_signals()
         self.on_instrument_connected(self.is_instrument_connected)
@@ -963,7 +1076,7 @@ class CT400ControlPanel(BaseControlPanel):
             logger.error(
                 "Inconsistent CT400 scan panel state: connected flag is true, but the device reference is unavailable."
             )
-        if not self.is_instrument_connected or ct400 is None:
+        if not self.is_instrument_connected or ct400 is None or not self._selected_input_is_authorized():
             QMessageBox.warning(self, "Not Connected", "CT400 device is not connected.")
             return
         if self.scanning:
@@ -1158,6 +1271,7 @@ class CT400ControlPanel(BaseControlPanel):
     @Slot()
     def _scan_thread_finished(self):
         logger.info("ScanPanel: Scan thread finished.")
+        safety_issue = self.scan_worker.safety_issue() if self.scan_worker else None
         timing_summary: dict[str, object] | None = None
         if self.scan_worker and self.scan_worker.final_timing_summary is not None:
             timing_summary = self.scan_worker.final_timing_summary.copy()
@@ -1197,6 +1311,9 @@ class CT400ControlPanel(BaseControlPanel):
             self.scan_thread = None
 
         self._reset_scan_ui()
+        if safety_issue is not None:
+            logger.error("ScanPanel: Physical CT400 authorization requires recovery: %s", safety_issue.reason)
+            self.scan_safety_uncertain.emit(safety_issue)
         self.operation_finished.emit()
 
     def _reset_scan_ui(self):
@@ -1255,6 +1372,7 @@ class HistogramControlPanel(BaseControlPanel):
 
         # Initialize subclass-specific UI
         self._init_subclass_ui()
+        self.input_port.currentIndexChanged.connect(self._refresh_action_state)
 
         # Setup worker and timer
         self._setup_worker_and_timer()
@@ -1409,7 +1527,7 @@ class HistogramControlPanel(BaseControlPanel):
         ct400 = self.ct400
         if self.is_instrument_connected and ct400 is None:
             logger.error("Monitor Panel: Inconsistent connected state; CT400 device reference is unavailable.")
-        if not self.is_instrument_connected or ct400 is None:
+        if not self.is_instrument_connected or ct400 is None or not self._selected_input_is_authorized():
             logger.error("Monitor Panel: Cannot apply settings, instrument not connected.")
             return False
         try:
@@ -1452,7 +1570,7 @@ class HistogramControlPanel(BaseControlPanel):
         ct400 = self.ct400
         if self.is_instrument_connected and ct400 is None:
             logger.error("Monitor Panel: Inconsistent connected state; CT400 device reference is unavailable.")
-        if not self.is_instrument_connected or ct400 is None:
+        if not self.is_instrument_connected or ct400 is None or not self._selected_input_is_authorized():
             QMessageBox.warning(self, "Not Connected", "CT400 device is not connected.")
             return
         if self.monitoring:

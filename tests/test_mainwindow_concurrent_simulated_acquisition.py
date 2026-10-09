@@ -530,6 +530,7 @@ def test_close_during_alignment_waits_for_cleanup_before_ct400_close(qtbot, monk
     device = _fake_physical_ct400(events)
     window.ct400_device = device
     alignment = _prepare_alignment_panel(window, device)
+    window._handle_ct400_connection_success("Connected", LaserInput.LI_3)
     release = threading.Event()
     started = threading.Event()
     _arm_blocking_alignment(alignment, release, started, events)
@@ -740,6 +741,7 @@ def test_cancel_and_close_stop_scan_without_stopping_camera_early(qtbot, monkeyp
 
     physical_device.cmd_laser = record_configured_disable
     window.is_ct400_connected_state = True
+    window._ct400_cleanup_laser_input = LaserInput(window.config.scan_defaults.input_port)
     scan_terminations = []
     original_terminate = QThread.terminate
 
@@ -862,8 +864,9 @@ def test_failed_disconnect_is_not_treated_as_confirmed_and_shutdown_retries_disa
     device.cmd_laser = failed_disable
     window.ct400_device = device
     window._ct400_connection_configured = True
+    window._ct400_cleanup_laser_input = LaserInput(window.config.scan_defaults.input_port)
     window.is_ct400_connected_state = False
-    window._handle_ct400_connection_failure("GUI Disconnect failed")
+    window._handle_ct400_disconnection_failure("GUI Disconnect failed")
     assert window._ct400_connection_configured
 
     window.close()

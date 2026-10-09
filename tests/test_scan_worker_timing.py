@@ -88,11 +88,16 @@ def _summary(caplog):
 
 
 @pytest.mark.parametrize(
-    ("result_code", "expected_outcome", "measurement_count"),
-    [(0, "success", 1), (100, "warning", 1), (1, "cancellation", 0), (2, "error", 0)],
+    ("result_code", "expected_outcome", "measurement_count", "recovery_required"),
+    [
+        (0, "success", 1, False),
+        (100, "warning", 1, False),
+        (1, "cancellation", 0, False),
+        (2, "error", 0, True),
+    ],
 )
 def test_timing_summary_measures_stages_and_preserves_scan_result(
-    timed_worker, caplog, result_code, expected_outcome, measurement_count
+    timed_worker, caplog, result_code, expected_outcome, measurement_count, recovery_required
 ):
     worker, device, _clock, events, measurements, errors, _command_count = timed_worker
     if result_code:
@@ -104,6 +109,7 @@ def test_timing_summary_measures_stages_and_preserves_scan_result(
     summary = _summary(caplog)
     stages = summary["stage_seconds"]
     assert summary["outcome"] == expected_outcome
+    assert worker.recovery_required is recovery_required
     assert summary["requested_start_wavelength_nm"] == 1500.0
     assert summary["requested_end_wavelength_nm"] == 1501.0
     assert summary["configured_speed_nm_s_at_connect"] == 10
@@ -191,6 +197,7 @@ def test_timing_summary_keeps_partial_measurements_after_stage_exception(
     assert summary["failed_stages"] == [failed_stage]
     assert "final_laser_disable_seconds" in summary["stage_seconds"]
     assert summary["cleanup_failed"] is False
+    assert worker.recovery_required
     assert measurements == []
     assert len(errors) == 1
     assert command_count[0] == 2
@@ -219,6 +226,7 @@ def test_timing_summary_records_cleanup_failure_without_changing_measurement(tim
     assert summary["cleanup_failed"] is True
     assert summary["stage_seconds"]["final_laser_disable_seconds"] == pytest.approx(0.09)
     assert summary["failed_stages"] == ["final_laser_disable_seconds"]
+    assert worker.recovery_required
     assert len(measurements) == 1
     assert errors == []
     assert device.scan_wait_end_calls == 1

@@ -93,6 +93,7 @@ from ui.control_panel import (
     CT400ConnectionWorker,
     CT400ControlPanel,
     HistogramControlPanel,
+    ScanSafetyIssue,
     ScanSettings,
 )
 from ui.log_console import LogConsole
@@ -142,6 +143,9 @@ class CT400Status(Enum):
     CONNECTING = auto()
     DISCONNECTING = auto()
     ERROR = auto()
+    DISCONNECT_UNCONFIRMED = auto()
+    SCAN_STATE_UNCERTAIN = auto()
+    RECOVERY_CONFIRMATION_REQUIRED = auto()
     UNAVAILABLE = auto()
     UNKNOWN = auto()
 
@@ -214,7 +218,14 @@ class MainWindow(QMainWindow):
         self.shared_scan_settings = ScanSettings()
         self.vmb_instance: VmbSystem | None = None
         self.is_ct400_connected_state: bool = False
+        self._ct400_connected_laser_input: LaserInput | None = None
+        self._ct400_cleanup_laser_input: LaserInput | None = None
+        self._ct400_connection_operation_token = 0
+        self._pending_ct400_device_replacement: AbstractCT400 | None = None
         self._ct400_connection_configured: bool = False
+        self._ct400_scan_state_uncertain = False
+        self._ct400_recovery_input_matches = True
+        self._ct400_recovery_disconnect_completed = False
         self._ct400_operation_state = CT400OperationState.IDLE
         self._pending_ct400_operation_close: bool = False
         self._pending_init_close: bool = False
@@ -391,7 +402,9 @@ class MainWindow(QMainWindow):
         panel = getattr(self, "alignment_tab", None)
         if panel is None:
             return
+        panel.set_start_authorizer(self._is_alignment_operation_authorized)
         if self._alignment_hardware_transition_blocked():
+            panel._update_control_availability()
             return
         ready = (
             self.ct400_device is not None
@@ -407,6 +420,30 @@ class MainWindow(QMainWindow):
             panel.set_hardware(self.ct400_device, self.piezo_left, self.piezo_right)
         else:
             panel.clear_hardware()
+
+    def _is_alignment_operation_authorized(self) -> bool:
+        """Authorize alignment only for simulation or the explicitly connected physical input."""
+        if self._ct400_operation_state is not CT400OperationState.IDLE:
+            return False
+        if self._ct400_scan_state_uncertain or self._ct400_recovery_disconnect_completed:
+            return False
+        device = self.ct400_device
+        if isinstance(device, DummyCT400):
+            return self.alignment_tab is not None and self.alignment_tab.ct400 is device
+        if not isinstance(device, CT400) or self.alignment_tab is None or self.alignment_tab.ct400 is not device:
+            return False
+        captured_input = self._ct400_connected_laser_input
+        if (
+            not self._ct400_connection_configured
+            or captured_input is None
+            or captured_input is not self._ct400_cleanup_laser_input
+        ):
+            return False
+        try:
+            selected_input = LaserInput(self.alignment_tab.input_port_combo.currentData())
+        except (TypeError, ValueError):
+            return False
+        return selected_input is captured_input
 
     @Slot(str)
     def _on_piezo_connection_success(self, side: str):
@@ -463,6 +500,19 @@ class MainWindow(QMainWindow):
         that depends on the CT400.
         """
         logger.info(f"CT400 initialization finished. Received device: {type(device)}")
+        if device is not self.ct400_device and self._ct400_operation_state in (
+            CT400OperationState.CONNECTING,
+            CT400OperationState.DISCONNECTING,
+            CT400OperationState.SCANNING,
+            CT400OperationState.MONITORING,
+        ):
+            logger.warning("Deferring CT400 replacement until the active operation releases its device.")
+            self._defer_ct400_device_replacement(device)
+            return
+        if device is not self.ct400_device and self._ct400_device_has_unresolved_laser_state():
+            self._defer_ct400_device_replacement(device)
+            self._apply_pending_ct400_device_replacement()
+            return
         if self._alignment_hardware_transition_blocked() and device is not self.ct400_device:
             logger.warning("Ignoring CT400 replacement while alignment owns the current hardware.")
             if isinstance(device, CT400):
@@ -471,7 +521,16 @@ class MainWindow(QMainWindow):
                 except Exception:
                     logger.exception("Could not release rejected CT400 resources.")
             return
+        old_device = self.ct400_device
         self.ct400_device = device
+        if old_device is not device:
+            self._ct400_connection_operation_token += 1
+            self._ct400_connected_laser_input = None
+            self._ct400_cleanup_laser_input = None
+            self._ct400_connection_configured = False
+            self._ct400_scan_state_uncertain = False
+            self._ct400_recovery_input_matches = True
+            self._ct400_recovery_disconnect_completed = False
 
         # Now that the device exists, pass it to the control panels
         self.control_panel.set_instrument(self.ct400_device)
@@ -483,8 +542,17 @@ class MainWindow(QMainWindow):
         # DummyCT400 exposes the same scan interface and is safe to operate in
         # development mode. Keep it unavailable to connection controls, but
         # allow scans and label their results as simulated below.
-        self.control_panel.on_instrument_connected(is_real_ct400 or is_simulated_ct400)
-        self.histogram_control.on_instrument_connected(is_real_ct400 or is_simulated_ct400)
+        self.control_panel.set_connected_laser_input(None)
+        self.histogram_control.set_connected_laser_input(None)
+        if is_simulated_ct400:
+            self.control_panel.on_instrument_connected(True)
+            self.histogram_control.on_instrument_connected(True)
+
+        if old_device is not None and old_device is not device and isinstance(old_device, CT400):
+            try:
+                old_device.close()
+            except Exception:
+                logger.exception("Could not close replaced CT400 device.")
 
         if is_real_ct400:
             self._update_ct400_visuals(state=CT400Status.DISCONNECTED, message="CT400 Ready (Disconnected)")
@@ -496,6 +564,62 @@ class MainWindow(QMainWindow):
             self.ct400_status_label.setText("CT400: SIMULATED (Dummy)")
 
         self._sync_alignment_hardware()
+
+    def _ct400_device_has_unresolved_laser_state(self) -> bool:
+        return bool(
+            self._ct400_scan_state_uncertain
+            or self._ct400_connection_configured
+            or self._ct400_cleanup_laser_input is not None
+            or self._ct400_connected_laser_input is not None
+            or self.is_ct400_connected_state
+        )
+
+    def _defer_ct400_device_replacement(self, device: AbstractCT400):
+        previous = self._pending_ct400_device_replacement
+        if previous is not None and previous is not device and isinstance(previous, CT400):
+            try:
+                previous.close()
+            except Exception:
+                logger.exception("Could not close superseded pending CT400 device.")
+        self._pending_ct400_device_replacement = device
+        if self._ct400_operation_state is CT400OperationState.IDLE:
+            self._ct400_connection_operation_token += 1
+            self._ct400_connected_laser_input = None
+            self.control_panel.set_connected_laser_input(None)
+            self.histogram_control.set_connected_laser_input(None)
+            if self._ct400_scan_state_uncertain:
+                if self._ct400_recovery_disconnect_completed:
+                    state = CT400Status.RECOVERY_CONFIRMATION_REQUIRED
+                    message = (
+                        "Recovery Disconnect command returned; it does not independently confirm physical "
+                        "safe-state. Follow the approved procedure, then explicitly confirm safe-state."
+                    )
+                else:
+                    state = CT400Status.SCAN_STATE_UNCERTAIN
+                    message = "CT400 scan state is uncertain; use operator-controlled recovery before replacement."
+                self._update_ct400_visuals(state, message)
+            elif self._ct400_cleanup_laser_input is not None:
+                self._update_ct400_visuals(
+                    CT400Status.DISCONNECT_UNCONFIRMED,
+                    f"Replacement pending; disconnect the previously configured input "
+                    f"{self._ct400_cleanup_laser_input.name} first.",
+                )
+            else:
+                self._update_ct400_visuals(
+                    CT400Status.DISCONNECT_UNCONFIRMED,
+                    "CT400 state is uncertain and its configured input is unknown. "
+                    "Follow the approved laboratory safe-state procedure.",
+                )
+
+    def _apply_pending_ct400_device_replacement(self):
+        replacement = self._pending_ct400_device_replacement
+        if replacement is None or self._ct400_operation_state is not CT400OperationState.IDLE:
+            return
+        if self._ct400_device_has_unresolved_laser_state():
+            self._defer_ct400_device_replacement(replacement)
+            return
+        self._pending_ct400_device_replacement = None
+        self._on_ct400_initialized(replacement)
 
     def _begin_lazy_init(self):
         """Starts all slow hardware initializations on background threads."""
@@ -881,6 +1005,9 @@ class MainWindow(QMainWindow):
             CT400Status.CONNECTING: ("Connecting...", ":/icons/spinner.svg", False, True),
             CT400Status.DISCONNECTING: ("Disconnecting...", ":/icons/spinner.svg", False, False),
             CT400Status.ERROR: ("Connect CT400 (Error)", ":/icons/connect.svg", True, False),
+            CT400Status.DISCONNECT_UNCONFIRMED: ("Disconnect CT400 (Retry)", ":/icons/disconnect.svg", True, True),
+            CT400Status.SCAN_STATE_UNCERTAIN: ("Disconnect CT400 (Recovery)", ":/icons/disconnect.svg", True, True),
+            CT400Status.RECOVERY_CONFIRMATION_REQUIRED: ("Confirm CT400 Safe State", ":/icons/check.svg", True, False),
             CT400Status.UNAVAILABLE: ("CT400 Unavailable", ":/icons/laser.svg", False, False),
             CT400Status.UNKNOWN: ("CT400 Initializing", ":/icons/spinner.svg", False, False),
         }
@@ -893,6 +1020,15 @@ class MainWindow(QMainWindow):
             action_enabled
             and isinstance(self.ct400_device, CT400)
             and self._ct400_operation_state is CT400OperationState.IDLE
+            and (state is not CT400Status.DISCONNECT_UNCONFIRMED or self._ct400_cleanup_laser_input is not None)
+            and (
+                state is not CT400Status.SCAN_STATE_UNCERTAIN
+                or (self._ct400_cleanup_laser_input is not None and self._ct400_recovery_input_matches)
+            )
+            and (
+                state is not CT400Status.RECOVERY_CONFIRMATION_REQUIRED
+                or (self._ct400_cleanup_laser_input is not None and self._ct400_recovery_input_matches)
+            )
         )
         action.setChecked(action_checked)
 
@@ -905,6 +1041,10 @@ class MainWindow(QMainWindow):
             timeout = 5000 if state in [CT400Status.CONNECTED, CT400Status.DISCONNECTED, CT400Status.ERROR] else 0
             self.statusBar().showMessage(message, timeout)
 
+        alignment_panel = getattr(self, "alignment_tab", None)
+        if alignment_panel is not None:
+            alignment_panel._update_control_availability()
+
         if state == CT400Status.ERROR:
             self._ct400_error_reset_timer.start(3000)
         elif self._ct400_error_reset_timer.isActive():
@@ -915,7 +1055,21 @@ class MainWindow(QMainWindow):
     @Slot()
     def _reset_ct400_error_visuals(self):
         """Return an error status to disconnected while owned by this window."""
-        self._update_ct400_visuals(CT400Status.DISCONNECTED, "Error occurred. Ready to connect.")
+        state = (
+            CT400Status.SCAN_STATE_UNCERTAIN
+            if self._ct400_scan_state_uncertain
+            else CT400Status.DISCONNECT_UNCONFIRMED
+            if self._ct400_device_has_unresolved_laser_state()
+            else CT400Status.DISCONNECTED
+        )
+        message = (
+            "Scan state is uncertain. Use operator-controlled recovery."
+            if state is CT400Status.SCAN_STATE_UNCERTAIN
+            else "Error occurred. Ready to retry disconnect."
+            if state is CT400Status.DISCONNECT_UNCONFIRMED
+            else "Error occurred. Ready to connect."
+        )
+        self._update_ct400_visuals(state, message)
 
     def _create_menus(self):
         """Creates the main menu bar and all its actions."""
@@ -1208,11 +1362,100 @@ class MainWindow(QMainWindow):
                 action.setEnabled(False)
             return
 
-        worker = CT400ConnectionWorker(self.ct400_device, self.config, connect=checked)
+        if self._ct400_recovery_disconnect_completed:
+            if not checked:
+                if action:
+                    action.setChecked(False)
+                self._update_ct400_visuals(
+                    CT400Status.RECOVERY_CONFIRMATION_REQUIRED,
+                    "Follow the approved laboratory safe-state procedure, then explicitly confirm it here. "
+                    "The CmdLaser return alone is not confirmation.",
+                )
+                return
+            answer = QMessageBox.question(
+                self,
+                "Confirm CT400 Safe State",
+                "Only continue after completing the approved laboratory procedure and independently verifying "
+                "the CT400 and laser are in a safe state. A successful CmdLaser return is not physical "
+                "confirmation. Have you completed that procedure and verified the safe state?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                if action:
+                    action.setChecked(False)
+                self._update_ct400_visuals(
+                    CT400Status.RECOVERY_CONFIRMATION_REQUIRED,
+                    "Recovery remains unresolved. Complete the approved procedure before confirming safe-state.",
+                )
+                return
+            logger.warning("Operator confirmed the approved safe-state procedure after scan recovery.")
+            self._ct400_scan_state_uncertain = False
+            self._ct400_recovery_disconnect_completed = False
+            self._ct400_recovery_input_matches = True
+            self._ct400_connection_configured = False
+            self._ct400_connected_laser_input = None
+            self._ct400_cleanup_laser_input = None
+            self.control_panel.set_connected_laser_input(None)
+            self.histogram_control.set_connected_laser_input(None)
+            self._update_ct400_visuals(
+                CT400Status.DISCONNECTED,
+                "Operator confirmed the approved safe-state procedure. CT400 is disconnected; Connect remains "
+                "a separate explicit action.",
+            )
+            self._apply_pending_ct400_device_replacement()
+            return
+
+        unresolved = self._ct400_device_has_unresolved_laser_state()
+        if checked and unresolved:
+            if action:
+                action.setChecked(True)
+            state = (
+                CT400Status.SCAN_STATE_UNCERTAIN
+                if self._ct400_scan_state_uncertain
+                else CT400Status.DISCONNECT_UNCONFIRMED
+            )
+            self._update_ct400_visuals(
+                state,
+                "Disconnect the previously configured input before connecting another input.",
+            )
+            return
+        if not checked and unresolved and self._ct400_cleanup_laser_input is None:
+            if action:
+                action.setChecked(True)
+            state = (
+                CT400Status.SCAN_STATE_UNCERTAIN
+                if self._ct400_scan_state_uncertain
+                else CT400Status.DISCONNECT_UNCONFIRMED
+            )
+            self._update_ct400_visuals(
+                state,
+                "Configured input is unknown. Follow the approved laboratory safe-state procedure.",
+            )
+            return
+        if not checked and self._ct400_scan_state_uncertain and not self._ct400_recovery_input_matches:
+            if action:
+                action.setChecked(True)
+            self._update_ct400_visuals(
+                CT400Status.SCAN_STATE_UNCERTAIN,
+                "Scan input differs from the captured Connect input. Follow the approved laboratory "
+                "safe-state procedure; automatic input selection is blocked.",
+            )
+            return
+        if not checked and not unresolved:
+            self._update_ct400_visuals(CT400Status.DISCONNECTED, "CT400 Ready (Disconnected)")
+            return
+        laser_input = LaserInput(self.config.scan_defaults.input_port) if checked else self._ct400_cleanup_laser_input
+        self._ct400_connection_operation_token += 1
+        token = self._ct400_connection_operation_token
+        device = self.ct400_device
+        worker = CT400ConnectionWorker(
+            device, self.config, connect=checked, laser_input=laser_input, operation_token=token
+        )
         worker.signals.connection_succeeded.connect(self._handle_ct400_connection_success)
         worker.signals.connection_failed.connect(self._handle_ct400_connection_failure)
         worker.signals.disconnection_succeeded.connect(self._handle_ct400_disconnection_success)
-        worker.signals.disconnection_failed.connect(self._handle_ct400_connection_failure)
+        worker.signals.disconnection_failed.connect(self._handle_ct400_disconnection_failure)
         worker.signals.finished.connect(self._handle_ct400_connection_operation_finished)
 
         self._set_ct400_operation_state(
@@ -1237,7 +1480,28 @@ class MainWindow(QMainWindow):
         if action is not None:
             if state is CT400OperationState.IDLE:
                 status = getattr(self, "_ct400_visual_state", CT400Status.DISCONNECTED)
-                enabled = status in (CT400Status.CONNECTED, CT400Status.DISCONNECTED, CT400Status.ERROR)
+                statuses_enabled = (
+                    CT400Status.CONNECTED,
+                    CT400Status.DISCONNECTED,
+                    CT400Status.ERROR,
+                    CT400Status.DISCONNECT_UNCONFIRMED,
+                    CT400Status.SCAN_STATE_UNCERTAIN,
+                    CT400Status.RECOVERY_CONFIRMATION_REQUIRED,
+                )
+                enabled = (
+                    status in statuses_enabled
+                    and (
+                        status is not CT400Status.DISCONNECT_UNCONFIRMED or self._ct400_cleanup_laser_input is not None
+                    )
+                    and (
+                        status is not CT400Status.SCAN_STATE_UNCERTAIN
+                        or (self._ct400_cleanup_laser_input is not None and self._ct400_recovery_input_matches)
+                    )
+                    and (
+                        status is not CT400Status.RECOVERY_CONFIRMATION_REQUIRED
+                        or (self._ct400_cleanup_laser_input is not None and self._ct400_recovery_input_matches)
+                    )
+                )
                 action.setEnabled(enabled and isinstance(self.ct400_device, CT400))
             else:
                 action.setEnabled(False)
@@ -1252,6 +1516,7 @@ class MainWindow(QMainWindow):
     def _handle_ct400_scan_finished(self):
         if self._ct400_operation_state is CT400OperationState.SCANNING:
             self._set_ct400_operation_state(CT400OperationState.IDLE)
+        self._apply_pending_ct400_device_replacement()
 
     @Slot()
     def _handle_ct400_monitor_started(self):
@@ -1262,19 +1527,25 @@ class MainWindow(QMainWindow):
     def _handle_ct400_monitor_finished(self):
         if self._ct400_operation_state is CT400OperationState.MONITORING:
             self._set_ct400_operation_state(CT400OperationState.IDLE)
+        self._apply_pending_ct400_device_replacement()
         self._resume_close_after_ct400_operation()
 
     @Slot()
     def _handle_alignment_operation_started(self):
-        if self._ct400_operation_state is CT400OperationState.IDLE:
+        if self._ct400_operation_state is CT400OperationState.IDLE and self._is_alignment_operation_authorized():
             self._set_ct400_operation_state(CT400OperationState.ALIGNMENT)
         else:
-            logger.error("Rejected alignment start while CT400 is owned by %s", self._ct400_operation_state.name)
+            logger.error(
+                "Rejected unauthorized alignment start while CT400 is %s (physical connection/input or "
+                "scan recovery requirement not satisfied).",
+                self._ct400_operation_state.name,
+            )
 
     @Slot()
     def _handle_alignment_operation_finished(self):
         if self._ct400_operation_state is CT400OperationState.ALIGNMENT:
             self._set_ct400_operation_state(CT400OperationState.IDLE)
+        self._apply_pending_ct400_device_replacement()
         self._resume_close_after_ct400_operation()
 
     def _resume_close_after_ct400_operation(self):
@@ -1282,39 +1553,154 @@ class MainWindow(QMainWindow):
             self._pending_ct400_operation_close = False
             QTimer.singleShot(0, self.close)
 
-    @Slot()
-    def _handle_ct400_connection_operation_finished(self):
+    def _is_current_ct400_connection_callback(self, token: int | None, device: AbstractCT400 | None) -> bool:
+        return (token is None or token == self._ct400_connection_operation_token) and (
+            device is None or device is self.ct400_device
+        )
+
+    @Slot(int, object)
+    def _handle_ct400_connection_operation_finished(
+        self, token: int | None = None, device: AbstractCT400 | None = None
+    ):
         """Release connection-operation ownership and resume deferred shutdown."""
+        if not self._is_current_ct400_connection_callback(token, device):
+            logger.info("Ignoring stale CT400 connection completion callback.")
+            return
         if self._ct400_operation_state in (CT400OperationState.CONNECTING, CT400OperationState.DISCONNECTING):
             self._set_ct400_operation_state(CT400OperationState.IDLE)
-        action = getattr(self, "ct400_connect_action", None)
-        if action is not None:
-            action.setEnabled(True)
+        self._apply_pending_ct400_device_replacement()
 
         self._resume_close_after_ct400_operation()
 
-    @Slot(str)
-    def _handle_ct400_connection_success(self, message: str):
+    @Slot(str, object, int, object)
+    def _handle_ct400_connection_success(
+        self,
+        message: str,
+        laser_input: LaserInput | None = None,
+        token: int | None = None,
+        device: AbstractCT400 | None = None,
+    ):
         """Slot to handle a successful CT400 connection."""
+        if not self._is_current_ct400_connection_callback(token, device):
+            logger.info("Ignoring stale CT400 connection-success callback.")
+            return
+        if self._ct400_scan_state_uncertain:
+            logger.error("Ignoring CT400 Connect success while scan-state recovery remains unresolved.")
+            return
+        if laser_input is None:
+            laser_input = LaserInput(self.config.scan_defaults.input_port)
+        self._ct400_connected_laser_input = laser_input
+        self._ct400_cleanup_laser_input = laser_input
         self._ct400_connection_configured = True
+        self._ct400_recovery_input_matches = True
         self._update_ct400_visuals(state=CT400Status.CONNECTED, message=message)
-        self.control_panel.on_instrument_connected(True)
-        self.histogram_control.on_instrument_connected(True)
+        self.control_panel.set_connected_laser_input(laser_input)
+        self.histogram_control.set_connected_laser_input(laser_input)
 
-    @Slot(str)
-    def _handle_ct400_connection_failure(self, error_message: str):
+    @Slot(str, int, object)
+    def _handle_ct400_connection_failure(
+        self, error_message: str, token: int | None = None, device: AbstractCT400 | None = None
+    ):
         """Slot to handle a failed CT400 connection or disconnection."""
+        if not self._is_current_ct400_connection_callback(token, device):
+            logger.info("Ignoring stale CT400 connection-failure callback.")
+            return
         self._update_ct400_visuals(state=CT400Status.ERROR, message=error_message)
-        self.control_panel.on_instrument_connected(False)
-        self.histogram_control.on_instrument_connected(False)
+        # A failed operation revokes use authorization. Keep the last
+        # successfully configured input separately for shutdown cleanup.
+        self._ct400_connected_laser_input = None
+        self.control_panel.set_connected_laser_input(None)
+        self.histogram_control.set_connected_laser_input(None)
 
-    @Slot(str)
-    def _handle_ct400_disconnection_success(self, message: str):
+    @Slot(str, int, object)
+    def _handle_ct400_disconnection_failure(
+        self, error_message: str, token: int | None = None, device: AbstractCT400 | None = None
+    ):
+        """Revoke use authorization while retaining the explicit cleanup obligation."""
+        if not self._is_current_ct400_connection_callback(token, device):
+            logger.info("Ignoring stale CT400 disconnection-failure callback.")
+            return
+        self._ct400_connected_laser_input = None
+        self.control_panel.set_connected_laser_input(None)
+        self.histogram_control.set_connected_laser_input(None)
+        state = (
+            CT400Status.SCAN_STATE_UNCERTAIN if self._ct400_scan_state_uncertain else CT400Status.DISCONNECT_UNCONFIRMED
+        )
+        self._update_ct400_visuals(
+            state,
+            f"Disconnect was not confirmed. Retry the captured input "
+            f"{self._ct400_cleanup_laser_input.name if self._ct400_cleanup_laser_input else '(unknown)'}. "
+            f"{error_message}",
+        )
+
+    @Slot(str, int, object)
+    def _handle_ct400_disconnection_success(
+        self, message: str, token: int | None = None, device: AbstractCT400 | None = None
+    ):
         """Slot to handle a successful CT400 disconnection."""
+        if not self._is_current_ct400_connection_callback(token, device):
+            logger.info("Ignoring stale CT400 disconnection-success callback.")
+            return
+        was_scan_uncertain = self._ct400_scan_state_uncertain
+        if was_scan_uncertain:
+            self._ct400_connected_laser_input = None
+            self._ct400_recovery_disconnect_completed = True
+            self.control_panel.set_connected_laser_input(None)
+            self.histogram_control.set_connected_laser_input(None)
+            self._update_ct400_visuals(
+                CT400Status.RECOVERY_CONFIRMATION_REQUIRED,
+                "Recovery Disconnect command returned. It does not independently confirm physical safe-state. "
+                "Follow the approved laboratory procedure, then explicitly confirm safe-state before reconnecting.",
+            )
+            return
         self._ct400_connection_configured = False
-        self._update_ct400_visuals(state=CT400Status.DISCONNECTED, message=message)
-        self.control_panel.on_instrument_connected(False)
-        self.histogram_control.on_instrument_connected(False)
+        self._ct400_connected_laser_input = None
+        self._ct400_cleanup_laser_input = None
+        self._ct400_scan_state_uncertain = False
+        self._ct400_recovery_input_matches = True
+        self._ct400_recovery_disconnect_completed = False
+        status_message = message
+        self._update_ct400_visuals(state=CT400Status.DISCONNECTED, message=status_message)
+        self.control_panel.set_connected_laser_input(None)
+        self.histogram_control.set_connected_laser_input(None)
+        self._apply_pending_ct400_device_replacement()
+
+    @Slot(object)
+    def _handle_ct400_scan_safety_uncertain(self, issue: ScanSafetyIssue):
+        """Revoke physical use authorization after worker cleanup and thread completion."""
+        if not isinstance(issue.device, CT400) or issue.device is not self.ct400_device:
+            logger.warning("Ignoring stale or simulated CT400 scan safety outcome.")
+            return
+        self._ct400_scan_state_uncertain = True
+        self._ct400_connected_laser_input = None
+        captured_input = self._ct400_cleanup_laser_input
+        self._ct400_recovery_input_matches = captured_input is not None and captured_input is issue.laser_input
+        self.control_panel.set_connected_laser_input(None)
+        self.histogram_control.set_connected_laser_input(None)
+        if captured_input is None:
+            input_detail = "The Connect input is unknown; use the approved laboratory safe-state procedure."
+        elif self._ct400_recovery_input_matches:
+            input_detail = (
+                f"The captured Connect input is {captured_input.name}; only explicit Disconnect recovery is allowed."
+            )
+        else:
+            input_detail = (
+                f"Scan input {issue.laser_input.name} differs from captured Connect input {captured_input.name}; "
+                "automatic recovery is blocked."
+            )
+        logger.critical(
+            "CT400 physical scan state uncertain; authorization revoked (input=%s, failed_stages=%s, "
+            "cleanup_failed=%s): %s",
+            captured_input.name if captured_input is not None else "unknown",
+            issue.failed_stages,
+            issue.cleanup_failed,
+            issue.reason,
+        )
+        self._update_ct400_visuals(
+            CT400Status.SCAN_STATE_UNCERTAIN,
+            f"Unexpected CT400 scan failure. Scan/Monitor authorization revoked. {input_detail} "
+            "A successful CmdLaser return does not independently confirm physical safe-state.",
+        )
 
     def _show_about_dialog(self):
         """Displays the 'About' message box with application info."""
@@ -1711,7 +2097,17 @@ class MainWindow(QMainWindow):
 
     def _disable_configured_ct400_input_for_shutdown(self) -> bool:
         """Apply the connection-level selected-input cleanup before close."""
-        laser_input = LaserInput(self.config.scan_defaults.input_port)
+        laser_input = self._ct400_cleanup_laser_input
+        if laser_input is None:
+            if self._ct400_device_has_unresolved_laser_state():
+                QMessageBox.warning(
+                    self,
+                    "CT400 State Uncertain",
+                    "The configured laser input is unknown. Follow the approved laboratory safe-state "
+                    "procedure before disconnecting or closing the instrument.",
+                )
+                return False
+            return True
         try:
             self.ct400_device.cmd_laser(
                 laser_input=laser_input,
@@ -1912,6 +2308,7 @@ class MainWindow(QMainWindow):
             self.control_panel.scan_data_ready.connect(self._handle_scan_data)
             self.control_panel.operation_started.connect(self._handle_ct400_scan_started)
             self.control_panel.operation_finished.connect(self._handle_ct400_scan_finished)
+            self.control_panel.scan_safety_uncertain.connect(self._handle_ct400_scan_safety_uncertain)
             self.control_panel.scan_warning.connect(lambda message: self.statusBar().showMessage(message, 10000))
         else:
             logger.warning("CT400 Control Panel not initialized, skipping signal connection.")
