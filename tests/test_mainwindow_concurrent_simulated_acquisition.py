@@ -862,8 +862,9 @@ def test_failed_disconnect_is_not_treated_as_confirmed_and_shutdown_retries_disa
     device.cmd_laser = failed_disable
     window.ct400_device = device
     window._ct400_connection_configured = True
+    window._ct400_cleanup_laser_input = LaserInput(window.config.scan_defaults.input_port)
     window.is_ct400_connected_state = False
-    window._handle_ct400_connection_failure("GUI Disconnect failed")
+    window._handle_ct400_disconnection_failure("GUI Disconnect failed")
     assert window._ct400_connection_configured
 
     window.close()
