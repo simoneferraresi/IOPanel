@@ -740,6 +740,7 @@ def test_cancel_and_close_stop_scan_without_stopping_camera_early(qtbot, monkeyp
 
     physical_device.cmd_laser = record_configured_disable
     window.is_ct400_connected_state = True
+    window._ct400_cleanup_laser_input = LaserInput(window.config.scan_defaults.input_port)
     scan_terminations = []
     original_terminate = QThread.terminate
 
