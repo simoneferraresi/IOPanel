@@ -1,14 +1,16 @@
-from threading import Thread
+from threading import Event, Thread
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 from PySide6.QtCore import QSettings, Qt
 
+import ui.control_panel as control_panel_module
 import ui.main_window as main_window_module
 from app_settings import AppSettings
 from config_model import AppConfig
 from hardware.ct400 import CT400
-from hardware.ct400_types import Enable, LaserInput
+from hardware.ct400_types import Enable, LaserInput, ScanWaitResult
 from hardware.dummy_ct400 import DummyCT400
 from ui.control_panel import (
     CT400ConnectionSignals,
@@ -430,5 +432,238 @@ def test_unknown_configured_input_blocks_reconnect_and_shutdown_guess(qtbot, mon
         assert device.laser_calls == []
         assert not window._disable_configured_ct400_input_for_shutdown()
         assert device.laser_calls == []
+    finally:
+        window.close()
+
+
+@pytest.mark.parametrize(
+    ("result_code", "request_stop", "expected_stop_calls"),
+    [(0, False, 0), (1, True, 1), (100, False, 0)],
+    ids=["success", "documented-cancellation", "documented-warning"],
+)
+def test_normal_physical_scan_outcomes_preserve_authorization(
+    qtbot, monkeypatch, tmp_path, result_code, request_stop, expected_stop_calls
+):
+    window = _window(qtbot, monkeypatch, tmp_path)
+    monkeypatch.setattr(control_panel_module.QMessageBox, "critical", lambda *_args: None)
+    monkeypatch.setattr(main_window_module.QMessageBox, "warning", lambda *_args: None)
+    device = _physical_device()
+    events = []
+    start_entered, wait_entered, release_wait = Event(), Event(), Event()
+    if not request_stop:
+        release_wait.set()
+
+    device.cmd_laser = lambda **kwargs: events.append(("laser", kwargs["laser_input"], kwargs["enable"]))
+    device.set_scan = lambda *_args, **_kwargs: None
+    device.set_sampling_res = lambda *_args, **_kwargs: None
+    device.set_detector_array = lambda *_args, **_kwargs: None
+    device.start_scan = lambda: (start_entered.set(), None)[1]
+
+    def scan_wait_end():
+        wait_entered.set()
+        if not release_wait.wait(5):
+            raise TimeoutError("test did not release scan wait")
+        return ScanWaitResult(result_code, "documented result" if result_code else "")
+
+    device.scan_wait_end = scan_wait_end
+    device.stop_scan = lambda: events.append(("stop",))
+    device.get_data_points = lambda _detectors: (np.array([1500.0, 1501.0]), np.array([[1.0, 2.0]]))
+    device.get_all_powers = lambda: SimpleNamespace(pout=-20.0)
+
+    window._on_ct400_initialized(device)
+    for panel in (window.control_panel, window.histogram_control):
+        panel.input_port.setCurrentIndex(panel.input_port.findData(LaserInput.LI_3))
+    window._handle_ct400_connection_success("Connected", LaserInput.LI_3)
+    try:
+        window.control_panel.scan_btn.click()
+        qtbot.waitUntil(start_entered.is_set)
+        qtbot.waitUntil(wait_entered.is_set)
+        if request_stop:
+            window.control_panel.scan_btn.click()
+            assert events.count(("stop",)) == 1
+            release_wait.set()
+        qtbot.waitUntil(lambda: window._ct400_operation_state is CT400OperationState.IDLE)
+        qtbot.waitUntil(lambda: window.control_panel.scan_thread is None)
+
+        assert events.count(("stop",)) == expected_stop_calls
+        assert not window._ct400_scan_state_uncertain
+        assert window._ct400_connected_laser_input is LaserInput.LI_3
+        assert window._ct400_cleanup_laser_input is LaserInput.LI_3
+        assert window._ct400_connection_configured
+        assert window.control_panel.scan_btn.isEnabled()
+        assert window.histogram_control.monitor_btn.isEnabled()
+    finally:
+        release_wait.set()
+        window.close()
+
+
+@pytest.mark.parametrize(
+    ("cleanup_fails", "recovery_disconnect_succeeds", "operator_confirms_safe_state"),
+    [(False, True, True), (False, False, False), (True, True, True), (False, True, False)],
+    ids=[
+        "start-failure-recovery-confirmed",
+        "start-failure-disconnect-fails",
+        "cleanup-failure-recovery-confirmed",
+        "start-failure-recovery-not-confirmed",
+    ],
+)
+def test_scanstart_exception_revokes_authorization_and_requires_explicit_recovery(
+    qtbot, monkeypatch, tmp_path, caplog, cleanup_fails, recovery_disconnect_succeeds, operator_confirms_safe_state
+):
+    caplog.set_level("INFO", logger="LabApp.control_panel")
+    window = _window(qtbot, monkeypatch, tmp_path)
+    monkeypatch.setattr(control_panel_module.QMessageBox, "critical", lambda *_args: None)
+    monkeypatch.setattr(main_window_module.QMessageBox, "warning", lambda *_args: None)
+    device = _physical_device()
+    events = []
+    start_entered, release_start = Event(), Event()
+    disconnect_count = 0
+    set_laser_calls = []
+
+    def cmd_laser(**kwargs):
+        nonlocal disconnect_count
+        disconnect_count += 1
+        events.append(("laser", kwargs["laser_input"], kwargs["enable"]))
+        if cleanup_fails and disconnect_count == 2:
+            raise RuntimeError("mock final cleanup failure")
+        if disconnect_count >= 3 and not recovery_disconnect_succeeds:
+            raise RuntimeError("mock recovery disconnect failure")
+
+    def start_scan():
+        start_entered.set()
+        if not release_start.wait(5):
+            raise TimeoutError("test did not release ScanStart")
+        raise OSError(0xEEDFADE, "mock ScanStart failure")
+
+    device.cmd_laser = cmd_laser
+    device.set_laser = lambda **kwargs: set_laser_calls.append(kwargs)
+    device.set_scan = lambda *_args, **_kwargs: None
+    device.set_sampling_res = lambda *_args, **_kwargs: None
+    device.set_detector_array = lambda *_args, **_kwargs: None
+    device.start_scan = start_scan
+    device.stop_scan = lambda: events.append(("stop",))
+    threads = []
+
+    class FakePool:
+        def start(self, worker):
+            thread = Thread(target=worker.run)
+            threads.append(thread)
+            thread.start()
+
+    monkeypatch.setattr(main_window_module, "QThreadPool", SimpleNamespace(globalInstance=lambda: FakePool()))
+    window._on_ct400_initialized(device)
+    for panel in (window.control_panel, window.histogram_control):
+        panel.input_port.setCurrentIndex(panel.input_port.findData(LaserInput.LI_4))
+    window._handle_ct400_connection_success("Connected", LaserInput.LI_4)
+    try:
+        window.control_panel.scan_btn.click()
+        qtbot.waitUntil(start_entered.is_set)
+        assert window._ct400_operation_state is CT400OperationState.SCANNING
+        assert window.control_panel.scan_worker is not None
+        assert not window.control_panel.scan_worker._started
+
+        # GUI Stop during blocked ScanStart records cancellation but must not
+        # issue native ScanStop until ScanStart returns successfully.
+        window.control_panel.scan_btn.click()
+        assert not any(event[0] == "stop" for event in events)
+        assert "CT400_ScanStart entry" in caplog.text
+        assert "Cancellation requested while CT400_ScanStart is in progress" in caplog.text
+        release_start.set()
+        qtbot.waitUntil(lambda: window._ct400_operation_state is CT400OperationState.IDLE)
+        qtbot.waitUntil(lambda: window.control_panel.scan_thread is None)
+        assert "CT400_ScanStart exit" in caplog.text
+        assert "Unexpected exception at stage start_scan_seconds (OSError)" in caplog.text
+        assert not any(event[0] == "stop" for event in events)
+        assert [event[1] for event in events if event[0] == "laser"] == [
+            LaserInput.LI_4,
+            LaserInput.LI_4,
+        ]
+        assert window._ct400_scan_state_uncertain
+        assert window._ct400_visual_state.name == "SCAN_STATE_UNCERTAIN"
+        assert window._ct400_connected_laser_input is None
+        assert window._ct400_cleanup_laser_input is LaserInput.LI_4
+        assert window._ct400_connection_configured
+        assert not window.control_panel.scan_btn.isEnabled()
+        assert not window.histogram_control.monitor_btn.isEnabled()
+        assert window.ct400_connect_action.isEnabled()
+        assert "Recovery" in window.ct400_connect_action.text()
+
+        replacement = _physical_device()
+        window._on_ct400_initialized(replacement)
+        assert window.ct400_device is device
+        assert window._pending_ct400_device_replacement is replacement
+        assert window._ct400_cleanup_laser_input is LaserInput.LI_4
+
+        # An explicit Connect request cannot silently reauthorize or reconfigure.
+        window._handle_ct400_connect_action_triggered(True)
+        assert window._ct400_scan_state_uncertain
+        assert set_laser_calls == []
+        assert disconnect_count == 2
+
+        # Recovery is an operator click; it always targets the input captured by Connect.
+        window.ct400_connect_action.trigger()
+        qtbot.waitUntil(lambda: disconnect_count == 3)
+        qtbot.waitUntil(lambda: window._ct400_operation_state is CT400OperationState.IDLE)
+        threads[-1].join()
+        assert events[-1][0] == "laser"
+        assert events[-1][1] is LaserInput.LI_4
+        assert events[-1][2] is Enable.DISABLE
+        assert set_laser_calls == []
+        if recovery_disconnect_succeeds:
+            assert window._ct400_scan_state_uncertain
+            assert window._ct400_recovery_disconnect_completed
+            assert window._ct400_visual_state.name == "RECOVERY_CONFIRMATION_REQUIRED"
+            assert "does not independently confirm" in window.statusBar().currentMessage()
+            if operator_confirms_safe_state:
+                # This separate operator click asserts the approved lab safe-state
+                # check; the CmdLaser return alone leaves recovery unresolved.
+                window.ct400_connect_action.trigger()
+        recovery_resolved = recovery_disconnect_succeeds and operator_confirms_safe_state
+        if recovery_resolved:
+            assert window.ct400_device is replacement
+            assert not window._ct400_scan_state_uncertain
+            assert not window._ct400_recovery_disconnect_completed
+            assert window._ct400_connected_laser_input is None
+            assert not window._ct400_connection_configured
+            assert not window.control_panel.scan_btn.isEnabled()
+            assert not window.histogram_control.monitor_btn.isEnabled()
+        else:
+            assert window.ct400_device is device
+            assert window._pending_ct400_device_replacement is replacement
+            assert window._ct400_scan_state_uncertain
+            assert window._ct400_recovery_disconnect_completed is recovery_disconnect_succeeds
+            assert window._ct400_cleanup_laser_input is LaserInput.LI_4
+            assert not window.control_panel.scan_btn.isEnabled()
+            assert not window.histogram_control.monitor_btn.isEnabled()
+    finally:
+        release_start.set()
+        for thread in threads:
+            thread.join()
+        window._ct400_error_reset_timer.stop()
+        window.close()
+
+
+def test_scan_failure_with_unknown_captured_input_blocks_recovery_command(qtbot, monkeypatch, tmp_path):
+    window = _window(qtbot, monkeypatch, tmp_path)
+    monkeypatch.setattr(main_window_module.QMessageBox, "warning", lambda *_args: None)
+    device = _physical_device()
+    window._on_ct400_initialized(device)
+    window._ct400_connection_configured = True
+    issue = control_panel_module.ScanSafetyIssue(
+        device=device,
+        laser_input=LaserInput.LI_4,
+        reason="OSError at start_scan_seconds.",
+        failed_stages=("start_scan_seconds",),
+        cleanup_failed=False,
+    )
+    try:
+        window._handle_ct400_scan_safety_uncertain(issue)
+        assert window._ct400_visual_state.name == "SCAN_STATE_UNCERTAIN"
+        assert not window.ct400_connect_action.isEnabled()
+        assert not window.control_panel.scan_btn.isEnabled()
+        assert not window.histogram_control.monitor_btn.isEnabled()
+        window._handle_ct400_connect_action_triggered(False)
+        assert device.laser_calls == []
+        assert window._ct400_scan_state_uncertain
     finally:
         window.close()

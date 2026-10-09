@@ -5,6 +5,7 @@ import time
 import uuid
 from abc import ABC, ABCMeta, abstractmethod
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TypeVar, override
 
@@ -38,7 +39,7 @@ from PySide6.QtWidgets import (
 )
 
 from config_model import AppConfig
-from hardware.ct400 import CT400Error
+from hardware.ct400 import CT400, CT400Error
 from hardware.ct400_types import (
     CT400ScanResultKind,
     Detector,
@@ -193,6 +194,17 @@ class ScanSettings:
         self.power_unit: str = ""
 
 
+@dataclass(frozen=True)
+class ScanSafetyIssue:
+    """Physical scan outcome that requires operator-controlled recovery."""
+
+    device: AbstractCT400
+    laser_input: LaserInput
+    reason: str
+    failed_stages: tuple[str, ...]
+    cleanup_failed: bool
+
+
 ###############################################################################
 # ScanWorker
 ###############################################################################
@@ -250,7 +262,12 @@ class ScanWorker(QtCore.QObject):
         self._stop_requested = False
         self._finished = False
         self._started = False
+        self._scan_start_in_progress = False
         self._final_kind: CT400ScanResultKind | None = None
+        self._stop_failed = False
+        self._failure_type: str | None = None
+        self._failure_stage: str | None = None
+        self.recovery_required = False
 
     def _is_cancel_requested(self) -> bool:
         with self._state_lock:
@@ -281,8 +298,10 @@ class ScanWorker(QtCore.QObject):
         started_at = time.perf_counter()
         try:
             return call()
-        except Exception:
+        except Exception as exc:
             self._failed_stages.append(stage)
+            self._failure_stage = stage
+            self._failure_type = type(exc).__name__
             raise
         finally:
             self._stage_timings_seconds[stage] = round(max(0.0, time.perf_counter() - started_at), 6)
@@ -316,6 +335,25 @@ class ScanWorker(QtCore.QObject):
             "worker_duration_seconds": worker_duration_seconds,
         }
 
+    def safety_issue(self) -> ScanSafetyIssue | None:
+        if not self.recovery_required or not isinstance(self.ct400, CT400):
+            return None
+        if self._timing_cleanup_failed:
+            reason = "The scan worker could not confirm completion of its final laser-disable command."
+        elif self._stop_failed:
+            reason = "The native ScanStop request failed."
+        elif self._failure_stage is not None:
+            reason = f"{self._failure_type or 'Unexpected failure'} at {self._failure_stage}."
+        else:
+            reason = f"The scan ended with unverified native result {self.final_kind!s}."
+        return ScanSafetyIssue(
+            device=self.ct400,
+            laser_input=self.input_port,
+            reason=reason,
+            failed_stages=tuple(self._failed_stages),
+            cleanup_failed=self._timing_cleanup_failed,
+        )
+
     def _issue_stop_once(self):
         with self._state_lock:
             if not self._started or self._stop_requested or self._finished:
@@ -324,6 +362,10 @@ class ScanWorker(QtCore.QObject):
         try:
             self.ct400.stop_scan()
         except Exception as e:  # noqa: BLE001  # Preserve CT400 worker recovery and cleanup behavior.
+            self._stop_failed = True
+            self._failure_stage = "stop_scan"
+            self._failure_type = type(e).__name__
+            self._failed_stages.append("stop_scan")
             message = f"CT400_ScanStop failed; scan remains active until ScanWaitEnd returns: {e}"
             logger.error(message)
             self.stop_failed_signal.emit(message)
@@ -388,9 +430,25 @@ class ScanWorker(QtCore.QObject):
                 self._report_cancelled()
                 return
 
-            self._timed_call("start_scan_seconds", self.ct400.start_scan)
             with self._state_lock:
-                self._started = True
+                self._scan_start_in_progress = True
+            scan_start_entered_at = time.perf_counter()
+            scan_start_returned = False
+            logger.info("ScanWorker: CT400_ScanStart entry (scan_id=%s).", self.scan_id)
+            try:
+                self._timed_call("start_scan_seconds", self.ct400.start_scan)
+                scan_start_returned = True
+                with self._state_lock:
+                    self._started = True
+            finally:
+                with self._state_lock:
+                    self._scan_start_in_progress = False
+                logger.info(
+                    "ScanWorker: CT400_ScanStart exit (scan_id=%s, returned=%s, elapsed_seconds=%.6f).",
+                    self.scan_id,
+                    scan_start_returned,
+                    max(0.0, time.perf_counter() - scan_start_entered_at),
+                )
             logger.info("ScanWorker: CT400 scan started.")
             if self._is_cancel_requested():
                 self._issue_stop_once()
@@ -468,13 +526,19 @@ class ScanWorker(QtCore.QObject):
             self._timing_outcome = "warning" if kind == CT400ScanResultKind.WARNING else "success"
         except CT400Error as e:
             self._timing_outcome = "error"
-            logger.error(f"ScanWorker: CT400 Error: {e}")
+            if self._failure_type is None:
+                self._failure_type = type(e).__name__
+                self._failure_stage = "ct400_operation"
+            logger.exception("ScanWorker: CT400 exception at stage %s (%s)", self._failure_stage, type(e).__name__)
             # Map the generic exception to our structured error type
             err = InstrumentError(code=None, message=str(e), source=self.__class__.__name__)
             self.error_signal.emit(err)
         except Exception as e:
             self._timing_outcome = "error"
-            logger.exception("ScanWorker: Unexpected error")
+            if self._failure_type is None:
+                self._failure_type = type(e).__name__
+                self._failure_stage = "application_processing"
+            logger.exception("ScanWorker: Unexpected exception at stage %s (%s)", self._failure_stage, type(e).__name__)
             err = InstrumentError(
                 code=None,
                 message=f"An unexpected error occurred: {e}",
@@ -492,9 +556,22 @@ class ScanWorker(QtCore.QObject):
                         power=float(self.disable_power),
                     ),
                 )
-            except Exception as e:  # noqa: BLE001  # Preserve CT400 worker recovery and cleanup behavior.
+            except Exception as e:  # Preserve CT400 worker recovery and cleanup behavior.
                 self._timing_cleanup_failed = True
-                logger.error(f"ScanWorker: Error during cleanup in finally block: {e}")
+                logger.exception(
+                    "ScanWorker: Laser cleanup failed at stage final_laser_disable_seconds (%s).", type(e).__name__
+                )
+            self.recovery_required = bool(
+                self._timing_cleanup_failed
+                or self._stop_failed
+                or self._failed_stages
+                or self.final_kind
+                not in (
+                    CT400ScanResultKind.SUCCESS,
+                    CT400ScanResultKind.USER_CANCELLED,
+                    CT400ScanResultKind.WARNING,
+                )
+            )
             worker_duration = round(max(0.0, time.perf_counter() - worker_started_at), 6)
             timing_summary = self._timing_summary(worker_duration)
             self.final_timing_summary = timing_summary.copy()
@@ -517,6 +594,12 @@ class ScanWorker(QtCore.QObject):
             if self._finished or self._cancel_requested:
                 return False
             self._cancel_requested = True
+            scan_start_in_progress = self._scan_start_in_progress
+        if scan_start_in_progress:
+            logger.warning(
+                "ScanWorker: Cancellation requested while CT400_ScanStart is in progress; "
+                "ScanStop will wait for successful ScanStart return."
+            )
         self._issue_stop_once()
         return True
 
@@ -779,6 +862,7 @@ class BaseControlPanel(QWidget, ABC, metaclass=QABCMeta):
 class CT400ControlPanel(BaseControlPanel):
     scan_data_ready = QtCore.Signal(object)
     scan_timing_ready = QtCore.Signal(object)
+    scan_safety_uncertain = QtCore.Signal(object)
     scan_warning = QtCore.Signal(str)
     operation_started = QtCore.Signal()
     operation_finished = QtCore.Signal()
@@ -1187,6 +1271,7 @@ class CT400ControlPanel(BaseControlPanel):
     @Slot()
     def _scan_thread_finished(self):
         logger.info("ScanPanel: Scan thread finished.")
+        safety_issue = self.scan_worker.safety_issue() if self.scan_worker else None
         timing_summary: dict[str, object] | None = None
         if self.scan_worker and self.scan_worker.final_timing_summary is not None:
             timing_summary = self.scan_worker.final_timing_summary.copy()
@@ -1226,6 +1311,9 @@ class CT400ControlPanel(BaseControlPanel):
             self.scan_thread = None
 
         self._reset_scan_ui()
+        if safety_issue is not None:
+            logger.error("ScanPanel: Physical CT400 authorization requires recovery: %s", safety_issue.reason)
+            self.scan_safety_uncertain.emit(safety_issue)
         self.operation_finished.emit()
 
     def _reset_scan_ui(self):
