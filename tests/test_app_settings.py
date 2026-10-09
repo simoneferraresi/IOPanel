@@ -22,6 +22,7 @@ def test_missing_schema_initializes_v1_and_defaults(tmp_path):
     assert settings.scan_export_formats() == (True, True, False)
     assert settings.power_monitor_export_directory() == Path.cwd()
     assert settings.power_monitor_export_formats() == (True, True)
+    assert settings.application_icon() == "optical_burst"
 
 
 def test_schema_v1_typed_values_round_trip(tmp_path):
@@ -35,6 +36,7 @@ def test_schema_v1_typed_values_round_trip(tmp_path):
     power_monitor_directory = Path.cwd()
     settings.set_power_monitor_export_directory(power_monitor_directory)
     settings.set_power_monitor_export_formats(csv=False, mat=True)
+    settings.set_application_icon("prism_spectrum")
     settings.sync()
 
     assert settings.geometry() == QByteArray(b"geometry")
@@ -46,6 +48,10 @@ def test_schema_v1_typed_values_round_trip(tmp_path):
     assert settings.scan_export_formats() == (False, True, True)
     assert settings.power_monitor_export_directory() == power_monitor_directory.resolve()
     assert settings.power_monitor_export_formats() == (False, True)
+    assert settings.application_icon() == "prism_spectrum"
+    assert AppSettings(QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)).application_icon() == (
+        "prism_spectrum"
+    )
 
 
 def test_log_level_preferences_migrate_and_reject_unknown_values(tmp_path):
@@ -66,6 +72,7 @@ def test_future_schema_is_left_untouched_and_uses_defaults(tmp_path):
     backend.setValue("MainWindow/active_tab", 2)
     backend.setValue("Export/formats/csv", False)
     backend.setValue("Export/power_monitor_formats/mat", False)
+    backend.setValue("Appearance/application_icon", "prism_spectrum")
     backend.sync()
     settings = AppSettings(backend)
 
@@ -82,6 +89,19 @@ def test_future_schema_is_left_untouched_and_uses_defaults(tmp_path):
     assert backend.value("Export/power_monitor_formats/mat") is False
     assert settings.scan_export_formats() == (True, True, False)
     assert settings.power_monitor_export_formats() == (True, True)
+    assert settings.application_icon() == "optical_burst"
+    assert backend.value("Appearance/application_icon") == "prism_spectrum"
+
+
+def test_application_icon_rejects_unknown_values_and_invalid_types(tmp_path):
+    settings = make_settings(tmp_path / "application-icon.ini")
+    settings._settings.setValue("Appearance/application_icon", "unknown")
+    assert settings.application_icon() == "optical_burst"
+
+    settings._settings.setValue("Appearance/application_icon", 42)
+    assert settings.application_icon() == "optical_burst"
+    settings.set_application_icon("unknown")
+    assert settings.application_icon() == "optical_burst"
 
 
 def test_malformed_export_format_values_fall_back_individually(tmp_path):

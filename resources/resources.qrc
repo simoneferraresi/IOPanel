@@ -23,6 +23,22 @@
     <file alias="stop-circle.svg">icons/stop-circle.svg</file>
     <file alias="stop.svg">icons/stop.svg</file>
 </qresource>
+<qresource prefix="/icons/app">
+    <file alias="optical_burst/16.png">icons/app/optical_burst/16.png</file>
+    <file alias="optical_burst/24.png">icons/app/optical_burst/24.png</file>
+    <file alias="optical_burst/32.png">icons/app/optical_burst/32.png</file>
+    <file alias="optical_burst/48.png">icons/app/optical_burst/48.png</file>
+    <file alias="optical_burst/64.png">icons/app/optical_burst/64.png</file>
+    <file alias="optical_burst/128.png">icons/app/optical_burst/128.png</file>
+    <file alias="optical_burst/256.png">icons/app/optical_burst/256.png</file>
+    <file alias="prism_spectrum/16.png">icons/app/prism_spectrum/16.png</file>
+    <file alias="prism_spectrum/24.png">icons/app/prism_spectrum/24.png</file>
+    <file alias="prism_spectrum/32.png">icons/app/prism_spectrum/32.png</file>
+    <file alias="prism_spectrum/48.png">icons/app/prism_spectrum/48.png</file>
+    <file alias="prism_spectrum/64.png">icons/app/prism_spectrum/64.png</file>
+    <file alias="prism_spectrum/128.png">icons/app/prism_spectrum/128.png</file>
+    <file alias="prism_spectrum/256.png">icons/app/prism_spectrum/256.png</file>
+</qresource>
 <qresource prefix="/fonts">
     <file alias="Geist-Variable.ttf">fonts/Geist-Variable.ttf</file>
     <file alias="GeistMono-Variable.ttf">fonts/GeistMono-Variable.ttf</file>

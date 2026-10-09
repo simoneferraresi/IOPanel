@@ -28,6 +28,7 @@ from PySide6.QtCore import QObject, QRunnable, QSize, Qt, QThreadPool, QTimer, S
 from PySide6.QtGui import QAction, QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
     QDockWidget,
     QFileDialog,
     QFrame,
@@ -53,6 +54,8 @@ from hardware.piezo_init_worker import PiezoInitWorker
 from logic.scan_import import ScanImportError, load_scan
 from logic.task_runner import TaskRunner
 from ui.alignment_panel import AlignmentPanel
+from ui.appearance_dialog import AppearanceDialog
+from ui.application_icons import application_icon
 from ui.discovery_dialog import CameraDiscoveryDialog
 
 try:
@@ -186,6 +189,8 @@ class MainWindow(QMainWindow):
         super().__init__(parent)
         self.config = config
         self.settings = settings if settings is not None else AppSettings()
+        self._application_icon_id = self.settings.application_icon()
+        self._set_application_icon(self._application_icon_id)
         logger.info("Initializing MainWindow...")
         # --- Member variable initialization ---
         self.cameras: list[VimbaCam] = []
@@ -677,7 +682,6 @@ class MainWindow(QMainWindow):
         """Constructs the main user interface of the application."""
         logger.debug("Initializing UI...")
         self.setWindowTitle(self.config.app_name)
-        self.setWindowIcon(QIcon(":/icons/laser.svg"))
         self.setMinimumSize(1200, 800)
 
         try:
@@ -759,6 +763,11 @@ class MainWindow(QMainWindow):
         self.log_console_dock.setFloating(True)
         self.log_console_dock.hide()
         self.view_menu = self.menuBar().addMenu("&View")
+        self.application_icon_action = QAction("Application Icon…", self)
+        self.application_icon_action.setObjectName("applicationIconAction")
+        self.application_icon_action.setStatusTip("Choose the icon shown by IOPanel while it is running")
+        self.application_icon_action.triggered.connect(self._show_appearance_dialog)
+        self.view_menu.addAction(self.application_icon_action)
         self.log_console_action = QAction("Log Console", self)
         self.log_console_action.setCheckable(True)
         self.log_console_action.setShortcut("F12")
@@ -769,6 +778,31 @@ class MainWindow(QMainWindow):
 
         self._update_ct400_visuals(state=CT400Status.UNKNOWN, message="Initializing...")
         logger.debug("UI Initialization finished.")
+
+    def _set_application_icon(self, icon_id: str) -> None:
+        """Apply the chosen icon to this window and Qt's application default."""
+        icon = application_icon(icon_id)
+        self._application_icon_id = icon_id
+        app = QApplication.instance()
+        if app is not None:
+            app.setWindowIcon(icon)
+        self.setWindowIcon(icon)
+
+    @Slot(str)
+    def _select_application_icon(self, icon_id: str) -> None:
+        """Apply and persist a menu selection without touching hardware state."""
+        if icon_id not in self.settings.APPLICATION_ICON_IDS:
+            return
+        if icon_id == self._application_icon_id:
+            return
+        self.settings.set_application_icon(icon_id)
+        self._set_application_icon(icon_id)
+
+    @Slot()
+    def _show_appearance_dialog(self) -> None:
+        dialog = AppearanceDialog(self._application_icon_id, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._select_application_icon(dialog.selected_icon_id)
 
     @Slot(object, object)
     def _on_piezos_initialized(self, piezo_left: PiezoController | None, piezo_right: PiezoController | None):

@@ -34,6 +34,11 @@ REQUIRED_RESOURCE_ENTRIES = {
     ("/icons", "snowflake.svg", "icons/snowflake.svg"),
     ("/icons", "stop-circle.svg", "icons/stop-circle.svg"),
     ("/icons", "stop.svg", "icons/stop.svg"),
+    *(
+        ("/icons/app", f"{name}/{size}.png", f"icons/app/{name}/{size}.png")
+        for name in ("optical_burst", "prism_spectrum")
+        for size in (16, 24, 32, 48, 64, 128, 256)
+    ),
     ("/fonts", "Geist-Variable.ttf", "fonts/Geist-Variable.ttf"),
     ("/fonts", "GeistMono-Variable.ttf", "fonts/GeistMono-Variable.ttf"),
     ("/fonts", "OFL.txt", "fonts/OFL.txt"),
@@ -64,6 +69,10 @@ def test_compiled_resource_aliases_are_registered(qapp) -> None:
         ":/icons/camera.svg",
         ":/icons/camera-white.svg",
         ":/icons/record.svg",
+        ":/icons/app/optical_burst/16.png",
+        ":/icons/app/optical_burst/256.png",
+        ":/icons/app/prism_spectrum/16.png",
+        ":/icons/app/prism_spectrum/256.png",
         ":/fonts/Geist-Variable.ttf",
         ":/fonts/GeistMono-Variable.ttf",
         ":/fonts/OFL.txt",
@@ -105,6 +114,10 @@ def test_resource_compiler_smoke(tmp_path: Path) -> None:
             ":/icons/camera.svg",
             ":/icons/camera-white.svg",
             ":/icons/record.svg",
+            ":/icons/app/optical_burst/16.png",
+            ":/icons/app/optical_burst/256.png",
+            ":/icons/app/prism_spectrum/16.png",
+            ":/icons/app/prism_spectrum/256.png",
             ":/fonts/Geist-Variable.ttf",
             ":/fonts/GeistMono-Variable.ttf",
             ":/fonts/OFL.txt",
