@@ -41,6 +41,7 @@ class ScanMeasurement:
     simulated: bool
     completed_at_utc: datetime
     detector_unit: str | None = None  # Vendor dB/dBm meaning remains unverified.
+    scan_id: str | None = None
 
     def __post_init__(self):
         if self.completed_at_utc.utcoffset() is None:

@@ -1,0 +1,135 @@
+{
+  "analysis_summary": {
+    "by_case": {
+      "A": {
+        "count": 2,
+        "max_error_seconds": 0.32999999999999996,
+        "median_error_seconds": 0.31,
+        "median_stage_seconds": {
+          "get_data_points_seconds": 0.03,
+          "scan_wait_end_seconds": 0.73,
+          "set_scan_seconds": 0.01
+        },
+        "min_error_seconds": 0.29000000000000004
+      }
+    },
+    "by_speed_nm_s": {
+      "10": {
+        "count": 2,
+        "max_error_seconds": 0.32999999999999996,
+        "median_error_seconds": 0.31,
+        "min_error_seconds": 0.29000000000000004,
+        "run_to_run_sd_seconds": 0.019999999999999962
+      }
+    },
+    "outcome_counts": {
+      "success": 2
+    },
+    "runs": [
+      {
+        "error_seconds": 0.32999999999999996,
+        "run_id": "simulated-example-1"
+      },
+      {
+        "error_seconds": 0.29000000000000004,
+        "run_id": "simulated-example-2"
+      }
+    ],
+    "successful_measurements": 2,
+    "total_measurements": 2
+  },
+  "campaign_id": "e39c92da-893f-403e-b9dd-364968d60043",
+  "created_at_utc": "2026-10-09T08:19:06.853351+00:00",
+  "notes": "",
+  "provenance": {
+    "application_revision": "554b2a935051afe096b76a22608acb6c9d5f52f0 (PR #139 base)",
+    "generated_at_utc": "2026-10-09T08:19:06.853351+00:00",
+    "synthetic_example": true
+  },
+  "records": [
+    {
+      "active_detector_count": 1,
+      "campaign_id": "e39c92da-893f-403e-b9dd-364968d60043",
+      "case_id": "A",
+      "configured_speed_nm_s_at_connect": 10,
+      "detectors": [
+        "DE_1"
+      ],
+      "end_wavelength_nm": 1535.0,
+      "error": null,
+      "gui_completion_dispatch_latency_seconds": 0.002,
+      "gui_start_to_completion_seconds": 0.83,
+      "matrix_order": 1,
+      "nominal_sweep_seconds": 0.5,
+      "operator_notes": "Synthetic demonstration only; not an instrument measurement.",
+      "outcome": "success",
+      "predicted_sample_count": 5001,
+      "repetition": 1,
+      "requested_speed_nm_s": 10,
+      "resolution_pm": 1,
+      "returned_sample_count": 5001,
+      "run_id": "simulated-example-1",
+      "simulated": true,
+      "speed_block_nm_s": 10,
+      "speed_mismatch": false,
+      "stage_seconds": {
+        "get_data_points_seconds": 0.03,
+        "scan_wait_end_seconds": 0.75,
+        "set_scan_seconds": 0.01
+      },
+      "start_wavelength_nm": 1530.0,
+      "timestamp_utc": "2026-10-09T08:19:06.853351+00:00",
+      "warning": null,
+      "worker_duration_seconds": 0.8099999999999999
+    },
+    {
+      "active_detector_count": 1,
+      "campaign_id": "e39c92da-893f-403e-b9dd-364968d60043",
+      "case_id": "A",
+      "configured_speed_nm_s_at_connect": 10,
+      "detectors": [
+        "DE_1"
+      ],
+      "end_wavelength_nm": 1535.0,
+      "error": null,
+      "gui_completion_dispatch_latency_seconds": 0.002,
+      "gui_start_to_completion_seconds": 0.79,
+      "matrix_order": 2,
+      "nominal_sweep_seconds": 0.5,
+      "operator_notes": "Synthetic demonstration only; not an instrument measurement.",
+      "outcome": "success",
+      "predicted_sample_count": 5001,
+      "repetition": 2,
+      "requested_speed_nm_s": 10,
+      "resolution_pm": 1,
+      "returned_sample_count": 5001,
+      "run_id": "simulated-example-2",
+      "simulated": true,
+      "speed_block_nm_s": 10,
+      "speed_mismatch": false,
+      "stage_seconds": {
+        "get_data_points_seconds": 0.03,
+        "scan_wait_end_seconds": 0.7100000000000001,
+        "set_scan_seconds": 0.01
+      },
+      "start_wavelength_nm": 1530.0,
+      "timestamp_utc": "2026-10-09T08:19:06.867345+00:00",
+      "warning": null,
+      "worker_duration_seconds": 0.77
+    }
+  ],
+  "settings": {
+    "case_id": "A",
+    "detectors": [
+      "DE_1"
+    ],
+    "repetitions": 2,
+    "resolution_pm": 1,
+    "simulated": true,
+    "speed_nm_s": 10,
+    "wavelength_range_nm": [
+      1530.0,
+      1535.0
+    ]
+  }
+}
