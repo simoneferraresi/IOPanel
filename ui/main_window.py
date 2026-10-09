@@ -56,6 +56,7 @@ from logic.task_runner import TaskRunner
 from ui.alignment_panel import AlignmentPanel
 from ui.appearance_dialog import AppearanceDialog
 from ui.application_icons import application_icon
+from ui.ct400_calibration_dialog import CT400CalibrationDialog
 from ui.discovery_dialog import CameraDiscoveryDialog
 
 try:
@@ -932,6 +933,11 @@ class MainWindow(QMainWindow):
         self.add_scan_action.setStatusTip("Add a saved IOPanel schema-v2 scan as a separate plot overlay")
         self.add_scan_action.triggered.connect(self._add_scan_to_plot)
         file_menu.addAction(self.add_scan_action)
+        calibration_action = QAction("CT400 ETA Calibration…", self)
+        calibration_action.setObjectName("ct400EtaCalibrationAction")
+        calibration_action.setStatusTip("Preview and configure a supervised CT400 calibration campaign")
+        calibration_action.triggered.connect(self._show_ct400_calibration)
+        file_menu.addAction(calibration_action)
         file_menu.addSeparator()
         exit_action = QAction(QIcon(":/icons/exit.svg"), "E&xit", self)
         exit_action.setStatusTip("Exit the application")
@@ -977,6 +983,15 @@ class MainWindow(QMainWindow):
         about_action.triggered.connect(self._show_about_dialog)
         help_menu.addAction(about_action)
         logger.debug("Menus created.")
+
+    @Slot()
+    def _show_ct400_calibration(self) -> None:
+        """Open calibration planning without claiming or operating the instrument."""
+        enabled_detectors = tuple(
+            detector.name for detector, checkbox in self.control_panel.scan_detector_cbs.items() if checkbox.isChecked()
+        )
+        dialog = CT400CalibrationDialog(self.config, self, enabled_detectors)
+        dialog.exec()
 
     @Slot()
     def _open_scan_file(self) -> None:

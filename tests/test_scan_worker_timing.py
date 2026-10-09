@@ -98,7 +98,6 @@ def test_timing_summary_measures_stages_and_preserves_scan_result(
     if result_code:
         device._scan_result_code = result_code
         device._scan_error = "controlled result"
-
     with caplog.at_level(logging.INFO, logger="LabApp.control_panel"):
         worker.do_scan()
 
@@ -114,6 +113,9 @@ def test_timing_summary_measures_stages_and_preserves_scan_result(
     assert summary["active_detector_count"] == 2
     assert summary["returned_sample_count"] == (11 if measurement_count else None)
     assert summary["simulated"] is True
+    assert worker.final_timing_summary["scan_id"] == summary["scan_id"]
+    if measurements:
+        assert measurements[0].scan_id == summary["scan_id"]
     assert "DummyCT400" in summary["backend"]
     assert summary["known_stabilization_delay_seconds"] == 0.15
     expected_worker_duration = 0.45 if not measurement_count else 0.60

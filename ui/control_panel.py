@@ -2,6 +2,7 @@ import json
 import logging
 import threading
 import time
+import uuid
 from abc import ABC, ABCMeta, abstractmethod
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -211,6 +212,7 @@ class ScanWorker(QtCore.QObject):
         parent: QtCore.QObject | None = None,
         acquisition_settings: ScanAcquisitionSettings | None = None,
         configured_speed_nm_s: int | None = None,
+        scan_id: str | None = None,
     ):
         super().__init__(parent)
         if ct400 is None:
@@ -225,7 +227,9 @@ class ScanWorker(QtCore.QObject):
             start_wl, end_wl, resolution, "N/A", "N/A", "", laser_power, input_port, (Detector.DE_1,)
         )
         self.configured_speed_nm_s = configured_speed_nm_s
+        self.scan_id = scan_id or str(uuid.uuid4())
         self._stage_timings_seconds: dict[str, float] = {}
+        self.final_timing_summary: dict[str, object] | None = None
         self._failed_stages: list[str] = []
         self._timing_outcome = "error"
         self._timing_cleanup_failed = False
@@ -285,6 +289,7 @@ class ScanWorker(QtCore.QObject):
                 speed_differs = True
 
         return {
+            "scan_id": self.scan_id,
             "outcome": self._timing_outcome,
             "requested_start_wavelength_nm": self.start_wl,
             "requested_end_wavelength_nm": self.end_wl,
@@ -449,6 +454,7 @@ class ScanWorker(QtCore.QObject):
                 backend=f"{type(self.ct400).__module__}.{type(self.ct400).__qualname__}",
                 simulated=isinstance(self.ct400, DummyCT400),
                 completed_at_utc=datetime.now(UTC),
+                scan_id=self.scan_id,
             )
             self.measurement_ready.emit(measurement)
             self._timing_outcome = "warning" if kind == CT400ScanResultKind.WARNING else "success"
@@ -483,6 +489,7 @@ class ScanWorker(QtCore.QObject):
                 logger.error(f"ScanWorker: Error during cleanup in finally block: {e}")
             worker_duration = round(max(0.0, time.perf_counter() - worker_started_at), 6)
             timing_summary = self._timing_summary(worker_duration)
+            self.final_timing_summary = timing_summary.copy()
             logger.info("Scan timing summary: %s", json.dumps(timing_summary, separators=(",", ":"), sort_keys=True))
             self.finished_emitted_at = time.perf_counter()
             with self._state_lock:
@@ -743,6 +750,7 @@ class BaseControlPanel(QWidget, ABC, metaclass=QABCMeta):
 ###############################################################################
 class CT400ControlPanel(BaseControlPanel):
     scan_data_ready = QtCore.Signal(object)
+    scan_timing_ready = QtCore.Signal(object)
     scan_warning = QtCore.Signal(str)
     operation_started = QtCore.Signal()
     operation_finished = QtCore.Signal()
@@ -765,6 +773,7 @@ class CT400ControlPanel(BaseControlPanel):
         super().__init__(ct400_device, config, parent)
 
         self._scan_started_at: float | None = None
+        self._next_scan_id: str | None = None
         self._scan_estimated_duration_seconds: float | None = None
         self._scan_stopping = False
         self._scan_elapsed_timer = QTimer(self)
@@ -779,6 +788,22 @@ class CT400ControlPanel(BaseControlPanel):
 
         self._connect_settings_signals()
         self.on_instrument_connected(self.is_instrument_connected)
+
+    def set_next_scan_id(self, scan_id: str) -> None:
+        """Attach a caller-owned ID to the next normal scan without starting it."""
+        if QThread.currentThread() != self.thread():
+            raise RuntimeError("scan IDs must be assigned from the control panel's GUI thread")
+        if self.scanning or self.is_busy() or self._next_scan_id is not None:
+            raise RuntimeError("a scan ID can only be assigned once while the CT400 panel is idle")
+        if not scan_id.strip():
+            raise ValueError("scan_id must not be empty")
+        self._next_scan_id = scan_id
+
+    def clear_next_scan_id(self) -> None:
+        """Discard a queued ID if the caller abandons a planned run."""
+        if QThread.currentThread() != self.thread():
+            raise RuntimeError("scan IDs must be cleared from the control panel's GUI thread")
+        self._next_scan_id = None
 
     @override
     def _init_subclass_ui(self) -> None:
@@ -970,6 +995,8 @@ class CT400ControlPanel(BaseControlPanel):
                 laser_input=input_port_enum,
                 detectors=selected_detectors,
             )
+            scan_id = self._next_scan_id
+            self._next_scan_id = None
 
             # The scan panel speed is requested metadata. The physical laser speed is
             # configured by ConnectionWorker from scan_defaults when Connect is used.
@@ -1000,6 +1027,7 @@ class CT400ControlPanel(BaseControlPanel):
                 input_port_enum,
                 acquisition_settings=acquisition_settings,
                 configured_speed_nm_s=self.config.scan_defaults.speed_nm_s,
+                scan_id=scan_id,
                 disable_wl=self.config.scan_defaults.safe_parking_wavelength,
                 disable_power=self.config.scan_defaults.laser_power,
             )
@@ -1130,12 +1158,24 @@ class CT400ControlPanel(BaseControlPanel):
     @Slot()
     def _scan_thread_finished(self):
         logger.info("ScanPanel: Scan thread finished.")
+        timing_summary: dict[str, object] | None = None
+        if self.scan_worker and self.scan_worker.final_timing_summary is not None:
+            timing_summary = self.scan_worker.final_timing_summary.copy()
+        if timing_summary is not None:
+            started_at = self._scan_started_at
+            timing_summary["gui_start_to_completion_seconds"] = (
+                round(max(0.0, time.perf_counter() - started_at), 6) if started_at is not None else None
+            )
         if self.scan_worker and self.scan_worker.finished_emitted_at is not None:
             gui_completion_latency = round(max(0.0, time.perf_counter() - self.scan_worker.finished_emitted_at), 6)
+            if timing_summary is not None:
+                timing_summary["gui_completion_dispatch_latency_seconds"] = gui_completion_latency
             logger.info(
                 "Scan UI completion timing: %s",
                 json.dumps({"gui_completion_dispatch_latency_seconds": gui_completion_latency}, separators=(",", ":")),
             )
+        if timing_summary is not None:
+            self.scan_timing_ready.emit(timing_summary)
         final_kind = self.scan_worker.final_kind if self.scan_worker else None
         if final_kind == CT400ScanResultKind.USER_CANCELLED:
             self.scan_status_label.setText(MSG_SCAN_CANCELLED)

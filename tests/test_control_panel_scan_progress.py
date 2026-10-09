@@ -131,6 +131,11 @@ def test_simulated_scan_eta_is_unavailable_and_logs_speed_source(qtbot, caplog):
     panel.config.scan_defaults.speed_nm_s = 3
     panel.initial_wl.setText("1550")
     panel.final_wl.setText("1556")
+    panel.set_next_scan_id("calibration-run-007")
+    timing_events = []
+    measurements = []
+    panel.scan_timing_ready.connect(timing_events.append)
+    panel.scan_data_ready.connect(measurements.append)
 
     with caplog.at_level(logging.INFO, logger="LabApp.control_panel"):
         panel._start_scan()
@@ -147,6 +152,11 @@ def test_simulated_scan_eta_is_unavailable_and_logs_speed_source(qtbot, caplog):
     assert timing["scan_panel_speed_nm_s"] == "10"
     assert timing["scan_panel_speed_differs_from_configured"] is True
     assert timing["simulated"] is True
+    assert len(timing_events) == 1
+    assert timing_events[0]["scan_id"] == "calibration-run-007"
+    assert measurements[0].scan_id == timing_events[0]["scan_id"]
+    assert timing_events[0]["gui_start_to_completion_seconds"] >= timing_events[0]["worker_duration_seconds"]
+    assert timing_events[0]["gui_completion_dispatch_latency_seconds"] >= 0
 
 
 def test_stop_request_keeps_busy_ui_until_cancelled_worker_finishes(qtbot):
