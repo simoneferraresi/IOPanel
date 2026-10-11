@@ -4,6 +4,9 @@ Hardware configuration remains in ``config.ini``. Values in this module are
 limited to presentation preferences and paths used by file dialogs.
 """
 
+import os
+import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -168,6 +171,14 @@ class AppSettings:
 
     def directory(self, key: str, fallback: Path | None = None) -> Path:
         default = fallback or Path.cwd()
+        if fallback is None and getattr(sys, "frozen", False):
+            root = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+            default = root / "IOPanel" / "output"
+            try:
+                default.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                default = Path(tempfile.gettempdir()) / "IOPanel" / "output"
+                default.mkdir(parents=True, exist_ok=True)
         value = self._read(key, None)
         if not isinstance(value, str) or not value.strip():
             return default

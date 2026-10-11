@@ -239,6 +239,7 @@ class MainWindow(QMainWindow):
         self._pending_camera_lifecycle_close: bool = False
         self._pending_piezo_operation_close: bool = False
         self._piezo_operations_in_flight: set[str] = set()
+        self._lazy_init_started = False
         self.power_monitor_trace_widget: PowerMonitorTraceWidget | None = None
         self._ct400_error_reset_timer = QTimer(self)
         self._ct400_error_reset_timer.setSingleShot(True)
@@ -630,6 +631,9 @@ class MainWindow(QMainWindow):
 
     def _begin_lazy_init(self):
         """Starts all slow hardware initializations on background threads."""
+        if self._lazy_init_started:
+            return
+        self._lazy_init_started = True
         logger.info("Starting lazy initialization of hardware...")
 
         # 1. Start Piezo discovery (already asynchronous, good)
