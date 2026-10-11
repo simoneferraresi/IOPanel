@@ -6,9 +6,9 @@ are not tests of a real MATLAB process or the MATLAB vendor FutureResult.
 """
 
 import os
+from pathlib import Path
 import subprocess
 import sys
-from pathlib import Path
 
 
 _CHILD_PROBE = r"""
