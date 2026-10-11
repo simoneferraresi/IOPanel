@@ -44,6 +44,7 @@ from logic.power_monitor_export import (
     default_power_monitor_export_name,
     derive_power_monitor_export_targets,
 )
+from logic.power_monitor_export_worker import PowerMonitorExportOutcome, PowerMonitorExportWorker
 from logic.power_monitor_recording import (
     PowerMonitorAcquisitionSettings,
     PowerMonitorRecording,
@@ -317,6 +318,8 @@ def _is_numeric_list(values: list[object]) -> bool:
 class PowerMonitorTraceWidget(QWidget):
     """Live selected-detector trace driven only by accepted M1 recording samples."""
 
+    export_idle = Signal()
+
     def __init__(self, settings: AppSettings | None = None, parent: QWidget | None = None):
         super().__init__(parent)
         self.app_settings = settings
@@ -324,6 +327,13 @@ class PowerMonitorTraceWidget(QWidget):
         self.current_recording: PowerMonitorRecording | None = None
         self.recording_active = False
         self._user_hidden = False
+        self._power_monitor_export_task: TaskRunner | None = None
+        self._owned_power_monitor_export_tasks: dict[int, TaskRunner] = {}
+        self._power_monitor_export_result: PowerMonitorExportOutcome | None = None
+        self._power_monitor_export_thread_stopped = False
+        self._pending_power_monitor_export_close = False
+        self._closing_for_power_monitor_export = False
+        self._power_monitor_export_idle_notified = True
         self.elapsed_values: list[float] = []
         self.detector_values: dict[Detector, list[float]] = {}
         self.display_history: PowerMonitorDisplayHistory | None = None
@@ -465,7 +475,7 @@ class PowerMonitorTraceWidget(QWidget):
         self._reset_trace(recording.settings)
         self.recording_active = False
         self.current_recording = recording
-        self.save_recording_button.setEnabled(len(recording.elapsed_s) > 0)
+        self.save_recording_button.setEnabled(len(recording.elapsed_s) > 0 and not self.power_monitor_export_busy)
         self.elapsed_values = recording.elapsed_s.tolist()
         self.detector_values = {
             detector: recording.detector_data[row].tolist() for row, detector in enumerate(recording.detectors)
@@ -505,6 +515,8 @@ class PowerMonitorTraceWidget(QWidget):
         self.hide()
 
     def save_recording(self) -> None:
+        if self.power_monitor_export_busy:
+            return
         recording = self.current_recording
         if recording is None:
             QMessageBox.warning(self, "No Recording", "There is no completed recording to save.")
@@ -558,42 +570,102 @@ class PowerMonitorTraceWidget(QWidget):
             QMessageBox.warning(self, "Power Monitor Export Not Supported", str(error))
             return
 
-        saved: list[Path] = []
-        errors: list[str] = []
-        if request.csv:
-            csv_path = targets["CSV"]
-            try:
-                with csv_path.resolve().open("w", encoding="utf-8", newline="") as output:
-                    np.savetxt(
-                        output, payload.csv_data, delimiter=",", header=payload.csv_header, comments="", fmt="%.17g"
-                    )
-                saved.append(csv_path)
-            except Exception as error:
-                logger.exception("Power Monitor CSV save failed")
-                errors.append(f"CSV: {error}")
+        worker = PowerMonitorExportWorker(payload, targets, frozenset(conflicts))
+        task = TaskRunner(worker)
+        # Qt owns the native QThread until deferred deletion. Keep its
+        # TaskRunner alive as well until QObject.destroyed is delivered.
+        task.worker_thread.setParent(self)
+        task_id = id(task)
+        self._owned_power_monitor_export_tasks[task_id] = task
+        task.worker_thread.destroyed.connect(
+            lambda _obj=None, key=task_id: self._on_power_monitor_export_task_destroyed(key)
+        )
+        self._power_monitor_export_task = task
+        self._power_monitor_export_idle_notified = False
+        self._closing_for_power_monitor_export = False
+        self._power_monitor_export_result = None
+        self._power_monitor_export_thread_stopped = False
+        self.save_recording_button.setEnabled(False)
+        self._set_status("Saving Power Monitor recording…")
+        worker.outcome.connect(self._on_power_monitor_export_outcome, Qt.ConnectionType.QueuedConnection)
+        task.worker_thread.finished.connect(
+            self._on_power_monitor_export_thread_finished, Qt.ConnectionType.QueuedConnection
+        )
+        task.start()
 
-        if request.mat:
-            mat_path = targets["MAT"]
-            try:
-                from scipy.io import savemat
+    @property
+    def power_monitor_export_busy(self) -> bool:
+        # Deletion is part of the native Qt lifecycle; not just thread stop.
+        return self._power_monitor_export_task is not None or bool(self._owned_power_monitor_export_tasks)
 
-                savemat(str(mat_path.resolve()), payload.mat_data, do_compression=True)
-                saved.append(mat_path)
-            except Exception as error:
-                logger.exception("Power Monitor MAT save failed")
-                errors.append(f"MAT: {error}")
+    def request_power_monitor_export_close(self) -> None:
+        """Suppress completion dialogs while MainWindow defers shutdown."""
+        self._closing_for_power_monitor_export = True
 
-        saved_paths = "\n".join(str(path) for path in saved)
-        if errors:
+    @Slot(object)
+    def _on_power_monitor_export_outcome(self, result: PowerMonitorExportOutcome) -> None:
+        self._power_monitor_export_result = result
+        self._finish_power_monitor_export_if_ready()
+
+    @Slot()
+    def _on_power_monitor_export_thread_finished(self) -> None:
+        self._power_monitor_export_thread_stopped = True
+        self._finish_power_monitor_export_if_ready()
+
+    def _finish_power_monitor_export_if_ready(self) -> None:
+        # Both queued signals can be delivered in either order.
+        if self._power_monitor_export_task is None or not self._power_monitor_export_thread_stopped:
+            return
+        result = self._power_monitor_export_result
+        if result is None:
+            return
+        self._power_monitor_export_task = None
+        self._power_monitor_export_result = None
+        self._power_monitor_export_thread_stopped = False
+        self._notify_power_monitor_export_idle_if_ready()
+        if self._closing_for_power_monitor_export:
+            return
+        saved_paths = "\n".join(str(path) for path in result.saved)
+        if result.errors:
+            self._set_status("Power Monitor save encountered errors")
             QMessageBox.warning(
                 self,
                 "Save Issues",
-                "Some files may have saved:\n" + saved_paths + "\n\nErrors occurred:\n" + "\n".join(errors),
+                "Some files may have saved:\n" + saved_paths + "\n\nErrors occurred:\n" + "\n".join(result.errors),
             )
-        elif saved:
+        elif result.saved:
+            self._set_status("Power Monitor recording saved")
             QMessageBox.information(
                 self, "Save Successful", "Power Monitor data saved successfully to:\n" + saved_paths
             )
+
+    def _on_power_monitor_export_task_destroyed(self, task_id: int) -> None:
+        self._owned_power_monitor_export_tasks.pop(task_id, None)
+        self._notify_power_monitor_export_idle_if_ready()
+
+    def _notify_power_monitor_export_idle_if_ready(self) -> None:
+        # QObject.destroyed may precede the separately queued outcome/finished
+        # signals. Notify exactly once only after *both* sides are complete.
+        if self.power_monitor_export_busy or self._power_monitor_export_idle_notified:
+            return
+        self._power_monitor_export_idle_notified = True
+        self.save_recording_button.setEnabled(
+            self.current_recording is not None
+            and bool(len(self.current_recording.elapsed_s))
+            and not self.recording_active
+        )
+        self.export_idle.emit()
+        if self._pending_power_monitor_export_close:
+            self._pending_power_monitor_export_close = False
+            QTimer.singleShot(0, self.close)
+
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        if self.power_monitor_export_busy:
+            self._pending_power_monitor_export_close = True
+            self._closing_for_power_monitor_export = True
+            event.ignore()
+            return
+        super().closeEvent(event)
 
     def _set_status(self, message: str) -> None:
         self.status_label.setText(message)
