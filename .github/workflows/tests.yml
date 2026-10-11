@@ -21,5 +21,8 @@ jobs:
       - run: uv sync --locked --extra test --extra typecheck --extra lint
       - run: uv run --no-sync ruff check .
       - run: uv run --no-sync ruff format --check .
+      - name: Diagnostic Ruff diff for async import
+        if: failure()
+        run: uv run --no-sync ruff format --diff logic/scan_import_worker.py ui/main_window.py tests/test_scan_import_async_gui.py tests/test_mainwindow_disabled_cameras.py tools/benchmark_scan_gui.py
       - run: uv run --no-sync pyright
       - run: uv run --no-sync pytest -vv --tb=short -o faulthandler_timeout=30
