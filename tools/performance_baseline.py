@@ -9,7 +9,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib.metadata
-from itertools import pairwise
 import json
 import math
 import os
@@ -20,6 +19,7 @@ import sys
 import tempfile
 import time
 from datetime import UTC, datetime
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
