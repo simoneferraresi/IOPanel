@@ -26,8 +26,6 @@ from logic.scan_export import build_scan_export_v2
 from logic.scan_import import load_scan
 from logic.scan_measurement import ScanAcquisitionSettings, ScanMeasurement
 
-_T = TypeVar("_T")
-
 
 def _windows_memory() -> dict[str, float]:
     """Current/peak process working sets in MiB; absent on other OSes."""
@@ -84,9 +82,9 @@ def _synthetic_scan(points: int, detectors: tuple[Detector, ...]) -> ScanMeasure
     )
 
 
-def _timed_on_qt_thread[_T](
-    app: QtWidgets.QApplication, operation: Callable[[], _T]
-) -> tuple[_T, dict[str, float]]:
+def _timed_on_qt_thread[T](
+    app: QtWidgets.QApplication, operation: Callable[[], T]
+) -> tuple[T, dict[str, float]]:
     """A queued zero-delay callback exposes how long synchronous work blocks Qt.
 
     This is a *pending-callback latency proxy*, not GUI paint rate, event-loop
