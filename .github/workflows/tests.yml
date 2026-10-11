@@ -21,8 +21,5 @@ jobs:
       - run: uv sync --locked --extra test --extra typecheck --extra lint
       - run: uv run --no-sync ruff check .
       - run: uv run --no-sync ruff format --check .
-      - name: Diagnostic format diff for GUI benchmark
-        if: failure()
-        run: uv run --no-sync ruff format --diff tools/benchmark_scan_gui.py tools/performance_baseline.py tests/test_performance_scan_gui.py
       - run: uv run --no-sync pyright
       - run: uv run --no-sync pytest -vv --tb=short -o faulthandler_timeout=30
