@@ -151,6 +151,7 @@ def test_export_is_nonblocking_and_direct_widget_close_defers(qtbot, monkeypatch
         widget.save_scan_data()
         qtbot.waitUntil(started.is_set, timeout=3000)
         assert widget.scan_export_busy
+        assert widget._scan_export_task.worker_thread.parent() is widget
         assert widget.pending_saves == 1
         assert not widget.save_btn.isEnabled()
 
@@ -165,6 +166,7 @@ def test_export_is_nonblocking_and_direct_widget_close_defers(qtbot, monkeypatch
     finally:
         release.set()
     qtbot.waitUntil(lambda: not widget.scan_export_busy and not widget.isVisible(), timeout=5000)
+    qtbot.waitUntil(lambda: not widget._owned_scan_export_tasks, timeout=5000)
     assert (tmp_path / "scan.csv").exists()
     assert (tmp_path / "scan.mat").exists()
     assert not list(tmp_path.glob(".iopanel-scan-*"))

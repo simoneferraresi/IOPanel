@@ -214,6 +214,7 @@ class MainWindow(QMainWindow):
         self._init_tasks: set[TaskRunner] = set()
         self._camera_recovery_tasks: dict[str, TaskRunner] = {}
         self._scan_import_task: TaskRunner | None = None
+        self._owned_scan_import_tasks: dict[int, TaskRunner] = {}
         self._scan_import_context: tuple[bool, str, str, object, int] | None = None
         self._scan_import_outcome: ScanImportOutcome | None = None
         self._scan_import_thread_stopped = False
@@ -1431,6 +1432,15 @@ class MainWindow(QMainWindow):
         self._scan_import_thread_stopped = False
         worker = ScanImportWorker(filename, loader=load_scan)
         task = TaskRunner(worker)
+        # Keep the native QThread owned by this GUI object until Qt processes
+        # its deferred deleteLater, even after the Python TaskRunner reference
+        # is cleared on the queued thread-finished notification.
+        task.worker_thread.setParent(self)
+        task_id = id(task)
+        self._owned_scan_import_tasks[task_id] = task
+        task.worker_thread.destroyed.connect(
+            lambda _obj=None, key=task_id: self._owned_scan_import_tasks.pop(key, None)
+        )
         self._scan_import_task = task
         worker.outcome.connect(self._on_scan_import_parsed, Qt.ConnectionType.QueuedConnection)
         task.worker_thread.finished.connect(self._on_scan_import_thread_finished, Qt.ConnectionType.QueuedConnection)

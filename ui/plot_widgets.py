@@ -1358,6 +1358,7 @@ class PlotWidget(QWidget):
         self._export_measurement: ScanMeasurement | None = None
         self.pending_saves = 0
         self._scan_export_task: TaskRunner | None = None
+        self._owned_scan_export_tasks: dict[int, TaskRunner] = {}
         self._scan_export_result: ScanExportOutcome | None = None
         self._scan_export_thread_stopped = False
         self._pending_export_widget_close = False
@@ -2439,6 +2440,15 @@ class PlotWidget(QWidget):
             data_targets = {name: path for name, path in targets.items() if name in ("CSV", "MAT")}
             worker = ScanExportWorker(export_payload, data_targets, frozenset(conflicts))
             task = TaskRunner(worker)
+            # Qt owns the QThread lifetime until deferred deletion; releasing
+            # the TaskRunner after finished must not finalize the native thread
+            # while Qt still has pending object-destruction events.
+            task.worker_thread.setParent(self)
+            task_id = id(task)
+            self._owned_scan_export_tasks[task_id] = task
+            task.worker_thread.destroyed.connect(
+                lambda _obj=None, key=task_id: self._owned_scan_export_tasks.pop(key, None)
+            )
             self._scan_export_result = None
             self._scan_export_thread_stopped = False
             self._scan_export_task = task

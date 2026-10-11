@@ -116,6 +116,7 @@ def test_in_flight_scan_import_is_nonblocking_and_rejects_duplicate(qtbot, monke
         window._open_scan_file()
         qtbot.waitUntil(started.is_set, timeout=3000)
         assert window._scan_import_task is not None
+        assert window._scan_import_task.worker_thread.parent() is window
         # No worker result required for the main Qt event loop to process a timer.
         events = []
         main_window_module.QTimer.singleShot(0, lambda: events.append("responsive"))
@@ -126,6 +127,7 @@ def test_in_flight_scan_import_is_nonblocking_and_rejects_duplicate(qtbot, monke
     finally:
         release.set()
     qtbot.waitUntil(lambda: window._scan_import_task is None, timeout=5000)
+    qtbot.waitUntil(lambda: not window._owned_scan_import_tasks, timeout=5000)
     assert window.plot_widget.current_imported_scan is not None
     window.close()
 
@@ -206,3 +208,26 @@ def test_import_errors_report_on_ui_thread_without_mutating_plot(qtbot, monkeypa
     assert window.plot_widget.current_imported_scan is None
     assert window.open_scan_action.isEnabled()
     window.close()
+
+
+def test_repeated_scan_import_worker_teardown_retains_qthread_until_deleted(qtbot, monkeypatch, tmp_path):
+    """Stress the native QThread lifetime through successive parsed imports."""
+    window = _window(qtbot, monkeypatch, tmp_path)
+    csv_path, _ = _scan_file(tmp_path, "csv")
+    mat_path, _ = _scan_file(tmp_path, "mat")
+    paths = (csv_path, mat_path)
+    try:
+        for index in range(20):
+            selected = paths[index % len(paths)]
+            _select(monkeypatch, selected)
+            window._open_scan_file()
+            assert window._scan_import_task is not None
+            assert window._scan_import_task.worker_thread.parent() is window
+            qtbot.waitUntil(lambda: window._scan_import_task is None, timeout=5000)
+            qtbot.waitUntil(lambda: not window._owned_scan_import_tasks, timeout=5000)
+            imported = window.plot_widget.current_imported_scan
+            assert imported is not None
+            assert imported.source_path == selected.resolve()
+        assert not window._owned_scan_import_tasks
+    finally:
+        window.close()
