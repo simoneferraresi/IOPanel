@@ -1544,6 +1544,7 @@ def test_csv_mat_formats_never_start_matlab_and_write_both(qtbot, monkeypatch, t
     _silence_export_messages(monkeypatch)
     monkeypatch.setattr(plot_widgets, "MATLAB_ENGINE_AVAILABLE", True)
     widget.save_scan_data()
+    qtbot.waitUntil(lambda: not widget.scan_export_busy, timeout=5000)
     assert (tmp_path / "scan.csv").exists() and (tmp_path / "scan.mat").exists()
     assert not (tmp_path / "scan.fig").exists()
     assert not widget.has_unsaved_acquisition()
@@ -1558,6 +1559,7 @@ def test_csv_or_mat_only_writes_selected_file(qtbot, monkeypatch, tmp_path, form
     _silence_export_messages(monkeypatch)
     monkeypatch.setattr(plot_widgets, "MATLAB_ENGINE_AVAILABLE", True)
     widget.save_scan_data()
+    qtbot.waitUntil(lambda: not widget.scan_export_busy, timeout=5000)
     assert {path.name for path in tmp_path.iterdir()} == expected
     assert widget.save_btn.isEnabled()
     assert not widget.has_unsaved_acquisition()
@@ -1604,6 +1606,7 @@ def test_fig_completion_never_marks_schema_v2_data_saved(
 
     monkeypatch.setattr(widget, "_queue_matlab_fig", queue_fig)
     widget.save_scan_data()
+    qtbot.waitUntil(lambda: not widget.scan_export_busy, timeout=5000)
     assert widget.pending_saves == 1
 
     widget._handle_matlab_save_finished("fig", fig_success, str(tmp_path / "scan.fig"))
@@ -1626,6 +1629,7 @@ def test_late_fig_completion_does_not_change_current_acquisition_persistence(qtb
     monkeypatch.setattr(widget, "_queue_matlab_fig", lambda _request: setattr(widget, "pending_saves", 1))
 
     widget.save_scan_data()
+    qtbot.waitUntil(lambda: not widget.scan_export_busy, timeout=5000)
     assert widget._export_measurement is original
     replacement = _detector_measurement([1510.0, 1520.0], [[-22.0, -23.0]], (Detector.DE_1,))
     widget.set_measurement(replacement)
@@ -1646,6 +1650,7 @@ def test_fig_only_startup_waits_without_failure(qtbot, monkeypatch, tmp_path):
     warnings = []
     monkeypatch.setattr(plot_widgets.QMessageBox, "warning", lambda *args: warnings.append(args[-1]))
     widget.save_scan_data()
+    qtbot.waitUntil(lambda: not widget.scan_export_busy, timeout=5000)
     assert widget.pending_saves == 1
     assert widget._pending_matlab_fig is not None
     assert widget.matlab_status_label.text() == "Waiting for MATLAB…"
@@ -1662,6 +1667,7 @@ def test_all_formats_writes_csv_mat_and_queues_selected_fig(qtbot, monkeypatch, 
     queued = []
     monkeypatch.setattr(widget, "_queue_matlab_fig", lambda request: queued.append(request))
     widget.save_scan_data()
+    qtbot.waitUntil(lambda: not widget.scan_export_busy, timeout=5000)
     assert {path.name for path in tmp_path.iterdir()} == {"scan.csv", "scan.mat"}
     assert str(tmp_path / "scan.fig") == queued[0][1]
     assert widget.pending_saves == 0
@@ -1679,6 +1685,7 @@ def test_overwrite_decline_writes_nothing_and_lists_only_selected_conflict(qtbot
         lambda *args: questions.append(args[2]) or plot_widgets.QMessageBox.StandardButton.No,
     )
     widget.save_scan_data()
+    qtbot.waitUntil(lambda: not widget.scan_export_busy, timeout=5000)
     assert widget.has_unsaved_acquisition()
     assert conflict.read_bytes() == b"original"
     assert not (tmp_path / "scan.csv").exists()
@@ -1698,6 +1705,7 @@ def test_comment_and_settings_are_recorded_for_accepted_request(qtbot, monkeypat
     _stub_save_dialog(monkeypatch, output, "event.csv", formats=(True, True, False), comment="first\r\nsecond")
     _silence_export_messages(monkeypatch)
     widget.save_scan_data()
+    qtbot.waitUntil(lambda: not widget.scan_export_busy, timeout=5000)
     assert settings.scan_export_directory() == output.resolve()
     assert settings.scan_export_formats() == (True, True, False)
     assert r'# Comment: "first\nsecond"' in (output / "event.csv").read_text(encoding="utf-8")
@@ -1717,6 +1725,7 @@ def test_dialog_cancel_does_not_write_or_persist(qtbot, monkeypatch, tmp_path):
     assert widget.has_unsaved_acquisition()
     _stub_save_dialog(monkeypatch, tmp_path, accepted=False)
     widget.save_scan_data()
+    qtbot.waitUntil(lambda: not widget.scan_export_busy, timeout=5000)
     assert not list(tmp_path.glob("*.csv"))
     assert settings.scan_export_formats() == (True, True, False)
     assert settings._settings.value("Paths/scan_export") is None
@@ -1740,6 +1749,7 @@ def test_multidetector_csv_mat_preserve_schema_v2_identity(qtbot, monkeypatch, t
     _silence_export_messages(monkeypatch)
 
     widget.save_scan_data()
+    qtbot.waitUntil(lambda: not widget.scan_export_busy, timeout=5000)
 
     csv_text = (tmp_path / "multi.detector.v2.csv").read_text(encoding="utf-8")
     assert "# SchemaVersion: 2" in csv_text
@@ -1768,6 +1778,7 @@ def test_partial_export_failure_keeps_successful_format(qtbot, monkeypatch, tmp_
     )
 
     widget.save_scan_data()
+    qtbot.waitUntil(lambda: not widget.scan_export_busy, timeout=5000)
 
     assert not (tmp_path / "scan.csv").exists()
     assert (tmp_path / "scan.mat").exists()
@@ -1786,6 +1797,7 @@ def test_payload_validation_error_writes_nothing_and_restores_button(qtbot, monk
     )
 
     widget.save_scan_data()
+    qtbot.waitUntil(lambda: not widget.scan_export_busy, timeout=5000)
 
     assert not list(tmp_path.iterdir())
     assert warnings and "bad payload" in warnings[0]
@@ -1808,6 +1820,7 @@ def test_unavailable_matlab_preserves_saved_fig_preference(qtbot, monkeypatch, t
     _silence_export_messages(monkeypatch)
 
     widget.save_scan_data()
+    qtbot.waitUntil(lambda: not widget.scan_export_busy, timeout=5000)
 
     assert {path.name for path in output.iterdir()} == {"scan.csv", "scan.mat"}
     assert settings.scan_export_formats() == (True, True, True)

@@ -55,6 +55,17 @@ def _wait_for_background_import(window, app: QtWidgets.QApplication) -> None:
         time.sleep(0.001)
 
 
+def _save_and_wait(widget: plot_widgets.PlotWidget, app: QtWidgets.QApplication) -> None:
+    """Retain complete end-to-end save timing while pumping Qt callbacks."""
+    widget.save_scan_data()
+    deadline = time.perf_counter() + 20
+    while widget.scan_export_busy:
+        app.processEvents()
+        if time.perf_counter() >= deadline:
+            raise TimeoutError("Scan data export did not complete")
+        time.sleep(0.001)
+
+
 def characterize(points: list[int], detectors: list[int], output: Path) -> list[dict[str, object]]:
     """Exercise real GUI handlers with deterministic in-memory acquisition data."""
     if not points or any(value < 2 for value in points):
@@ -168,7 +179,9 @@ def characterize(points: list[int], detectors: list[int], output: Path) -> list[
                                 request
                             ),
                         ):
-                            _, timing = _timed_on_qt_thread(app, window.plot_widget.save_scan_data)
+                            _, timing = _timed_on_qt_thread(
+                                app, lambda widget=window.plot_widget: _save_and_wait(widget, app)
+                            )
                         target = folder / f"{export_request.base_name}.{kind}"
                         if not target.is_file() or not target.stat().st_size:
                             raise AssertionError("PlotWidget export handler failed to write scan")
