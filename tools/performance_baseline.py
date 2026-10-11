@@ -455,7 +455,10 @@ def _validate_startup_runs(report: dict[str, Any]) -> None:
         case = run["cases"][0]
         if not isinstance(case, dict):
             raise TypeError("Startup case must be a mapping")
-        _validate_startup_case(case, subprocess_wall_s=run.get("subprocess_wall_s"))
+        wall_s = run.get("subprocess_wall_s")
+        if isinstance(wall_s, bool) or not isinstance(wall_s, (float, int)):
+            raise TypeError("Startup subprocess wall time must be numeric")
+        _validate_startup_case(case, subprocess_wall_s=float(wall_s))
 
 
 def _capture_startup_one(root: Path, output: Path, *, qt_platform: str) -> tuple[float, list[dict[str, Any]]]:
@@ -525,7 +528,10 @@ def _load_report(path: Path) -> dict[str, Any]:
         raise ValueError(f"Unsupported performance report: {path}")
     if not isinstance(report.get("runs"), list):
         raise TypeError("Report has no raw runs")
-    case_keys = BENCHMARK_CASE_KEYS.get(report.get("benchmark"))
+    benchmark = report.get("benchmark")
+    if not isinstance(benchmark, str):
+        raise ValueError("Missing performance benchmark kind")
+    case_keys = BENCHMARK_CASE_KEYS.get(benchmark)
     if case_keys is None:
         raise ValueError("Unknown performance benchmark")
     _validate_startup_runs(report)
