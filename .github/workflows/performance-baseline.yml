@@ -1,0 +1,52 @@
+# Hardware-independent, informational benchmark artifact; NOT a CI speed gate.
+# Triggers on this workflow's first merge to main, then by manual dispatch.
+name: Synthetic Windows performance baseline
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/performance-baseline.yml"
+      - "tools/performance_baseline.py"
+      - "tools/benchmark_scan_overlays.py"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/performance-baseline.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  scan-overlays:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          version: "0.12.21"
+      - name: Install locked driver-free application dependencies
+        run: uv sync --locked --extra test
+      - name: Capture synthetic Qt offscreen scan-overlay profile
+        run: >-
+          uv run --no-sync python -m tools.performance_baseline capture
+          --qt-platform offscreen
+          --points 10000 50000
+          --detectors 1 4
+          --overlays 0 4 8
+          --repetitions 3
+          --warmups 1
+          --output benchmark-results/scan-overlays-offscreen.json
+      - name: Upload informational baseline JSON
+        if: always()
+        uses: actions/upload-artifact@v7.0.0
+        with:
+          name: scan-overlays-offscreen-${{ github.sha }}
+          path: benchmark-results/scan-overlays-offscreen.json
+          if-no-files-found: warn
+          retention-days: 30
