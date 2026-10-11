@@ -2439,6 +2439,10 @@ class PlotWidget(QWidget):
             data_targets = {name: path for name, path in targets.items() if name in ("CSV", "MAT")}
             worker = ScanExportWorker(export_payload, data_targets, frozenset(conflicts))
             task = TaskRunner(worker)
+            # Qt owns the QThread lifetime until deferred deletion; releasing
+            # the TaskRunner after finished must not finalize the native thread
+            # while Qt still has pending object-destruction events.
+            task.worker_thread.setParent(self)
             self._scan_export_result = None
             self._scan_export_thread_stopped = False
             self._scan_export_task = task
