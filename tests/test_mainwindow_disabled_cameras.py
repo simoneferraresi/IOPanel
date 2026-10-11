@@ -182,17 +182,20 @@ def test_import_confirms_unsaved_acquisition_and_preserves_reference(qtbot, monk
     window.plot_widget._handle_matlab_save_finished("fig", True, str(tmp_path / "acquired.fig"))
     assert window.plot_widget.has_unsaved_acquisition()
     window._add_scan_to_plot()
+    qtbot.waitUntil(lambda: window._scan_import_task is None, timeout=5000)
     assert window.plot_widget.current_measurement is acquired
     assert window.plot_widget.reference_measurement is frozen
     assert len(window.plot_widget.scan_overlays) == 1
     assert prompts == []
     assert settings.directory("Paths/scan_import") == scan_directory.resolve()
     window._open_scan_file()
+    qtbot.waitUntil(lambda: window._scan_import_task is None, timeout=5000)
     assert window.plot_widget.current_measurement is acquired
     assert window.plot_widget.reference_measurement is frozen
     assert settings.directory("Paths/scan_import") == scan_directory.resolve()
 
     window._open_scan_file()
+    qtbot.waitUntil(lambda: window._scan_import_task is None, timeout=5000)
     imported = window.plot_widget.current_imported_scan
     assert imported is not None and imported.source_path == scan_path.resolve()
     assert window.plot_widget.reference_measurement is frozen
@@ -203,10 +206,12 @@ def test_import_confirms_unsaved_acquisition_and_preserves_reference(qtbot, monk
 
     # Imported data is already on disk, so replacing it does not prompt again.
     window.plot_widget.load_btn.click()
+    qtbot.waitUntil(lambda: window._scan_import_task is None, timeout=5000)
     assert len(prompts) == 2
     imported = window.plot_widget.current_imported_scan
     selected_path[0] = str(corrupt_path)
     window._open_scan_file()
+    qtbot.waitUntil(lambda: window._scan_import_task is None, timeout=5000)
     assert window.plot_widget.current_imported_scan is imported
     assert window.plot_widget.reference_measurement is frozen
     assert settings.directory("Paths/scan_import") == scan_directory.resolve()

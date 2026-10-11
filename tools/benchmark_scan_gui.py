@@ -13,6 +13,7 @@ import io
 import json
 import sys
 import tempfile
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -42,6 +43,16 @@ class _AcceptedExportDialog:
 
 def _unexpected_prompt(*_args: object, **_kwargs: object) -> None:
     raise AssertionError("Unexpected user confirmation or error during synthetic GUI benchmark")
+
+
+def _wait_for_background_import(window, app: QtWidgets.QApplication) -> None:
+    """Measure completed import+plot without starving the Qt event loop."""
+    deadline = time.perf_counter() + 20
+    while window._scan_import_task is not None:
+        app.processEvents()
+        if time.perf_counter() >= deadline:
+            raise TimeoutError("MainWindow scan import did not complete")
+        time.sleep(0.001)
 
 
 def characterize(points: list[int], detectors: list[int], output: Path) -> list[dict[str, object]]:
@@ -102,6 +113,7 @@ def characterize(points: list[int], detectors: list[int], output: Path) -> list[
                         return_value=(str(path), "IOPanel scan"),
                     ):
                         window._open_scan_file()
+                    _wait_for_background_import(window, app)
                     imported = window.plot_widget.current_imported_scan
                     if imported is None or imported.source_path != path.resolve():
                         raise AssertionError("MainWindow foreground scan import did not complete")
@@ -114,6 +126,7 @@ def characterize(points: list[int], detectors: list[int], output: Path) -> list[
                         return_value=(str(path), "IOPanel scan"),
                     ):
                         window._add_scan_to_plot()
+                    _wait_for_background_import(window, app)
                     if len(window.plot_widget.scan_overlays) != before + 1:
                         raise AssertionError("MainWindow scan overlay import did not complete")
 

@@ -52,7 +52,8 @@ from hardware.ct400_init_worker import CT400InitOutcome, CT400InitWorker
 from hardware.dummy_ct400 import DummyCT400
 from hardware.piezo import PiezoController
 from hardware.piezo_init_worker import PiezoInitWorker
-from logic.scan_import import ScanImportError, load_scan
+from logic.scan_import import load_scan
+from logic.scan_import_worker import ScanImportOutcome, ScanImportWorker
 from logic.task_runner import TaskRunner
 from ui.alignment_panel import AlignmentPanel
 from ui.appearance_dialog import AppearanceDialog
@@ -212,6 +213,12 @@ class MainWindow(QMainWindow):
         self._camera_cleanup_complete = False
         self._init_tasks: set[TaskRunner] = set()
         self._camera_recovery_tasks: dict[str, TaskRunner] = {}
+        self._scan_import_task: TaskRunner | None = None
+        self._scan_import_context: tuple[bool, str, str, object, int] | None = None
+        self._scan_import_outcome: ScanImportOutcome | None = None
+        self._scan_import_thread_stopped = False
+        self._pending_scan_import_close = False
+        self._scan_import_generation = 0
 
         # --- CT400 and Piezo hardware will be None until workers finish ---
         self.ct400_device: AbstractCT400 | None = None
@@ -1389,6 +1396,9 @@ class MainWindow(QMainWindow):
         mode = "Add Scan to Plot" if add_overlay else "Open Scan"
         if self._scan_import_shutdown_in_progress():
             return
+        if self._scan_import_task is not None:
+            self.statusBar().showMessage("A saved scan is already loading.", 5000)
+            return
         if self._scan_import_is_blocked():
             self.statusBar().showMessage("Wait for the CT400 scan to finish before importing a saved scan.", 5000)
             return
@@ -1400,26 +1410,87 @@ class MainWindow(QMainWindow):
         )
         if not filename:
             return
-        if self._scan_import_shutdown_in_progress():
+        if self._scan_import_shutdown_in_progress() or self._scan_import_task is not None:
             return
         if self._scan_import_is_blocked():
             self.statusBar().showMessage(
                 "The CT400 scan started while the file dialog was open; import cancelled.", 5000
             )
             return
-        try:
-            scan = load_scan(filename)
-        except ScanImportError as error:
-            logger.warning("Rejected imported scan %s: %s", filename, error)
-            QMessageBox.warning(self, f"Could Not {mode}", str(error))
+        # Keep every dialog and plot operation on the GUI thread. Only the
+        # validated schema-v2 file parse runs on a worker-owned QThread.
+        self._scan_import_context = (
+            add_overlay,
+            mode,
+            filename,
+            self.plot_widget.current_measurement,
+            self._scan_import_generation,
+        )
+        self._scan_import_outcome = None
+        self._scan_import_thread_stopped = False
+        worker = ScanImportWorker(filename, loader=load_scan)
+        task = TaskRunner(worker)
+        self._scan_import_task = task
+        worker.outcome.connect(self._on_scan_import_parsed, Qt.ConnectionType.QueuedConnection)
+        task.worker_thread.finished.connect(self._on_scan_import_thread_finished, Qt.ConnectionType.QueuedConnection)
+        self._update_scan_import_actions()
+        self.statusBar().showMessage(f"Reading {filename}…", 0)
+        task.start()
+
+    @Slot(object)
+    def _on_scan_import_parsed(self, outcome: ScanImportOutcome) -> None:
+        self._scan_import_outcome = outcome
+        self._complete_scan_import_if_ready()
+
+    @Slot()
+    def _on_scan_import_thread_finished(self) -> None:
+        self._scan_import_thread_stopped = True
+        self._complete_scan_import_if_ready()
+
+    def _complete_scan_import_if_ready(self) -> None:
+        # Qt does not promise queued outcome/thread-finished delivery order.
+        if self._scan_import_task is None or not self._scan_import_thread_stopped:
             return
-        except Exception as error:  # Defensive boundary for damaged third-party MAT files.
-            logger.exception("Unexpected error importing scan %s", filename)
-            QMessageBox.warning(self, f"Could Not {mode}", f"The scan could not be read: {error}")
+        outcome = self._scan_import_outcome
+        if outcome is None:
             return
-        if self._scan_import_is_blocked():
-            self.statusBar().showMessage("The CT400 scan is still completing; import cancelled.", 5000)
+        context = self._scan_import_context
+        self._scan_import_task = None
+        self._scan_import_context = None
+        self._scan_import_outcome = None
+        self._scan_import_thread_stopped = False
+        self._update_scan_import_actions()
+        if self._pending_scan_import_close:
+            self._pending_scan_import_close = False
+            QTimer.singleShot(0, self.close)
             return
+        if context is None or self._scan_import_shutdown_in_progress():
+            return
+        add_overlay, mode, filename, original_measurement, original_generation = context
+        if (
+            self._scan_import_is_blocked()
+            or original_generation != self._scan_import_generation
+            or self.plot_widget.current_measurement is not original_measurement
+        ):
+            self.statusBar().showMessage("A scan changed while the file was loading; import cancelled.", 5000)
+            return
+        if outcome.error is not None:
+            if outcome.unexpected:
+                logger.error("Unexpected scan import failure for %s: %s", filename, outcome.error)
+                QMessageBox.warning(self, f"Could Not {mode}", f"The scan could not be read: {outcome.error}")
+            else:
+                logger.warning("Rejected imported scan %s: %s", filename, outcome.error)
+                QMessageBox.warning(self, f"Could Not {mode}", outcome.error)
+            return
+        scan = outcome.scan
+        if scan is None:
+            logger.error("Scan parser returned no result for %s", filename)
+            QMessageBox.warning(self, f"Could Not {mode}", "The scan parser returned no result.")
+            return
+        self._apply_imported_scan(scan, add_overlay=add_overlay)
+
+    def _apply_imported_scan(self, scan, *, add_overlay: bool) -> None:
+        """Complete parsed imports exclusively on the Qt GUI thread."""
         if add_overlay:
             if not self.plot_widget.add_imported_overlay(scan):
                 self.statusBar().showMessage("Overlay already present or the overlay limit was reached.", 5000)
@@ -1465,7 +1536,11 @@ class MainWindow(QMainWindow):
         )
 
     def _update_scan_import_actions(self) -> None:
-        enabled = not self._scan_import_is_blocked() and not self._scan_import_shutdown_in_progress()
+        enabled = (
+            self._scan_import_task is None
+            and not self._scan_import_is_blocked()
+            and not self._scan_import_shutdown_in_progress()
+        )
         action = getattr(self, "open_scan_action", None)
         if action is not None:
             action.setEnabled(enabled)
@@ -1481,6 +1556,7 @@ class MainWindow(QMainWindow):
             bool(getattr(self, name, False))
             for name in (
                 "_pending_scan_close",
+                "_pending_scan_import_close",
                 "_pending_init_close",
                 "_pending_camera_lifecycle_close",
                 "_pending_ct400_operation_close",
@@ -1739,6 +1815,7 @@ class MainWindow(QMainWindow):
     @Slot()
     def _handle_ct400_scan_started(self):
         if self._ct400_operation_state is CT400OperationState.IDLE:
+            self._scan_import_generation += 1
             self._set_ct400_operation_state(CT400OperationState.SCANNING)
 
     @Slot()
@@ -2390,6 +2467,13 @@ class MainWindow(QMainWindow):
             scan_panel._stop_scan(cancelled=True)
             if not scan_thread.isRunning():
                 self._resume_close_after_scan()
+            return
+
+        if self._scan_import_task is not None:
+            event.ignore()
+            self._pending_scan_import_close = True
+            self._update_scan_import_actions()
+            self.statusBar().showMessage("Waiting for the scan file reader to finish before closing…", 0)
             return
 
         if self._camera_lifecycle_busy():
