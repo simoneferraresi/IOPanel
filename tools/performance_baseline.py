@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib.metadata
+from itertools import pairwise
 import json
 import math
 import os
@@ -385,7 +386,7 @@ def capture_io(
 def _validate_startup_case(row: dict[str, Any], *, subprocess_wall_s: float) -> None:
     """Fail closed on incomplete, inconsistent or misleading startup measurements."""
     if isinstance(subprocess_wall_s, bool) or not isinstance(subprocess_wall_s, (int, float)):
-        raise ValueError("Startup subprocess wall time must be numeric")
+        raise TypeError("Startup subprocess wall time must be numeric")
     if not math.isfinite(subprocess_wall_s) or subprocess_wall_s <= 0:
         raise ValueError("Startup subprocess wall time must be positive and finite")
     for key in STARTUP_CASE_KEYS:
@@ -393,15 +394,15 @@ def _validate_startup_case(row: dict[str, Any], *, subprocess_wall_s: float) -> 
             raise ValueError(f"Startup case missing required context: {key}")
     for flag in ("vmbpy_import_available", "matlab_engine_import_available"):
         if not isinstance(row[flag], bool):
-            raise ValueError(f"Startup optional SDK availability must be boolean: {flag}")
+            raise TypeError(f"Startup optional SDK availability must be boolean: {flag}")
     for name in STARTUP_METRICS:
         value = row.get(name)
         if isinstance(value, bool) or not isinstance(value, (float, int)):
-            raise ValueError(f"Startup missing or nonnumeric timing: {name}")
+            raise TypeError(f"Startup missing or nonnumeric timing: {name}")
         if not math.isfinite(value) or value < 0:
             raise ValueError(f"Startup nonfinite or negative timing: {name}")
     def ordered(*keys: str) -> None:
-        for first, next_key in zip(keys, keys[1:], strict=False):
+        for first, next_key in pairwise(keys):
             if row[first] > row[next_key]:
                 raise ValueError(f"Startup timeline out of order: {first} > {next_key}")
 
@@ -456,7 +457,7 @@ def _validate_startup_runs(report: dict[str, Any]) -> None:
             raise ValueError("Startup repetition requires exactly one case")
         case = run["cases"][0]
         if not isinstance(case, dict):
-            raise ValueError("Startup case must be a mapping")
+            raise TypeError("Startup case must be a mapping")
         _validate_startup_case(case, subprocess_wall_s=run.get("subprocess_wall_s"))
 
 
