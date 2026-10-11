@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import io
 import json
 import logging
 import time
@@ -51,8 +50,10 @@ from logic.power_monitor_recording import (
     PowerMonitorRecordingSample,
 )
 from logic.scan_export import build_scan_export_v2
+from logic.scan_export_worker import ScanExportOutcome, ScanExportWorker
 from logic.scan_import import ImportedScan
 from logic.scan_measurement import ScanMeasurement
+from logic.task_runner import TaskRunner
 from ui.power_monitor_export_dialog import PowerMonitorExportDialog
 from ui.scan_export_dialog import ScanExportDialog
 from ui.typography import make_font, plot_title_font, pyqtgraph_title_style
@@ -1326,6 +1327,7 @@ class PlotWidget(QWidget):
     _matlab_save_thread_finished = Signal(object, object)
     open_scan_requested = Signal()
     add_scan_requested = Signal()
+    scan_export_idle = Signal()
 
     def __init__(self, shared_settings, parent: QWidget | None = None, settings: AppSettings | None = None):
         super().__init__(parent)
@@ -1355,6 +1357,12 @@ class PlotWidget(QWidget):
         self._saved_measurement_ref: ReferenceType[ScanMeasurement] | None = None
         self._export_measurement: ScanMeasurement | None = None
         self.pending_saves = 0
+        self._scan_export_task: TaskRunner | None = None
+        self._owned_scan_export_tasks: dict[int, TaskRunner] = {}
+        self._scan_export_result: ScanExportOutcome | None = None
+        self._scan_export_thread_stopped = False
+        self._pending_export_widget_close = False
+        self._closing_for_export = False
 
         # --- Worker Thread Setup for MATLAB Saving ---
         # We'll create the thread and worker on-demand when saving to .fig
@@ -2425,39 +2433,31 @@ class PlotWidget(QWidget):
         self._export_measurement = measurement
         self._completion_reported = False
 
-        if request.csv:
-            try:
-                csv_path = targets["CSV"]
-                csv_buffer = io.StringIO()
-                np.savetxt(
-                    csv_buffer,
-                    export_payload.csv_data,
-                    delimiter=",",
-                    header=export_payload.csv_header,
-                    comments="",
-                    fmt="%.6f",
-                )
-                with csv_path.resolve().open("w", encoding="utf-8", newline="") as csv_file:
-                    csv_file.write(csv_buffer.getvalue())
-                self.saved_files_list.append(csv_path)
-                self._mark_measurement_saved(measurement)
-                logger.info(f"Saved CSV: {csv_path}")
-            except Exception as e:
-                self.error_list.append(f"CSV: {e}")
-                logger.exception("CSV save failed")
-
-        if request.mat:
-            try:
-                import scipy.io as sio
-
-                mat_path = targets["MAT"]
-                sio.savemat(str(mat_path.resolve()), export_payload.mat_data, do_compression=True)
-                self.saved_files_list.append(mat_path)
-                self._mark_measurement_saved(measurement)
-                logger.info(f"Saved MAT: {mat_path}")
-            except Exception as e:
-                self.error_list.append(f"MAT: {e}")
-                logger.exception("MAT save failed")
+        if request.csv or request.mat:
+            # Payload is an immutable acquisition snapshot plus the chosen
+            # annotation. The potentially slow serialization and disk writes
+            # belong entirely to the worker thread.
+            data_targets = {name: path for name, path in targets.items() if name in ("CSV", "MAT")}
+            worker = ScanExportWorker(export_payload, data_targets, frozenset(conflicts))
+            task = TaskRunner(worker)
+            # Qt owns the QThread lifetime until deferred deletion; releasing
+            # the TaskRunner after finished must not finalize the native thread
+            # while Qt still has pending object-destruction events.
+            task.worker_thread.setParent(self)
+            task_id = id(task)
+            self._owned_scan_export_tasks[task_id] = task
+            task.worker_thread.destroyed.connect(
+                lambda _obj=None, key=task_id: self._owned_scan_export_tasks.pop(key, None)
+            )
+            self._scan_export_result = None
+            self._scan_export_thread_stopped = False
+            self._scan_export_task = task
+            self.pending_saves += 1
+            worker.outcome.connect(self._on_scan_export_outcome, Qt.ConnectionType.QueuedConnection)
+            task.worker_thread.finished.connect(
+                self._on_scan_export_thread_finished, Qt.ConnectionType.QueuedConnection
+            )
+            task.start()
 
         if request.fig:
             fig_path = targets["FIG"]
@@ -2476,6 +2476,45 @@ class PlotWidget(QWidget):
 
         if self.pending_saves == 0:
             self._check_all_saves_done()
+
+    @property
+    def scan_export_busy(self) -> bool:
+        return self._scan_export_task is not None
+
+    def request_scan_export_close(self) -> None:
+        """Suppress completion dialogs while MainWindow defers its own close."""
+        self._closing_for_export = True
+
+    @Slot(object)
+    def _on_scan_export_outcome(self, outcome: ScanExportOutcome) -> None:
+        self._scan_export_result = outcome
+        self._finish_scan_export_if_ready()
+
+    @Slot()
+    def _on_scan_export_thread_finished(self) -> None:
+        self._scan_export_thread_stopped = True
+        self._finish_scan_export_if_ready()
+
+    def _finish_scan_export_if_ready(self) -> None:
+        # Queued outcome/finished notifications can arrive in either order.
+        if self._scan_export_task is None or not self._scan_export_thread_stopped:
+            return
+        outcome = self._scan_export_result
+        if outcome is None:
+            return
+        self._scan_export_task = None
+        self._scan_export_result = None
+        self._scan_export_thread_stopped = False
+        self.saved_files_list.extend(outcome.saved)
+        self.error_list.extend(outcome.errors)
+        if outcome.saved and self._export_measurement is not None:
+            self._mark_measurement_saved(self._export_measurement)
+        self.pending_saves -= 1
+        self._check_all_saves_done()
+        self.scan_export_idle.emit()
+        if self._pending_export_widget_close:
+            self._pending_export_widget_close = False
+            QTimer.singleShot(0, self.close)
 
     @Slot(str, bool, str)
     def _handle_matlab_save_finished(self, filetype: str, success: bool, message_or_filename: str):
@@ -2508,6 +2547,10 @@ class PlotWidget(QWidget):
         if getattr(self, "_completion_reported", False):
             return
         self._completion_reported = True
+        if self._closing_for_export or self._cleaned_up:
+            self.saved_files_list = []
+            self.error_list = []
+            return
 
         saved_files_str_list = [str(path) for path in self.saved_files_list]
         if not self.error_list and saved_files_str_list:
@@ -2569,6 +2612,11 @@ class PlotWidget(QWidget):
             self.matlab_engine_manager.shutdown()
 
     def closeEvent(self, event: QtGui.QCloseEvent):
+        if self.scan_export_busy:
+            self._pending_export_widget_close = True
+            self._closing_for_export = True
+            event.ignore()
+            return
         self.cleanup()
         super().closeEvent(event)
 

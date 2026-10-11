@@ -214,10 +214,12 @@ class MainWindow(QMainWindow):
         self._init_tasks: set[TaskRunner] = set()
         self._camera_recovery_tasks: dict[str, TaskRunner] = {}
         self._scan_import_task: TaskRunner | None = None
+        self._owned_scan_import_tasks: dict[int, TaskRunner] = {}
         self._scan_import_context: tuple[bool, str, str, object, int] | None = None
         self._scan_import_outcome: ScanImportOutcome | None = None
         self._scan_import_thread_stopped = False
         self._pending_scan_import_close = False
+        self._pending_scan_export_close = False
         self._scan_import_generation = 0
 
         # --- CT400 and Piezo hardware will be None until workers finish ---
@@ -1430,6 +1432,15 @@ class MainWindow(QMainWindow):
         self._scan_import_thread_stopped = False
         worker = ScanImportWorker(filename, loader=load_scan)
         task = TaskRunner(worker)
+        # Keep the native QThread owned by this GUI object until Qt processes
+        # its deferred deleteLater, even after the Python TaskRunner reference
+        # is cleared on the queued thread-finished notification.
+        task.worker_thread.setParent(self)
+        task_id = id(task)
+        self._owned_scan_import_tasks[task_id] = task
+        task.worker_thread.destroyed.connect(
+            lambda _obj=None, key=task_id: self._owned_scan_import_tasks.pop(key, None)
+        )
         self._scan_import_task = task
         worker.outcome.connect(self._on_scan_import_parsed, Qt.ConnectionType.QueuedConnection)
         task.worker_thread.finished.connect(self._on_scan_import_thread_finished, Qt.ConnectionType.QueuedConnection)
@@ -1557,6 +1568,7 @@ class MainWindow(QMainWindow):
             for name in (
                 "_pending_scan_close",
                 "_pending_scan_import_close",
+                "_pending_scan_export_close",
                 "_pending_init_close",
                 "_pending_camera_lifecycle_close",
                 "_pending_ct400_operation_close",
@@ -2476,6 +2488,13 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Waiting for the scan file reader to finish before closing…", 0)
             return
 
+        if self.plot_widget.scan_export_busy:
+            event.ignore()
+            self._pending_scan_export_close = True
+            self.plot_widget.request_scan_export_close()
+            self.statusBar().showMessage("Waiting for scan data file writing to complete before closing…", 0)
+            return
+
         if self._camera_lifecycle_busy():
             event.ignore()
             self._pending_camera_lifecycle_close = True
@@ -2613,6 +2632,12 @@ class MainWindow(QMainWindow):
         self.settings.sync()
 
     @Slot()
+    def _resume_close_after_scan_export(self) -> None:
+        if self._pending_scan_export_close:
+            self._pending_scan_export_close = False
+            QTimer.singleShot(0, self.close)
+
+    @Slot()
     def _resume_close_after_scan(self):
         """Resume a deferred close on the GUI thread after scan cleanup."""
         if getattr(self, "_pending_scan_close", False):
@@ -2624,6 +2649,7 @@ class MainWindow(QMainWindow):
         if getattr(self, "plot_widget", None) is not None:
             self.plot_widget.open_scan_requested.connect(self._open_scan_file)
             self.plot_widget.add_scan_requested.connect(self._add_scan_to_plot)
+            self.plot_widget.scan_export_idle.connect(self._resume_close_after_scan_export)
             self.plot_widget.matlab_engine_manager.state_changed.connect(self._refresh_global_status)
             self._refresh_global_status()
 
