@@ -37,7 +37,13 @@ CASE_KEYS = (
     "window_system",
 )
 IO_CASE_KEYS = ("points_per_scan", "detector_count", "operation", "qt_platform", "window_system")
-BENCHMARK_CASE_KEYS = {"scan_overlays": CASE_KEYS, "scan_io": IO_CASE_KEYS, "scan_gui": IO_CASE_KEYS}
+STARTUP_CASE_KEYS = ("scenario", "qt_platform", "window_system")
+BENCHMARK_CASE_KEYS = {
+    "scan_overlays": CASE_KEYS,
+    "scan_io": IO_CASE_KEYS,
+    "scan_gui": IO_CASE_KEYS,
+    "startup": STARTUP_CASE_KEYS,
+}
 PACKAGES = ("PySide6", "numpy", "pyqtgraph", "scipy")
 
 
@@ -345,6 +351,62 @@ def capture_io(
     }
 
 
+def _capture_startup_one(root: Path, output: Path, *, qt_platform: str) -> tuple[float, list[dict[str, Any]]]:
+    """Measure a fresh Python interpreter constructing a MainWindow without device startup."""
+    args = [sys.executable, "-m", "tools.benchmark_startup", "--output", str(output)]
+    env = os.environ.copy()
+    env["QT_QPA_PLATFORM"] = qt_platform
+    started = time.perf_counter()
+    result = subprocess.run(args, cwd=root, env=env, capture_output=True, text=True, check=False, timeout=45)
+    elapsed = time.perf_counter() - started
+    if result.returncode:
+        raise RuntimeError(f"Startup benchmark exited {result.returncode}: {result.stderr[-3500:]}")
+    rows = json.loads(output.read_text(encoding="utf-8"))
+    if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict):
+        raise ValueError("Startup benchmark did not return exactly one case")
+    if rows[0].get("qt_platform") != qt_platform:
+        raise ValueError("Qt platform differs from the explicitly requested platform")
+    if rows[0].get("scenario") != "main_window_deferred_hardware_suppressed":
+        raise ValueError("Unexpected startup benchmark scenario")
+    return elapsed, rows
+
+
+def capture_startup(
+    root: Path, *, repetitions: int, warmups: int, qt_platform: str
+) -> dict[str, Any]:
+    """Capture per-process startup stages using the existing versioned report protocol."""
+    if repetitions < 1 or warmups < 0:
+        raise ValueError("Require >=1 repetition and >=0 warmups")
+    if qt_platform not in ("offscreen", "windows"):
+        raise ValueError("Only explicitly selected Qt offscreen or Windows platforms are supported")
+    runs = []
+    with tempfile.TemporaryDirectory(prefix="iopanel-startup-baseline-") as temp:
+        for index in range(warmups + repetitions):
+            elapsed, cases = _capture_startup_one(root, Path(temp) / f"run-{index}.json", qt_platform=qt_platform)
+            if index >= warmups:
+                runs.append({"repetition": index - warmups + 1, "subprocess_wall_s": elapsed, "cases": cases})
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "kind": REPORT_KIND,
+        "benchmark": "startup",
+        "recorded_utc": datetime.now(UTC).isoformat(),
+        "evidence_scope": (
+            "fresh Python child process, real MainWindow constructed with deferred hardware initialization "
+            "suppressed; Qt paint dispatch and queued callbacks, NOT physical hardware or a displayed frame"
+        ),
+        "environment": _environment(root, qt_platform),
+        "configuration": {
+            "repetitions": repetitions,
+            "warmup_subprocesses": warmups,
+            "scenario": "main_window_deferred_hardware_suppressed",
+            "cameras": "disabled",
+            "ct400_backend": "simulation",
+        },
+        "runs": runs,
+        "statistics": summarize_runs(runs, case_keys=STARTUP_CASE_KEYS),
+    }
+
+
 def _load_report(path: Path) -> dict[str, Any]:
     report = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(report, dict) or report.get("kind") != REPORT_KIND or report.get("schema_version") != 1:
@@ -447,6 +509,11 @@ def main(argv: list[str] | None = None) -> None:
     gui_run.add_argument("--repetitions", type=int, default=3)
     gui_run.add_argument("--warmups", type=int, default=1)
     gui_run.add_argument("--qt-platform", choices=("offscreen", "windows"), default="offscreen")
+    startup_run = commands.add_parser("capture-startup", help="capture fresh-process Qt MainWindow startup")
+    startup_run.add_argument("--output", type=Path, required=True)
+    startup_run.add_argument("--repetitions", type=int, default=3)
+    startup_run.add_argument("--warmups", type=int, default=0)
+    startup_run.add_argument("--qt-platform", choices=("offscreen", "windows"), default="offscreen")
     cmp = commands.add_parser("compare", help="compare two versioned JSON baselines")
     cmp.add_argument("baseline", type=Path)
     cmp.add_argument("candidate", type=Path)
@@ -480,6 +547,11 @@ def main(argv: list[str] | None = None) -> None:
         )
         _write_new(args.output, report)
         print(f"Wrote {len(report['statistics'])} I/O cases x {args.repetitions} repetitions to {args.output}")
+    elif args.command == "capture-startup":
+        root = Path(__file__).resolve().parents[1]
+        report = capture_startup(root, repetitions=args.repetitions, warmups=args.warmups, qt_platform=args.qt_platform)
+        _write_new(args.output, report)
+        print(f"Wrote {len(report['statistics'])} startup cases x {args.repetitions} repetitions to {args.output}")
     else:
         result = compare_reports(
             _load_report(args.baseline),
@@ -505,6 +577,7 @@ def main(argv: list[str] | None = None) -> None:
                         "qt_pending_callback_delay_s",
                         "peak_working_set_mb",
                     )
+                    or key.endswith("_s")
                     or "repaint" in key
                     or "range" in key
                 ):
