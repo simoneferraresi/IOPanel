@@ -11,6 +11,7 @@ on:
       - "tools/performance_baseline.py"
       - "tools/benchmark_scan_overlays.py"
       - "tools/benchmark_scan_io.py"
+      - "tools/benchmark_scan_gui.py"
   push:
     branches: [main]
     paths:
@@ -80,5 +81,36 @@ jobs:
         with:
           name: scan-io-offscreen-${{ github.sha }}
           path: benchmark-results/scan-io-offscreen.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  scan-gui:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          version: "0.12.21"
+      - name: Install locked driver-free application dependencies
+        run: uv sync --locked --extra test
+      - name: Capture MainWindow/PlotWidget synchronous scan I/O callbacks
+        run: >-
+          uv run --no-sync python -m tools.performance_baseline capture-gui
+          --qt-platform offscreen
+          --points 10000 50000
+          --detectors 1 4
+          --repetitions 3
+          --warmups 1
+          --output benchmark-results/scan-gui-offscreen.json
+      - name: Upload informational scan GUI handler JSON
+        if: always()
+        uses: actions/upload-artifact@v7.0.0
+        with:
+          name: scan-gui-offscreen-${{ github.sha }}
+          path: benchmark-results/scan-gui-offscreen.json
           if-no-files-found: warn
           retention-days: 30
