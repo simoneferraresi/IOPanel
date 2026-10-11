@@ -33,15 +33,19 @@ def _window(qtbot, monkeypatch, tmp_path):
 
 def _scan_file(tmp_path, kind="csv"):
     detectors = (Detector.DE_2, Detector.DE_1)
-    settings = ScanAcquisitionSettings(
-        1510.0, 1510.02, 10, "5", "1", "mW", 1.0, LaserInput.LI_1, detectors
-    )
+    settings = ScanAcquisitionSettings(1510.0, 1510.02, 10, "5", "1", "mW", 1.0, LaserInput.LI_1, detectors)
     measurement = ScanMeasurement(
         settings,
         np.array([1510.0, 1510.01, 1510.02]),
         np.array([[1.0, 2.0, 3.0], [-1.0, -2.0, -3.0]]),
-        detectors, None, CT400ScanResultKind.SUCCESS, 0, "", "synthetic",
-        True, datetime(2026, 10, 1, tzinfo=UTC),
+        detectors,
+        None,
+        CT400ScanResultKind.SUCCESS,
+        0,
+        "",
+        "synthetic",
+        True,
+        datetime(2026, 10, 1, tzinfo=UTC),
     )
     export = build_scan_export_v2(measurement, comment="async import test")
     path = tmp_path / f"saved.{kind}"
@@ -56,7 +60,8 @@ def _scan_file(tmp_path, kind="csv"):
 
 def _select(monkeypatch, path):
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getOpenFileName",
+        main_window_module.QFileDialog,
+        "getOpenFileName",
         lambda *_args, **_kwargs: (str(path), "IOPanel Scan"),
     )
 
@@ -186,7 +191,8 @@ def test_import_errors_report_on_ui_thread_without_mutating_plot(qtbot, monkeypa
     _select(monkeypatch, path)
     warnings = []
     monkeypatch.setattr(
-        main_window_module.QMessageBox, "warning",
+        main_window_module.QMessageBox,
+        "warning",
         lambda *_args: warnings.append(_args[-1]),
     )
 
