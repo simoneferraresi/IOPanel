@@ -140,10 +140,9 @@ def test_close_cancels_camera_init_while_discovery_is_waiting(qtbot, monkeypatch
     monkeypatch.setattr(camera_module, "VIMBA_AVAILABLE", True)
     monkeypatch.setattr(camera_module, "VmbSystem", FakeVmbSystem)
     monkeypatch.setattr(main_window_module.MainWindow, "_begin_lazy_init", lambda _window: None)
-    scheduled = []
-    monkeypatch.setattr(main_window_module.QTimer, "singleShot", lambda _delay, callback: scheduled.append(callback))
     window = main_window_module.MainWindow(AppConfig(instruments={"ct400_backend": "simulation"}))
     qtbot.addWidget(window)
+    window.show()
     config = CameraConfig(identifier="physical-wait", name="Physical wait")
     worker = camera_init_worker.CameraInitWorker(config.identifier, config)
     initialized = []
@@ -153,14 +152,19 @@ def test_close_cancels_camera_init_while_discovery_is_waiting(qtbot, monkeypatch
     task.start()
 
     qtbot.waitUntil(poll_started.is_set, timeout=1500)
-    scheduled.clear()
     event = QCloseEvent()
     window.closeEvent(event)
 
     assert not event.isAccepted()
     assert worker._cancel_event.is_set()
-    qtbot.waitUntil(lambda: _runner_stopped(task), timeout=1500)
-    qtbot.waitUntil(lambda: task not in window._init_tasks, timeout=1500)
+
+    # Exercise the actual queued QThread.finished -> task removal ->
+    # QTimer.singleShot(0, window.close) path instead of replacing QTimer
+    # globally. A stopped QThread alone does not prove GUI bookkeeping ran.
+    qtbot.waitUntil(
+        lambda: task not in window._init_tasks and window._camera_cleanup_complete,
+        timeout=3000,
+    )
+    assert _runner_stopped(task)
+    assert window._pending_init_close is False
     assert initialized == []
-    assert len(scheduled) == 1
-    window._pending_init_close = False
