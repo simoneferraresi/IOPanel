@@ -43,6 +43,7 @@ def characterize(
     from PySide6.QtCore import QEvent, QObject, QSettings, QTimer
     from PySide6.QtWidgets import QApplication
 
+    from config_model import InstrumentsConfig
     from hardware.camera import VIMBA_AVAILABLE
     from ui.plot_widgets import MATLAB_ENGINE_AVAILABLE
 
@@ -104,7 +105,7 @@ def characterize(
         settings = app_module.AppSettings(
             QSettings(str(Path(temporary) / "isolated-settings.ini"), QSettings.Format.IniFormat)
         )
-        config = app_module.AppConfig(instruments={"ct400_backend": "simulation"}, cameras={})
+        config = app_module.AppConfig(instruments=InstrumentsConfig(ct400_backend="simulation"), cameras={})
         construction_started = time.perf_counter()
         window = app_module.MainWindow(config, settings=settings)
         constructed = time.perf_counter()
