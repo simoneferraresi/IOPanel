@@ -44,9 +44,7 @@ def _unexpected_prompt(*_args: object, **_kwargs: object) -> None:
     raise AssertionError("Unexpected user confirmation or error during synthetic GUI benchmark")
 
 
-def characterize(
-    points: list[int], detectors: list[int], output: Path
-) -> list[dict[str, object]]:
+def characterize(points: list[int], detectors: list[int], output: Path) -> list[dict[str, object]]:
     """Exercise real GUI handlers with deterministic in-memory acquisition data."""
     if not points or any(value < 2 for value in points):
         raise ValueError("All point counts must be >= 2")
@@ -70,16 +68,20 @@ def characterize(
         folder = Path(temp)
         for count in points:
             for num_detectors in detectors:
-                measurement = _synthetic_scan(count, tuple(
-                    plot_widgets.Detector(index + 1) for index in range(num_detectors)
-                ))
+                measurement = _synthetic_scan(
+                    count, tuple(plot_widgets.Detector(index + 1) for index in range(num_detectors))
+                )
                 payload = build_scan_export_v2(measurement, comment="synthetic benchmark")
                 csv_path = folder / f"fixture-{count}-{num_detectors}.csv"
                 mat_path = folder / f"fixture-{count}-{num_detectors}.mat"
                 with io.StringIO() as buffer:
                     np.savetxt(
-                        buffer, payload.csv_data, delimiter=",",
-                        header=payload.csv_header, comments="", fmt="%.6f",
+                        buffer,
+                        payload.csv_data,
+                        delimiter=",",
+                        header=payload.csv_header,
+                        comments="",
+                        fmt="%.6f",
                     )
                     csv_path.write_text(buffer.getvalue(), encoding="utf-8")
                 savemat(mat_path, payload.mat_data, do_compression=True)
@@ -95,7 +97,8 @@ def characterize(
 
                 def import_foreground(path: Path, *, window=window) -> None:
                     with patch.object(
-                        main_window_module.QFileDialog, "getOpenFileName",
+                        main_window_module.QFileDialog,
+                        "getOpenFileName",
                         return_value=(str(path), "IOPanel scan"),
                     ):
                         window._open_scan_file()
@@ -106,7 +109,8 @@ def characterize(
                 def import_overlay(path: Path, *, window=window) -> None:
                     before = len(window.plot_widget.scan_overlays)
                     with patch.object(
-                        main_window_module.QFileDialog, "getOpenFileName",
+                        main_window_module.QFileDialog,
+                        "getOpenFileName",
                         return_value=(str(path), "IOPanel scan"),
                     ):
                         window._add_scan_to_plot()
@@ -120,26 +124,36 @@ def characterize(
                     )
                     for name, path, handler in tasks:
                         _, timing = _timed_on_qt_thread(app, handler)
-                        rows.append({
-                            "points_per_scan": count,
-                            "detector_count": num_detectors,
-                            "operation": name,
-                            "qt_platform": app.platformName(),
-                            "window_system": sys.platform,
-                            "file_bytes": path.stat().st_size,
-                            **timing,
-                        })
+                        rows.append(
+                            {
+                                "points_per_scan": count,
+                                "detector_count": num_detectors,
+                                "operation": name,
+                                "qt_platform": app.platformName(),
+                                "window_system": sys.platform,
+                                "file_bytes": path.stat().st_size,
+                                **timing,
+                            }
+                        )
 
                     for kind in ("csv", "mat"):
                         # Preparing the active plot is excluded from export-handler timing.
                         window.plot_widget.set_measurement(measurement)
                         export_request = ScanExportRequest(
-                            folder, f"gui-export-{count}-{num_detectors}-{kind}",
-                            kind == "csv", kind == "mat", False, False, "benchmark note",
+                            folder,
+                            f"gui-export-{count}-{num_detectors}-{kind}",
+                            kind == "csv",
+                            kind == "mat",
+                            False,
+                            False,
+                            "benchmark note",
                         )
                         with patch.object(
-                            plot_widgets, "ScanExportDialog",
-                            side_effect=lambda *_args, request=export_request, **_kwargs: _AcceptedExportDialog(request),
+                            plot_widgets,
+                            "ScanExportDialog",
+                            side_effect=lambda *_args, request=export_request, **_kwargs: _AcceptedExportDialog(
+                                request
+                            ),
                         ):
                             _, timing = _timed_on_qt_thread(app, window.plot_widget.save_scan_data)
                         target = folder / f"{export_request.base_name}.{kind}"
@@ -150,15 +164,17 @@ def characterize(
                             raise AssertionError("Export handler changed schema-v2 detector/comment metadata")
                         if not np.allclose(exported.detector_data, measurement.detector_data, atol=1e-6, rtol=0):
                             raise AssertionError("Export handler changed detector samples")
-                        rows.append({
-                            "points_per_scan": count,
-                            "detector_count": num_detectors,
-                            "operation": f"export_{kind}",
-                            "qt_platform": app.platformName(),
-                            "window_system": sys.platform,
-                            "file_bytes": target.stat().st_size,
-                            **timing,
-                        })
+                        rows.append(
+                            {
+                                "points_per_scan": count,
+                                "detector_count": num_detectors,
+                                "operation": f"export_{kind}",
+                                "qt_platform": app.platformName(),
+                                "window_system": sys.platform,
+                                "file_bytes": target.stat().st_size,
+                                **timing,
+                            }
+                        )
                 finally:
                     window.close()
                     app.processEvents()
