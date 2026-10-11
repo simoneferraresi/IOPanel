@@ -25,7 +25,9 @@ Frozen export dialogs default to `%LOCALAPPDATA%\IOPanel\output` (or the system 
 
 `packaging/config.simulation.ini` explicitly selects the simulated CT400 and one simulated camera. `--smoke-test` refuses a physical CT400 backend or any enabled non-simulated camera before constructing the main window. It suppresses MATLAB prewarming and closes through the normal Qt window lifecycle. CI does not install hardware drivers or SDKs.
 
-Physical deployment remains external to this package profile. CT400 DLL paths in a separately approved site INI remain external and are not bundled. Vimba X and its camera SDK must be installed and configured on the target host before selecting the Vimba backend. MATLAB Engine and MATLAB itself are not bundled; MATLAB support requires a compatible separately installed MATLAB/Engine setup and the optional `matlab` extra in a separately qualified environment. This package does not qualify physical hardware or cross-host SDK compatibility.
+**This specific frozen EXE is a simulation-only distribution for camera and MATLAB integration.** Its build excludes the VmbPy and MATLAB Engine Python modules, so installing Vimba X, MATLAB, or their Python packages on the destination computer does **not** make them available inside this executable. To enable physical camera functionality or MATLAB `.fig` export in a frozen application, create a **separately built and validated packaging profile** containing the compatible Python modules and required PyInstaller hooks, alongside the externally installed Vimba X SDK or MATLAB application, dependencies, and licenses. Do not use this simulation package as evidence of those integrations.
+
+The CT400 native DLL is different: a separately approved physical site INI can point to an external `CT400_lib.dll` loaded at runtime, but that physical path has **not** been qualified in this package. This milestone includes no physical-device operation, no cross-host SDK compatibility claim, and no proprietary SDK redistributions.
 
 ## Build scope
 

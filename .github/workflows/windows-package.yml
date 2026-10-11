@@ -2,7 +2,7 @@ name: Windows one-folder package
 
 on:
   push:
-    branches: ["feat/windows-onefolder-package"]
+    branches: [main, "feat/windows-onefolder-package"]
   pull_request:
     branches: [main]
 
