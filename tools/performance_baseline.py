@@ -530,7 +530,7 @@ def _load_report(path: Path) -> dict[str, Any]:
         raise TypeError("Report has no raw runs")
     benchmark = report.get("benchmark")
     if not isinstance(benchmark, str):
-        raise ValueError("Missing performance benchmark kind")
+        raise TypeError("Missing performance benchmark kind")
     case_keys = BENCHMARK_CASE_KEYS.get(benchmark)
     if case_keys is None:
         raise ValueError("Unknown performance benchmark")
