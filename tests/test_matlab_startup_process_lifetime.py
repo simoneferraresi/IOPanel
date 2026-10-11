@@ -5,14 +5,10 @@ guaranteed after interpreter exit. These tests record that distinction; they
 are not tests of a real MATLAB process or the MATLAB vendor FutureResult.
 """
 
-from __future__ import annotations
-
 import os
 import subprocess
 import sys
 from pathlib import Path
-
-import pytest
 
 
 _CHILD_PROBE = r"""
@@ -84,8 +80,7 @@ record("main_return")
 """
 
 
-@pytest.mark.parametrize("case", ("resolved", "blocked"))
-def test_matlab_shutdown_process_exit_boundary(tmp_path: Path, case: str) -> None:
+def _assert_matlab_shutdown_process_exit_boundary(tmp_path: Path, case: str) -> None:
     """Distinguish early Python exit from a cleanup observed before exit."""
     trace = tmp_path / f"startup-{case}.events"
     env = os.environ.copy()
@@ -116,3 +111,11 @@ def test_matlab_shutdown_process_exit_boundary(tmp_path: Path, case: str) -> Non
         # evidence that MATLAB itself was orphaned or that its API was invoked.
         assert "engine_quit" not in events
         assert "disposal_joined" not in events
+
+
+def test_matlab_shutdown_cleans_engine_before_interpreter_exit(tmp_path: Path) -> None:
+    _assert_matlab_shutdown_process_exit_boundary(tmp_path, "resolved")
+
+
+def test_matlab_shutdown_cannot_guarantee_disposal_after_interpreter_exit(tmp_path: Path) -> None:
+    _assert_matlab_shutdown_process_exit_boundary(tmp_path, "blocked")
