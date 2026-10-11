@@ -13,7 +13,7 @@ from pathlib import Path
 _CHILD_PROBE = r"""
 import sys
 from pathlib import Path
-from threading import Event
+from threading import Event, Lock
 
 from PySide6.QtCore import QCoreApplication
 
@@ -21,12 +21,16 @@ from logic.matlab_engine_manager import MatlabEngineManager, MatlabEngineState
 
 trace = Path(sys.argv[1])
 case = sys.argv[2]
+trace_lock = Lock()
 
 
 def record(event):
-    with trace.open("a", encoding="utf-8") as output:
-        output.write(event + "\n")
-        output.flush()
+    # Main and disposer threads can write simultaneously. Event records must
+    # be complete and ordered under a lock, even when Python exits promptly.
+    with trace_lock:
+        with trace.open("a", encoding="utf-8") as output:
+            output.write(event + "\n")
+            output.flush()
 
 
 class Engine:
