@@ -371,9 +371,7 @@ def _capture_startup_one(root: Path, output: Path, *, qt_platform: str) -> tuple
     return elapsed, rows
 
 
-def capture_startup(
-    root: Path, *, repetitions: int, warmups: int, qt_platform: str
-) -> dict[str, Any]:
+def capture_startup(root: Path, *, repetitions: int, warmups: int, qt_platform: str) -> dict[str, Any]:
     """Capture per-process startup stages using the existing versioned report protocol."""
     if repetitions < 1 or warmups < 0:
         raise ValueError("Require >=1 repetition and >=0 warmups")
