@@ -123,3 +123,87 @@ Each selected format is staged as `.iopanel-monitor-*.tmp` in its destination di
 The Power Monitor trace widget prevents a second save while a worker is pending, Qt-parents the QThread and retains TaskRunner ownership until the QThread `destroyed` event, and defers a direct widget close or MainWindow shutdown until worker cleanup. A new monitor recording does not change the immutable save payload; it stays selected if an earlier save finishes. All user-facing result dialogs remain on the GUI thread. The monitor's close-trace button still **hides** the trace rather than stopping acquisition.
 
 These changes do **not** modify the scan schema-v2 exporter, MATLAB FIG lifecycle or CT400 recording/acquisition controls. Native-lifetime issues remain under investigation in #167, so Windows CI tests include blocked workers, repeated-save guards, native QThread ownership/deferred deletion, shutdown, staged overwrite races and file-failure checks. Matched native desktop Power Monitor responsiveness statistics are still a separate manual characterization; Github Actions latency alone is not physical lab-PC evidence.
+
+
+## First-responsive MainWindow startup baseline (Issue #152, measurement-only)
+
+`tools/benchmark_startup.py` is a **fresh-child-interpreter** probe of the
+application's ordinary PySide6 imports, `ui.main_window` import, QApplication
+creation/Fusion/font setup, full MainWindow construction, `window.show()`, Qt
+paint-event dispatch and two queued event-loop callbacks. The second callback
+runs **after the first observed MainWindow paint event**, so the report
+distinguishes *first event-loop activity* from a post-paint opportunity to
+respond. A 12-second child Qt watchdog and 45-second parent subprocess deadline
+fail closed if a callback or paint never arrives; no missing timing is silently
+reported as zero. A 100-ms deferred initialization timer is observed through a
+**suppressed**, instrument-free hook (no initialization worker is launched).
+
+Run in the Python 3.12 locked `uv` environment:
+
+```powershell
+uv sync --locked --extra test --extra lint --extra typecheck
+uv run --no-sync python -m tools.performance_baseline capture-startup --qt-platform offscreen --repetitions 5 --warmups 0 --output startup-main.json
+# At a separately reviewed candidate commit on the same machine/session:
+uv run --no-sync python -m tools.performance_baseline capture-startup --qt-platform offscreen --repetitions 5 --warmups 0 --output startup-candidate.json
+uv run --no-sync python -m tools.performance_baseline compare startup-main.json startup-candidate.json --output startup-comparison.json
+```
+
+To inspect native interactive Windows timing **only in an authorized desktop
+session**, substitute `--qt-platform windows` for both runs. Do not compare
+`offscreen` with `windows` as equivalent desktop evidence. Captures are
+informational; this increment adds **no automatic speed threshold** to CI and
+changes **no production startup, GUI logic, imports, MATLAB Engine or hardware
+integration**.
+
+The existing schema-v1 JSON includes `benchmark=startup`, Qt platform, commit
+and lock/environment metadata, each independent child subprocess's wall time,
+raw stage measurements and median/nearest-rank p95/spread. The benchmark case
+keys are `scenario`, `qt_platform`, `window_system` so earlier overlays,
+scan_io and scan_gui reports remain compatible but never intercomparable with
+startup. Stage names ending in `_s` are elapsed seconds. Key fields:
+
+- `qt_import_s`, `mainwindow_import_s`, `remaining_import_s`: split
+  module-import intervals after the probe's first Python statement; these do
+  **not** measure Python interpreter creation.
+- `qapplication_create_s`, `qt_configure_s`, `mainwindow_construct_s`,
+  `show_call_s`: independently measured setup intervals.
+- `entry_to_*_s`: elapsed from the probe's first statement to import
+  completion, MainWindow construction, show return, first Qt callback,
+  first window paint **dispatch**, post-paint Qt callback and the suppressed
+  deferred-init timer callback.
+- `event_loop_enter_to_*_s`: latency from entering the Qt event loop to
+  the first callback and post-paint callback.
+- `subprocess_wall_s` (in each run, outside case metrics): parent-observed
+  total process duration including interpreter startup, imports, about 100 ms
+  of waiting for the suppressed deferred hook, cleanup and process shutdown.
+  It is **not** an accurate process-spawn-to-responsive metric by itself.
+
+**Cold/warm interpretation:** each recorded trial starts a **fresh Python
+interpreter**, with no warm in-process module cache. The first trial of a new
+OS session is only a *cold-cache candidate*: launching child processes does
+not purge OS filesystem caches, memory-mapped DLL pages, antivirus state or
+Windows compositor/font caches. `--warmups N` runs N additional fresh
+processes **before** collecting the samples; this can warm OS caches but is
+not a controlled hardware cold boot. For credible cold-versus-warmed claims,
+capture separate labelled reports across documented machine/session
+conditions, with identical report configurations. Median/p95 from only 3–5
+repetitions are descriptive rather than stable tail-latency guarantees.
+
+**Evidence/coverage limits:** this diagnostic intentionally constructs the
+real MainWindow under a fresh isolated QSettings store and explicit
+`ct400_backend=simulation` with **zero cameras**. It patches
+`MainWindow._begin_lazy_init` *before construction* so neither physical
+CT400/piezo/Vimba discovery nor simulated device workers execute. It never
+invokes FIG export or MATLAB prewarm. This gives a consistent *pre-instrument,
+UI-construction critical-path* benchmark, **not full normal app startup**
+(including INI disk load, logger setup, real camera discovery, MATLAB
+prewarm or packaged executable bootstrap). An import of a Python SDK adapter
+must not be interpreted as physical device operation. On a loaded vendor
+environment, verify the chosen profile separately.
+
+The first Qt paint event and queued callbacks are observable Qt message
+dispatch, **not evidence of a frame reaching the monitor** or actual user
+input latency. Offscreen results exclude native window composition, GPU and
+RDP effects. A later independent PR may use `-X importtime` and precise
+hot-import attribution, but should avoid modifying import behavior until
+measurements from the selected Windows deployment profile justify it.
