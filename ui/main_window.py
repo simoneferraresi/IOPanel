@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 import sys
 import time
+import weakref
 from enum import Enum, auto
 
 from PySide6 import QtGui, QtWidgets
@@ -47,7 +48,7 @@ from PySide6.QtWidgets import (
 
 from app_settings import AppSettings
 from config_model import AppConfig, CameraConfig
-from hardware.ct400_init_worker import CT400InitWorker
+from hardware.ct400_init_worker import CT400InitOutcome, CT400InitWorker
 from hardware.dummy_ct400 import DummyCT400
 from hardware.piezo import PiezoController
 from hardware.piezo_init_worker import PiezoInitWorker
@@ -183,9 +184,8 @@ class MainWindow(QMainWindow):
             which could be a real or dummy implementation.
     """
 
-    _ct400_init_task_finished = Signal(int, object)
+    _ct400_init_task_finished = Signal(int, object, object)
     _ct400_attempt_status = Signal(int, str, str)
-    _ct400_attempt_result = Signal(int, object)
     _piezo_init_task_finished = Signal(object)
     _init_task_thread_finished = Signal(object)
     _camera_recovery_thread_finished = Signal(str, object)
@@ -222,8 +222,8 @@ class MainWindow(QMainWindow):
         self.ct400_task: TaskRunner | None = None
         self._ct400_init_attempt_id = 0
         self._active_ct400_init_attempt_id: int | None = None
-        self._ct400_init_result_received = False
-        self._ct400_init_thread_finished_ids: set[int] = set()
+        self._ct400_latest_finished_attempt_id = 0
+        self._ct400_disposed_candidates: weakref.WeakSet[CT400] = weakref.WeakSet()
 
         # --- Piezo Worker ---
         self.piezo_task: TaskRunner | None = None
@@ -265,7 +265,6 @@ class MainWindow(QMainWindow):
         self._connect_signals()
         self._ct400_init_task_finished.connect(self._on_ct400_init_task_finished)
         self._ct400_attempt_status.connect(self._on_ct400_attempt_status_updated)
-        self._ct400_attempt_result.connect(self._on_ct400_attempt_initialized)
         self._piezo_init_task_finished.connect(self._on_piezo_init_task_finished)
         self._init_task_thread_finished.connect(self._on_init_task_thread_finished)
         self._camera_recovery_thread_finished.connect(self._on_camera_recovery_thread_finished)
@@ -514,28 +513,10 @@ class MainWindow(QMainWindow):
 
     @Slot(int, str, str)
     def _on_ct400_attempt_status_updated(self, attempt_id: int, state_name: str, message: str):
-        if attempt_id != self._active_ct400_init_attempt_id:
+        if attempt_id != self._active_ct400_init_attempt_id or self._pending_init_close:
             logger.debug("Ignoring stale CT400 initialization status for attempt %s.", attempt_id)
             return
         self._on_ct400_status_updated(state_name, message)
-
-    @Slot(int, object)
-    def _on_ct400_attempt_initialized(self, attempt_id: int, device: AbstractCT400):
-        if attempt_id != self._active_ct400_init_attempt_id:
-            logger.warning("Ignoring stale CT400 initialization result for attempt %s.", attempt_id)
-            if isinstance(device, CT400):
-                try:
-                    device.close()
-                except Exception:
-                    logger.exception("Could not release stale CT400 initialization result.")
-            return
-        self._ct400_init_result_received = True
-        self._on_ct400_initialized(device)
-        if attempt_id in self._ct400_init_thread_finished_ids:
-            self._ct400_init_thread_finished_ids.discard(attempt_id)
-            self._active_ct400_init_attempt_id = None
-            self._ct400_init_result_received = False
-            self._update_ct400_retry_action()
 
     @Slot(AbstractCT400)
     def _on_ct400_initialized(self, device: AbstractCT400):
@@ -711,35 +692,87 @@ class MainWindow(QMainWindow):
         self._ct400_init_attempt_id += 1
         attempt_id = self._ct400_init_attempt_id
         self._active_ct400_init_attempt_id = attempt_id
-        self._ct400_init_result_received = False
         logger.info("Starting lazy initialization of CT400...")
         worker = CT400InitWorker(config=self.config)
-        worker.ct400_initialized.connect(lambda device: self._ct400_attempt_result.emit(attempt_id, device))
+        terminal_outcome: list[CT400InitOutcome | None] = [None]
+        worker.initialization_completed.connect(
+            lambda outcome: terminal_outcome.__setitem__(0, outcome),
+            Qt.ConnectionType.DirectConnection,
+        )
         worker.status_updated.connect(
             lambda state, message: self._ct400_attempt_status.emit(attempt_id, state, message)
         )
         task = TaskRunner(worker)
         self.ct400_task = task
         task.worker_thread.finished.connect(
-            lambda task=task, attempt_id=attempt_id: self._ct400_init_task_finished.emit(attempt_id, task)
+            lambda task=task, attempt_id=attempt_id, outcome=terminal_outcome: self._ct400_init_task_finished.emit(
+                attempt_id, task, outcome[0]
+            )
         )
         self._track_init_task(task)
         self._update_ct400_retry_action()
         task.start()
 
-    @Slot(int, object)
-    def _on_ct400_init_task_finished(self, attempt_id: int, task=None):
-        """Clear only the CT400 task whose thread just finished."""
+    @Slot(int, object, object)
+    def _on_ct400_init_task_finished(self, attempt_id: int, task=None, outcome: CT400InitOutcome | None = None):
+        """Transfer an outcome only after its worker thread has released ownership."""
         if task is None:
+            return
+        if attempt_id <= self._ct400_latest_finished_attempt_id:
+            self._dispose_unowned_ct400_candidate(outcome.device if outcome is not None else None)
+            return
+        if attempt_id != self._active_ct400_init_attempt_id:
+            logger.warning("Ignoring CT400 completion for inactive attempt %s.", attempt_id)
+            self._dispose_unowned_ct400_candidate(outcome.device if outcome is not None else None)
             return
         if self.ct400_task is task:
             self.ct400_task = None
-        self._ct400_init_thread_finished_ids.add(attempt_id)
-        if self._active_ct400_init_attempt_id == attempt_id and self._ct400_init_result_received:
+        self._ct400_latest_finished_attempt_id = attempt_id
+        if outcome is None:
+            outcome = CT400InitOutcome(
+                device=None,
+                state_name="UNAVAILABLE",
+                message="CT400 initialization ended without a terminal result. Retry is available.",
+            )
+        if self._pending_init_close:
+            self._dispose_unowned_ct400_candidate(outcome.device)
             self._active_ct400_init_attempt_id = None
-            self._ct400_init_result_received = False
-            self._ct400_init_thread_finished_ids.discard(attempt_id)
+            self._update_ct400_retry_action()
+            return
+        if outcome.device is None:
+            try:
+                terminal_state = CT400Status[outcome.state_name.upper()]
+            except KeyError:
+                terminal_state = CT400Status.UNAVAILABLE
+            self._update_ct400_visuals(terminal_state, outcome.message)
+        else:
+            if outcome.state_name.upper() == "UNAVAILABLE":
+                self._update_ct400_visuals(CT400Status.UNAVAILABLE, outcome.message)
+            self._on_ct400_initialized(outcome.device)
+            if outcome.state_name.upper() == "SIMULATED":
+                self.statusBar().showMessage(outcome.message, 5000)
+        self._active_ct400_init_attempt_id = None
         self._update_ct400_retry_action()
+
+    def _dispose_unowned_ct400_candidate(self, device: AbstractCT400 | None) -> None:
+        if not isinstance(device, CT400) or self._ct400_device_is_owned(device):
+            return
+        if device in self._ct400_disposed_candidates:
+            return
+        self._ct400_disposed_candidates.add(device)
+        try:
+            device.close()
+        except Exception:
+            logger.exception("Could not release an unowned stale CT400 initialization result.")
+
+    def _ct400_device_is_owned(self, device: CT400) -> bool:
+        if device is self.ct400_device or device is self._pending_ct400_device_replacement:
+            return True
+        for panel_name in ("control_panel", "histogram_control", "alignment_tab"):
+            panel = getattr(self, panel_name, None)
+            if panel is not None and getattr(panel, "ct400", None) is device:
+                return True
+        return False
 
     def _update_ct400_retry_action(self) -> None:
         action = getattr(self, "ct400_retry_action", None)
@@ -760,6 +793,9 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _retry_ct400_initialization(self) -> None:
+        if self._pending_init_close:
+            logger.info("Ignoring CT400 retry while application close is pending.")
+            return
         if not (self.ct400_device is None or isinstance(self.ct400_device, DummyCT400)):
             self.statusBar().showMessage("CT400 is already initialized; retry is unavailable.", 5000)
             return

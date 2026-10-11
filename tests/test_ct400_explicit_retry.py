@@ -1,5 +1,6 @@
 from config_model import AppConfig
 from hardware import ct400_init_worker
+from hardware.ct400_init_worker import CT400InitOutcome
 from hardware.dummy_ct400 import DummyCT400
 from logic.task_runner import TaskRunner
 from ui import main_window as main_window_module
@@ -31,8 +32,11 @@ def test_explicit_retry_starts_only_ct400_and_suppresses_reentry(qtbot, monkeypa
     assert camera_calls == []
     assert not window.ct400_retry_action.isEnabled()
 
-    window._ct400_attempt_result.emit(window._active_ct400_init_attempt_id, DummyCT400())
+    outcome = CT400InitOutcome(DummyCT400(), "UNAVAILABLE", "Mock failure.")
+    first_task.worker.initialization_completed.emit(outcome)
     first_task.worker_thread.finished.emit()
+    assert window._active_ct400_init_attempt_id is None
+    assert window.ct400_status_label.text() == "CT400: Unavailable"
 
 
 def test_retry_rejected_while_old_ct400_state_is_unresolved(qtbot, monkeypatch):
@@ -54,10 +58,83 @@ def test_stale_ct400_attempt_status_and_result_are_ignored(qtbot, monkeypatch):
     old_text = window.ct400_status_label.text()
 
     window._on_ct400_attempt_status_updated(1, "UNAVAILABLE", "stale failure")
-    window._on_ct400_attempt_initialized(1, DummyCT400())
+    window._on_ct400_init_task_finished(1, object(), CT400InitOutcome(DummyCT400(), "UNAVAILABLE", "stale"))
 
     assert window.ct400_device is previous_device
     assert window.ct400_status_label.text() == old_text
+
+
+def test_cancelled_initialization_without_device_releases_retry(qtbot, monkeypatch):
+    window = _window(qtbot, monkeypatch)
+    tasks = []
+
+    def cancel_before_worker_run(task):
+        task.worker.stop()
+        task.worker.run()
+        tasks.append(task)
+
+    monkeypatch.setattr(TaskRunner, "start", cancel_before_worker_run)
+
+    window._retry_ct400_initialization()
+
+    task = tasks[0]
+    assert task.worker.terminal_outcome is not None
+    assert task.worker.terminal_outcome.cancelled
+    assert task.worker.terminal_outcome.device is None
+    assert window.ct400_device is None
+
+    task.worker_thread.finished.emit()
+
+    assert window._active_ct400_init_attempt_id is None
+    assert window.ct400_status_label.text() == "CT400: Unavailable"
+    assert window.ct400_retry_action.isEnabled()
+
+
+def test_ct400_terminal_outcome_is_transferred_at_thread_boundary(qtbot, monkeypatch):
+    window = _window(qtbot, monkeypatch)
+    tasks = []
+    monkeypatch.setattr(TaskRunner, "start", lambda task: tasks.append(task))
+    window._retry_ct400_initialization()
+    task = tasks[0]
+    attempt_id = window._active_ct400_init_attempt_id
+    outcome = CT400InitOutcome(DummyCT400(), "UNAVAILABLE", "mock terminal failure")
+
+    task.worker.initialization_completed.emit(outcome)
+
+    assert window.ct400_device is None
+    assert window._active_ct400_init_attempt_id == attempt_id
+
+    task.worker_thread.finished.emit()
+
+    assert window.ct400_device is outcome.device
+    assert window._active_ct400_init_attempt_id is None
+    assert window.ct400_status_label.text() == "CT400: Unavailable"
+
+
+def test_stale_physical_candidate_is_closed_once_but_current_device_is_retained(qtbot, monkeypatch):
+    window = _window(qtbot, monkeypatch)
+    monkeypatch.setattr(main_window_module, "CT400", FakeCT400)
+    window._active_ct400_init_attempt_id = 2
+    current = FakeCT400()
+    stale = FakeCT400()
+    window.ct400_device = current
+
+    window._on_ct400_init_task_finished(1, object(), CT400InitOutcome(current, "DISCONNECTED", "stale"))
+    window._on_ct400_init_task_finished(1, object(), CT400InitOutcome(stale, "DISCONNECTED", "stale"))
+    window._on_ct400_init_task_finished(1, object(), CT400InitOutcome(stale, "DISCONNECTED", "duplicate"))
+
+    assert current.close_calls == 0
+    assert stale.close_calls == 1
+    assert window.ct400_device is current
+
+
+class FakeCT400:
+    def __init__(self):
+        self.close_calls = 0
+        self.handle = None
+
+    def close(self):
+        self.close_calls += 1
 
 
 def test_physical_failure_dummy_stays_unavailable_and_cannot_enable_operations(qtbot, monkeypatch):

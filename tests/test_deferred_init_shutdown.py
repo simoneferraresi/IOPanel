@@ -1,6 +1,9 @@
+from threading import Event
+
 from PySide6.QtGui import QCloseEvent
 
 from config_model import AppConfig, CameraConfig
+from hardware.ct400_init_worker import CT400InitOutcome, CT400InitWorker
 from hardware.simulated_camera import SimulatedCamera
 from logic.task_runner import BaseWorker, TaskRunner
 from ui import main_window as main_window_module
@@ -188,3 +191,75 @@ def test_refresh_and_direct_init_are_blocked_while_init_close_pending(qtbot, mon
     window._init_ct400_lazy()
     window._init_piezos_lazy()
     assert starts == []
+
+
+def test_close_defers_active_ct400_retry_until_terminal_thread_boundary(qtbot, monkeypatch, request):
+    entered = Event()
+    release = Event()
+    worker_runs = []
+    stop_requests = []
+    candidates = []
+
+    class FakePhysicalCT400:
+        def __init__(self):
+            self.handle = 1
+            self.close_calls = 0
+            self.laser_calls = 0
+
+        def close(self):
+            self.close_calls += 1
+
+    class BlockingCT400InitWorker(CT400InitWorker):
+        def run(self):
+            entered.set()
+            release.wait()
+            candidate = FakePhysicalCT400()
+            candidates.append(candidate)
+            outcome = CT400InitOutcome(candidate, "DISCONNECTED", "Fake CT400 initialized.")
+            self._terminal_outcome = outcome
+            self.initialization_completed.emit(outcome)
+            self.finished.emit()
+            worker_runs.append("finished")
+
+        def stop(self):
+            stop_requests.append("stop")
+            super().stop()
+
+    monkeypatch.setattr(main_window_module, "CT400InitWorker", BlockingCT400InitWorker)
+    monkeypatch.setattr(main_window_module, "CT400", FakePhysicalCT400)
+    window = _window(qtbot, monkeypatch, AppConfig(instruments={"ct400_backend": "physical"}))
+    histogram_thread = _ensure_histogram_worker_stops(window, request, monkeypatch)
+    task_starts = []
+    original_start = TaskRunner.start
+
+    def track_start(task):
+        task_starts.append(task)
+        original_start(task)
+
+    monkeypatch.setattr(TaskRunner, "start", track_start)
+    window._retry_ct400_initialization()
+    task = window.ct400_task
+    assert task is not None
+    assert entered.wait(2)
+
+    assert window.close() is False
+    assert window._pending_init_close
+    assert task.worker_thread.isRunning()
+    waiting_message = window.statusBar().currentMessage()
+    window._retry_ct400_initialization()
+    assert window.statusBar().currentMessage() == waiting_message
+    assert task_starts == [task]
+    assert stop_requests == []
+    assert worker_runs == []
+
+    release.set()
+    qtbot.waitUntil(lambda: _qt_thread_stopped(task.worker_thread), timeout=3000)
+    qtbot.waitUntil(lambda: window._camera_cleanup_complete, timeout=3000)
+
+    assert window._active_ct400_init_attempt_id is None
+    assert window.ct400_device is None
+    assert candidates[0].close_calls == 1
+    assert candidates[0].laser_calls == 0
+    assert worker_runs == ["finished"]
+    assert stop_requests == []
+    assert _qt_thread_stopped(histogram_thread)

@@ -14,20 +14,20 @@ def _config(backend="physical"):
 def test_ct400_missing_dll_emits_dummy_and_finished_once(qtbot, monkeypatch):
     worker = ct400_init_worker.CT400InitWorker(_config())
     monkeypatch.setattr(worker, "_find_dll", lambda: None)
-    results = QSignalSpy(worker.ct400_initialized)
+    results = QSignalSpy(worker.initialization_completed)
     finished = QSignalSpy(worker.finished)
 
     worker.run()
 
     assert results.count() == 1
-    assert isinstance(results.at(0)[0], DummyCT400)
+    assert isinstance(results.at(0)[0].device, DummyCT400)
     assert finished.count() == 1
 
 
 def test_ct400_missing_dll_stops_taskrunner_thread(qtbot, monkeypatch):
     worker = ct400_init_worker.CT400InitWorker(_config())
     monkeypatch.setattr(worker, "_find_dll", lambda: None)
-    results = QSignalSpy(worker.ct400_initialized)
+    results = QSignalSpy(worker.initialization_completed)
     task = TaskRunner(worker)
     task.start()
 
@@ -44,13 +44,13 @@ def _thread_finished(task):
 
 def test_ct400_simulation_emits_finished_once():
     worker = ct400_init_worker.CT400InitWorker(_config("simulation"))
-    results = QSignalSpy(worker.ct400_initialized)
+    results = QSignalSpy(worker.initialization_completed)
     finished = QSignalSpy(worker.finished)
 
     worker.run()
 
     assert results.count() == 1
-    assert isinstance(results.at(0)[0], DummyCT400)
+    assert isinstance(results.at(0)[0].device, DummyCT400)
     assert finished.count() == 1
 
 
@@ -61,13 +61,14 @@ def test_ct400_successful_fake_constructor_emits_result_and_finished(monkeypatch
     monkeypatch.setattr(ct400_init_worker.CT400InitWorker, "_find_dll", lambda _worker: dll_path)
     monkeypatch.setattr(ct400_init_worker, "CT400", lambda _path: expected_device)
     worker = ct400_init_worker.CT400InitWorker(_config())
-    results = QSignalSpy(worker.ct400_initialized)
+    results = QSignalSpy(worker.initialization_completed)
     finished = QSignalSpy(worker.finished)
 
     worker.run()
 
     assert results.count() == 1
-    assert results.at(0)[0] is expected_device
+    assert results.at(0)[0].device is expected_device
+    assert results.at(0)[0].state_name == "DISCONNECTED"
     assert finished.count() == 1
 
 
@@ -81,13 +82,14 @@ def test_ct400_handled_constructor_failure_emits_dummy_and_finished(qtbot, monke
 
     monkeypatch.setattr(ct400_init_worker, "CT400", fail_constructor)
     worker = ct400_init_worker.CT400InitWorker(_config())
-    results = QSignalSpy(worker.ct400_initialized)
+    results = QSignalSpy(worker.initialization_completed)
     finished = QSignalSpy(worker.finished)
 
     worker.run()
 
     assert results.count() == 1
-    assert isinstance(results.at(0)[0], DummyCT400)
+    assert isinstance(results.at(0)[0].device, DummyCT400)
+    assert results.at(0)[0].state_name == "UNAVAILABLE"
     assert finished.count() == 1
 
 
@@ -97,26 +99,28 @@ def test_ct400_unexpected_constructor_failure_emits_dummy_and_finished(qtbot, mo
     monkeypatch.setattr(ct400_init_worker.CT400InitWorker, "_find_dll", lambda _worker: dll_path)
     monkeypatch.setattr(ct400_init_worker, "CT400", lambda _path: (_ for _ in ()).throw(RuntimeError("fake")))
     worker = ct400_init_worker.CT400InitWorker(_config())
-    results = QSignalSpy(worker.ct400_initialized)
+    results = QSignalSpy(worker.initialization_completed)
     finished = QSignalSpy(worker.finished)
 
     worker.run()
 
     assert results.count() == 1
-    assert isinstance(results.at(0)[0], DummyCT400)
+    assert isinstance(results.at(0)[0].device, DummyCT400)
     assert finished.count() == 1
 
 
 def test_ct400_stopped_before_run_emits_finished_without_initializing(monkeypatch):
     worker = ct400_init_worker.CT400InitWorker(_config())
     monkeypatch.setattr(worker, "_find_dll", lambda: (_ for _ in ()).throw(AssertionError("discovery called")))
-    results = QSignalSpy(worker.ct400_initialized)
+    results = QSignalSpy(worker.initialization_completed)
     finished = QSignalSpy(worker.finished)
 
     worker.stop()
     worker.run()
 
-    assert results.count() == 0
+    assert results.count() == 1
+    assert results.at(0)[0].device is None
+    assert results.at(0)[0].cancelled is True
     assert finished.count() == 1
 
 
