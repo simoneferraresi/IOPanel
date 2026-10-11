@@ -93,7 +93,7 @@ def characterize(
                 window.show()
                 app.processEvents()
 
-                def import_foreground(path: Path) -> None:
+                def import_foreground(path: Path, *, window=window) -> None:
                     with patch.object(
                         main_window_module.QFileDialog, "getOpenFileName",
                         return_value=(str(path), "IOPanel scan"),
@@ -103,7 +103,7 @@ def characterize(
                     if imported is None or imported.source_path != path.resolve():
                         raise AssertionError("MainWindow foreground scan import did not complete")
 
-                def import_overlay(path: Path) -> None:
+                def import_overlay(path: Path, *, window=window) -> None:
                     before = len(window.plot_widget.scan_overlays)
                     with patch.object(
                         main_window_module.QFileDialog, "getOpenFileName",
@@ -115,8 +115,8 @@ def characterize(
 
                 try:
                     tasks = (
-                        ("import_csv_foreground", csv_path, lambda: import_foreground(csv_path)),
-                        ("import_mat_overlay", mat_path, lambda: import_overlay(mat_path)),
+                        ("import_csv_foreground", csv_path, lambda path=csv_path: import_foreground(path)),
+                        ("import_mat_overlay", mat_path, lambda path=mat_path: import_overlay(path)),
                     )
                     for name, path, handler in tasks:
                         _, timing = _timed_on_qt_thread(app, handler)
@@ -139,7 +139,7 @@ def characterize(
                         )
                         with patch.object(
                             plot_widgets, "ScanExportDialog",
-                            side_effect=lambda *_args, **_kwargs: _AcceptedExportDialog(export_request),
+                            side_effect=lambda *_args, request=export_request, **_kwargs: _AcceptedExportDialog(request),
                         ):
                             _, timing = _timed_on_qt_thread(app, window.plot_widget.save_scan_data)
                         target = folder / f"{export_request.base_name}.{kind}"
