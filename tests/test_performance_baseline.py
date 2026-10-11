@@ -37,8 +37,7 @@ def _case(repaint: float = 5.0, points: int = 10_000):
 
 def _report(repaints=(3.0, 5.0, 9.0), commit="aaa", qt="offscreen"):
     runs = [
-        {"repetition": i + 1, "subprocess_wall_s": 2.0, "cases": [_case(value)]}
-        for i, value in enumerate(repaints)
+        {"repetition": i + 1, "subprocess_wall_s": 2.0, "cases": [_case(value)]} for i, value in enumerate(repaints)
     ]
     return {
         "schema_version": 1,
@@ -132,8 +131,14 @@ def test_capture_keeps_warmups_out_of_recorded_samples(monkeypatch, tmp_path: Pa
     monkeypatch.setattr("tools.performance_baseline._capture_one", fake_capture)
     monkeypatch.setattr("tools.performance_baseline._environment", lambda *_args: {"commit": "abc"})
     result = capture(
-        tmp_path, points=[10000], detectors=[1], overlays=[0], repetitions=3, warmups=1,
-        qt_platform="offscreen", mouse_events=False,
+        tmp_path,
+        points=[10000],
+        detectors=[1],
+        overlays=[0],
+        repetitions=3,
+        warmups=1,
+        qt_platform="offscreen",
+        mouse_events=False,
     )
     assert len(calls) == 4
     assert len(result["runs"]) == 3
@@ -145,6 +150,12 @@ def test_capture_keeps_warmups_out_of_recorded_samples(monkeypatch, tmp_path: Pa
 def test_capture_rejects_invalid_matrix_before_invocation(tmp_path, points, detectors, overlays):
     with pytest.raises(ValueError):
         capture(
-            tmp_path, points=points, detectors=detectors, overlays=overlays,
-            repetitions=1, warmups=0, qt_platform="offscreen", mouse_events=False,
+            tmp_path,
+            points=points,
+            detectors=detectors,
+            overlays=overlays,
+            repetitions=1,
+            warmups=0,
+            qt_platform="offscreen",
+            mouse_events=False,
         )
