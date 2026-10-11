@@ -79,3 +79,20 @@ Each measured synchronous operation queues a **zero-delay Qt timer callback on t
 The report shares the **same v1 JSON envelope** as the scan-overlay benchmark, with a different, explicitly labeled `benchmark: scan_io` and I/O-specific case identity (`points_per_scan`, `detector_count`, `operation`, `qt_platform`, `window_system`). The existing archived overlay JSON files remain loadable/comparable. Do not compare overlay and I/O workload reports against one another. CSV and MAT may have different numeric precision; only schema-correct round trips are compared. The I/O report preserves CPU seconds, wall seconds, the pending callback proxy, and where available **current and peak Windows working-set observations**; peak working set is a process-lifetime high-water mark, not incremental allocation by each operation.
 
 The existing optional Actions baseline workflow now archives **separate** scan-overlay and scan-I/O JSON artifacts. Its I/O run is synthetic, Qt offscreen and **informational**, not a latency regression gate. As with all Actions benchmarks, the host's resource sharing can make direct cross-run speed comparisons misleading.
+
+## Actual MainWindow / PlotWidget scan I/O handler characterization (#155)
+
+`tools/benchmark_scan_gui.py` exercises **the real** `MainWindow._open_scan_file`, `MainWindow._add_scan_to_plot` and `PlotWidget.save_scan_data` methods using deterministic `ScanMeasurement` inputs. The first-run code creates an ordinary MainWindow and PlotWidget, but substitutes only the file chooser, export chooser, modal message boxes and delayed hardware initialization. Every fixture uses the normal schema-v2 CSV/MAT export/import logic. No CT400/Vimba/piezo/MATLAB instance is opened or operated; requesting an unexpected confirmation is an error. Data preparation, dialogs and MainWindow construction are **excluded** from the measured handler time; parsing, plot application, serialization and disk writes remain inside the measured calls.
+
+**Capture and compare:**
+
+```powershell
+uv run --no-sync python -m tools.performance_baseline capture-gui --qt-platform offscreen --output scan-gui-main.json
+uv run --no-sync python -m tools.performance_baseline compare scan-gui-main.json scan-gui-candidate.json --output scan-gui-comparison.json
+```
+
+A separate optional Actions job retains `scan-gui-offscreen-<sha>` JSON (30 days). Its 10k/50k × 1/4-detector workload measures **four GUI handler actions per fixture**: `import_csv_foreground`, `import_mat_overlay`, `export_csv`, `export_mat`, for three fresh-process repetitions after a discarded warmup. The report uses the **unchanged v1 envelope**, `benchmark=scan_gui`, the same case keys as `scan_io` and the same comparability checks, but the comparator **rejects cross-benchmark comparisons**. File size is recorded; current/peak process working-set observations (when present) are not incremental per-operation allocations.
+
+The `qt_pending_callback_delay_s` metric queues a zero-delay Qt callback immediately before each synchronous GUI handler and measures when that pending event finally executes. It is a **single pending-callback starvation proxy** which includes a small amount of Qt post-handler dispatch overhead—not an event-loop heartbeat p95, a paint frame rate, or the complete interactive user experience. File dialogs are mocked, so real dialog time is not included. The diagnostic does **not** establish that workers can safely replace these calls; close/cancel, simultaneous scanning, overwrite/replacement policies, partial writes, native desktop event latency and GUI lifecycle ownership must be covered by separate #155 implementation tests before changing production behavior.
+
+Do not infer a physical-lab-PC performance improvement from Github shared-runner timings. Keep the first implementation decision benchmark-led, and perform any native interactive Windows qualification separately with explicit authorization before declaring a UI-latency gain.
