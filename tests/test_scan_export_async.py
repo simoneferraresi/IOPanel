@@ -35,9 +35,7 @@ def _dialog(monkeypatch, directory: Path, formats=(True, True, False), name="sca
         DialogCode = QDialog.DialogCode
 
         def __init__(self, *_args):
-            self.export_request = ScanExportRequest(
-                directory, name, *formats, False, "row one\nrow two"
-            )
+            self.export_request = ScanExportRequest(directory, name, *formats, False, "row one\nrow two")
 
         def exec(self):
             return self.DialogCode.Accepted
