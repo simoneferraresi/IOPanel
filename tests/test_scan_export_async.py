@@ -151,6 +151,7 @@ def test_export_is_nonblocking_and_direct_widget_close_defers(qtbot, monkeypatch
         widget.save_scan_data()
         qtbot.waitUntil(started.is_set, timeout=3000)
         assert widget.scan_export_busy
+        assert widget._scan_export_task.worker_thread.parent() is widget
         assert widget.pending_saves == 1
         assert not widget.save_btn.isEnabled()
 
