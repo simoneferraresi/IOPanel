@@ -151,7 +151,8 @@ def test_startup_child_fail_closed_on_wrong_platform_or_process_failure(monkeypa
 def test_startup_rejects_missing_nonfinite_inconsistent_or_out_of_range_metrics(mutation, error):
     row = _case()
     mutation(row)
-    with pytest.raises(ValueError, match=error):
+    expected_exception = TypeError if error in ("missing or nonnumeric timing", "availability must be boolean") else ValueError
+    with pytest.raises(expected_exception, match=error):
         _validate_startup_case(row, subprocess_wall_s=0.2)
 
 
@@ -162,7 +163,7 @@ def test_raw_report_validation_catches_omission_even_with_recomputed_statistics(
     report["statistics"] = summarize_runs(report["runs"], case_keys=STARTUP_CASE_KEYS)
     path = tmp_path / "forged.json"
     _write_new(path, report)
-    with pytest.raises(ValueError, match="missing or nonnumeric timing"):
+    with pytest.raises(TypeError, match="missing or nonnumeric timing"):
         _load_report(path)
     with pytest.raises(ValueError, match="missing or nonnumeric timing"):
         compare_reports(report, _report())
