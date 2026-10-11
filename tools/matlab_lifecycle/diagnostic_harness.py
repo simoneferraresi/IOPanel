@@ -41,7 +41,7 @@ def _safe_text(value: Any) -> str:
 class JsonlEventWriter:
     """Serialize event records before enqueueing and preserve serialization errors."""
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, daemon: bool = False) -> None:
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._queue: queue.SimpleQueue[str | None] = queue.SimpleQueue()
@@ -49,7 +49,7 @@ class JsonlEventWriter:
         self._io_errors: list[str] = []
         self._serialization_failures = 0
         self._closed = False
-        self._thread = threading.Thread(target=self._write_loop, name="JsonlEventWriter", daemon=False)
+        self._thread = threading.Thread(target=self._write_loop, name="JsonlEventWriter", daemon=daemon)
         self._thread.start()
 
     @property
@@ -377,6 +377,15 @@ REQUIRED_SUCCESS_EVENTS = (
     "disposal_wait_started",
     "disposal_wait_complete",
 )
+REQUIRED_NORMAL_EXIT_EVENTS = (
+    "child_environment",
+    "prewarm_requested",
+    "startup_state_observed",
+    "manager_shutdown_requested",
+    "manager_shutdown_returned",
+    "disposal_thread_observed",
+    "python_interpreter_atexit",
+)
 MATLAB_PROCESS_NAMES = frozenset({"matlab.exe", "matlabwindow.exe"})
 
 
@@ -412,6 +421,140 @@ def validate_child_evidence(rows: Sequence[Mapping[str, Any]], parse_errors: Seq
     if disposal is not None and disposal.get("alive") is not False:
         errors.append("disposal worker was still alive after its bounded observation")
     return tuple(errors)
+
+
+def validate_normal_exit_child_evidence(
+    rows: Sequence[Mapping[str, Any]], parse_errors: Sequence[str] = ()
+) -> tuple[str, ...]:
+    """Validate normal-exit chronology without requiring daemon disposal to finish."""
+    errors = list(parse_errors)
+    events = [row.get("event") for row in rows]
+    if "event_serialization_failure" in events:
+        errors.append("child JSONL contains event_serialization_failure")
+    if "child_exception" in events:
+        errors.append("child JSONL contains child_exception")
+
+    positions: list[int] = []
+    for required in REQUIRED_NORMAL_EXIT_EVENTS:
+        count = events.count(required)
+        if count == 0:
+            errors.append(f"missing critical normal-exit event: {required}")
+        elif count > 1:
+            errors.append(f"normal-exit event occurred {count} times: {required}")
+        else:
+            positions.append(events.index(required))
+    if len(positions) == len(REQUIRED_NORMAL_EXIT_EVENTS) and positions != sorted(positions):
+        errors.append("critical normal-exit events are out of lifecycle order")
+
+    startup = next((row for row in rows if row.get("event") == "startup_state_observed"), None)
+    if startup is not None and (
+        startup.get("manager_state") != "STARTING" or startup.get("future_pending") is not True
+    ):
+        errors.append("normal-exit startup observation did not confirm a pending STARTING future")
+    shutdown = next((row for row in rows if row.get("event") == "manager_shutdown_requested"), None)
+    if shutdown is not None and (
+        shutdown.get("manager_state_before") != "STARTING" or shutdown.get("future_pending") is not True
+    ):
+        errors.append("normal-exit shutdown was not requested during pending STARTING")
+    worker = next((row for row in rows if row.get("event") == "disposal_thread_observed"), None)
+    if worker is not None and (worker.get("worker_exists") is not True or worker.get("daemon") is not True):
+        errors.append("normal-exit disposal worker was not confirmed as an existing daemon thread")
+
+    at_exit = next((row for row in rows if row.get("event") == "python_interpreter_atexit"), None)
+    if at_exit is not None:
+        if at_exit.get("disposer_joined") is not False:
+            errors.append("normal-exit child joined or did not record that it skipped joining the disposer")
+        if not isinstance(at_exit.get("disposer_alive"), bool):
+            errors.append("normal-exit event lacks the disposal worker's interpreter-exit state")
+        if not isinstance(at_exit.get("cancel_completed"), bool):
+            errors.append("normal-exit event lacks the cancellation completion state")
+        if not isinstance(at_exit.get("cancel_started"), bool):
+            errors.append("normal-exit event lacks the cancellation-start state")
+        if at_exit.get("cancel_completed") is True and not isinstance(at_exit.get("cancel_result"), bool):
+            errors.append("completed cancellation lacks its boolean return value")
+    cancel_returns = [row for row in rows if row.get("event") == "future_cancel_return"]
+    cancel_starts = [row for row in rows if row.get("event") == "future_cancel_entered"]
+    if at_exit is not None and at_exit.get("cancel_started") is True and len(cancel_starts) != 1:
+        errors.append(f"future cancellation entry occurred {len(cancel_starts)} times, expected once")
+    if at_exit is not None and at_exit.get("cancel_started") is False and cancel_starts:
+        errors.append("future cancellation entry was logged but interpreter-exit state says it never started")
+    if len(cancel_returns) > 1:
+        errors.append(f"future cancellation return occurred {len(cancel_returns)} times, expected at most once")
+    if cancel_returns and not isinstance(cancel_returns[0].get("result"), bool):
+        errors.append("future cancellation return did not record a boolean result")
+    if (
+        at_exit is not None
+        and at_exit.get("cancel_completed") is True
+        and not cancel_returns
+        and not isinstance(at_exit.get("cancel_result"), bool)
+    ):
+        errors.append("interpreter-exit event claims cancellation completed without a recorded return")
+    if at_exit is not None and at_exit.get("cancel_completed") is True and at_exit.get("cancel_started") is not True:
+        errors.append("interpreter-exit event says cancellation completed before it started")
+    if cancel_returns and at_exit is not None:
+        exit_time = at_exit.get("monotonic_ns")
+        latest_return = max((row.get("monotonic_ns", 0) for row in cancel_returns), default=0)
+        if isinstance(exit_time, int) and latest_return > exit_time:
+            errors.append("cancellation return was recorded after the interpreter-exit observation")
+        if at_exit.get("cancel_completed") is not True:
+            errors.append("cancellation returned but interpreter-exit event says it was incomplete")
+    if at_exit is not None and at_exit.get("cancel_completed") is False and at_exit.get("disposer_alive") is False:
+        errors.append("disposer ended before interpreter exit without a recorded cancellation completion")
+    return tuple(errors)
+
+
+def summarize_matlab_candidates(
+    baseline: Sequence[Mapping[str, Any]],
+    snapshot_rows: Sequence[Mapping[str, Any]],
+    final: Sequence[Mapping[str, Any]],
+    *,
+    child_pid: int,
+) -> list[dict[str, Any]]:
+    """Summarize new MATLAB identities without claiming confirmed Engine ownership."""
+    baseline_matlab = [row for row in baseline if is_matlab_process(row)]
+    candidates: dict[tuple[str, int | None], dict[str, Any]] = {}
+    for snapshot in snapshot_rows:
+        phase = snapshot.get("phase", "unknown")
+        process_rows = snapshot.get("processes", [])
+        if not isinstance(process_rows, Sequence):
+            continue
+        for row in process_rows:
+            if not isinstance(row, Mapping) or not is_matlab_process(row):
+                continue
+            if any(same_process_identity(row, previous) for previous in baseline_matlab):
+                continue
+            pid = row.get("PID")
+            creation = normalize_creation_time(row.get("CreationDate", row.get("CreationUTC")))
+            key = (str(pid), creation)
+            candidate = candidates.setdefault(
+                key,
+                {
+                    **dict(row),
+                    "attribution": "candidate; direct parent match"
+                    if row.get("ParentPID") == child_pid
+                    else "UNVERIFIED",
+                    "direct_child_of_diagnostic_child": row.get("ParentPID") == child_pid,
+                    "observed_phases": [],
+                    "first_observed_utc": snapshot.get("utc"),
+                    "last_observed_utc": snapshot.get("utc"),
+                    "identity_verified": pid is not None and creation is not None,
+                },
+            )
+            candidate["last_observed_utc"] = snapshot.get("utc")
+            if phase not in candidate["observed_phases"]:
+                candidate["observed_phases"].append(phase)
+
+    for candidate in candidates.values():
+        present_final = any(same_process_identity(candidate, row) for row in final if is_matlab_process(row))
+        candidate["present_in_final_inventory"] = present_final
+        candidate["observed_after_child_exit"] = "post_exit" in candidate["observed_phases"]
+        if present_final:
+            candidate["disposition"] = "survived_child_exit"
+        elif candidate["observed_after_child_exit"]:
+            candidate["disposition"] = "disappeared_during_post_exit_observation"
+        else:
+            candidate["disposition"] = "absent_by_first_post_exit_inventory"
+    return list(candidates.values())
 
 
 def normalize_creation_time(value: Any) -> int | None:
