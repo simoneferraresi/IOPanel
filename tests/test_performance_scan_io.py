@@ -83,9 +83,7 @@ def test_capture_io_warmups_and_validation(monkeypatch, tmp_path: Path):
 
     monkeypatch.setattr("tools.performance_baseline._capture_io_one", fake_capture)
     monkeypatch.setattr("tools.performance_baseline._environment", lambda *_args: {"commit": "abc"})
-    captured = capture_io(
-        tmp_path, points=[10_000], detectors=[1], warmups=1, repetitions=2, qt_platform="offscreen"
-    )
+    captured = capture_io(tmp_path, points=[10_000], detectors=[1], warmups=1, repetitions=2, qt_platform="offscreen")
     assert len(calls) == 3
     assert captured["benchmark"] == "scan_io"
     assert captured["statistics"][0]["metrics"]["wall_s"]["samples"] == [2.0, 3.0]
@@ -101,10 +99,18 @@ def test_scan_io_windows_offscreen_subprocess(tmp_path: Path):
     """Exercise schema-v2 CSV/MAT export/import + pending Qt callback on Windows."""
     target = tmp_path / "scan-io-baseline.json"
     command = [
-        sys.executable, "-m", "tools.performance_baseline", "capture-io",
-        "--points", "10000", "--detectors", "1",
-        "--repetitions", "2", "--warmups", "0",
-        "--qt-platform", "offscreen", "--output", str(target),
+        sys.executable,
+        "-m",
+        "tools.performance_baseline",
+        "capture-io",
+        "--points",
+        "10000",
+        "--detectors",
+        "1",
+        "--repetitions",
+        "2",
+        "--warmups",
+        "0",
     ]
     completed = subprocess.run(
         command, cwd=Path(__file__).resolve().parents[1],
