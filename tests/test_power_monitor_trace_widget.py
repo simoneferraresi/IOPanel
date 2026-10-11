@@ -449,6 +449,7 @@ def test_save_writes_only_selected_csv_and_or_mat(qtbot, tmp_path, monkeypatch, 
     monkeypatch.setattr(plot_widgets, "PowerMonitorExportDialog", _FakeExportDialog)
     monkeypatch.setattr(QMessageBox, "information", lambda *_args: None)
     widget.save_recording()
+    qtbot.waitUntil(lambda: not widget.power_monitor_export_busy, timeout=5000)
 
     assert sorted(path.name for path in tmp_path.glob("saved.*")) == sorted(expected)
     assert settings.power_monitor_export_directory() == tmp_path.resolve()
@@ -512,6 +513,7 @@ def test_partial_mat_failure_keeps_csv_and_reports_save_issues(qtbot, tmp_path, 
     monkeypatch.setattr(QMessageBox, "warning", lambda *_args: warnings.append(_args[1]))
 
     widget.save_recording()
+    qtbot.waitUntil(lambda: not widget.power_monitor_export_busy, timeout=5000)
 
     assert (tmp_path / "saved.csv").exists()
     assert not (tmp_path / "saved.mat").exists()
