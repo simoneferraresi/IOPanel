@@ -220,6 +220,7 @@ class MainWindow(QMainWindow):
         self._scan_import_thread_stopped = False
         self._pending_scan_import_close = False
         self._pending_scan_export_close = False
+        self._pending_power_monitor_export_close = False
         self._scan_import_generation = 0
 
         # --- CT400 and Piezo hardware will be None until workers finish ---
@@ -2323,6 +2324,9 @@ class MainWindow(QMainWindow):
             trace_widget = self.power_monitor_trace_widget
             if trace_widget is None:
                 trace_widget = PowerMonitorTraceWidget(settings=self.settings, parent=self.histogram_plot_container)
+                trace_widget.export_idle.connect(
+                    self._resume_close_after_power_monitor_export, Qt.ConnectionType.QueuedConnection
+                )
                 self.histogram_plot_layout.addWidget(trace_widget, stretch=1)
                 self.power_monitor_trace_widget = trace_widget
             trace_widget.start_recording(settings)
@@ -2495,6 +2499,14 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Waiting for scan data file writing to complete before closing…", 0)
             return
 
+        trace = self.power_monitor_trace_widget
+        if trace is not None and trace.power_monitor_export_busy:
+            event.ignore()
+            self._pending_power_monitor_export_close = True
+            trace.request_power_monitor_export_close()
+            self.statusBar().showMessage("Waiting for Power Monitor file writing to finish…", 0)
+            return
+
         if self._camera_lifecycle_busy():
             event.ignore()
             self._pending_camera_lifecycle_close = True
@@ -2635,6 +2647,12 @@ class MainWindow(QMainWindow):
     def _resume_close_after_scan_export(self) -> None:
         if self._pending_scan_export_close:
             self._pending_scan_export_close = False
+            QTimer.singleShot(0, self.close)
+
+    @Slot()
+    def _resume_close_after_power_monitor_export(self) -> None:
+        if self._pending_power_monitor_export_close:
+            self._pending_power_monitor_export_close = False
             QTimer.singleShot(0, self.close)
 
     @Slot()
