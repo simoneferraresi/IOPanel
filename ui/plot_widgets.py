@@ -333,6 +333,7 @@ class PowerMonitorTraceWidget(QWidget):
         self._power_monitor_export_thread_stopped = False
         self._pending_power_monitor_export_close = False
         self._closing_for_power_monitor_export = False
+        self._power_monitor_export_idle_notified = True
         self.elapsed_values: list[float] = []
         self.detector_values: dict[Detector, list[float]] = {}
         self.display_history: PowerMonitorDisplayHistory | None = None
@@ -580,6 +581,8 @@ class PowerMonitorTraceWidget(QWidget):
             lambda _obj=None, key=task_id: self._on_power_monitor_export_task_destroyed(key)
         )
         self._power_monitor_export_task = task
+        self._power_monitor_export_idle_notified = False
+        self._closing_for_power_monitor_export = False
         self._power_monitor_export_result = None
         self._power_monitor_export_thread_stopped = False
         self.save_recording_button.setEnabled(False)
@@ -619,6 +622,7 @@ class PowerMonitorTraceWidget(QWidget):
         self._power_monitor_export_task = None
         self._power_monitor_export_result = None
         self._power_monitor_export_thread_stopped = False
+        self._notify_power_monitor_export_idle_if_ready()
         if self._closing_for_power_monitor_export:
             return
         saved_paths = "\n".join(str(path) for path in result.saved)
@@ -637,8 +641,14 @@ class PowerMonitorTraceWidget(QWidget):
 
     def _on_power_monitor_export_task_destroyed(self, task_id: int) -> None:
         self._owned_power_monitor_export_tasks.pop(task_id, None)
-        if self.power_monitor_export_busy:
+        self._notify_power_monitor_export_idle_if_ready()
+
+    def _notify_power_monitor_export_idle_if_ready(self) -> None:
+        # QObject.destroyed may precede the separately queued outcome/finished
+        # signals. Notify exactly once only after *both* sides are complete.
+        if self.power_monitor_export_busy or self._power_monitor_export_idle_notified:
             return
+        self._power_monitor_export_idle_notified = True
         self.save_recording_button.setEnabled(
             self.current_recording is not None
             and bool(len(self.current_recording.elapsed_s))
