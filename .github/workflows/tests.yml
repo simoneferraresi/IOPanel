@@ -21,8 +21,5 @@ jobs:
       - run: uv sync --locked --extra test --extra typecheck --extra lint
       - run: uv run --no-sync ruff check .
       - run: uv run --no-sync ruff format --check .
-      - name: Temporary formatter diff for async export
-        if: failure()
-        run: uv run --no-sync ruff format --diff logic/scan_export_worker.py ui/plot_widgets.py ui/main_window.py tests/test_scan_export_async.py tests/test_plot_widgets.py tools/benchmark_scan_gui.py
       - run: uv run --no-sync pyright
       - run: uv run --no-sync pytest -vv --tb=short -o faulthandler_timeout=30
