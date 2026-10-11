@@ -1,6 +1,8 @@
 """Pure, driver-free checks for the versioned performance-reporting protocol."""
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -159,3 +161,44 @@ def test_capture_rejects_invalid_matrix_before_invocation(tmp_path, points, dete
             qt_platform="offscreen",
             mouse_events=False,
         )
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Qualified Windows Qt offscreen benchmark smoke")
+def test_windows_offscreen_capture_subprocess(tmp_path: Path):
+    """Exercise actual synthetic Qt benchmark capture, not just mocked subprocesses."""
+    output = tmp_path / "offscreen-smoke.json"
+    root = Path(__file__).resolve().parents[1]
+    command = [
+        sys.executable,
+        "-m",
+        "tools.performance_baseline",
+        "capture",
+        "--points",
+        "10000",
+        "--detectors",
+        "1",
+        "--overlays",
+        "0",
+        "4",
+        "--repetitions",
+        "3",
+        "--warmups",
+        "0",
+        "--qt-platform",
+        "offscreen",
+        "--output",
+        str(output),
+    ]
+    completed = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=180, check=False)
+    assert completed.returncode == 0, completed.stderr[-4000:]
+    report = _load_report(output)
+    assert report["configuration"]["repetitions"] == 3
+    assert report["environment"]["qt_platform_requested"] == "offscreen"
+    assert len(report["runs"]) == 3
+    assert {row["case"]["overlay_count"] for row in report["statistics"]} == {0, 4}
+    for case in report["statistics"]:
+        assert case["case"]["qt_platform"] == "offscreen"
+        assert case["metrics"]
+        for metric in case["metrics"].values():
+            assert len(metric["samples"]) == 3
+            assert metric["min"] <= metric["median"] <= metric["max"]
