@@ -55,9 +55,7 @@ def _dialog(monkeypatch, directory: Path, *, csv=True, mat=True, base_name="save
         DialogCode = QDialog.DialogCode
 
         def __init__(self, *_args):
-            self.export_request = PowerMonitorExportRequest(
-                directory, base_name, csv, mat, "line one\nline two"
-            )
+            self.export_request = PowerMonitorExportRequest(directory, base_name, csv, mat, "line one\nline two")
 
         def exec(self):
             return self.DialogCode.Accepted
@@ -89,7 +87,7 @@ def test_power_monitor_staged_export_preserves_format_and_cleans_files(tmp_path)
     csv_text = csv_path.read_text(encoding="utf-8")
     assert "# SampleCount: 3" in csv_text
     assert "# ActiveDetectors: DE_3,DE_1" in csv_text
-    assert "# Comment: \"line one\\nline two\"" in csv_text
+    assert '# Comment: "line one\\nline two"' in csv_text
     samples = np.loadtxt(csv_path, delimiter=",", comments="#")
     assert samples.shape == (3, 6)
     np.testing.assert_array_equal(samples[:, 0], [0.1, 0.23, 0.44])
