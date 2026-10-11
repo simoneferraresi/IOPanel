@@ -111,17 +111,29 @@ def test_scan_io_windows_offscreen_subprocess(tmp_path: Path):
         "2",
         "--warmups",
         "0",
+        "--qt-platform",
+        "offscreen",
+        "--output",
+        str(target),
     ]
     completed = subprocess.run(
-        command, cwd=Path(__file__).resolve().parents[1],
-        capture_output=True, text=True, timeout=120, check=False,
+        command,
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
     )
     assert completed.returncode == 0, completed.stderr[-4000:]
     result = _load_report(target)
     assert len(result["runs"]) == 2
     assert len(result["statistics"]) == 5
     assert {item["case"]["operation"] for item in result["statistics"]} == {
-        "build_payload", "csv_export", "mat_export", "csv_import", "mat_import",
+        "build_payload",
+        "csv_export",
+        "mat_export",
+        "csv_import",
+        "mat_import",
     }
     assert all("qt_pending_callback_delay_s" in item["metrics"] for item in result["statistics"])
     assert all(item["case"]["qt_platform"] == "offscreen" for item in result["statistics"])
