@@ -1431,6 +1431,10 @@ class MainWindow(QMainWindow):
         self._scan_import_thread_stopped = False
         worker = ScanImportWorker(filename, loader=load_scan)
         task = TaskRunner(worker)
+        # Keep the native QThread owned by this GUI object until Qt processes
+        # its deferred deleteLater, even after the Python TaskRunner reference
+        # is cleared on the queued thread-finished notification.
+        task.worker_thread.setParent(self)
         self._scan_import_task = task
         worker.outcome.connect(self._on_scan_import_parsed, Qt.ConnectionType.QueuedConnection)
         task.worker_thread.finished.connect(self._on_scan_import_thread_finished, Qt.ConnectionType.QueuedConnection)
