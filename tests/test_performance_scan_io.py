@@ -90,7 +90,7 @@ def test_capture_io_warmups_and_validation(monkeypatch, tmp_path: Path):
     assert captured["benchmark"] == "scan_io"
     assert captured["statistics"][0]["metrics"]["wall_s"]["samples"] == [2.0, 3.0]
     for invalid in ({"points": [1]}, {"detectors": [2]}, {"repetitions": 0}):
-        options = dict(points=[10_000], detectors=[1], repetitions=2, warmups=0, qt_platform="offscreen")
+        options = {"points": [10_000], "detectors": [1], "repetitions": 2, "warmups": 0, "qt_platform": "offscreen"}
         options.update(invalid)
         with pytest.raises(ValueError):
             capture_io(tmp_path, **options)
