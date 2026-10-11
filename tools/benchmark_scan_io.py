@@ -63,9 +63,7 @@ def _windows_memory() -> dict[str, float]:
 
 def _synthetic_scan(points: int, detectors: tuple[Detector, ...]) -> ScanMeasurement:
     wavelengths = np.linspace(1520.0, 1580.0, points, dtype=np.float64)
-    values = np.vstack(
-        [-20.0 + index + np.sin(wavelengths * 0.123 + index) for index in range(len(detectors))]
-    )
+    values = np.vstack([-20.0 + index + np.sin(wavelengths * 0.123 + index) for index in range(len(detectors))])
     settings = ScanAcquisitionSettings(1520.0, 1580.0, 1, "5", "1", "mW", 1.0, LaserInput.LI_1, detectors)
     return ScanMeasurement(
         settings,
@@ -82,9 +80,7 @@ def _synthetic_scan(points: int, detectors: tuple[Detector, ...]) -> ScanMeasure
     )
 
 
-def _timed_on_qt_thread[T](
-    app: QtWidgets.QApplication, operation: Callable[[], T]
-) -> tuple[T, dict[str, float]]:
+def _timed_on_qt_thread[T](app: QtWidgets.QApplication, operation: Callable[[], T]) -> tuple[T, dict[str, float]]:
     """A queued zero-delay callback exposes how long synchronous work blocks Qt.
 
     This is a *pending-callback latency proxy*, not GUI paint rate, event-loop
@@ -136,8 +132,12 @@ def _characterize_case(
     def export_csv() -> None:
         buffer = io.StringIO()
         np.savetxt(
-            buffer, payload.csv_data, delimiter=",",
-            header=payload.csv_header, comments="", fmt="%.6f",
+            buffer,
+            payload.csv_data,
+            delimiter=",",
+            header=payload.csv_header,
+            comments="",
+            fmt="%.6f",
         )
         with csv_path.open("w", encoding="utf-8", newline="") as stream:
             stream.write(buffer.getvalue())
