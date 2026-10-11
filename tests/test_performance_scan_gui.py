@@ -11,9 +11,12 @@ from tools.performance_baseline import IO_CASE_KEYS, _load_report, capture_io, c
 
 def _case(operation: str, delay: float) -> dict:
     return {
-        "points_per_scan": 10_000, "detector_count": 1,
-        "operation": operation, "qt_platform": "offscreen",
-        "window_system": "win32", "wall_s": delay,
+        "points_per_scan": 10_000,
+        "detector_count": 1,
+        "operation": operation,
+        "qt_platform": "offscreen",
+        "window_system": "win32",
+        "wall_s": delay,
         "qt_pending_callback_delay_s": delay + 0.00001,
     }
 
@@ -25,10 +28,13 @@ def test_scan_gui_statistics_and_comparisons():
             for i, value in enumerate(values, start=1)
         ]
         return {
-            "kind": "iopanel-performance-baseline", "schema_version": 1, "benchmark": "scan_gui",
+            "kind": "iopanel-performance-baseline",
+            "schema_version": 1,
+            "benchmark": "scan_gui",
             "environment": {"commit": commit, "python": "3.12.10", "qt_platform_requested": "offscreen"},
             "configuration": {"points": [10_000], "detectors": [1], "repetitions": len(values)},
-            "runs": runs, "statistics": summarize_runs(runs, case_keys=IO_CASE_KEYS),
+            "runs": runs,
+            "statistics": summarize_runs(runs, case_keys=IO_CASE_KEYS),
         }
 
     before = report("a", (0.3, 0.4))
@@ -51,16 +57,26 @@ def test_scan_gui_capture_warmup_and_validation(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("tools.performance_baseline._capture_gui_one", fake_capture)
     monkeypatch.setattr("tools.performance_baseline._environment", lambda *_args: {"commit": "test"})
     report = capture_io(
-        tmp_path, points=[10_000], detectors=[1], repetitions=2,
-        warmups=1, qt_platform="offscreen", benchmark="scan_gui",
+        tmp_path,
+        points=[10_000],
+        detectors=[1],
+        repetitions=2,
+        warmups=1,
+        qt_platform="offscreen",
+        benchmark="scan_gui",
     )
     assert counts == [1, 1, 1]
     assert report["benchmark"] == "scan_gui"
     assert report["statistics"][0]["metrics"]["wall_s"]["samples"] == [2.0, 3.0]
     with pytest.raises(ValueError, match="Unsupported"):
         capture_io(
-            tmp_path, points=[10_000], detectors=[1], repetitions=1,
-            warmups=0, qt_platform="offscreen", benchmark="bad",
+            tmp_path,
+            points=[10_000],
+            detectors=[1],
+            repetitions=1,
+            warmups=0,
+            qt_platform="offscreen",
+            benchmark="bad",
         )
 
 
@@ -68,21 +84,40 @@ def test_scan_gui_capture_warmup_and_validation(tmp_path: Path, monkeypatch):
 def test_real_mainwindow_gui_handlers_offscreen(tmp_path: Path):
     output = tmp_path / "actual-handler.json"
     command = [
-        sys.executable, "-m", "tools.performance_baseline", "capture-gui",
-        "--points", "10000", "--detectors", "1",
-        "--repetitions", "1", "--warmups", "0",
-        "--qt-platform", "offscreen", "--output", str(output),
+        sys.executable,
+        "-m",
+        "tools.performance_baseline",
+        "capture-gui",
+        "--points",
+        "10000",
+        "--detectors",
+        "1",
+        "--repetitions",
+        "1",
+        "--warmups",
+        "0",
+        "--qt-platform",
+        "offscreen",
+        "--output",
+        str(output),
     ]
     result = subprocess.run(
-        command, cwd=Path(__file__).resolve().parents[1],
-        capture_output=True, text=True, timeout=120, check=False,
+        command,
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
     )
     assert result.returncode == 0, result.stderr[-4500:]
     report = _load_report(output)
     assert report["benchmark"] == "scan_gui"
     assert len(report["statistics"]) == 4
     assert {row["case"]["operation"] for row in report["statistics"]} == {
-        "import_csv_foreground", "import_mat_overlay", "export_csv", "export_mat",
+        "import_csv_foreground",
+        "import_mat_overlay",
+        "export_csv",
+        "export_mat",
     }
     for case in report["statistics"]:
         assert case["case"]["qt_platform"] == "offscreen"
