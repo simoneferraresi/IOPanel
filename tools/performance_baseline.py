@@ -90,9 +90,7 @@ def _percentile(values: list[float], percentile: float) -> float:
     return ordered[max(0, math.ceil(percentile * len(ordered)) - 1)]
 
 
-def summarize_runs(
-    runs: list[dict[str, Any]], *, case_keys: tuple[str, ...] = CASE_KEYS
-) -> list[dict[str, Any]]:
+def summarize_runs(runs: list[dict[str, Any]], *, case_keys: tuple[str, ...] = CASE_KEYS) -> list[dict[str, Any]]:
     if not runs:
         raise ValueError("A baseline requires at least one recorded repetition")
     by_case: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
@@ -233,14 +231,19 @@ def capture(
     }
 
 
-
 def _capture_io_one(
     root: Path, output: Path, *, points: list[int], detectors: list[int], qt_platform: str
 ) -> tuple[float, list[dict[str, Any]]]:
     args = [
-        sys.executable, "-m", "tools.benchmark_scan_io",
-        "--points", *map(str, points), "--detectors", *map(str, detectors),
-        "--output", str(output),
+        sys.executable,
+        "-m",
+        "tools.benchmark_scan_io",
+        "--points",
+        *map(str, points),
+        "--detectors",
+        *map(str, detectors),
+        "--output",
+        str(output),
     ]
     env = os.environ.copy()
     env["QT_QPA_PLATFORM"] = qt_platform
@@ -258,8 +261,13 @@ def _capture_io_one(
 
 
 def capture_io(
-    root: Path, *, points: list[int], detectors: list[int],
-    repetitions: int, warmups: int, qt_platform: str,
+    root: Path,
+    *,
+    points: list[int],
+    detectors: list[int],
+    repetitions: int,
+    warmups: int,
+    qt_platform: str,
 ) -> dict[str, Any]:
     if repetitions < 1 or warmups < 0:
         raise ValueError("Require >=1 repetition and >=0 warmups")
@@ -271,8 +279,11 @@ def capture_io(
     with tempfile.TemporaryDirectory(prefix="iopanel-scan-io-baseline-") as temp:
         for index in range(warmups + repetitions):
             elapsed, cases = _capture_io_one(
-                root, Path(temp) / f"run-{index}.json",
-                points=points, detectors=detectors, qt_platform=qt_platform,
+                root,
+                Path(temp) / f"run-{index}.json",
+                points=points,
+                detectors=detectors,
+                qt_platform=qt_platform,
             )
             if index >= warmups:
                 runs.append({"repetition": index - warmups + 1, "subprocess_wall_s": elapsed, "cases": cases})
@@ -414,8 +425,11 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "capture-io":
         root = Path(__file__).resolve().parents[1]
         report = capture_io(
-            root, points=args.points, detectors=args.detectors,
-            repetitions=args.repetitions, warmups=args.warmups,
+            root,
+            points=args.points,
+            detectors=args.detectors,
+            repetitions=args.repetitions,
+            warmups=args.warmups,
             qt_platform=args.qt_platform,
         )
         _write_new(args.output, report)
@@ -434,7 +448,17 @@ def main(argv: list[str] | None = None) -> None:
             print(f"\nCase: {', '.join(f'{key}={value}' for key, value in context.items())}")
             for key, metric in item["metrics"].items():
                 if (
-                    key in ("cpu_time_s", "working_set_mb", "csv_parse_s", "mat_parse_s", "wall_s", "cpu_s", "qt_pending_callback_delay_s", "peak_working_set_mb")
+                    key
+                    in (
+                        "cpu_time_s",
+                        "working_set_mb",
+                        "csv_parse_s",
+                        "mat_parse_s",
+                        "wall_s",
+                        "cpu_s",
+                        "qt_pending_callback_delay_s",
+                        "peak_working_set_mb",
+                    )
                     or "repaint" in key
                     or "range" in key
                 ):
