@@ -14,8 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+import scipy.io as sio
 from PySide6.QtCore import Signal, Slot
-from scipy.io import savemat
 
 from logic.scan_export import ScanExportPayload
 from logic.task_runner import BaseWorker
@@ -58,7 +58,7 @@ def _write_staged_format(
                     os.fsync(stream.buffer.fileno())
                 # TextIOWrapper closes the underlying descriptor.
             elif name == "MAT":
-                savemat(raw, payload.mat_data, do_compression=True)
+                sio.savemat(raw, payload.mat_data, do_compression=True)
                 raw.flush()
                 os.fsync(raw.fileno())
             else:
