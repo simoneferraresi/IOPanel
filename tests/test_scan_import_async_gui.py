@@ -116,6 +116,7 @@ def test_in_flight_scan_import_is_nonblocking_and_rejects_duplicate(qtbot, monke
         window._open_scan_file()
         qtbot.waitUntil(started.is_set, timeout=3000)
         assert window._scan_import_task is not None
+        assert window._scan_import_task.worker_thread.parent() is window
         # No worker result required for the main Qt event loop to process a timer.
         events = []
         main_window_module.QTimer.singleShot(0, lambda: events.append("responsive"))
