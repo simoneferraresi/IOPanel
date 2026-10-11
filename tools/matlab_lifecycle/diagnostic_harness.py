@@ -10,6 +10,7 @@ import datetime as dt
 import json
 import os
 import queue
+import re
 import subprocess
 import threading
 import time
@@ -46,6 +47,7 @@ class JsonlEventWriter:
         self._queue: queue.SimpleQueue[str | None] = queue.SimpleQueue()
         self._lock = threading.Lock()
         self._io_errors: list[str] = []
+        self._serialization_failures = 0
         self._closed = False
         self._thread = threading.Thread(target=self._write_loop, name="JsonlEventWriter", daemon=False)
         self._thread.start()
@@ -54,6 +56,11 @@ class JsonlEventWriter:
     def io_errors(self) -> tuple[str, ...]:
         with self._lock:
             return tuple(self._io_errors)
+
+    @property
+    def serialization_failures(self) -> int:
+        with self._lock:
+            return self._serialization_failures
 
     @staticmethod
     def _timestamp() -> dict[str, Any]:
@@ -71,6 +78,7 @@ class JsonlEventWriter:
             try:
                 encoded = json.dumps(row, ensure_ascii=True, allow_nan=False)
             except (TypeError, ValueError, OverflowError) as exc:
+                self._serialization_failures += 1
                 fallback = {
                     "event": "event_serialization_failure",
                     **self._timestamp(),
@@ -146,8 +154,17 @@ def wait_for_disposer(
     """Join a disposal worker only through the shared bounded deadline."""
     remaining_s = max(0.0, deadline_s - (monotonic_ns() - shutdown_started_ns) / 1_000_000_000)
     writer.emit("disposal_wait_started", worker_name=worker.name, remaining_s=remaining_s)
-    worker.join(timeout=remaining_s)
-    alive = bool(worker.is_alive())
+    try:
+        worker.join(timeout=remaining_s)
+        alive = bool(worker.is_alive())
+    except BaseException as exc:
+        writer.emit(
+            "disposal_wait_exception",
+            worker_name=worker.name,
+            exception_type=type(exc).__name__,
+            exception=_safe_text(exc),
+        )
+        raise
     writer.emit("disposal_wait_complete", worker_name=worker.name, alive=alive)
     return alive
 
@@ -195,6 +212,7 @@ class MonitorResult:
     deadline_reached: bool
     snapshots_after_exit: int
     snapshot_errors: tuple[str, ...]
+    deadline_reason: str | None = None
 
 
 def diagnostic_exit_code(
@@ -202,9 +220,19 @@ def diagnostic_exit_code(
     *,
     snapshot_errors: Sequence[str] = (),
     writer_errors: Sequence[str] = (),
+    evidence_errors: Sequence[str] = (),
+    serialization_failures: int = 0,
 ) -> int:
     """Return success only when the child and evidence collection both succeeded."""
-    return 0 if child_return_code == 0 and not snapshot_errors and not writer_errors else 1
+    return (
+        0
+        if child_return_code == 0
+        and not snapshot_errors
+        and not writer_errors
+        and not evidence_errors
+        and serialization_failures == 0
+        else 1
+    )
 
 
 def monitor_child(
@@ -214,10 +242,12 @@ def monitor_child(
     snapshot: Callable[[], Sequence[Mapping[str, Any]]],
     snapshot_path: Path,
     shutdown_requested: Callable[[], float | None],
+    max_before_shutdown_s: float = 120.0,
     max_after_shutdown_s: float = 150.0,
     post_exit_observation_s: float = 60.0,
     interval_s: float = 1.0,
     monotonic: Callable[[], float] = time.monotonic,
+    monitor_started_at: float | None = None,
     wait: Callable[[float], Any] | None = None,
 ) -> MonitorResult:
     """Monitor without terminating the child; continue monitoring after failure."""
@@ -227,6 +257,7 @@ def monitor_child(
     snapshots_after_exit = 0
     return_code: int | None = None
     deadline_reached = False
+    startup_deadline = (monotonic() if monitor_started_at is None else monitor_started_at) + max_before_shutdown_s
 
     def take_snapshot(phase: str) -> None:
         nonlocal snapshots_after_exit
@@ -256,11 +287,33 @@ def monitor_child(
         if return_code is not None:
             break
         requested_at = shutdown_requested()
-        if requested_at is not None and monotonic() - requested_at >= max_after_shutdown_s:
+        current = monotonic()
+        if (requested_at is None and current >= startup_deadline) or (
+            requested_at is not None and requested_at > startup_deadline
+        ):
+            deadline_reached = True
+            writer.emit("child_startup_deadline_reached_left_running", pid=process.pid, return_code=None)
+            take_snapshot("startup_deadline")
+            return MonitorResult(
+                process.pid,
+                None,
+                True,
+                snapshots_after_exit,
+                tuple(snapshot_errors),
+                "before_shutdown_requested",
+            )
+        if requested_at is not None and current - requested_at >= max_after_shutdown_s:
             deadline_reached = True
             writer.emit("child_deadline_reached_left_running", pid=process.pid, return_code=None)
             take_snapshot("deadline")
-            return MonitorResult(process.pid, None, True, snapshots_after_exit, tuple(snapshot_errors))
+            return MonitorResult(
+                process.pid,
+                None,
+                True,
+                snapshots_after_exit,
+                tuple(snapshot_errors),
+                "after_shutdown_requested",
+            )
         take_snapshot("running")
         wait_for_event(interval_s)
 
@@ -276,6 +329,168 @@ def monitor_child(
     return MonitorResult(process.pid, return_code, deadline_reached, snapshots_after_exit, tuple(snapshot_errors))
 
 
+@dataclass(frozen=True)
+class JsonlReadResult:
+    rows: tuple[dict[str, Any], ...]
+    errors: tuple[str, ...]
+
+
+def read_jsonl(path: Path, *, allow_incomplete_final_line: bool = False) -> JsonlReadResult:
+    """Read JSONL without silently discarding malformed or incomplete evidence."""
+    try:
+        content = path.read_bytes()
+    except OSError as exc:
+        return JsonlReadResult((), (f"cannot read {path}: {type(exc).__name__}: {exc}",))
+    if not content:
+        return JsonlReadResult((), (f"empty JSONL evidence: {path}",))
+
+    chunks = content.splitlines(keepends=True)
+    rows: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for index, chunk in enumerate(chunks, start=1):
+        is_final = index == len(chunks)
+        complete = chunk.endswith((b"\n", b"\r"))
+        if is_final and not complete and allow_incomplete_final_line:
+            errors.append(f"incomplete trailing JSONL record in {path} line {index} (write may still be active)")
+            continue
+        if not complete:
+            errors.append(f"incomplete JSONL record in {path} line {index}")
+        try:
+            value = json.loads(chunk.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            errors.append(f"invalid JSONL record in {path} line {index}: {type(exc).__name__}: {exc}")
+            continue
+        if not isinstance(value, dict):
+            errors.append(f"JSONL record in {path} line {index} is {type(value).__name__}, expected object")
+            continue
+        rows.append(value)
+    return JsonlReadResult(tuple(rows), tuple(errors))
+
+
+REQUIRED_SUCCESS_EVENTS = (
+    "child_environment",
+    "prewarm_requested",
+    "startup_state_observed",
+    "manager_shutdown_requested",
+    "manager_shutdown_returned",
+    "disposal_thread_observed",
+    "disposal_wait_started",
+    "disposal_wait_complete",
+)
+MATLAB_PROCESS_NAMES = frozenset({"matlab.exe", "matlabwindow.exe"})
+
+
+def is_matlab_process(row: Mapping[str, Any]) -> bool:
+    return str(row.get("Name", "")).lower() in MATLAB_PROCESS_NAMES
+
+
+def validate_child_evidence(rows: Sequence[Mapping[str, Any]], parse_errors: Sequence[str] = ()) -> tuple[str, ...]:
+    """Require a complete, failure-free startup/shutdown chronology for success."""
+    errors = list(parse_errors)
+    events = [row.get("event") for row in rows]
+    if "event_serialization_failure" in events:
+        errors.append("child JSONL contains event_serialization_failure")
+    if "child_exception" in events:
+        errors.append("child JSONL contains child_exception")
+    positions: list[int] = []
+    for required in REQUIRED_SUCCESS_EVENTS:
+        count = events.count(required)
+        if count == 0:
+            errors.append(f"missing critical child event: {required}")
+        elif count > 1:
+            errors.append(f"critical child event occurred {count} times: {required}")
+        else:
+            positions.append(events.index(required))
+    if len(positions) == len(REQUIRED_SUCCESS_EVENTS) and positions != sorted(positions):
+        errors.append("critical child events are out of lifecycle order")
+    startup = next((row for row in rows if row.get("event") == "startup_state_observed"), None)
+    if startup is not None and (
+        startup.get("manager_state") != "STARTING" or startup.get("future_pending") is not True
+    ):
+        errors.append("startup observation did not confirm a pending STARTING future")
+    disposal = next((row for row in reversed(rows) if row.get("event") == "disposal_wait_complete"), None)
+    if disposal is not None and disposal.get("alive") is not False:
+        errors.append("disposal worker was still alive after its bounded observation")
+    return tuple(errors)
+
+
+def normalize_creation_time(value: Any) -> int | None:
+    """Normalize common PowerShell/CIM timestamp encodings to UTC nanoseconds."""
+    if isinstance(value, dt.datetime):
+        parsed = value
+    elif isinstance(value, (int, float)):
+        # Windows PowerShell ConvertTo-Json serializes DateTime as epoch milliseconds.
+        return int(value * 1_000_000) if abs(value) < 100_000_000_000 else int(value) * 1_000_000
+    elif isinstance(value, str):
+        match = re.fullmatch(r"/?Date\((-?\d+)(?:[+-]\d+)?\)/?", value)
+        if match:
+            return int(match.group(1)) * 1_000_000
+        dmtf = re.fullmatch(r"(\d{14})\.(\d{6})([+-])(\d{3})", value)
+        if dmtf:
+            parsed = dt.datetime.strptime(dmtf.group(1), "%Y%m%d%H%M%S").replace(  # noqa: DTZ007
+                microsecond=int(dmtf.group(2))
+            )
+            offset_minutes = int(dmtf.group(4)) * (1 if dmtf.group(3) == "+" else -1)
+            parsed = parsed.replace(tzinfo=dt.timezone(dt.timedelta(minutes=offset_minutes)))
+        else:
+            iso = value[:-1] + "+00:00" if value.endswith("Z") else value
+            try:
+                parsed = dt.datetime.fromisoformat(iso)
+            except ValueError:
+                return None
+    else:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.UTC)
+    return int(parsed.timestamp() * 1_000_000_000)
+
+
+def same_process_identity(first: Mapping[str, Any], second: Mapping[str, Any]) -> bool:
+    """Compare PID and creation time, allowing sub-millisecond encoding precision."""
+    first_pid = first.get("PID")
+    second_pid = second.get("PID")
+    if first_pid is None or second_pid is None:
+        return False
+    try:
+        if int(first_pid) != int(second_pid):
+            return False
+    except (TypeError, ValueError):
+        return False
+    first_time = normalize_creation_time(first.get("CreationDate", first.get("CreationUTC")))
+    second_time = normalize_creation_time(second.get("CreationDate", second.get("CreationUTC")))
+    return first_time is not None and second_time is not None and abs(first_time - second_time) <= 1_000_000
+
+
+def compare_process_inventories(
+    baseline: Sequence[Mapping[str, Any]],
+    final: Sequence[Mapping[str, Any]],
+    *,
+    image_names: Sequence[str] = tuple(MATLAB_PROCESS_NAMES),
+) -> dict[str, list[dict[str, Any]]]:
+    """Compare every baseline process by PID plus creation time, including PID reuse."""
+    accepted_names = {name.lower() for name in image_names}
+    initial = [row for row in baseline if str(row.get("Name", "")).lower() in accepted_names]
+    current = [row for row in final if str(row.get("Name", "")).lower() in accepted_names]
+    preserved: list[dict[str, Any]] = []
+    missing: list[dict[str, Any]] = []
+    reused: list[dict[str, Any]] = []
+    unverified: list[dict[str, Any]] = []
+    for previous in initial:
+        if normalize_creation_time(previous.get("CreationDate", previous.get("CreationUTC"))) is None:
+            unverified.append({"baseline": dict(previous), "reason": "unrecognized creation time"})
+            continue
+        match = next((row for row in current if same_process_identity(previous, row)), None)
+        if match is not None:
+            preserved.append({"baseline": dict(previous), "final": dict(match)})
+            continue
+        same_pid = [row for row in current if row.get("PID") == previous.get("PID")]
+        if same_pid:
+            reused.append({"baseline": dict(previous), "final": dict(same_pid[0])})
+        else:
+            missing.append(dict(previous))
+    return {"preserved": preserved, "missing": missing, "pid_reused": reused, "unverified": unverified}
+
+
 def launch_child(
     command: Sequence[str],
     *,
@@ -286,9 +501,11 @@ def launch_child(
     """Start an isolated child while preserving its unmodified stdout and stderr."""
     stdout_path.parent.mkdir(parents=True, exist_ok=True)
     stderr_path.parent.mkdir(parents=True, exist_ok=True)
-    stdout_stream = stdout_path.open("wb")
-    stderr_stream = stderr_path.open("wb")
+    stdout_stream: Any | None = None
+    stderr_stream: Any | None = None
     try:
+        stdout_stream = stdout_path.open("wb")
+        stderr_stream = stderr_path.open("wb")
         return subprocess.Popen(
             list(command),
             cwd=cwd,
@@ -298,5 +515,7 @@ def launch_child(
         )
     finally:
         # Popen inherits the OS handles; close the supervisor's copies immediately.
-        stdout_stream.close()
-        stderr_stream.close()
+        if stdout_stream is not None:
+            stdout_stream.close()
+        if stderr_stream is not None:
+            stderr_stream.close()
