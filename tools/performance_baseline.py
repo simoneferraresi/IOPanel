@@ -204,7 +204,7 @@ def _load_report(path: Path) -> dict[str, Any]:
     if not isinstance(report, dict) or report.get("kind") != REPORT_KIND or report.get("schema_version") != 1:
         raise ValueError(f"Unsupported performance report: {path}")
     if not isinstance(report.get("runs"), list):
-        raise ValueError("Report has no raw runs")
+        raise TypeError("Report has no raw runs")
     if report.get("statistics") != summarize_runs(report["runs"]):
         raise ValueError("Report statistics do not match preserved raw runs")
     return report
