@@ -53,3 +53,11 @@ The existing profiler's working_set_mb reflects a working-set observation **not 
 5. Only propose an implementation PR when a reproducible bottleneck exists, the expected improvement is worth the complexity, and correctness, lifecycle and hardware safety can be preserved. A measured no-change decision is a valid investigation outcome.
 
 This harness establishes a common *scan-overlay* report protocol; it does not by itself finish all measurement families in Issue #151.
+
+## Archived Windows Actions baseline (separate workflow)
+
+The optional [Synthetic Windows performance baseline](../.github/workflows/performance-baseline.yml) GitHub Actions workflow runs the same hardware-free `capture` CLI in a locked **Python 3.12 / Windows runner / Qt offscreen** environment. It uploads the actual versioned JSON as a 30-day Actions artifact rather than relying solely on a transient test fixture. The default workflow matrix is 10k/50k points × 1/4 detectors × 0/4/8 overlays, with one discarded startup subprocess and three recorded repetitions. For 100k-point and native interactive desktop characterization, use the manual commands above.
+
+The workflow runs on pull requests that change its own definition or the benchmark scripts, **once when the workflow file is merged to `main`**, and through the Actions **Run workflow** control afterward. It is informational only: neither a required status check nor a regression threshold. A failed benchmark is still reported as a failed diagnostic workflow, but it does not establish a production application regression without investigation. CI does not initialize a Vimba camera, CT400, piezo or real MATLAB Engine. Download the run's `scan-overlays-offscreen-<commit>` artifact for the JSON, and record the run URL with any analysis.
+
+**Evidence limit:** GitHub-hosted runner load, operating-system images and CPU hardware can change between runs. Versioned JSON environmental checks reduce accidental apples-to-oranges comparisons but do not make shared-runner time measurements causally attributable to source changes. Prefer comparable native Windows sessions for confident performance claims; never equate offscreen times to real camera FPS or physical acquisition latency.
