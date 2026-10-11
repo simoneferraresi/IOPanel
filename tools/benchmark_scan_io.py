@@ -13,9 +13,9 @@ import json
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Callable, TypeVar
 
 import numpy as np
 from PySide6 import QtCore, QtWidgets
@@ -84,7 +84,7 @@ def _synthetic_scan(points: int, detectors: tuple[Detector, ...]) -> ScanMeasure
     )
 
 
-def _timed_on_qt_thread(
+def _timed_on_qt_thread[_T](
     app: QtWidgets.QApplication, operation: Callable[[], _T]
 ) -> tuple[_T, dict[str, float]]:
     """A queued zero-delay callback exposes how long synchronous work blocks Qt.
@@ -122,9 +122,58 @@ def _verified_import(path: Path, expected: ScanMeasurement) -> None:
         raise AssertionError("Scan I/O benchmark round-trip changed detector data")
 
 
-def characterize(
-    points: list[int], detectors: list[int], output: Path
+def _characterize_case(
+    app: QtWidgets.QApplication, folder: Path, count: int, num_detectors: int
 ) -> list[dict[str, object]]:
+    """Keep operation callbacks scoped to one fixture instead of loop variables."""
+    measurement = _synthetic_scan(count, tuple(Detector(i + 1) for i in range(num_detectors)))
+
+    def build():
+        return build_scan_export_v2(measurement, comment="synthetic I/O benchmark")
+
+    payload, build_stats = _timed_on_qt_thread(app, build)
+    csv_path = folder / f"scan-{count}-{num_detectors}.csv"
+    mat_path = folder / f"scan-{count}-{num_detectors}.mat"
+
+    def export_csv() -> None:
+        buffer = io.StringIO()
+        np.savetxt(
+            buffer, payload.csv_data, delimiter=",",
+            header=payload.csv_header, comments="", fmt="%.6f",
+        )
+        with csv_path.open("w", encoding="utf-8", newline="") as stream:
+            stream.write(buffer.getvalue())
+
+    def export_mat() -> None:
+        savemat(str(mat_path), payload.mat_data, do_compression=True)
+
+    operations: tuple[tuple[str, Callable[[], object]], ...] = (
+        ("build_payload", build),
+        ("csv_export", export_csv),
+        ("mat_export", export_mat),
+        ("csv_import", lambda: _verified_import(csv_path, measurement)),
+        ("mat_import", lambda: _verified_import(mat_path, measurement)),
+    )
+    rows: list[dict[str, object]] = []
+    for label, operation in operations:
+        if label == "build_payload":
+            stats = build_stats
+        else:
+            _, stats = _timed_on_qt_thread(app, operation)
+        rows.append(
+            {
+                "points_per_scan": count,
+                "detector_count": num_detectors,
+                "operation": label,
+                "qt_platform": app.platformName(),
+                "window_system": sys.platform,
+                **stats,
+            }
+        )
+    return rows
+
+
+def characterize(points: list[int], detectors: list[int], output: Path) -> list[dict[str, object]]:
     if not points or any(p < 2 for p in points):
         raise ValueError("points must be >= 2")
     if not detectors or any(d not in (1, 4) for d in detectors):
@@ -135,49 +184,7 @@ def characterize(
         folder = Path(temp)
         for count in points:
             for num_detectors in detectors:
-                measurement = _synthetic_scan(count, tuple(Detector(i + 1) for i in range(num_detectors)))
-
-                def build():
-                    return build_scan_export_v2(measurement, comment="synthetic I/O benchmark")
-
-                payload, build_stats = _timed_on_qt_thread(app, build)
-                csv_path = folder / f"scan-{count}-{num_detectors}.csv"
-                mat_path = folder / f"scan-{count}-{num_detectors}.mat"
-
-                def export_csv() -> None:
-                    buffer = io.StringIO()
-                    np.savetxt(
-                        buffer, payload.csv_data, delimiter=",",
-                        header=payload.csv_header, comments="", fmt="%.6f",
-                    )
-                    with csv_path.open("w", encoding="utf-8", newline="") as stream:
-                        stream.write(buffer.getvalue())
-
-                def export_mat() -> None:
-                    savemat(str(mat_path), payload.mat_data, do_compression=True)
-
-                operations: tuple[tuple[str, Callable[[], object]], ...] = (
-                    ("build_payload", build),
-                    ("csv_export", export_csv),
-                    ("mat_export", export_mat),
-                    ("csv_import", lambda: _verified_import(csv_path, measurement)),
-                    ("mat_import", lambda: _verified_import(mat_path, measurement)),
-                )
-                for label, operation in operations:
-                    if label == "build_payload":
-                        stats = build_stats
-                    else:
-                        _, stats = _timed_on_qt_thread(app, operation)
-                    rows.append(
-                        {
-                            "points_per_scan": count,
-                            "detector_count": num_detectors,
-                            "operation": label,
-                            "qt_platform": app.platformName(),
-                            "window_system": sys.platform,
-                            **stats,
-                        }
-                    )
+                rows.extend(_characterize_case(app, folder, count, num_detectors))
     output.write_text(json.dumps(rows, indent=2, allow_nan=False) + "\n", encoding="utf-8")
     return rows
 
