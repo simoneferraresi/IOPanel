@@ -37,7 +37,7 @@ CASE_KEYS = (
     "window_system",
 )
 IO_CASE_KEYS = ("points_per_scan", "detector_count", "operation", "qt_platform", "window_system")
-BENCHMARK_CASE_KEYS = {"scan_overlays": CASE_KEYS, "scan_io": IO_CASE_KEYS}
+BENCHMARK_CASE_KEYS = {"scan_overlays": CASE_KEYS, "scan_io": IO_CASE_KEYS, "scan_gui": IO_CASE_KEYS}
 PACKAGES = ("PySide6", "numpy", "pyqtgraph", "scipy")
 
 
@@ -260,6 +260,30 @@ def _capture_io_one(
     return elapsed, rows
 
 
+
+def _capture_gui_one(
+    root: Path, output: Path, *, points: list[int], detectors: list[int], qt_platform: str
+) -> tuple[float, list[dict[str, Any]]]:
+    """Invoke the real MainWindow and PlotWidget handlers with synthetic data."""
+    args = [
+        sys.executable, "-m", "tools.benchmark_scan_gui", "--points", *map(str, points),
+        "--detectors", *map(str, detectors), "--output", str(output),
+    ]
+    env = os.environ.copy()
+    env["QT_QPA_PLATFORM"] = qt_platform
+    start = time.perf_counter()
+    result = subprocess.run(args, cwd=root, env=env, capture_output=True, text=True, timeout=240, check=False)
+    elapsed = time.perf_counter() - start
+    if result.returncode:
+        raise RuntimeError(f"Real scan GUI benchmark exited {result.returncode}: {result.stderr[-3500:]}")
+    rows = json.loads(output.read_text(encoding="utf-8"))
+    if not isinstance(rows, list) or not rows or not all(isinstance(item, dict) for item in rows):
+        raise ValueError("Real scan GUI benchmark returned no valid cases")
+    if any(item.get("qt_platform") != qt_platform for item in rows):
+        raise ValueError("Qt platform differs from the explicitly requested platform")
+    return elapsed, rows
+
+
 def capture_io(
     root: Path,
     *,
@@ -268,7 +292,10 @@ def capture_io(
     repetitions: int,
     warmups: int,
     qt_platform: str,
+    benchmark: str = "scan_io",
 ) -> dict[str, Any]:
+    if benchmark not in ("scan_io", "scan_gui"):
+        raise ValueError("Unsupported scan file-I/O benchmark")
     if repetitions < 1 or warmups < 0:
         raise ValueError("Require >=1 repetition and >=0 warmups")
     if not points or any(p < 2 for p in points) or not detectors or any(d not in (1, 4) for d in detectors):
@@ -276,9 +303,10 @@ def capture_io(
     if qt_platform not in ("offscreen", "windows"):
         raise ValueError("Only explicitly selected Qt offscreen or Windows platforms are supported")
     runs = []
+    capture_one = _capture_io_one if benchmark == "scan_io" else _capture_gui_one
     with tempfile.TemporaryDirectory(prefix="iopanel-scan-io-baseline-") as temp:
         for index in range(warmups + repetitions):
-            elapsed, cases = _capture_io_one(
+            elapsed, cases = capture_one(
                 root,
                 Path(temp) / f"run-{index}.json",
                 points=points,
@@ -290,9 +318,13 @@ def capture_io(
     return {
         "schema_version": SCHEMA_VERSION,
         "kind": REPORT_KIND,
-        "benchmark": "scan_io",
+        "benchmark": benchmark,
         "recorded_utc": datetime.now(UTC).isoformat(),
-        "evidence_scope": "synthetic QApplication queued-timer latency proxy; NOT actual GUI handler or hardware",
+        "evidence_scope": (
+            "Actual MainWindow and PlotWidget synchronous handlers with synthetic scans; Qt pending callback proxy, no hardware"
+            if benchmark == "scan_gui"
+            else "synthetic QApplication queued-timer latency proxy; NOT actual GUI handler or hardware"
+        ),
         "environment": _environment(root, qt_platform),
         "configuration": {
             "points": points,
@@ -402,6 +434,13 @@ def main(argv: list[str] | None = None) -> None:
     io_run.add_argument("--repetitions", type=int, default=3)
     io_run.add_argument("--warmups", type=int, default=1)
     io_run.add_argument("--qt-platform", choices=("offscreen", "windows"), default="offscreen")
+    gui_run = commands.add_parser("capture-gui", help="characterize real scan UI handlers using synthetic data")
+    gui_run.add_argument("--output", type=Path, required=True)
+    gui_run.add_argument("--points", type=int, nargs="+", default=[10_000, 50_000])
+    gui_run.add_argument("--detectors", type=int, nargs="+", default=[1, 4])
+    gui_run.add_argument("--repetitions", type=int, default=3)
+    gui_run.add_argument("--warmups", type=int, default=1)
+    gui_run.add_argument("--qt-platform", choices=("offscreen", "windows"), default="offscreen")
     cmp = commands.add_parser("compare", help="compare two versioned JSON baselines")
     cmp.add_argument("baseline", type=Path)
     cmp.add_argument("candidate", type=Path)
@@ -422,7 +461,7 @@ def main(argv: list[str] | None = None) -> None:
         )
         _write_new(args.output, report)
         print(f"Wrote {len(report['statistics'])} cases x {args.repetitions} repetitions to {args.output}")
-    elif args.command == "capture-io":
+    elif args.command in ("capture-io", "capture-gui"):
         root = Path(__file__).resolve().parents[1]
         report = capture_io(
             root,
@@ -431,6 +470,7 @@ def main(argv: list[str] | None = None) -> None:
             repetitions=args.repetitions,
             warmups=args.warmups,
             qt_platform=args.qt_platform,
+            benchmark="scan_gui" if args.command == "capture-gui" else "scan_io",
         )
         _write_new(args.output, report)
         print(f"Wrote {len(report['statistics'])} I/O cases x {args.repetitions} repetitions to {args.output}")
