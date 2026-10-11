@@ -127,6 +127,7 @@ def test_in_flight_scan_import_is_nonblocking_and_rejects_duplicate(qtbot, monke
     finally:
         release.set()
     qtbot.waitUntil(lambda: window._scan_import_task is None, timeout=5000)
+    qtbot.waitUntil(lambda: not window._owned_scan_import_tasks, timeout=5000)
     assert window.plot_widget.current_imported_scan is not None
     window.close()
 
