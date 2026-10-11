@@ -499,7 +499,7 @@ def test_overwrite_decline_preflights_only_selected_conflicts_and_keeps_preferen
 
 
 def test_partial_mat_failure_keeps_csv_and_reports_save_issues(qtbot, tmp_path, monkeypatch):
-    import scipy.io
+    import logic.power_monitor_export_worker as export_worker
 
     settings = _app_settings(tmp_path)
     widget = PowerMonitorTraceWidget(settings)
@@ -508,9 +508,12 @@ def test_partial_mat_failure_keeps_csv_and_reports_save_issues(qtbot, tmp_path, 
     _FakeExportDialog.next_result = QDialog.DialogCode.Accepted
     _FakeExportDialog.next_request = _export_request(tmp_path, csv=True, mat=True)
     monkeypatch.setattr(plot_widgets, "PowerMonitorExportDialog", _FakeExportDialog)
-    monkeypatch.setattr(scipy.io, "savemat", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("mat failed")))
+    monkeypatch.setattr(export_worker, "savemat", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("mat failed")))
     warnings = []
     monkeypatch.setattr(QMessageBox, "warning", lambda *_args: warnings.append(_args[1]))
+    monkeypatch.setattr(
+        QMessageBox, "information", lambda *_args: pytest.fail("unexpected successful-save dialog")
+    )
 
     widget.save_recording()
     qtbot.waitUntil(lambda: not widget.power_monitor_export_busy, timeout=5000)
