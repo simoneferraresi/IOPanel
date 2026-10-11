@@ -62,9 +62,12 @@ def test_startup_warmup_excluded_and_versioned_report_is_comparable(monkeypatch,
     candidate["environment"]["commit"] = "next"
     candidate["runs"][0]["cases"][0]["entry_to_post_paint_callback_s"] = 1.5
     candidate["statistics"] = summarize_runs(candidate["runs"], case_keys=STARTUP_CASE_KEYS)
-    assert compare_reports(report, candidate)["comparisons"][0]["metrics"]["entry_to_post_paint_callback_s"][
-        "candidate_median"
-    ] == 3.0
+    assert (
+        compare_reports(report, candidate)["comparisons"][0]["metrics"]["entry_to_post_paint_callback_s"][
+            "candidate_median"
+        ]
+        == 3.0
+    )
 
 
 @pytest.mark.parametrize(
