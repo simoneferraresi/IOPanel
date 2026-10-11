@@ -167,7 +167,7 @@ def test_raw_report_validation_catches_omission_even_with_recomputed_statistics(
     _write_new(path, report)
     with pytest.raises(TypeError, match="missing or nonnumeric timing"):
         _load_report(path)
-    with pytest.raises(ValueError, match="missing or nonnumeric timing"):
+    with pytest.raises(TypeError, match="missing or nonnumeric timing"):
         compare_reports(report, _report())
 
 
