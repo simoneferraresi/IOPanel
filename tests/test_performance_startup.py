@@ -151,7 +151,9 @@ def test_startup_child_fail_closed_on_wrong_platform_or_process_failure(monkeypa
 def test_startup_rejects_missing_nonfinite_inconsistent_or_out_of_range_metrics(mutation, error):
     row = _case()
     mutation(row)
-    expected_exception = TypeError if error in ("missing or nonnumeric timing", "availability must be boolean") else ValueError
+    expected_exception = (
+        TypeError if error in ("missing or nonnumeric timing", "availability must be boolean") else ValueError
+    )
     with pytest.raises(expected_exception, match=error):
         _validate_startup_case(row, subprocess_wall_s=0.2)
 
