@@ -130,15 +130,29 @@ def summarize_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _capture_one(
-    root: Path, output: Path, *, points: list[int], detectors: list[int], overlays: list[int],
-    qt_platform: str, mouse_events: bool,
+    root: Path,
+    output: Path,
+    *,
+    points: list[int],
+    detectors: list[int],
+    overlays: list[int],
+    qt_platform: str,
+    mouse_events: bool,
 ) -> tuple[float, list[dict[str, Any]]]:
     args = [
-        sys.executable, "-m", "tools.benchmark_scan_overlays",
-        "--points", *map(str, points),
-        "--detectors", *map(str, detectors),
-        "--overlay-counts", *map(str, overlays),
-        "--nonfinite-pattern", "mixed", "--output", str(output),
+        sys.executable,
+        "-m",
+        "tools.benchmark_scan_overlays",
+        "--points",
+        *map(str, points),
+        "--detectors",
+        *map(str, detectors),
+        "--overlay-counts",
+        *map(str, overlays),
+        "--nonfinite-pattern",
+        "mixed",
+        "--output",
+        str(output),
     ]
     if mouse_events:
         args.append("--mouse-events")
@@ -162,8 +176,15 @@ def _capture_one(
 
 
 def capture(
-    root: Path, *, points: list[int], detectors: list[int], overlays: list[int],
-    repetitions: int, warmups: int, qt_platform: str, mouse_events: bool,
+    root: Path,
+    *,
+    points: list[int],
+    detectors: list[int],
+    overlays: list[int],
+    repetitions: int,
+    warmups: int,
+    qt_platform: str,
+    mouse_events: bool,
 ) -> dict[str, Any]:
     if repetitions < 1 or warmups < 0:
         raise ValueError("Require >=1 repetition and >=0 warmups")
@@ -177,8 +198,13 @@ def capture(
     with tempfile.TemporaryDirectory(prefix="iopanel-perf-baseline-") as temp:
         for index in range(warmups + repetitions):
             elapsed, cases = _capture_one(
-                root, Path(temp) / f"run-{index}.json", points=points, detectors=detectors,
-                overlays=overlays, qt_platform=qt_platform, mouse_events=mouse_events,
+                root,
+                Path(temp) / f"run-{index}.json",
+                points=points,
+                detectors=detectors,
+                overlays=overlays,
+                qt_platform=qt_platform,
+                mouse_events=mouse_events,
             )
             if index >= warmups:
                 runs.append({"repetition": index - warmups + 1, "subprocess_wall_s": elapsed, "cases": cases})
@@ -190,9 +216,13 @@ def capture(
         "evidence_scope": "synthetic Qt operation-level; NOT physical instrumentation or interactive frame rate",
         "environment": _environment(root, qt_platform),
         "configuration": {
-            "points": points, "detectors": detectors, "overlays": overlays,
-            "repetitions": repetitions, "warmup_subprocesses": warmups,
-            "nonfinite_pattern": "mixed", "mouse_events": mouse_events,
+            "points": points,
+            "detectors": detectors,
+            "overlays": overlays,
+            "repetitions": repetitions,
+            "warmup_subprocesses": warmups,
+            "nonfinite_pattern": "mixed",
+            "mouse_events": mouse_events,
         },
         "runs": runs,
         "statistics": summarize_runs(runs),
@@ -217,9 +247,8 @@ def compare_reports(
         raise ValueError("Both inputs must be IOPanel baseline reports")
     if base.get("schema_version") != SCHEMA_VERSION or candidate.get("schema_version") != SCHEMA_VERSION:
         raise ValueError("Incompatible report schema")
-    if (
-        base.get("benchmark") != candidate.get("benchmark")
-        or base.get("configuration") != candidate.get("configuration")
+    if base.get("benchmark") != candidate.get("benchmark") or base.get("configuration") != candidate.get(
+        "configuration"
     ):
         raise ValueError("Benchmark and configuration must match exactly")
     # Git commit is intentionally excluded: comparing revisions is the purpose.
@@ -291,15 +320,21 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "capture":
         root = Path(__file__).resolve().parents[1]
         report = capture(
-            root, points=args.points, detectors=args.detectors, overlays=args.overlays,
-            repetitions=args.repetitions, warmups=args.warmups,
-            qt_platform=args.qt_platform, mouse_events=args.mouse_events,
+            root,
+            points=args.points,
+            detectors=args.detectors,
+            overlays=args.overlays,
+            repetitions=args.repetitions,
+            warmups=args.warmups,
+            qt_platform=args.qt_platform,
+            mouse_events=args.mouse_events,
         )
         _write_new(args.output, report)
         print(f"Wrote {len(report['statistics'])} cases x {args.repetitions} repetitions to {args.output}")
     else:
         result = compare_reports(
-            _load_report(args.baseline), _load_report(args.candidate),
+            _load_report(args.baseline),
+            _load_report(args.candidate),
             allow_environment_mismatch=args.allow_environment_mismatch,
         )
         if args.output:
