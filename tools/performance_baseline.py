@@ -36,6 +36,8 @@ CASE_KEYS = (
     "qt_platform",
     "window_system",
 )
+IO_CASE_KEYS = ("points_per_scan", "detector_count", "operation", "qt_platform", "window_system")
+BENCHMARK_CASE_KEYS = {"scan_overlays": CASE_KEYS, "scan_io": IO_CASE_KEYS}
 PACKAGES = ("PySide6", "numpy", "pyqtgraph", "scipy")
 
 
@@ -76,10 +78,10 @@ def _environment(root: Path, qt_platform: str) -> dict[str, Any]:
     }
 
 
-def _case_key(row: dict[str, Any]) -> tuple[Any, ...]:
-    if any(key not in row for key in CASE_KEYS):
+def _case_key(row: dict[str, Any], case_keys: tuple[str, ...] = CASE_KEYS) -> tuple[Any, ...]:
+    if any(key not in row for key in case_keys):
         raise ValueError("Benchmark case missing required context keys")
-    return tuple(row[key] for key in CASE_KEYS)
+    return tuple(row[key] for key in case_keys)
 
 
 def _percentile(values: list[float], percentile: float) -> float:
@@ -88,7 +90,7 @@ def _percentile(values: list[float], percentile: float) -> float:
     return ordered[max(0, math.ceil(percentile * len(ordered)) - 1)]
 
 
-def summarize_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def summarize_runs(runs: list[dict[str, Any]], *, case_keys: tuple[str, ...] = CASE_KEYS) -> list[dict[str, Any]]:
     if not runs:
         raise ValueError("A baseline requires at least one recorded repetition")
     by_case: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
@@ -97,7 +99,7 @@ def summarize_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         cases = run.get("cases")
         if not isinstance(cases, list) or not cases:
             raise ValueError("Every repetition must contain nonempty case data")
-        keys = [_case_key(row) for row in cases]
+        keys = [_case_key(row, case_keys) for row in cases]
         if len(set(keys)) != len(keys):
             raise ValueError("Duplicate benchmark case within a repetition")
         if expected is None:
@@ -111,7 +113,7 @@ def summarize_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for key, records in sorted(by_case.items(), key=lambda item: repr(item[0])):
         available = set.intersection(*(set(record) for record in records))
         metrics: dict[str, Any] = {}
-        for name in sorted(available - set(CASE_KEYS)):
+        for name in sorted(available - set(case_keys)):
             vals = [record[name] for record in records]
             if any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in vals):
                 continue
@@ -125,7 +127,7 @@ def summarize_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "min": min(values),
                 "max": max(values),
             }
-        summaries.append({"case": dict(zip(CASE_KEYS, key, strict=True)), "metrics": metrics})
+        summaries.append({"case": dict(zip(case_keys, key, strict=True)), "metrics": metrics})
     return summaries
 
 
@@ -229,13 +231,92 @@ def capture(
     }
 
 
+def _capture_io_one(
+    root: Path, output: Path, *, points: list[int], detectors: list[int], qt_platform: str
+) -> tuple[float, list[dict[str, Any]]]:
+    args = [
+        sys.executable,
+        "-m",
+        "tools.benchmark_scan_io",
+        "--points",
+        *map(str, points),
+        "--detectors",
+        *map(str, detectors),
+        "--output",
+        str(output),
+    ]
+    env = os.environ.copy()
+    env["QT_QPA_PLATFORM"] = qt_platform
+    started = time.perf_counter()
+    result = subprocess.run(args, cwd=root, env=env, capture_output=True, text=True, check=False, timeout=240)
+    elapsed = time.perf_counter() - started
+    if result.returncode != 0:
+        raise RuntimeError(f"Scan I/O benchmark exited {result.returncode}: {result.stderr[-2500:]}")
+    rows = json.loads(output.read_text(encoding="utf-8"))
+    if not isinstance(rows, list) or not rows or not all(isinstance(row, dict) for row in rows):
+        raise ValueError("Scan I/O benchmark returned no valid cases")
+    if any(row.get("qt_platform") != qt_platform for row in rows):
+        raise ValueError("Qt platform differs from the explicitly requested platform")
+    return elapsed, rows
+
+
+def capture_io(
+    root: Path,
+    *,
+    points: list[int],
+    detectors: list[int],
+    repetitions: int,
+    warmups: int,
+    qt_platform: str,
+) -> dict[str, Any]:
+    if repetitions < 1 or warmups < 0:
+        raise ValueError("Require >=1 repetition and >=0 warmups")
+    if not points or any(p < 2 for p in points) or not detectors or any(d not in (1, 4) for d in detectors):
+        raise ValueError("Require points >=2 and detector counts of 1 or 4")
+    if qt_platform not in ("offscreen", "windows"):
+        raise ValueError("Only explicitly selected Qt offscreen or Windows platforms are supported")
+    runs = []
+    with tempfile.TemporaryDirectory(prefix="iopanel-scan-io-baseline-") as temp:
+        for index in range(warmups + repetitions):
+            elapsed, cases = _capture_io_one(
+                root,
+                Path(temp) / f"run-{index}.json",
+                points=points,
+                detectors=detectors,
+                qt_platform=qt_platform,
+            )
+            if index >= warmups:
+                runs.append({"repetition": index - warmups + 1, "subprocess_wall_s": elapsed, "cases": cases})
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "kind": REPORT_KIND,
+        "benchmark": "scan_io",
+        "recorded_utc": datetime.now(UTC).isoformat(),
+        "evidence_scope": "synthetic QApplication queued-timer latency proxy; NOT actual GUI handler or hardware",
+        "environment": _environment(root, qt_platform),
+        "configuration": {
+            "points": points,
+            "detectors": detectors,
+            "repetitions": repetitions,
+            "warmup_subprocesses": warmups,
+            "synthetic_backend": "synthetic.benchmark",
+            "csv_format": "%.6f",
+        },
+        "runs": runs,
+        "statistics": summarize_runs(runs, case_keys=IO_CASE_KEYS),
+    }
+
+
 def _load_report(path: Path) -> dict[str, Any]:
     report = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(report, dict) or report.get("kind") != REPORT_KIND or report.get("schema_version") != 1:
         raise ValueError(f"Unsupported performance report: {path}")
     if not isinstance(report.get("runs"), list):
         raise TypeError("Report has no raw runs")
-    if report.get("statistics") != summarize_runs(report["runs"]):
+    case_keys = BENCHMARK_CASE_KEYS.get(report.get("benchmark"))
+    if case_keys is None:
+        raise ValueError("Unknown performance benchmark")
+    if report.get("statistics") != summarize_runs(report["runs"], case_keys=case_keys):
         raise ValueError("Report statistics do not match preserved raw runs")
     return report
 
@@ -257,8 +338,11 @@ def compare_reports(
     mismatch = before_env != after_env
     if mismatch and not allow_environment_mismatch:
         raise ValueError("Environments differ; rerun on equivalent systems or explicitly allow a contextual comparison")
-    baseline_rows = {tuple(item["case"].get(k) for k in CASE_KEYS): item for item in base["statistics"]}
-    candidate_rows = {tuple(item["case"].get(k) for k in CASE_KEYS): item for item in candidate["statistics"]}
+    case_keys = BENCHMARK_CASE_KEYS.get(base["benchmark"])
+    if case_keys is None:
+        raise ValueError("Unknown performance benchmark")
+    baseline_rows = {tuple(item["case"].get(k) for k in case_keys): item for item in base["statistics"]}
+    candidate_rows = {tuple(item["case"].get(k) for k in case_keys): item for item in candidate["statistics"]}
     if baseline_rows.keys() != candidate_rows.keys():
         raise ValueError("Case matrices differ")
     comparisons = []
@@ -311,6 +395,13 @@ def main(argv: list[str] | None = None) -> None:
     run.add_argument("--warmups", type=int, default=1)
     run.add_argument("--qt-platform", choices=("offscreen", "windows"), default="offscreen")
     run.add_argument("--mouse-events", action="store_true")
+    io_run = commands.add_parser("capture-io", help="capture hardware-free schema-v2 import/export")
+    io_run.add_argument("--output", type=Path, required=True)
+    io_run.add_argument("--points", type=int, nargs="+", default=[10_000, 50_000, 100_000])
+    io_run.add_argument("--detectors", type=int, nargs="+", default=[1, 4])
+    io_run.add_argument("--repetitions", type=int, default=3)
+    io_run.add_argument("--warmups", type=int, default=1)
+    io_run.add_argument("--qt-platform", choices=("offscreen", "windows"), default="offscreen")
     cmp = commands.add_parser("compare", help="compare two versioned JSON baselines")
     cmp.add_argument("baseline", type=Path)
     cmp.add_argument("candidate", type=Path)
@@ -331,6 +422,18 @@ def main(argv: list[str] | None = None) -> None:
         )
         _write_new(args.output, report)
         print(f"Wrote {len(report['statistics'])} cases x {args.repetitions} repetitions to {args.output}")
+    elif args.command == "capture-io":
+        root = Path(__file__).resolve().parents[1]
+        report = capture_io(
+            root,
+            points=args.points,
+            detectors=args.detectors,
+            repetitions=args.repetitions,
+            warmups=args.warmups,
+            qt_platform=args.qt_platform,
+        )
+        _write_new(args.output, report)
+        print(f"Wrote {len(report['statistics'])} I/O cases x {args.repetitions} repetitions to {args.output}")
     else:
         result = compare_reports(
             _load_report(args.baseline),
@@ -342,13 +445,20 @@ def main(argv: list[str] | None = None) -> None:
         print(f"Environment mismatch: {result['environment_mismatch']}")
         for item in result["comparisons"]:
             context = item["case"]
-            print(
-                f"\nPoints {context['points_per_scan']}, detectors {context['detector_count']}, "
-                f"overlays {context['overlay_count']}"
-            )
+            print(f"\nCase: {', '.join(f'{key}={value}' for key, value in context.items())}")
             for key, metric in item["metrics"].items():
                 if (
-                    key in ("cpu_time_s", "working_set_mb", "csv_parse_s", "mat_parse_s")
+                    key
+                    in (
+                        "cpu_time_s",
+                        "working_set_mb",
+                        "csv_parse_s",
+                        "mat_parse_s",
+                        "wall_s",
+                        "cpu_s",
+                        "qt_pending_callback_delay_s",
+                        "peak_working_set_mb",
+                    )
                     or "repaint" in key
                     or "range" in key
                 ):
