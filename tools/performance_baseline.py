@@ -401,6 +401,7 @@ def _validate_startup_case(row: dict[str, Any], *, subprocess_wall_s: float) -> 
             raise TypeError(f"Startup missing or nonnumeric timing: {name}")
         if not math.isfinite(value) or value < 0:
             raise ValueError(f"Startup nonfinite or negative timing: {name}")
+
     def ordered(*keys: str) -> None:
         for first, next_key in pairwise(keys):
             if row[first] > row[next_key]:
@@ -436,11 +437,7 @@ def _validate_startup_case(row: dict[str, Any], *, subprocess_wall_s: float) -> 
         "post_paint_callback",
         "deferred_init_callback",
     ):
-        if abs(
-            row[f"request_to_{suffix}_s"]
-            - row[f"entry_to_{suffix}_s"]
-            - row["request_to_child_probe_s"]
-        ) > 0.002:
+        if abs(row[f"request_to_{suffix}_s"] - row[f"entry_to_{suffix}_s"] - row["request_to_child_probe_s"]) > 0.002:
             raise ValueError(f"Startup parent/child clock correlation mismatch: {suffix}")
     if abs(row["app_module_import_s"] - row["entry_to_app_import_complete_s"]) > 0.002:
         raise ValueError("Startup production app import interval does not match the timeline")
