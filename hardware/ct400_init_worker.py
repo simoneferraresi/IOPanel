@@ -78,9 +78,9 @@ class CT400InitWorker(BaseWorker):
             ct400_device: AbstractCT400
 
             if not dll_path_obj:
-                msg = "CT400 DLL not found. Using dummy device."
+                msg = "CT400 DLL not found. Physical initialization failed; a dummy device is available."
                 logger.warning(msg)
-                self.status_updated.emit("UNAVAILABLE", "CT400: DLL not found. Using Dummy.")
+                self.status_updated.emit("UNAVAILABLE", msg)
                 ct400_device = DummyCT400()
                 self.ct400_initialized.emit(ct400_device)
                 return
@@ -94,15 +94,15 @@ class CT400InitWorker(BaseWorker):
                 self.ct400_initialized.emit(ct400_device)
 
             except (CT400Error, OSError) as e:
-                msg = f"CT400 Init Failed: {e}. Using dummy device."
+                msg = f"CT400 initialization failed: {e}. A dummy device is available."
                 logger.exception(msg)
-                self.status_updated.emit("UNAVAILABLE", "CT400: Init Failed. Using Dummy.")
+                self.status_updated.emit("UNAVAILABLE", msg)
                 ct400_device = DummyCT400()
                 self.ct400_initialized.emit(ct400_device)
             except Exception as e:
-                msg = f"Unexpected error during CT400 initialization: {e}. Using dummy device."
+                msg = f"Unexpected CT400 initialization error: {e}. A dummy device is available."
                 logger.critical(msg, exc_info=True)
-                self.status_updated.emit("UNAVAILABLE", "CT400: Critical Error. Using Dummy.")
+                self.status_updated.emit("UNAVAILABLE", msg)
                 ct400_device = DummyCT400()
                 self.ct400_initialized.emit(ct400_device)
         finally:

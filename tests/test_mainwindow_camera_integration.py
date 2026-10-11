@@ -27,6 +27,7 @@ def _start_main_window(qtbot, monkeypatch, tmp_path, fail_after_frames=None, cam
 name = IOPanel integration test
 
 [Instruments]
+ct400_backend = simulation
 ct400_dll_path = unavailable-in-test-environment.dll
 
 [Camera:Top]

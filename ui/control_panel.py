@@ -765,11 +765,11 @@ class BaseControlPanel(QWidget, ABC, metaclass=QABCMeta):
         # Add the common group to the main layout. Subclasses will add more.
         self.main_layout.addWidget(common_settings_group)
 
-    def set_instrument(self, ct400_device: AbstractCT400 | None):
+    def set_instrument(self, ct400_device: AbstractCT400 | None, *, simulated: bool | None = None):
         """Assigns the live CT400 device and updates UI state."""
         logger.info(f"'{self.objectName()}' received instrument object: {ct400_device is not None}")
         self.ct400 = ct400_device
-        self.is_simulated = isinstance(ct400_device, DummyCT400)
+        self.is_simulated = isinstance(ct400_device, DummyCT400) if simulated is None else simulated
         self.connected_laser_input = None
         self.on_instrument_connected(self.is_simulated)
 
@@ -1462,9 +1462,9 @@ class HistogramControlPanel(BaseControlPanel):
 
     # --- Overridden and Implemented Abstract Methods ---
     @override
-    def set_instrument(self, ct400_device: AbstractCT400 | None) -> None:
+    def set_instrument(self, ct400_device: AbstractCT400 | None, *, simulated: bool | None = None) -> None:
         """Overrides base method to also update the worker's device instance."""
-        super().set_instrument(ct400_device)
+        super().set_instrument(ct400_device, simulated=simulated)
         if hasattr(self, "power_fetch_worker"):
             self.power_fetch_worker.ct400 = self.ct400
 

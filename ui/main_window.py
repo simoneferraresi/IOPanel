@@ -183,7 +183,9 @@ class MainWindow(QMainWindow):
             which could be a real or dummy implementation.
     """
 
-    _ct400_init_task_finished = Signal(object)
+    _ct400_init_task_finished = Signal(int, object)
+    _ct400_attempt_status = Signal(int, str, str)
+    _ct400_attempt_result = Signal(int, object)
     _piezo_init_task_finished = Signal(object)
     _init_task_thread_finished = Signal(object)
     _camera_recovery_thread_finished = Signal(str, object)
@@ -218,6 +220,10 @@ class MainWindow(QMainWindow):
 
         # --- CT400 Worker ---
         self.ct400_task: TaskRunner | None = None
+        self._ct400_init_attempt_id = 0
+        self._active_ct400_init_attempt_id: int | None = None
+        self._ct400_init_result_received = False
+        self._ct400_init_thread_finished_ids: set[int] = set()
 
         # --- Piezo Worker ---
         self.piezo_task: TaskRunner | None = None
@@ -258,6 +264,8 @@ class MainWindow(QMainWindow):
         self._load_defaults_from_config()
         self._connect_signals()
         self._ct400_init_task_finished.connect(self._on_ct400_init_task_finished)
+        self._ct400_attempt_status.connect(self._on_ct400_attempt_status_updated)
+        self._ct400_attempt_result.connect(self._on_ct400_attempt_initialized)
         self._piezo_init_task_finished.connect(self._on_piezo_init_task_finished)
         self._init_task_thread_finished.connect(self._on_init_task_thread_finished)
         self._camera_recovery_thread_finished.connect(self._on_camera_recovery_thread_finished)
@@ -437,7 +445,11 @@ class MainWindow(QMainWindow):
             return False
         device = self.ct400_device
         if isinstance(device, DummyCT400):
-            return self.alignment_tab is not None and self.alignment_tab.ct400 is device
+            return (
+                self._ct400_is_configured_simulation()
+                and self.alignment_tab is not None
+                and self.alignment_tab.ct400 is device
+            )
         if not isinstance(device, CT400) or self.alignment_tab is None or self.alignment_tab.ct400 is not device:
             return False
         captured_input = self._ct400_connected_laser_input
@@ -500,6 +512,31 @@ class MainWindow(QMainWindow):
 
         self._update_ct400_visuals(state=state, message=message)
 
+    @Slot(int, str, str)
+    def _on_ct400_attempt_status_updated(self, attempt_id: int, state_name: str, message: str):
+        if attempt_id != self._active_ct400_init_attempt_id:
+            logger.debug("Ignoring stale CT400 initialization status for attempt %s.", attempt_id)
+            return
+        self._on_ct400_status_updated(state_name, message)
+
+    @Slot(int, object)
+    def _on_ct400_attempt_initialized(self, attempt_id: int, device: AbstractCT400):
+        if attempt_id != self._active_ct400_init_attempt_id:
+            logger.warning("Ignoring stale CT400 initialization result for attempt %s.", attempt_id)
+            if isinstance(device, CT400):
+                try:
+                    device.close()
+                except Exception:
+                    logger.exception("Could not release stale CT400 initialization result.")
+            return
+        self._ct400_init_result_received = True
+        self._on_ct400_initialized(device)
+        if attempt_id in self._ct400_init_thread_finished_ids:
+            self._ct400_init_thread_finished_ids.discard(attempt_id)
+            self._active_ct400_init_attempt_id = None
+            self._ct400_init_result_received = False
+            self._update_ct400_retry_action()
+
     @Slot(AbstractCT400)
     def _on_ct400_initialized(self, device: AbstractCT400):
         """
@@ -541,12 +578,13 @@ class MainWindow(QMainWindow):
             self._ct400_recovery_disconnect_completed = False
 
         # Now that the device exists, pass it to the control panels
-        self.control_panel.set_instrument(self.ct400_device)
-        self.histogram_control.set_instrument(self.ct400_device)
+        is_configured_simulation = self._ct400_is_configured_simulation() and isinstance(self.ct400_device, DummyCT400)
+        self.control_panel.set_instrument(self.ct400_device, simulated=is_configured_simulation)
+        self.histogram_control.set_instrument(self.ct400_device, simulated=is_configured_simulation)
 
         # Update UI visuals based on whether the device is real or dummy
         is_real_ct400 = isinstance(self.ct400_device, CT400)
-        is_simulated_ct400 = isinstance(self.ct400_device, DummyCT400)
+        is_simulated_ct400 = is_configured_simulation and isinstance(self.ct400_device, DummyCT400)
         # DummyCT400 exposes the same scan interface and is safe to operate in
         # development mode. Keep it unavailable to connection controls, but
         # allow scans and label their results as simulated below.
@@ -581,6 +619,9 @@ class MainWindow(QMainWindow):
             or self._ct400_connected_laser_input is not None
             or self.is_ct400_connected_state
         )
+
+    def _ct400_is_configured_simulation(self) -> bool:
+        return self.config.instruments.ct400_backend == "simulation"
 
     def _defer_ct400_device_replacement(self, device: AbstractCT400):
         previous = self._pending_ct400_device_replacement
@@ -653,30 +694,87 @@ class MainWindow(QMainWindow):
         self._init_cameras_lazy()
 
     def _init_ct400_lazy(self):
-        """Initializes the CT400 on a background thread."""
+        """Start one owned CT400 initialization attempt on a background thread."""
         if self._pending_init_close:
             logger.info("Skipping CT400 initialization while application close is pending.")
             return
+        if self._active_ct400_init_attempt_id is not None:
+            logger.info("CT400 initialization is already in progress; suppressing duplicate attempt.")
+            return
+        if (
+            self._ct400_operation_state is not CT400OperationState.IDLE
+            or self._ct400_device_has_unresolved_laser_state()
+            or self._alignment_hardware_transition_blocked()
+        ):
+            self.statusBar().showMessage("Resolve the current CT400 operation or recovery state before retrying.", 5000)
+            return
+        self._ct400_init_attempt_id += 1
+        attempt_id = self._ct400_init_attempt_id
+        self._active_ct400_init_attempt_id = attempt_id
+        self._ct400_init_result_received = False
         logger.info("Starting lazy initialization of CT400...")
-        # 1. Create the worker
         worker = CT400InitWorker(config=self.config)
-
-        # 2. Connect SPECIFIC signals (TaskRunner handles lifecycle signals)
-        worker.ct400_initialized.connect(self._on_ct400_initialized)
-        worker.status_updated.connect(self._on_ct400_status_updated)
-
-        # TaskRunner owns the worker and thread for this one-shot operation.
+        worker.ct400_initialized.connect(lambda device: self._ct400_attempt_result.emit(attempt_id, device))
+        worker.status_updated.connect(
+            lambda state, message: self._ct400_attempt_status.emit(attempt_id, state, message)
+        )
         task = TaskRunner(worker)
         self.ct400_task = task
-        task.worker_thread.finished.connect(lambda task=task: self._ct400_init_task_finished.emit(task))
+        task.worker_thread.finished.connect(
+            lambda task=task, attempt_id=attempt_id: self._ct400_init_task_finished.emit(attempt_id, task)
+        )
         self._track_init_task(task)
+        self._update_ct400_retry_action()
         task.start()
 
-    @Slot(object)
-    def _on_ct400_init_task_finished(self, task):
+    @Slot(int, object)
+    def _on_ct400_init_task_finished(self, attempt_id: int, task=None):
         """Clear only the CT400 task whose thread just finished."""
+        if task is None:
+            return
         if self.ct400_task is task:
             self.ct400_task = None
+        self._ct400_init_thread_finished_ids.add(attempt_id)
+        if self._active_ct400_init_attempt_id == attempt_id and self._ct400_init_result_received:
+            self._active_ct400_init_attempt_id = None
+            self._ct400_init_result_received = False
+            self._ct400_init_thread_finished_ids.discard(attempt_id)
+        self._update_ct400_retry_action()
+
+    def _update_ct400_retry_action(self) -> None:
+        action = getattr(self, "ct400_retry_action", None)
+        if action is None:
+            return
+        eligible_device = self.ct400_device is None or isinstance(self.ct400_device, DummyCT400)
+        physical_backend = self.config.instruments.ct400_backend != "simulation"
+        allowed = (
+            eligible_device
+            and physical_backend
+            and self._active_ct400_init_attempt_id is None
+            and not self._pending_init_close
+            and self._ct400_operation_state is CT400OperationState.IDLE
+            and not self._ct400_device_has_unresolved_laser_state()
+            and not self._alignment_hardware_transition_blocked()
+        )
+        action.setEnabled(allowed)
+
+    @Slot()
+    def _retry_ct400_initialization(self) -> None:
+        if not (self.ct400_device is None or isinstance(self.ct400_device, DummyCT400)):
+            self.statusBar().showMessage("CT400 is already initialized; retry is unavailable.", 5000)
+            return
+        if self._active_ct400_init_attempt_id is not None:
+            self.statusBar().showMessage("CT400 initialization is already in progress.", 5000)
+            return
+        if (
+            self._ct400_operation_state is not CT400OperationState.IDLE
+            or self._ct400_device_has_unresolved_laser_state()
+            or self._alignment_hardware_transition_blocked()
+        ):
+            self.statusBar().showMessage("Resolve the current CT400 operation or recovery state before retrying.", 5000)
+            return
+        self._update_ct400_visuals(CT400Status.UNKNOWN, "Operator requested CT400 initialization retry.")
+        self._init_ct400_lazy()
 
     def _init_piezos_lazy(self):
         """Initializes the Piezo controllers on a background thread."""
@@ -1064,7 +1162,7 @@ class MainWindow(QMainWindow):
             label,
             format_ct400_status(
                 state,
-                simulated=isinstance(self.ct400_device, DummyCT400),
+                simulated=self._ct400_is_configured_simulation() and isinstance(self.ct400_device, DummyCT400),
                 operation=self._ct400_operation_state,
             ),
         )
@@ -1084,6 +1182,7 @@ class MainWindow(QMainWindow):
 
         self.is_ct400_connected_state = state == CT400Status.CONNECTED
         self._refresh_global_status()
+        self._update_ct400_retry_action()
 
     @staticmethod
     def _render_status_label(label: QLabel, status) -> None:
@@ -1108,7 +1207,7 @@ class MainWindow(QMainWindow):
             self.ct400_status_label,
             format_ct400_status(
                 getattr(self, "_ct400_visual_state", CT400Status.UNKNOWN),
-                simulated=isinstance(self.ct400_device, DummyCT400),
+                simulated=self._ct400_is_configured_simulation() and isinstance(self.ct400_device, DummyCT400),
                 operation=self._ct400_operation_state,
             ),
         )
@@ -1190,6 +1289,12 @@ class MainWindow(QMainWindow):
         refresh_action.setStatusTip("Scan for newly connected CT400 or Piezo devices")
         refresh_action.triggered.connect(self._on_refresh_instruments_triggered)
         self.instrument_menu.addAction(refresh_action)
+        self.ct400_retry_action = QAction("Retry CT400 Initialization", self)
+        self.ct400_retry_action.setObjectName("retryCT400InitializationAction")
+        self.ct400_retry_action.setStatusTip("Retry physical CT400 initialization without scanning other instruments")
+        self.ct400_retry_action.triggered.connect(self._retry_ct400_initialization)
+        self.instrument_menu.addAction(self.ct400_retry_action)
+        self._update_ct400_retry_action()
         self.instrument_menu.addSeparator()
         # ---------------------------
         self.ct400_connect_action = QAction(self)
@@ -1593,6 +1698,7 @@ class MainWindow(QMainWindow):
                 action.setEnabled(False)
         self._update_scan_import_actions()
         self._refresh_global_status()
+        self._update_ct400_retry_action()
 
     @Slot()
     def _handle_ct400_scan_started(self):
