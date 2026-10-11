@@ -70,6 +70,11 @@ def run_normal_exit_diagnostic(
     comparison: dict[str, list[dict[str, Any]]] = {"preserved": [], "missing": [], "pid_reused": [], "unverified": []}
     candidates: list[dict[str, Any]] = []
     monitor_result: Any | None = None
+    evidence_status = "NOT_ESTABLISHED"
+    python_exit_status = "NOT_OBSERVED"
+    candidate_disposition = "NOT_ESTABLISHED"
+    ownership_status = "UNCERTAIN"
+    diagnostic_result = "FAIL"
 
     try:
         events.emit("normal_exit_supervisor_started", python=sys.version, pid=os.getpid())
@@ -146,6 +151,7 @@ def run_normal_exit_diagnostic(
             snapshot_log.rows,
             final,
             child_pid=monitor_result.child_pid,
+            final_after_child_exit=child_return_code is not None,
         )
         if any(
             not candidate.get("PID")
@@ -158,15 +164,41 @@ def run_normal_exit_diagnostic(
         fallback_count = getattr(events, "serialization_failures", 0)
         if fallback_count:
             evidence_errors.append(f"supervisor JSONL serialization failures: {fallback_count}")
+        evidence_status = "SUCCEEDED" if not evidence_errors else "FAILED"
+        python_exit_status = (
+            "NORMAL"
+            if child_return_code == 0 and not monitor_result.deadline_reached
+            else f"ABNORMAL_OR_UNOBSERVED (return code {child_return_code})"
+        )
+        surviving_candidates = [candidate for candidate in candidates if candidate["present_in_final_inventory"]]
+        if surviving_candidates:
+            candidate_disposition = "SURVIVED_OBSERVATION_WINDOW"
+            ownership_status = "UNCERTAIN"
+        elif candidates:
+            candidate_disposition = "DISAPPEARED_DURING_OBSERVATION"
+            ownership_status = "UNCERTAIN"
+        else:
+            candidate_disposition = "NO_NEW_CANDIDATE_OBSERVED"
+            ownership_status = "NO_NEW_CANDIDATE_TO_ATTRIBUTE"
         exit_code = diagnostic_exit_code(
             child_return_code,
             snapshot_errors=snapshot_errors,
             evidence_errors=evidence_errors,
             serialization_failures=fallback_count,
         )
+        if exit_code == 0 and surviving_candidates:
+            # Evidence can be scientifically valid even when cleanup is not
+            # established. Require operator review and never clean up here.
+            exit_code = 2
+        diagnostic_result = "OPERATOR_REVIEW_REQUIRED" if surviving_candidates else "PASS" if exit_code == 0 else "FAIL"
         events.emit(
             "normal_exit_diagnostic_complete",
             exit_code=exit_code,
+            diagnostic_result=diagnostic_result,
+            evidence_collection=evidence_status,
+            python_exit=python_exit_status,
+            matlab_candidate_disposition=candidate_disposition,
+            matlab_ownership=ownership_status,
             evidence_errors=evidence_errors,
             candidate_count=len(candidates),
         )
@@ -181,12 +213,30 @@ def run_normal_exit_diagnostic(
                 f"- Post-exit samples: `{monitor_result.snapshots_after_exit}` of `{post_exit_observation_s}` seconds",
                 f"- Protected MATLAB processes preserved: `{len(comparison['preserved'])}/{len(baseline_matlab)}`",
                 f"- New MATLAB candidates: `{candidates!r}`",
+                f"- Evidence collection: `{evidence_status}`",
+                f"- Python child exit: `{python_exit_status}`",
+                f"- MATLAB candidate disposition: `{candidate_disposition}`",
+                f"- MATLAB process ownership: `{ownership_status}`",
                 f"- Evidence errors: `{evidence_errors!r}`",
-                f"- Diagnostic result: `{'PASS' if exit_code == 0 else 'FAIL'}`",
+                f"- Diagnostic result: `{diagnostic_result}`",
             ]
         )
     except BaseException as exc:  # noqa: BLE001 - parent errors must be preserved and reported.
         traceback_text = traceback.format_exc()
+        evidence_status = "FAILED"
+        python_exit_status = (
+            "NORMAL" if child_return_code == 0 else f"ABNORMAL_OR_UNOBSERVED (return code {child_return_code})"
+        )
+        if candidates:
+            candidate_disposition = (
+                "SURVIVED_OBSERVATION_WINDOW"
+                if any(candidate.get("present_in_final_inventory") for candidate in candidates)
+                else "DISAPPEARED_OR_NOT_PRESENT_AT_FINAL_INVENTORY"
+            )
+        else:
+            candidate_disposition = "UNVERIFIED"
+        ownership_status = "UNCERTAIN"
+        diagnostic_result = "FAIL"
         print(traceback_text, file=sys.stderr)
         try:
             events.emit(
@@ -201,7 +251,21 @@ def run_normal_exit_diagnostic(
             (output / "supervisor_failure.txt").write_text(traceback_text, encoding="utf-8")
         except OSError as write_error:
             print(f"could not preserve supervisor traceback: {write_error!r}", file=sys.stderr)
-        report_lines.extend(["", "## Supervisor failure", "", "```text", traceback_text.rstrip(), "```"])
+        report_lines.extend(
+            [
+                "",
+                "## Supervisor failure",
+                "",
+                f"- Evidence collection: `{evidence_status}`",
+                f"- Python child exit: `{python_exit_status}`",
+                f"- MATLAB candidate disposition: `{candidate_disposition}`",
+                f"- MATLAB process ownership: `{ownership_status}`",
+                "",
+                "```text",
+                traceback_text.rstrip(),
+                "```",
+            ]
+        )
         exit_code = 1
     finally:
         try:
@@ -217,7 +281,7 @@ def run_normal_exit_diagnostic(
             exit_code = 1
         for index, line in enumerate(report_lines):
             if line.startswith("- Diagnostic result:"):
-                report_lines[index] = f"- Diagnostic result: `{'PASS' if exit_code == 0 else 'FAIL'}`"
+                report_lines[index] = f"- Diagnostic result: `{diagnostic_result}`"
         try:
             _report(output, report_lines)
         except OSError as exc:

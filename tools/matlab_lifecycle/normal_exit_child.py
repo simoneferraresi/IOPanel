@@ -26,6 +26,7 @@ def record_normal_interpreter_exit(
     worker: Any | None,
     cancel_result: bool | None = None,
     cancel_duration_ns: int | None = None,
+    application: Any | None = None,
 ) -> tuple[str, ...]:
     """Record the atexit boundary and close logging without waiting on the disposer."""
     try:
@@ -45,6 +46,7 @@ def record_normal_interpreter_exit(
         cancel_duration_ns=cancel_duration_ns if cancel_completed.is_set() else None,
         disposer_alive=disposer_alive,
         disposer_joined=False,
+        qt_application_alive=application is not None,
     )
     return events.close()
 
@@ -75,7 +77,7 @@ def main() -> int:
             "return_logged": False,
         }
     )
-    state: dict[str, Any] = {"manager": None, "worker": None, "shutdown_called": False}
+    state: dict[str, Any] = {"manager": None, "worker": None, "shutdown_called": False, "application": None}
     profile_lock = threading.Lock()
 
     def on_interpreter_exit() -> None:
@@ -100,6 +102,7 @@ def main() -> int:
                 worker=worker,
                 cancel_result=cancel_observation["result"],
                 cancel_duration_ns=cancel_observation["duration_ns"],
+                application=state["application"],
             )
         if close_errors:
             print(f"normal-exit diagnostic JSONL writer failed: {close_errors!r}", file=sys.stderr)
@@ -172,6 +175,10 @@ def main() -> int:
             manager_module=__import__("logic.matlab_engine_manager", fromlist=["x"]).__file__,
         )
         app = QCoreApplication([])
+        # Keep the Qt event application reachable through the atexit callback.
+        # This preserves the Engine client's Qt lifetime without keeping its
+        # daemon disposal worker alive or waiting for cancellation.
+        state["application"] = app
         threading.setprofile(profile)
         sys.setprofile(profile)
 
@@ -225,7 +232,6 @@ def main() -> int:
         # Do not call join(), wait_for_disposer(), or wait on cancellation.
         # Returning from main triggers the atexit snapshot and cleanly closes
         # the JSONL writer; Python then tears down daemon threads naturally.
-        _ = app
     except BaseException as exc:  # noqa: BLE001 - failures must survive in child evidence.
         events.emit(
             "child_exception",

@@ -470,6 +470,8 @@ def validate_normal_exit_child_evidence(
             errors.append("normal-exit event lacks the cancellation completion state")
         if not isinstance(at_exit.get("cancel_started"), bool):
             errors.append("normal-exit event lacks the cancellation-start state")
+        if at_exit.get("qt_application_alive") is not True:
+            errors.append("Qt application was not confirmed alive at the interpreter-exit observation")
         if at_exit.get("cancel_completed") is True and not isinstance(at_exit.get("cancel_result"), bool):
             errors.append("completed cancellation lacks its boolean return value")
     cancel_returns = [row for row in rows if row.get("event") == "future_cancel_return"]
@@ -509,11 +511,13 @@ def summarize_matlab_candidates(
     final: Sequence[Mapping[str, Any]],
     *,
     child_pid: int,
+    final_after_child_exit: bool = False,
 ) -> list[dict[str, Any]]:
     """Summarize new MATLAB identities without claiming confirmed Engine ownership."""
     baseline_matlab = [row for row in baseline if is_matlab_process(row)]
     candidates: dict[tuple[str, int | None], dict[str, Any]] = {}
-    for snapshot in snapshot_rows:
+    observations = [*snapshot_rows, {"phase": "final", "processes": final}]
+    for snapshot in observations:
         phase = snapshot.get("phase", "unknown")
         process_rows = snapshot.get("processes", [])
         if not isinstance(process_rows, Sequence):
@@ -547,9 +551,14 @@ def summarize_matlab_candidates(
     for candidate in candidates.values():
         present_final = any(same_process_identity(candidate, row) for row in final if is_matlab_process(row))
         candidate["present_in_final_inventory"] = present_final
-        candidate["observed_after_child_exit"] = "post_exit" in candidate["observed_phases"]
-        if present_final:
+        candidate["observed_after_child_exit"] = bool(
+            "post_exit" in candidate["observed_phases"]
+            or (final_after_child_exit and "final" in candidate["observed_phases"])
+        )
+        if present_final and candidate["observed_after_child_exit"]:
             candidate["disposition"] = "survived_child_exit"
+        elif present_final:
+            candidate["disposition"] = "present_in_final_inventory"
         elif candidate["observed_after_child_exit"]:
             candidate["disposition"] = "disappeared_during_post_exit_observation"
         else:

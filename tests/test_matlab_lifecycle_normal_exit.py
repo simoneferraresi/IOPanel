@@ -39,6 +39,7 @@ def _normal_exit_rows(*, completed: bool, alive: bool, result: bool | None = Non
             "cancel_result": result if completed else None,
             "disposer_alive": alive,
             "disposer_joined": False,
+            "qt_application_alive": True,
         }
     )
     return rows
@@ -91,13 +92,64 @@ def test_candidate_disposition_uses_pid_creation_time_and_observation_phase(
     ]
     final = [*baseline, candidate] if final_candidate else baseline
 
-    result = summarize_matlab_candidates(baseline, snapshots, final, child_pid=4001)
+    result = summarize_matlab_candidates(baseline, snapshots, final, child_pid=4001, final_after_child_exit=True)
 
     assert len(result) == 1
     assert result[0]["PID"] == 5001
     assert result[0]["CreationDate"] == candidate["CreationDate"]
     assert result[0]["attribution"] == "candidate; direct parent match"
     assert result[0]["disposition"] == expected
+
+
+def test_final_only_matlab_candidate_is_included_with_normalized_identity() -> None:
+    baseline = [
+        {"Name": "MATLAB.exe", "PID": 22312, "CreationDate": "2026-10-09T12:50:57.476Z"},
+        {"Name": "MATLAB.exe", "PID": 22313, "CreationDate": "2026-10-10T08:12:00.000Z"},
+    ]
+    final_candidate = {
+        "Name": "MATLAB.exe",
+        "PID": 5002,
+        "ParentPID": 4001,
+        "CreationDate": "2026-10-11T17:00:00.000Z",
+    }
+
+    result = summarize_matlab_candidates(
+        baseline,
+        [{"phase": "post_exit", "utc": "t1", "processes": baseline}],
+        [*baseline, final_candidate],
+        child_pid=4001,
+        final_after_child_exit=True,
+    )
+
+    assert len(result) == 1
+    assert result[0]["PID"] == 5002
+    assert result[0]["identity_verified"] is True
+    assert result[0]["observed_phases"] == ["final"]
+    assert result[0]["disposition"] == "survived_child_exit"
+    assert result[0]["present_in_final_inventory"] is True
+
+
+def test_normal_exit_observation_keeps_qt_application_alive_through_atexit(tmp_path: Path) -> None:
+    events = JsonlEventWriter(tmp_path / "qt-lifetime.jsonl")
+    started = threading.Event()
+    completed = threading.Event()
+
+    class FakeApplication:
+        pass
+
+    state = {"application": FakeApplication()}
+    errors = record_normal_interpreter_exit(
+        events,
+        cancel_started=started,
+        cancel_completed=completed,
+        worker=None,
+        application=state["application"],
+    )
+
+    parsed = read_jsonl(tmp_path / "qt-lifetime.jsonl")
+    assert errors == ()
+    assert parsed.rows[-1]["event"] == "python_interpreter_atexit"
+    assert parsed.rows[-1]["qt_application_alive"] is True
 
 
 def test_missing_and_corrupt_evidence_fail_scenario_validation(tmp_path: Path) -> None:
@@ -142,6 +194,7 @@ def test_fake_future_cancellation_can_finish_before_exit_snapshot(tmp_path: Path
         worker=FinishedDisposer(),
         cancel_result=True,
         cancel_duration_ns=10,
+        application=object(),
     )
     assert errors == ()
     parsed = read_jsonl(tmp_path / "child.jsonl")
@@ -153,6 +206,7 @@ def test_fake_future_cancellation_can_finish_before_exit_snapshot(tmp_path: Path
     )
     assert parsed.rows[-1]["cancel_completed"] is True
     assert parsed.rows[-1]["disposer_joined"] is False
+    assert parsed.rows[-1]["qt_application_alive"] is True
 
 
 def test_fresh_python_exit_does_not_wait_for_blocked_daemon_disposer(tmp_path: Path) -> None:
@@ -183,7 +237,7 @@ worker.thread = threading.Thread(target=future.cancel, daemon=True)
 worker.thread.start()
 if not started.wait(3): raise RuntimeError('fake cancellation did not start')
 atexit.register(record_normal_interpreter_exit, writer, cancel_started=started,
-                cancel_completed=completed, worker=worker)
+                cancel_completed=completed, worker=worker, application=object())
 print('RETURNING_NATURALLY', flush=True)
 """
     stdout_path = tmp_path / "child.stdout.txt"
@@ -252,7 +306,7 @@ if not started.wait(3): raise RuntimeError('fake cancellation did not start')
 events.emit('disposal_thread_observed', worker_exists=True, daemon=True)
 events.emit('future_cancel_entered')
 atexit.register(record_normal_interpreter_exit, events, cancel_started=started,
-                cancel_completed=completed, worker=worker)
+                cancel_completed=completed, worker=worker, application=object())
 print('CHILD_RETURNING', flush=True)
 """
 
@@ -283,9 +337,106 @@ print('CHILD_RETURNING', flush=True)
     assert at_exit["cancel_completed"] is False
     assert at_exit["disposer_alive"] is True
     assert at_exit["disposer_joined"] is False
+    assert at_exit["qt_application_alive"] is True
     supervisor_rows = read_jsonl(output / "supervisor.jsonl").rows
     assert any(row["event"] == "child_exited" and row["return_code"] == 0 for row in supervisor_rows)
     assert "Diagnostic result: `PASS`" in (output / "REPORT.md").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("candidate_after_exit", "candidate_final", "expected_code", "expected_result", "expected_disposition"),
+    [
+        (True, True, 2, "OPERATOR_REVIEW_REQUIRED", "SURVIVED_OBSERVATION_WINDOW"),
+        (False, True, 2, "OPERATOR_REVIEW_REQUIRED", "SURVIVED_OBSERVATION_WINDOW"),
+        (True, False, 0, "PASS", "DISAPPEARED_DURING_OBSERVATION"),
+    ],
+)
+def test_supervisor_separates_valid_evidence_from_candidate_cleanup(
+    tmp_path: Path,
+    candidate_after_exit: bool,
+    candidate_final: bool,
+    expected_code: int,
+    expected_result: str,
+    expected_disposition: str,
+) -> None:
+    from tools.matlab_lifecycle.normal_exit_supervisor import REPOSITORY, run_normal_exit_diagnostic
+
+    class FakeClock:
+        now = 0.0
+
+        def monotonic(self) -> float:
+            return self.now
+
+        def wait(self, duration: float) -> None:
+            self.now += duration
+
+    class ExitedChild:
+        pid = 4001
+
+        def poll(self) -> int:
+            return 0
+
+    baseline = [
+        {"Name": "MATLAB.exe", "PID": 22312, "ParentPID": 1, "CreationDate": "2026-10-09T12:50:57.476Z"},
+        {"Name": "MATLAB.exe", "PID": 22313, "ParentPID": 1, "CreationDate": "2026-10-10T08:12:00.000Z"},
+    ]
+    candidate = {
+        "Name": "MATLAB.exe",
+        "PID": 5003,
+        "ParentPID": 4001,
+        "CreationDate": "2026-10-11T17:00:00.000Z",
+    }
+    snapshot_index = 0
+
+    def snapshot() -> list[dict[str, Any]]:
+        nonlocal snapshot_index
+        snapshot_index += 1
+        if snapshot_index <= 2:
+            return baseline
+        if snapshot_index in {3, 4} and candidate_after_exit:
+            return [*baseline, candidate]
+        if snapshot_index >= 5 and candidate_final:
+            return [*baseline, candidate]
+        return baseline
+
+    output = tmp_path / f"candidate-{expected_result}"
+
+    def launch(_command: list[str], *, cwd: Path, stdout_path: Path, stderr_path: Path) -> ExitedChild:
+        del cwd
+        stdout_path.touch()
+        stderr_path.touch()
+        child_rows = _normal_exit_rows(completed=False, alive=True)
+        (output / "child.jsonl").write_text("".join(json.dumps(row) + "\n" for row in child_rows), encoding="utf-8")
+        return ExitedChild()
+
+    clock = FakeClock()
+    result = run_normal_exit_diagnostic(
+        output,
+        snapshot_fn=snapshot,
+        launch_fn=launch,
+        environment_fn=lambda _repo: {"python": "fake", "repository": {"branch": "test", "head": "test"}},
+        repository=REPOSITORY,
+        post_exit_observation_s=0.02,
+        interval_s=0.01,
+        monotonic=clock.monotonic,
+        wait=clock.wait,
+    )
+
+    report = (output / "REPORT.md").read_text(encoding="utf-8")
+    assert result == expected_code
+    assert f"Diagnostic result: `{expected_result}`" in report
+    assert "Evidence collection: `SUCCEEDED`" in report
+    assert "Python child exit: `NORMAL`" in report
+    assert f"MATLAB candidate disposition: `{expected_disposition}`" in report
+    assert "MATLAB process ownership: `UNCERTAIN`" in report
+    assert "Protected MATLAB processes preserved: `2/2`" in report
+    candidates = json.loads((output / "candidate_processes.json").read_text(encoding="utf-8"))
+    if candidate_final:
+        assert candidates[0]["present_in_final_inventory"] is True
+        assert candidates[0]["disposition"] == "survived_child_exit"
+    else:
+        assert candidates[0]["present_in_final_inventory"] is False
+        assert candidates[0]["disposition"] == "disappeared_during_post_exit_observation"
 
 
 def test_scenario_supervisor_deadline_reports_without_terminating_fake_child(tmp_path: Path) -> None:
