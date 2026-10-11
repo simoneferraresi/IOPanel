@@ -260,14 +260,20 @@ def _capture_io_one(
     return elapsed, rows
 
 
-
 def _capture_gui_one(
     root: Path, output: Path, *, points: list[int], detectors: list[int], qt_platform: str
 ) -> tuple[float, list[dict[str, Any]]]:
     """Invoke the real MainWindow and PlotWidget handlers with synthetic data."""
     args = [
-        sys.executable, "-m", "tools.benchmark_scan_gui", "--points", *map(str, points),
-        "--detectors", *map(str, detectors), "--output", str(output),
+        sys.executable,
+        "-m",
+        "tools.benchmark_scan_gui",
+        "--points",
+        *map(str, points),
+        "--detectors",
+        *map(str, detectors),
+        "--output",
+        str(output),
     ]
     env = os.environ.copy()
     env["QT_QPA_PLATFORM"] = qt_platform
