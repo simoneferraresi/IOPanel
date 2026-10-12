@@ -94,6 +94,62 @@ restoration, or cleanup failure. The diagnostic performs no CT400, laser,
 piezo, or NIC operations and does not alter normal application display
 behavior.
 
+Batch 2's simulated Windows Qt-offscreen captures (5 seconds each, instrumented
+with the timing and Python-allocation counters above) observed the following:
+
+| Simulated layout | Conversion fps per camera | Presentation calls per camera | Paint events per camera | Process CPU | Peak process RSS | Traced Python peak |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 × 640×480 | 49.0 | 49.1 | 152 | 1.78 s | 118.9 MiB | 2.58 MiB |
+| 2 × 640×480 | 51.2 | 51.2–51.3 | 154 per camera | 2.36 s total | 125.4 MiB | 4.78 MiB |
+| 1 × 1292×964 full frame | 38.0 | 38.4 | 114 | 2.94 s | 127.7 MiB | 9.73 MiB |
+| 2 × 1292×240 ROI-shaped frames | 51.8 | 51.9 per camera | 154 per camera | 2.16 s total | 125.2 MiB | 3.56 MiB |
+
+In these runs, median conversion duration including the detached QImage copy
+was 0.10–0.15 ms at 640×480, 0.42 ms at 1292×964, and 0.11 ms at 1292×240.
+Median GUI QPixmap presentation was 1.26 ms, 1.26 ms, 2.88 ms, and 1.25 ms
+respectively; delayed preview scaling plus FPS overlay was 0.87 ms, 0.87 ms,
+1.59 ms, and 0.92 ms. The diagnostic also measured 100 NumPy mono-array copies
+as an owned-buffer copy proxy. Median/p95/max was 0.026/0.026/0.031 ms for
+307,200 bytes at 640×480 and 0.353/0.456/0.761 ms for 1,245,488 bytes at
+1292×964. This isolates a normal memory-copy operation, not time inside the
+SDK frame callback; observed latency varies with scheduling and cache state.
+The 16 ms Qt heartbeat interval had median/p95/max delays of 16/16/32 ms for
+one 640×480 camera, 16/16–23.5/32 ms across two 640×480 panels, 16/31/32 ms for
+the full-frame case, and 16/16/32 ms for dual ROI-shaped frames. This timer proxy
+shows event-loop scheduling under each display load; it is not a hard realtime
+latency guarantee. No conversion or presentation coalescing occurred in these
+short offscreen runs, and paint event counts remain separate from source FPS.
+
+Per-run JSON is retained in `docs/performance-evidence/camera-display-*.json`;
+it includes all raw stage-duration and heartbeat samples, environment and
+cleanup results. These reports were recaptured after PR #175 on source
+`18f90ffa2f4777bbb2aa383f54f8fc7067af7a1a`.
+
+For a matched before/after view of PR #174's existing stylesheet change, the
+same diagnostic harness (commit above) was copied into the PR #174 parent
+`dba6c018ab04d4c9583a43c62f4e5166fe97c0e5` and run with the same machine,
+Qt-offscreen mode, frame sizes, simulator interval, and five-second duration.
+The raw pre-#174 reports are also retained beside the post-merge reports.
+
+| Layout | Conversion fps before → after | Median conversion ms before → after | Median preview scaling ms before → after | Qt heartbeat p95 before → after |
+| --- | ---: | ---: | ---: | ---: |
+| 1 × 640×480 | 49.0 → 49.0 | 0.153 → 0.145 | 0.857 → 0.866 | 23.5 → 16 ms |
+| 2 × 640×480 | 48.8 → 51.2 | 0.115–0.116 → 0.103 | 0.908–0.913 → 0.870–0.872 | 16 → 16–23.5 ms |
+| 1 × 1292×964 | 37.8 → 38.0 | 0.418 → 0.417 | 1.586 → 1.586 | 16 → 31 ms |
+| 2 × 1292×240 | 51.0–51.2 → 51.8 | 0.103–0.104 → 0.111–0.112 | 0.660–0.661 → 0.918–0.922 | 16 → 16 ms |
+
+The before/after differences are small and inconsistent across display stages;
+heartbeat tails also move in both directions. The comparison does not support
+another display optimization. It is a short offscreen simulation and does not
+establish physical Vimba performance.
+
+These rates include Python allocation tracing and offscreen Qt overhead. They
+are software-path characterization, not physical camera FPS claims. The two
+1292×240 simulated sources measure concurrent software display of ROI-shaped
+frames, not a camera feature/ROI transaction. Reports label the CPU number as
+process CPU and RSS as a process-wide high-water mark; per-camera acquisition,
+conversion, presentation, paint and heartbeat details remain in the JSON.
+
 ```powershell
 uv run python tools/camera_display_characterize.py --camera-id <CAMERA_ID> `
   --window-size 960x720 --duration 30 --output display-characterization.json
@@ -118,6 +174,43 @@ and one process CPU metric. ROI writes and maximum frame-rate queries are
 independent per camera. Exposure and gain are not modified, so Side may remain
 exposure-limited at a small ROI. Settings and restoration readbacks are reported
 independently per camera.
+
+### Driver-free simulated display runs
+
+For development without VmbPy, `tools/simulated_camera_display_characterize.py`
+uses the same `CameraPanel`, conversion worker, one-slot latest-frame mailboxes,
+QImage/QPixmap presentation, and QWidget paint path with `SimulatedCamera`.
+It supports one or two Mono8 sources and records acquired signals, conversion,
+presentation, paint and heartbeat timing, coalescing, process CPU/RSS, and Python
+traced allocations. Run it from a desktop/offscreen-capable Qt environment:
+
+```powershell
+python -m tools.simulated_camera_display_characterize --cameras 1 --duration 10 `
+  --width 640 --height 480 --output simulated-display-single.json
+
+python -m tools.simulated_camera_display_characterize --cameras 2 --duration 10 `
+  --width 640 --height 480 --output simulated-display-dual.json
+```
+
+The allocation/lifetime path is: the physical Vimba callback obtains an
+OpenCV view over the SDK frame, optionally creates a flipped image, then copies
+the pixels before returning the SDK frame to its queue. `new_frame` and the
+frame buffer refer to this owned array. `ImageConversionWorker` holds the latest
+array reference in a one-slot mailbox, creates a QImage view during conversion,
+then emits `q_img.copy()` so Qt owns pixels after the NumPy source is released.
+CameraPanel retains the latest QImage in another one-slot mailbox. On the GUI
+thread it creates a QPixmap from that image and keeps the original-resolution
+pixmap; delayed resize presentation creates an aspect-preserving scaled pixmap
+and paints the FPS overlay onto the scaled copy. Screenshot capture uses the
+original-resolution pixmap. The SDK buffer copy and detached QImage copy protect
+against reuse of their source buffers. A simulated run measures this software
+path only; it cannot establish physical acquisition rate or vendor ownership
+behavior.
+
+`tracemalloc` reports Python allocations only. It does not include OpenCV,
+NumPy, QImage/QPixmap, or Qt plugin native buffers. Process RSS includes those
+allocations and framework imports, but a process high-water mark is cumulative
+and should not be presented as an individual frame allocation.
 
 ## Exposure and gain
 
