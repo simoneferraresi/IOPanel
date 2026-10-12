@@ -62,7 +62,9 @@ def test_menu_order_and_action_placement(qtbot, monkeypatch, tmp_path):
     assert labels("Help") == ["&About"]
     assert not menus["Cameras"].actions()[0].isSeparator()
     assert not menus["Cameras"].actions()[-1].isSeparator()
-    calibration = next(action for action in menus["Instruments"].actions() if action.objectName() == "ct400EtaCalibrationAction")
+    calibration = next(
+        action for action in menus["Instruments"].actions() if action.objectName() == "ct400EtaCalibrationAction"
+    )
     assert calibration.text() == "CT400 ETA Calibration…"
     assert window.log_console_action.shortcut() == QKeySequence("F12")
     assert window.log_console_action.isCheckable()
