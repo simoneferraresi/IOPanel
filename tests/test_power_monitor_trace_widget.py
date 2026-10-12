@@ -499,7 +499,7 @@ def test_overwrite_decline_preflights_only_selected_conflicts_and_keeps_preferen
 
 
 def test_partial_mat_failure_keeps_csv_and_reports_save_issues(qtbot, tmp_path, monkeypatch):
-    import logic.power_monitor_export_worker as export_worker
+    import scipy.io as sio
 
     settings = _app_settings(tmp_path)
     widget = PowerMonitorTraceWidget(settings)
@@ -509,7 +509,7 @@ def test_partial_mat_failure_keeps_csv_and_reports_save_issues(qtbot, tmp_path, 
     _FakeExportDialog.next_request = _export_request(tmp_path, csv=True, mat=True)
     monkeypatch.setattr(plot_widgets, "PowerMonitorExportDialog", _FakeExportDialog)
     monkeypatch.setattr(
-        export_worker, "savemat", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("mat failed"))
+        sio, "savemat", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("mat failed"))
     )
     warnings = []
     monkeypatch.setattr(QMessageBox, "warning", lambda *_args: warnings.append(_args[1]))
