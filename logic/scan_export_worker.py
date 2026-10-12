@@ -14,7 +14,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-import scipy.io as sio
 from PySide6.QtCore import Signal, Slot
 
 from logic.scan_export import ScanExportPayload
@@ -58,7 +57,10 @@ def _write_staged_format(
                     os.fsync(stream.buffer.fileno())
                 # TextIOWrapper closes the underlying descriptor.
             elif name == "MAT":
-                sio.savemat(raw, payload.mat_data, do_compression=True)
+                # Only load SciPy when a MAT export is actually requested.
+                from scipy.io import savemat
+
+                savemat(raw, payload.mat_data, do_compression=True)
                 raw.flush()
                 os.fsync(raw.fileno())
             else:

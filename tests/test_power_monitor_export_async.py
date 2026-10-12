@@ -134,8 +134,6 @@ def test_new_power_monitor_target_race_does_not_overwrite(monkeypatch, tmp_path)
 
 
 def test_independent_power_monitor_formats_and_atomic_approved_overwrite(monkeypatch, tmp_path):
-    import logic.power_monitor_export_worker as worker_module
-
     target = tmp_path / "saved.csv"
     target.write_bytes(b"previous")
     mat_path = tmp_path / "saved.mat"
@@ -143,7 +141,10 @@ def test_independent_power_monitor_formats_and_atomic_approved_overwrite(monkeyp
     def fail_mat(*_args, **_kwargs):
         raise OSError("mat writer error")
 
-    monkeypatch.setattr(worker_module, "savemat", fail_mat)
+    # MAT serializer is now acquired on demand rather than at module import.
+    import scipy.io as sio
+
+    monkeypatch.setattr(sio, "savemat", fail_mat)
     worker = PowerMonitorExportWorker(_payload(), {"CSV": target, "MAT": mat_path}, frozenset({target}))
     results = []
     worker.outcome.connect(results.append)

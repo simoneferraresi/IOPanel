@@ -15,7 +15,6 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import Signal, Slot
-from scipy.io import savemat
 
 from logic.power_monitor_export import PowerMonitorExportPayload
 from logic.task_runner import BaseWorker
@@ -50,6 +49,9 @@ def _write_staged_power_monitor_format(
                     output.flush()
                     os.fsync(output.buffer.fileno())
             elif name == "MAT":
+                # The CSV path needs no SciPy: defer its first import to MAT export.
+                from scipy.io import savemat
+
                 savemat(raw, payload.mat_data, do_compression=True)
                 raw.flush()
                 os.fsync(raw.fileno())
