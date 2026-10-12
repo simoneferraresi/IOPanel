@@ -50,6 +50,7 @@ def test_menu_order_and_action_placement(qtbot, monkeypatch, tmp_path):
     window = _make_window(qtbot, monkeypatch, settings)
     menus = {action.text().replace("&", ""): action.menu() for action in window.menuBar().actions()}
     assert list(menus) == ["File", "View", "Instruments", "Cameras", "Help"]
+
     def labels(name):
         return [action.text() for action in menus[name].actions() if not action.isSeparator()]
 
