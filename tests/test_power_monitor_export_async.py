@@ -134,8 +134,6 @@ def test_new_power_monitor_target_race_does_not_overwrite(monkeypatch, tmp_path)
 
 
 def test_independent_power_monitor_formats_and_atomic_approved_overwrite(monkeypatch, tmp_path):
-    import logic.power_monitor_export_worker as worker_module
-
     target = tmp_path / "saved.csv"
     target.write_bytes(b"previous")
     mat_path = tmp_path / "saved.mat"
