@@ -99,19 +99,26 @@ with the timing and Python-allocation counters above) observed the following:
 
 | Simulated layout | Conversion fps per camera | Presentation calls per camera | Paint events per camera | Process CPU | Peak process RSS | Traced Python peak |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 × 640×480 | 49.4 | 49.7 | 159 | 1.47 s | 119.2 MiB | 2.57 MiB |
-| 2 × 640×480 | 47.4 | 47.5 | 137–138 | 4.19 s total | 124.3 MiB | 4.99 MiB |
-| 1 × 1292×964 full frame | 34.0 | 34.2 | 103 | 3.22 s | 127.5 MiB | 9.73 MiB |
-| 2 × 1292×240 ROI-shaped frames | 49.8 | 49.7 | 151 per camera | 2.91 s total | 125.5 MiB | 4.99 MiB |
+| 1 × 640×480 | 47.8 | 47.9 | 150 | 2.22 s | 119.1 MiB | 2.58 MiB |
+| 2 × 640×480 | 48.0–48.2 | 48.0–48.2 | 141–142 | 4.27 s total | 124.0 MiB | 4.99 MiB |
+| 1 × 1292×964 full frame | 37.6 | 37.8 | 116 | 2.67 s | 127.9 MiB | 9.73 MiB |
+| 2 × 1292×240 ROI-shaped frames | 47.8 | 47.8–48.1 | 144 per camera | 3.19 s total | 125.8 MiB | 4.50 MiB |
 
-In these runs, median conversion duration including the detached QImage copy was
-0.14 ms at 640×480, 0.54 ms at 1292×964, and 0.13 ms at 1292×240. Median GUI
-QPixmap presentation was 1.35 ms, 3.56 ms, and 1.10 ms respectively; delayed
-preview scaling plus FPS overlay was 1.16 ms, 2.02 ms, and 0.67 ms. The
-diagnostic also measured 100 NumPy mono-array copies as an owned-buffer copy
-proxy: for 307,200 bytes, the single-camera median/p95/max was 0.073/0.093/0.196
-ms; for 1,245,488 bytes, it was 0.392/0.571/1.012 ms. This isolates a normal
-memory-copy operation, not time inside the SDK frame callback.
+In these runs, median conversion duration including the detached QImage copy
+was 0.17–0.20 ms at 640×480, 0.42 ms at 1292×964, and 0.13 ms at 1292×240.
+Median GUI QPixmap presentation was 1.31 ms, 2.35 ms, 2.90 ms, and 1.08 ms
+respectively; delayed preview scaling plus FPS overlay was 0.89 ms, 1.81 ms,
+1.58 ms, and 0.82 ms. The diagnostic also measured 100 NumPy mono-array copies
+as an owned-buffer copy proxy. Median/p95/max was 0.047/0.050/0.478 ms for
+307,200 bytes at 640×480, and 0.354/0.434/0.723 ms for 1,245,488 bytes at
+1292×964. This isolates a normal memory-copy operation, not time inside the
+SDK frame callback; observed latency varies with scheduling and cache state.
+The 16 ms Qt heartbeat interval had median/p95/max delays of 16/16/32 ms for
+one 640×480 camera, 16/31/32 ms for two 640×480 cameras, 16/31/32 ms for the
+full-frame case, and 16/31/32 ms for dual ROI-shaped frames. This timer proxy
+shows event-loop scheduling under each display load; it is not a hard realtime
+latency guarantee. No conversion or presentation coalescing occurred in these
+short offscreen runs, and paint event counts remain separate from source FPS.
 
 Per-run JSON is retained in `docs/performance-evidence/camera-display-*.json`;
 it includes all raw stage-duration and heartbeat samples, environment and
