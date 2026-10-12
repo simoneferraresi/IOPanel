@@ -127,7 +127,7 @@ def test_scan_io_windows_offscreen_subprocess(tmp_path: Path):
     assert completed.returncode == 0, completed.stderr[-4000:]
     result = _load_report(target)
     assert len(result["runs"]) == 2
-    assert len(result["statistics"]) == 7
+    assert len(result["statistics"]) == 8
     assert {item["case"]["operation"] for item in result["statistics"]} == {
         "build_payload",
         "csv_export",

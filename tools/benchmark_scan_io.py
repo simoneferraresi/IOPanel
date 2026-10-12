@@ -169,10 +169,17 @@ def _characterize_case(
             return
         raise AssertionError("Malformed scan CSV was accepted")
 
+    def read_decode_csv() -> int:
+        # Isolate filesystem read plus UTF-8-sig decoding from CSV parsing.
+        # The fixture was just written in this subprocess, so this is a
+        # warm-cache local-temp-filesystem measurement, not cold-disk latency.
+        return len(csv_path.read_bytes().decode("utf-8-sig"))
+
     operations: tuple[tuple[str, Callable[[], object]], ...] = (
         ("build_payload", build),
         ("csv_export", export_csv),
         ("mat_export", export_mat),
+        ("csv_file_read_decode", read_decode_csv),
         ("csv_import", lambda: _verified_import(csv_path, measurement, comment)),
         ("mat_import", lambda: _verified_import(mat_path, measurement, comment)),
         ("prepare_malformed_csv", create_malformed_fixture),
@@ -189,6 +196,7 @@ def _characterize_case(
         artifact = {
             "csv_export": csv_path,
             "csv_import": csv_path,
+            "csv_file_read_decode": csv_path,
             "mat_export": mat_path,
             "mat_import": mat_path,
             "prepare_malformed_csv": malformed_csv_path,
