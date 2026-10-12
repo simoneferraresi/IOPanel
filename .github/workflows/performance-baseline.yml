@@ -13,6 +13,9 @@ on:
       - "tools/benchmark_scan_io.py"
       - "tools/benchmark_scan_gui.py"
       - "tools/benchmark_startup.py"
+      - "logic/scan_import.py"
+      - "logic/scan_export_worker.py"
+      - "logic/power_monitor_export_worker.py"
   push:
     branches: [main]
     paths:
