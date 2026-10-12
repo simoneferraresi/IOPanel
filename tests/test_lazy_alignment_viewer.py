@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from PySide6.QtCore import QSettings, Signal
+from PySide6.QtGui import QOffscreenSurface, QOpenGLContext
 from PySide6.QtWidgets import QLabel, QWidget
 
 from app_settings import AppSettings
@@ -216,7 +217,37 @@ def test_immediate_map_render_failure_retains_latest_snapshot_and_recovers(qtbot
     assert panel._pending_mapping is None
 
 
-def test_real_gl_render_requires_a_valid_context(qtbot):
+def _offscreen_gl_capability_error():
+    surface = QOffscreenSurface()
+    surface.create()
+    context = QOpenGLContext()
+    try:
+        if not surface.isValid():
+            return "Qt could not create an offscreen OpenGL surface"
+        if not context.create() or not context.isValid():
+            return "Qt could not create a valid OpenGL context"
+        if not context.makeCurrent(surface):
+            return "Qt could not make the OpenGL context current"
+
+        from OpenGL import GL
+        from OpenGL.error import GLError
+
+        try:
+            GL.glClearColor(0.0, 0.0, 0.0, 1.0)
+            GL.glFinish()
+        except GLError as exc:
+            return f"OpenGL context rejected a basic rendering operation: {exc}"
+        return None
+    finally:
+        context.doneCurrent()
+        surface.destroy()
+
+
+def test_real_gl_render_requires_a_usable_context(qtbot):
+    capability_error = _offscreen_gl_capability_error()
+    if capability_error:
+        pytest.skip(capability_error)
+
     from ui.plot_3d_widget import Plot3DWidget
 
     viewer = Plot3DWidget()
@@ -224,8 +255,7 @@ def test_real_gl_render_requires_a_valid_context(qtbot):
     viewer.resize(320, 240)
     viewer.show()
     qtbot.wait(100)
-    if not viewer.view.isValid():
-        pytest.skip("Qt did not provide a valid OpenGL context on this runner")
+    assert viewer.view.isValid()
 
     viewer.update_plot(np.array([0.0, 1.0]), np.array([0.0, 1.0]), np.array([[0.0, 1.0], [1.0, 3.0]]))
     qtbot.wait(100)

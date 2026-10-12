@@ -727,21 +727,29 @@ class AlignmentPanel(QWidget):
             np.array(z_power_grid, copy=True),
             title,
         )
-        self._pending_mapping = snapshot
-        plot = self._plot3d_widget
+        plot = getattr(self, "_plot3d_widget", None)
+        pending_supported = hasattr(self, "_pending_mapping")
+        if plot is None and pending_supported:
+            self._pending_mapping = snapshot
+        else:
+            plot = plot if plot is not None else self.plot3d_widget
+            if pending_supported:
+                self._pending_mapping = snapshot
         render_failed = False
         if plot is not None:
             try:
                 plot.update_plot(*snapshot[:3])
                 plot.title_label.setText(title)
-                self._pending_mapping = None
+                if pending_supported:
+                    self._pending_mapping = None
             except Exception as exc:
                 render_failed = True
                 logger.exception("Could not render the completed power map")
-                self._discard_plot3d_widget()
-                self._plot_placeholder.setText(
-                    f"Power map retained; 3D viewer unavailable: {exc}. Select Auto Alignment to retry."
-                )
+                if pending_supported:
+                    self._discard_plot3d_widget()
+                    self._plot_placeholder.setText(
+                        f"Power map retained; 3D viewer unavailable: {exc}. Select Auto Alignment to retry."
+                    )
         self.reset_buttons()
         self.status_label.setText("Status: Finishing laser cleanup…")
         self.map_progress.setVisible(False)
