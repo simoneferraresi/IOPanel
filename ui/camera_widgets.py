@@ -594,6 +594,13 @@ class CameraPanel(QFrame):
         self._view_mode_changed = False
         self._panel_closing = False
         self._camera_shutdown_prepared = False
+        self._pending_parameter_updates: dict[str, tuple[VimbaCam, float]] = {}
+        self._parameter_update_timer = QTimer(self)
+        self._parameter_update_timer.setSingleShot(True)
+        self._parameter_update_timer.setInterval(35)
+        self._parameter_update_timer.timeout.connect(self._flush_pending_parameter_updates)
+        if camera is not None:
+            camera.disconnected.connect(self._cancel_pending_parameter_updates)
         self._presentation_enabled = False
         self._display_lock = threading.Lock()
         self._latest_qimage: QImage | None = None
@@ -712,6 +719,8 @@ class CameraPanel(QFrame):
             return
 
         self.camera = camera
+        camera.disconnected.connect(self._cancel_pending_parameter_updates)
+        self._cancel_pending_parameter_updates()
         self.status_changed.emit()
         self.setObjectName(f"cameraPanel_{camera.identifier}")
 
@@ -766,6 +775,7 @@ class CameraPanel(QFrame):
         self.recovery_requested.emit(self.camera.identifier)
 
     def recovery_started(self):
+        self._cancel_pending_parameter_updates()
         self._recovery_active = True
         self._recovery_failed = False
         self.watchdog_timer.stop()
@@ -949,6 +959,7 @@ class CameraPanel(QFrame):
         height = self._selected_view_mode_height()
         if height is None or not self.view_mode_apply.isEnabled():
             return
+        self._cancel_pending_parameter_updates()
         if self._view_mode_baseline is None:
             capability = self.camera.get_frame_rate_capability()
             feature = capability.get("feature") if isinstance(capability, dict) else None
@@ -1097,6 +1108,7 @@ class CameraPanel(QFrame):
             decimals=0,
         )
         self.exposure_control.valueChanged.connect(lambda val: self._handle_parameter_changed("exposure", val))
+        self.exposure_control.slider.sliderReleased.connect(self._flush_pending_parameter_updates)
         self.exposure_btn = QPushButton("Auto")
         self.exposure_btn.setToolTip("Run single-shot auto exposure")
         self.exposure_btn.setMinimumWidth(56)
@@ -1130,6 +1142,7 @@ class CameraPanel(QFrame):
             decimals=2,
         )
         self.gain_control.valueChanged.connect(lambda val: self._handle_parameter_changed("gain", val))
+        self.gain_control.slider.sliderReleased.connect(self._flush_pending_parameter_updates)
         self.gain_control.setEnabled(
             bool(self.camera and self.camera.get_feature_range("gain") and self._gain_is_writable())
         )
@@ -1161,6 +1174,7 @@ class CameraPanel(QFrame):
             decimals=2,
         )
         self.gamma_control.valueChanged.connect(lambda val: self._handle_parameter_changed("gamma", val))
+        self.gamma_control.slider.sliderReleased.connect(self._flush_pending_parameter_updates)
         gamma_action_space = QWidget()
         gamma_action_space.setFixedWidth(self.exposure_btn.sizeHint().width() + self.exposure_status.width() + 6)
         gamma_row = QHBoxLayout()
@@ -1191,29 +1205,67 @@ class CameraPanel(QFrame):
             logger.warning(f"Parameter '{name}' changed, but camera is not yet available.")
             return
 
+        control_widget = {
+            "gain": self.gain_control,
+            "exposure": self.exposure_control,
+            "gamma": self.gamma_control,
+        }.get(name)
+        if control_widget is None:
+            logger.warning(f"Unhandled parameter change: {name}")
+            return
+        if control_widget.slider.isSliderDown():
+            self._pending_parameter_updates[name] = (self.camera, value)
+            self._parameter_update_timer.start()
+            return
+        self._apply_parameter_change(name, value, self.camera)
+
+    @Slot()
+    def _flush_pending_parameter_updates(self):
+        updates = self._pending_parameter_updates
+        self._pending_parameter_updates = {}
+        self._parameter_update_timer.stop()
+        for name, (camera, value) in updates.items():
+            self._apply_parameter_change(name, value, camera)
+
+    @Slot()
+    def _cancel_pending_parameter_updates(self):
+        self._parameter_update_timer.stop()
+        self._pending_parameter_updates.clear()
+
+    def _apply_parameter_change(self, name: str, value: float, camera: VimbaCam):
+        if (
+            camera is not self.camera
+            or self._panel_closing
+            or self._recovery_active
+            or self._recovery_failed
+            or self._auto_op_active
+            or self._camera_mode_change_active
+        ):
+            return
+
         success = False
         control_widget = None
         reverted_value_getter = None
 
         match name:
             case "gamma":
-                success = self.camera.set_gamma(value)
+                success = camera.set_gamma(value)
                 control_widget = self.gamma_control
 
                 def reverted_value_getter():
-                    return self.camera.gamma
+                    return camera.gamma
             case "exposure":
-                success = self.camera.set_exposure(value)
+                success = camera.set_exposure(value)
                 control_widget = self.exposure_control
 
                 def reverted_value_getter():
-                    return self.camera.exposure_us
+                    return camera.exposure_us
             case "gain":
-                success = self.camera.set_gain(value)
+                success = camera.set_gain(value)
                 control_widget = self.gain_control
 
                 def reverted_value_getter():
-                    return self.camera.get_gain()
+                    return camera.get_gain()
             case _:
                 logger.warning(f"Unhandled parameter change: {name}")
                 return
@@ -1332,6 +1384,7 @@ class CameraPanel(QFrame):
         if not self.camera or self._recovery_active or self._recovery_failed or self._auto_op_active:
             logger.warning(f"Cannot start '{op_type}': camera is not yet available.")
             return
+        self._cancel_pending_parameter_updates()
 
         if op_type == OP_AUTO_EXPOSURE:
             if not self.exposure_btn.isEnabled():
@@ -1587,6 +1640,7 @@ class CameraPanel(QFrame):
             return
         self._camera_shutdown_prepared = True
         self._panel_closing = True
+        self._cancel_pending_parameter_updates()
         if self.camera and self._view_mode_changed and self._view_mode_baseline is not None:
             try:
                 self.camera.restore_view_mode_baseline(self._view_mode_baseline)
