@@ -19,6 +19,10 @@ class AppSettings:
     SCHEMA_VERSION = 1
     MAX_SPLITTER_SIZE = 1_000_000
     APPLICATION_ICON_IDS = frozenset({"optical_burst", "prism_spectrum"})
+    # Persist the selected tab by identity so future reordering does not alter
+    # the logical page restored from user preferences.
+    ACTIVE_TAB_IDS = ("power_monitor", "wavelength_scan", "auto_alignment")
+    LEGACY_TAB_IDS = ("wavelength_scan", "power_monitor", "auto_alignment")
 
     def __init__(self, backend: QSettings | None = None) -> None:
         self._settings = backend if backend is not None else QSettings()
@@ -79,11 +83,25 @@ class AppSettings:
         self._write("MainWindow/splitter_sizes", [int(size) for size in sizes])
 
     def active_tab(self, tab_count: int, fallback: int = 0) -> int:
-        value = self._as_int(self._read("MainWindow/active_tab", None))
-        return value if value is not None and 0 <= value < tab_count else fallback
+        tab_id = self._read("MainWindow/active_tab_id", None)
+        if tab_id is not None:
+            if isinstance(tab_id, str) and tab_id in self.ACTIVE_TAB_IDS:
+                index = self.ACTIVE_TAB_IDS.index(tab_id)
+                return index if index < tab_count else fallback
+            return fallback
+
+        legacy_index = self._as_int(self._read("MainWindow/active_tab", None))
+        if legacy_index is not None and 0 <= legacy_index < len(self.LEGACY_TAB_IDS):
+            # Settings written before the tab reorder used scan=0, monitor=1.
+            tab_id = self.LEGACY_TAB_IDS[legacy_index]
+            index = self.ACTIVE_TAB_IDS.index(tab_id)
+            return index if index < tab_count else fallback
+        return fallback
 
     def set_active_tab(self, index: int) -> None:
         self._write("MainWindow/active_tab", int(index))
+        if 0 <= index < len(self.ACTIVE_TAB_IDS):
+            self._write("MainWindow/active_tab_id", self.ACTIVE_TAB_IDS[index])
 
     def log_console_visible(self, fallback: bool = False) -> bool:
         value = self._read("MainWindow/log_console_visible", None)

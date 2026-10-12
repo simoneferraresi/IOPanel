@@ -133,7 +133,7 @@ def test_mainwindow_loads_simulation_config_and_displays_camera_frames(qtbot, mo
     assert isinstance(camera_instance, SimulatedCamera)
     assert "[SIMULATED]" in panel.title_label.text()
     menu_titles = [action.text().replace("&", "") for action in window.menuBar().actions()]
-    assert menu_titles == ["File", "Instruments", "Cameras", "Help", "View"]
+    assert menu_titles == ["File", "View", "Instruments", "Cameras", "Help"]
     assert not window.log_console_dock.isVisible()
     assert window.log_console_dock.isFloating()
     splitter_sizes = window.main_splitter.sizes()

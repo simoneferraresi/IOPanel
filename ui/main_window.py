@@ -1006,7 +1006,8 @@ class MainWindow(QMainWindow):
         self.plot_widget = PlotWidget(self.shared_scan_settings, settings=self.settings)
         first_tab_layout.addWidget(self.control_panel, stretch=0)
         first_tab_layout.addWidget(self.plot_widget, stretch=1)
-        self.tab_widget.addTab(self.first_tab, "Wavelength Scan")
+        # The scan widgets are constructed first for dependency compatibility,
+        # but monitoring is the first step of the usual laboratory workflow.
 
         self.second_tab = QWidget()
         second_tab_layout = QHBoxLayout(self.second_tab)
@@ -1021,6 +1022,7 @@ class MainWindow(QMainWindow):
         second_tab_layout.addWidget(self.histogram_control, stretch=0)
         second_tab_layout.addWidget(self.histogram_plot_container, stretch=1)
         self.tab_widget.addTab(self.second_tab, "Power Monitor")
+        self.tab_widget.addTab(self.first_tab, "Wavelength Scan")
 
         self.alignment_tab = AlignmentPanel(None, None, None, self)
         self.tab_widget.addTab(self.alignment_tab, "Auto Alignment")
@@ -1053,7 +1055,6 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.log_console_dock)
         self.log_console_dock.setFloating(True)
         self.log_console_dock.hide()
-        self.view_menu = self.menuBar().addMenu("&View")
         self.application_icon_action = QAction("Application Icon…", self)
         self.application_icon_action.setObjectName("applicationIconAction")
         self.application_icon_action.setStatusTip("Choose the icon shown by IOPanel while it is running")
@@ -1318,17 +1319,15 @@ class MainWindow(QMainWindow):
         self.add_scan_action.setStatusTip("Add a saved IOPanel schema-v2 scan as a separate plot overlay")
         self.add_scan_action.triggered.connect(self._add_scan_to_plot)
         file_menu.addAction(self.add_scan_action)
-        calibration_action = QAction("CT400 ETA Calibration…", self)
-        calibration_action.setObjectName("ct400EtaCalibrationAction")
-        calibration_action.setStatusTip("Preview and configure a supervised CT400 calibration campaign")
-        calibration_action.triggered.connect(self._show_ct400_calibration)
-        file_menu.addAction(calibration_action)
         file_menu.addSeparator()
         exit_action = QAction(QIcon(":/icons/exit.svg"), "E&xit", self)
         exit_action.setStatusTip("Exit the application")
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
 
+        # Create top-level menus in conventional desktop order. View actions
+        # are populated once the dock widgets exist later in _init_ui.
+        self.view_menu = menu_bar.addMenu("&View")
         self.instrument_menu = menu_bar.addMenu("&Instruments")
         # --- NEW: Refresh Action ---
         refresh_action = QAction(QIcon(":/icons/refresh.svg"), "Refresh Instruments", self)
@@ -1353,9 +1352,7 @@ class MainWindow(QMainWindow):
         discover_action = QAction("Discover Cameras...", self)
         discover_action.setStatusTip("List all available Vimba cameras and their IDs")
         discover_action.triggered.connect(self._show_camera_discovery_dialog)
-        self.cameras_menu.addSeparator()
         self.cameras_menu.addAction(discover_action)
-        self.cameras_menu.addSeparator()  # Add another separator for neatness
 
         self.piezo_connect_left_action = QAction("Connect Left Piezo", self)
         self.piezo_connect_left_action.triggered.connect(lambda: self.connect_piezo("left"))
@@ -1366,6 +1363,12 @@ class MainWindow(QMainWindow):
         self.instrument_menu.addAction(self.piezo_connect_right_action)
         self._update_piezo_action("left")
         self._update_piezo_action("right")
+        self.instrument_menu.addSeparator()
+        calibration_action = QAction("CT400 ETA Calibration…", self)
+        calibration_action.setObjectName("ct400EtaCalibrationAction")
+        calibration_action.setStatusTip("Preview and configure a supervised CT400 calibration campaign")
+        calibration_action.triggered.connect(self._show_ct400_calibration)
+        self.instrument_menu.addAction(calibration_action)
         self._update_scan_import_actions()
 
         help_menu = menu_bar.addMenu("&Help")
