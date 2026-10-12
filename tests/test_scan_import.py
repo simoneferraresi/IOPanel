@@ -201,6 +201,24 @@ def test_csv_rejects_truncated_rows_and_invalid_numbers(tmp_path):
     with pytest.raises(ScanImportError, match="invalid numeric"):
         load_scan(path)
 
+    path.write_text(payload.csv_header + "\n1500,1\n", encoding="utf-8")
+    with pytest.raises(ScanImportError, match="unexpected number of columns"):
+        load_scan(path)
+
+
+def test_csv_streaming_parser_ignores_blank_records_and_rejects_no_samples(tmp_path):
+    payload = build_scan_export_v2(_measurement())
+    path = tmp_path / "blank-records.csv"
+    data = "\n".join(",".join(map(str, row)) for row in payload.csv_data)
+    path.write_text("\ufeff" + payload.csv_header + "\n\n" + data + "\n, , , ,\n", encoding="utf-8")
+
+    scan = load_scan(path)
+    assert scan.wavelengths_nm.size == 3
+
+    path.write_text(payload.csv_header + "\n\n, , , ,\n", encoding="utf-8")
+    with pytest.raises(ScanImportError, match="no wavelength samples"):
+        load_scan(path)
+
 
 def test_csv_rejects_missing_metadata_and_wavelength_column(tmp_path):
     payload = build_scan_export_v2(_measurement())
