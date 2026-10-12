@@ -1481,7 +1481,9 @@ class CameraPanel(QFrame):
             return
 
         try:
-            self.video_label.setStyleSheet("background-color: transparent;")
+            active_style = "background-color: transparent;"
+            if self.video_label.styleSheet() != active_style:
+                self.video_label.setStyleSheet(active_style)
             pixmap = QPixmap.fromImage(q_img)  # This is a fast operation
 
             # Set aspect ratio on the first valid frame
