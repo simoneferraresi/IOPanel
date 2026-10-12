@@ -109,8 +109,6 @@ def test_new_target_appearing_during_save_is_never_overwritten(monkeypatch, tmp_
 
 
 def test_confirmed_overwrite_is_atomic_and_format_failures_independent(monkeypatch, tmp_path):
-    import logic.scan_export_worker as export_worker
-
     csv_path = tmp_path / "scan.csv"
     mat_path = tmp_path / "scan.mat"
     csv_path.write_bytes(b"before")
