@@ -833,3 +833,31 @@ def test_simulated_error_cleanup_stops_conversion_thread(qtbot):
     camera.close()
     panel.close()
     assert thread is not None and not thread.isRunning()
+
+
+def test_simulated_display_capture_reports_pipeline_and_memory(qtbot, tmp_path):
+    from tools.simulated_camera_display_characterize import characterize
+
+    report = characterize(
+        camera_count=2,
+        duration=0.25,
+        width=32,
+        height=24,
+        output=tmp_path / "simulated-display.json",
+    )
+
+    assert "measurement_error" not in report
+    assert len(report["cameras"]) == 2
+    assert all(camera["metrics"]["conversion"]["converted"] > 0 for camera in report["cameras"])
+    assert all(
+        camera["stage_durations"]["conversion_including_detached_qimage_copy"]["count"] > 0
+        for camera in report["cameras"]
+    )
+    assert all(camera["stage_durations"]["gui_pixmap_presentation"]["count"] > 0 for camera in report["cameras"])
+    assert all(
+        camera["stage_durations"]["preview_scaling_and_fps_overlay"]["count"] > 0 for camera in report["cameras"]
+    )
+    assert report["cameras"][0]["simulated_frame_payload_bytes"] == 32 * 24
+    assert report["process"]["owned_array_copy_probe"]["duration"]["count"] == 100
+    assert report["process"]["python_traced_peak_bytes_during_measurement"] > 0
+    assert report["cleanup"] == {"cameras_closed": True, "conversion_threads_stopped": True}
