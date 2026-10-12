@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 from hardware.alignment_worker import AlignmentSettings, AlignmentWorker, MappingSettings, SpiralSearchSettings
 from hardware.interfaces import AbstractCT400
 from hardware.piezo import PiezoController
-from ui.plot_widgets import ColorBarWidget, Plot3DWidget
+from ui.plot_widgets import ColorBarWidget
 from ui.typography import make_font, style_group_box_title
 
 logger = logging.getLogger("LabApp.AlignmentPanel")
@@ -254,13 +254,18 @@ class AlignmentPanel(QWidget):
         # --- Final Assembly ---
         main_layout.addWidget(controls_container)
 
-        # Create the new plot and color bar widgets
-        self.plot3d_widget = Plot3DWidget()
+        # Keep the plot area stable while the OpenGL renderer remains unloaded.
+        self._plot3d_widget = None
+        self._pending_mapping = None
+        self._plot_host = QWidget(self)
+        self._plot_host_layout = QVBoxLayout(self._plot_host)
+        self._plot_host_layout.setContentsMargins(0, 0, 0, 0)
+        self._plot_placeholder = QLabel("Select Auto Alignment to initialize the 3D viewer")
+        self._plot_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._plot_host_layout.addWidget(self._plot_placeholder)
         self.colorbar_widget = ColorBarWidget()
-
-        # Add them to the main layout
-        main_layout.addWidget(self.plot3d_widget, stretch=1)  # Plot takes most space
-        main_layout.addWidget(self.colorbar_widget)  # Color bar sits to the right
+        main_layout.addWidget(self._plot_host, stretch=1)
+        main_layout.addWidget(self.colorbar_widget)
 
         # --- Connect signals to slots ---
         self.align_button.clicked.connect(self.toggle_alignment)
@@ -269,7 +274,34 @@ class AlignmentPanel(QWidget):
         self.stop_operation_button.clicked.connect(self.request_stop)
 
         # --- NEW: Connect the plot's signal to the color bar's slot ---
-        self.plot3d_widget.colormap_updated.connect(self.colorbar_widget.update_colormap)
+
+    @property
+    def plot3d_widget(self):
+        """Create and retain the OpenGL plot on the GUI thread when first needed."""
+        if self._plot3d_widget is None:
+            from ui.plot_3d_widget import Plot3DWidget
+
+            widget = Plot3DWidget(self._plot_host)
+            self._plot_host_layout.removeWidget(self._plot_placeholder)
+            self._plot_placeholder.deleteLater()
+            self._plot_host_layout.addWidget(widget)
+            widget.colormap_updated.connect(self.colorbar_widget.update_colormap)
+            self._plot3d_widget = widget
+            if self._pending_mapping is not None:
+                x_coords, y_coords, z_grid, title = self._pending_mapping
+                widget.update_plot(x_coords, y_coords, z_grid)
+                widget.title_label.setText(title)
+                self._pending_mapping = None
+        return self._plot3d_widget
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        try:
+            _ = self.plot3d_widget
+        except Exception as exc:
+            logger.exception("Could not initialize the 3D power map")
+            if self._plot3d_widget is None:
+                self._plot_placeholder.setText(f"3D viewer unavailable: {exc}")
 
     @Slot()
     def toggle_spiral_alignment(self):
@@ -658,18 +690,24 @@ class AlignmentPanel(QWidget):
     def on_mapping_finished(self, x_coords, y_coords, z_power_grid):
         """Receives the completed map data, updates the plot, and resets the UI."""
         logger.info("Mapping finished. Updating 3D plot.")
-        self.plot3d_widget.update_plot(x_coords, y_coords, z_power_grid)
-
-        # --- MAPPING SUMMARY ---
         peak_power = z_power_grid.max()
         peak_indices = np.unravel_index(np.argmax(z_power_grid), z_power_grid.shape)
         peak_x = x_coords[peak_indices[0]]
         peak_y = y_coords[peak_indices[1]]
-
-        self.plot3d_widget.title_label.setText(
-            f"Power Map (Peak: {peak_power:.3f} mW at X={peak_x:.2f}, Y={peak_y:.2f} µm)"
+        title = f"Power Map (Peak: {peak_power:.3f} mW at X={peak_x:.2f}, Y={peak_y:.2f} ?m)"
+        snapshot = (
+            np.array(x_coords, copy=True),
+            np.array(y_coords, copy=True),
+            np.array(z_power_grid, copy=True),
+            title,
         )
-
+        plot = getattr(self, "_plot3d_widget", None)
+        if plot is None and hasattr(self, "_pending_mapping"):
+            self._pending_mapping = snapshot
+        else:
+            plot = plot if plot is not None else self.plot3d_widget
+            plot.update_plot(*snapshot[:3])
+            plot.title_label.setText(title)
         self.reset_buttons()
         self.status_label.setText("Status: Finishing laser cleanup…")
         self.map_progress.setVisible(False)
