@@ -19,6 +19,7 @@ import sys
 import tempfile
 import time
 from datetime import UTC, datetime
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -37,8 +38,45 @@ CASE_KEYS = (
     "window_system",
 )
 IO_CASE_KEYS = ("points_per_scan", "detector_count", "operation", "qt_platform", "window_system")
-BENCHMARK_CASE_KEYS = {"scan_overlays": CASE_KEYS, "scan_io": IO_CASE_KEYS, "scan_gui": IO_CASE_KEYS}
-PACKAGES = ("PySide6", "numpy", "pyqtgraph", "scipy")
+STARTUP_CASE_KEYS = (
+    "scenario",
+    "qt_platform",
+    "window_system",
+    "vmbpy_import_available",
+    "matlab_engine_import_available",
+)
+STARTUP_METRICS = (
+    "request_to_child_probe_s",
+    "request_to_app_import_complete_s",
+    "request_to_mainwindow_constructed_s",
+    "request_to_show_return_s",
+    "request_to_first_qt_callback_s",
+    "request_to_first_paint_event_s",
+    "request_to_post_paint_callback_s",
+    "request_to_deferred_init_callback_s",
+    "app_module_import_s",
+    "probe_post_app_import_s",
+    "qapplication_create_s",
+    "qt_configure_s",
+    "mainwindow_construct_s",
+    "show_call_s",
+    "entry_to_app_import_complete_s",
+    "entry_to_mainwindow_constructed_s",
+    "entry_to_show_return_s",
+    "entry_to_first_qt_callback_s",
+    "entry_to_first_paint_event_s",
+    "entry_to_post_paint_callback_s",
+    "entry_to_deferred_init_callback_s",
+    "event_loop_enter_to_first_qt_callback_s",
+    "event_loop_enter_to_post_paint_callback_s",
+)
+BENCHMARK_CASE_KEYS = {
+    "scan_overlays": CASE_KEYS,
+    "scan_io": IO_CASE_KEYS,
+    "scan_gui": IO_CASE_KEYS,
+    "startup": STARTUP_CASE_KEYS,
+}
+PACKAGES = ("PySide6", "numpy", "pyqtgraph", "scipy", "vmbpy", "matlabengine")
 
 
 def _git_commit(root: Path) -> str | None:
@@ -345,15 +383,158 @@ def capture_io(
     }
 
 
+def _validate_startup_case(row: dict[str, Any], *, subprocess_wall_s: float) -> None:
+    """Fail closed on incomplete, inconsistent or misleading startup measurements."""
+    if isinstance(subprocess_wall_s, bool) or not isinstance(subprocess_wall_s, (int, float)):
+        raise TypeError("Startup subprocess wall time must be numeric")
+    if not math.isfinite(subprocess_wall_s) or subprocess_wall_s <= 0:
+        raise ValueError("Startup subprocess wall time must be positive and finite")
+    for key in STARTUP_CASE_KEYS:
+        if key not in row:
+            raise ValueError(f"Startup case missing required context: {key}")
+    for flag in ("vmbpy_import_available", "matlab_engine_import_available"):
+        if not isinstance(row[flag], bool):
+            raise TypeError(f"Startup optional SDK availability must be boolean: {flag}")
+    for name in STARTUP_METRICS:
+        value = row.get(name)
+        if isinstance(value, bool) or not isinstance(value, (float, int)):
+            raise TypeError(f"Startup missing or nonnumeric timing: {name}")
+        if not math.isfinite(value) or value < 0:
+            raise ValueError(f"Startup nonfinite or negative timing: {name}")
+
+    def ordered(*keys: str) -> None:
+        for first, next_key in pairwise(keys):
+            if row[first] > row[next_key]:
+                raise ValueError(f"Startup timeline out of order: {first} > {next_key}")
+
+    ordered(
+        "request_to_child_probe_s",
+        "request_to_app_import_complete_s",
+        "request_to_mainwindow_constructed_s",
+        "request_to_show_return_s",
+        "request_to_first_qt_callback_s",
+    )
+    ordered(
+        "request_to_app_import_complete_s",
+        "request_to_mainwindow_constructed_s",
+        "request_to_first_paint_event_s",
+        "request_to_post_paint_callback_s",
+    )
+    ordered("request_to_show_return_s", "request_to_deferred_init_callback_s")
+    ordered("entry_to_first_paint_event_s", "entry_to_post_paint_callback_s")
+    ordered("entry_to_app_import_complete_s", "entry_to_mainwindow_constructed_s", "entry_to_show_return_s")
+    for name in STARTUP_METRICS:
+        if name.startswith("request_to_") and row[name] > subprocess_wall_s:
+            raise ValueError(f"Startup milestone exceeds subprocess wall time: {name}")
+    # Both clocks are perf_counter() and originate from the same system clock.
+    # Differences must agree with the parent-to-child probe offset.
+    for suffix in (
+        "app_import_complete",
+        "mainwindow_constructed",
+        "show_return",
+        "first_qt_callback",
+        "first_paint_event",
+        "post_paint_callback",
+        "deferred_init_callback",
+    ):
+        if abs(row[f"request_to_{suffix}_s"] - row[f"entry_to_{suffix}_s"] - row["request_to_child_probe_s"]) > 0.002:
+            raise ValueError(f"Startup parent/child clock correlation mismatch: {suffix}")
+    if abs(row["app_module_import_s"] - row["entry_to_app_import_complete_s"]) > 0.002:
+        raise ValueError("Startup production app import interval does not match the timeline")
+
+
+def _validate_startup_runs(report: dict[str, Any]) -> None:
+    if report.get("benchmark") != "startup":
+        return
+    runs = report.get("runs")
+    if not isinstance(runs, list) or not runs:
+        raise ValueError("Startup report requires nonempty raw repetitions")
+    for run in runs:
+        if not isinstance(run, dict) or not isinstance(run.get("cases"), list) or len(run["cases"]) != 1:
+            raise ValueError("Startup repetition requires exactly one case")
+        case = run["cases"][0]
+        if not isinstance(case, dict):
+            raise TypeError("Startup case must be a mapping")
+        wall_s = run.get("subprocess_wall_s")
+        if isinstance(wall_s, bool) or not isinstance(wall_s, (float, int)):
+            raise TypeError("Startup subprocess wall time must be numeric")
+        _validate_startup_case(case, subprocess_wall_s=float(wall_s))
+
+
+def _capture_startup_one(root: Path, output: Path, *, qt_platform: str) -> tuple[float, list[dict[str, Any]]]:
+    """Measure a fresh Python interpreter constructing a MainWindow without device startup."""
+    args = [sys.executable, "-m", "tools.benchmark_startup", "--output", str(output)]
+    env = os.environ.copy()
+    env["QT_QPA_PLATFORM"] = qt_platform
+    # Timestamp the launch request BEFORE Popen; Qt child returns milestones
+    # on the same perf_counter clock. This is not an OS process-creation timestamp.
+    started = time.perf_counter()
+    args.extend(("--parent-started", repr(started)))
+    result = subprocess.run(args, cwd=root, env=env, capture_output=True, text=True, check=False, timeout=45)
+    elapsed = time.perf_counter() - started
+    if result.returncode:
+        raise RuntimeError(f"Startup benchmark exited {result.returncode}: {result.stderr[-3500:]}")
+    rows = json.loads(output.read_text(encoding="utf-8"))
+    if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict):
+        raise ValueError("Startup benchmark did not return exactly one case")
+    if rows[0].get("qt_platform") != qt_platform:
+        raise ValueError("Qt platform differs from the explicitly requested platform")
+    if rows[0].get("scenario") != "main_window_deferred_hardware_suppressed":
+        raise ValueError("Unexpected startup benchmark scenario")
+    _validate_startup_case(rows[0], subprocess_wall_s=elapsed)
+    return elapsed, rows
+
+
+def capture_startup(root: Path, *, repetitions: int, warmups: int, qt_platform: str) -> dict[str, Any]:
+    """Capture per-process startup stages using the existing versioned report protocol."""
+    if repetitions < 1 or warmups < 0:
+        raise ValueError("Require >=1 repetition and >=0 warmups")
+    if qt_platform not in ("offscreen", "windows"):
+        raise ValueError("Only explicitly selected Qt offscreen or Windows platforms are supported")
+    runs = []
+    with tempfile.TemporaryDirectory(prefix="iopanel-startup-baseline-") as temp:
+        for index in range(warmups + repetitions):
+            elapsed, cases = _capture_startup_one(root, Path(temp) / f"run-{index}.json", qt_platform=qt_platform)
+            if len(cases) != 1:
+                raise ValueError("Startup benchmark must contain one case")
+            _validate_startup_case(cases[0], subprocess_wall_s=elapsed)
+            if index >= warmups:
+                runs.append({"repetition": index - warmups + 1, "subprocess_wall_s": elapsed, "cases": cases})
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "kind": REPORT_KIND,
+        "benchmark": "startup",
+        "recorded_utc": datetime.now(UTC).isoformat(),
+        "evidence_scope": (
+            "fresh Python child process, real MainWindow constructed with deferred hardware initialization "
+            "suppressed; Qt paint dispatch and queued callbacks, NOT physical hardware or a displayed frame"
+        ),
+        "environment": _environment(root, qt_platform),
+        "configuration": {
+            "repetitions": repetitions,
+            "warmup_subprocesses": warmups,
+            "scenario": "main_window_deferred_hardware_suppressed",
+            "cameras": "disabled",
+            "ct400_backend": "simulation",
+        },
+        "runs": runs,
+        "statistics": summarize_runs(runs, case_keys=STARTUP_CASE_KEYS),
+    }
+
+
 def _load_report(path: Path) -> dict[str, Any]:
     report = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(report, dict) or report.get("kind") != REPORT_KIND or report.get("schema_version") != 1:
         raise ValueError(f"Unsupported performance report: {path}")
     if not isinstance(report.get("runs"), list):
         raise TypeError("Report has no raw runs")
-    case_keys = BENCHMARK_CASE_KEYS.get(report.get("benchmark"))
+    benchmark = report.get("benchmark")
+    if not isinstance(benchmark, str):
+        raise TypeError("Missing performance benchmark kind")
+    case_keys = BENCHMARK_CASE_KEYS.get(benchmark)
     if case_keys is None:
         raise ValueError("Unknown performance benchmark")
+    _validate_startup_runs(report)
     if report.get("statistics") != summarize_runs(report["runs"], case_keys=case_keys):
         raise ValueError("Report statistics do not match preserved raw runs")
     return report
@@ -370,6 +551,8 @@ def compare_reports(
         "configuration"
     ):
         raise ValueError("Benchmark and configuration must match exactly")
+    _validate_startup_runs(base)
+    _validate_startup_runs(candidate)
     # Git commit is intentionally excluded: comparing revisions is the purpose.
     before_env = {k: v for k, v in base["environment"].items() if k != "commit"}
     after_env = {k: v for k, v in candidate["environment"].items() if k != "commit"}
@@ -447,6 +630,11 @@ def main(argv: list[str] | None = None) -> None:
     gui_run.add_argument("--repetitions", type=int, default=3)
     gui_run.add_argument("--warmups", type=int, default=1)
     gui_run.add_argument("--qt-platform", choices=("offscreen", "windows"), default="offscreen")
+    startup_run = commands.add_parser("capture-startup", help="capture fresh-process Qt MainWindow startup")
+    startup_run.add_argument("--output", type=Path, required=True)
+    startup_run.add_argument("--repetitions", type=int, default=3)
+    startup_run.add_argument("--warmups", type=int, default=0)
+    startup_run.add_argument("--qt-platform", choices=("offscreen", "windows"), default="offscreen")
     cmp = commands.add_parser("compare", help="compare two versioned JSON baselines")
     cmp.add_argument("baseline", type=Path)
     cmp.add_argument("candidate", type=Path)
@@ -480,6 +668,11 @@ def main(argv: list[str] | None = None) -> None:
         )
         _write_new(args.output, report)
         print(f"Wrote {len(report['statistics'])} I/O cases x {args.repetitions} repetitions to {args.output}")
+    elif args.command == "capture-startup":
+        root = Path(__file__).resolve().parents[1]
+        report = capture_startup(root, repetitions=args.repetitions, warmups=args.warmups, qt_platform=args.qt_platform)
+        _write_new(args.output, report)
+        print(f"Wrote {len(report['statistics'])} startup cases x {args.repetitions} repetitions to {args.output}")
     else:
         result = compare_reports(
             _load_report(args.baseline),
@@ -505,6 +698,7 @@ def main(argv: list[str] | None = None) -> None:
                         "qt_pending_callback_delay_s",
                         "peak_working_set_mb",
                     )
+                    or key.endswith("_s")
                     or "repaint" in key
                     or "range" in key
                 ):

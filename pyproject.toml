@@ -95,6 +95,8 @@ include = [
     "ui/control_panel.py",
     "ui/log_console.py",
     "tools/check_environment.py",
+    "tools/benchmark_startup.py",
+    "tools/performance_baseline.py",
 ]
 pythonVersion = "3.12"
 pythonPlatform = "Windows"

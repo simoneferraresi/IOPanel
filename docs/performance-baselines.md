@@ -123,3 +123,94 @@ Each selected format is staged as `.iopanel-monitor-*.tmp` in its destination di
 The Power Monitor trace widget prevents a second save while a worker is pending, Qt-parents the QThread and retains TaskRunner ownership until the QThread `destroyed` event, and defers a direct widget close or MainWindow shutdown until worker cleanup. A new monitor recording does not change the immutable save payload; it stays selected if an earlier save finishes. All user-facing result dialogs remain on the GUI thread. The monitor's close-trace button still **hides** the trace rather than stopping acquisition.
 
 These changes do **not** modify the scan schema-v2 exporter, MATLAB FIG lifecycle or CT400 recording/acquisition controls. Native-lifetime issues remain under investigation in #167, so Windows CI tests include blocked workers, repeated-save guards, native QThread ownership/deferred deletion, shutdown, staged overwrite races and file-failure checks. Matched native desktop Power Monitor responsiveness statistics are still a separate manual characterization; Github Actions latency alone is not physical lab-PC evidence.
+
+## First-responsive MainWindow startup baseline (Issue #152, measurement-only)
+
+This diagnostic measures **the real UI's startup without executing any
+instrument initialization**. A parent process timestamps immediately before
+requesting `subprocess.run`; every repetition starts a fresh Python child.
+The child first imports `app` in production's module-import order (so the
+Qt/MainWindow/optional-adapter imports are part of one `app_module_import_s`
+interval), constructs QApplication and the real MainWindow, calls
+`window.show()`, and records the first queued Qt callback, MainWindow Paint
+event **dispatch**, callback queued by that paint event, and the 100-ms
+deferred-init callback. The deferred callback is *intercepted* before window
+construction: it only records a timestamp and **does not** initialize CT400,
+piezo, cameras, VmbSystem or MATLAB Engine. Additional device initialization
+entry points raise if unexpectedly invoked. The normal MainWindow close/cleanup
+path executes.
+
+### Reproduce (locked Python 3.12 / Windows)
+
+```powershell
+uv sync --locked --extra test --extra typecheck --extra lint
+uv run --no-sync python -m tools.performance_baseline capture-startup --qt-platform offscreen --repetitions 5 --warmups 0 --output startup-main.json
+# After checking out a separately reviewed candidate revision on the same machine/session:
+uv run --no-sync python -m tools.performance_baseline capture-startup --qt-platform offscreen --repetitions 5 --warmups 0 --output startup-candidate.json
+uv run --no-sync python -m tools.performance_baseline compare startup-main.json startup-candidate.json --output startup-comparison.json
+```
+
+The informational Windows
+[`performance-baseline.yml`](../.github/workflows/performance-baseline.yml)
+job `startup` runs **five** offscreen child subprocesses (no warmups) and
+archives `startup-offscreen-<commit>.json` for 30 days. It does not gate CI on
+wall-clock performance. Read the report's commit/lock/package/platform data,
+raw runs and summaries before comparing two commits. To assess actual native
+Windows widget event dispatch in an authorized interactive desktop session,
+use `--qt-platform windows` for **both** reports; never treat Qt `offscreen`
+and native GUI measurements as interchangeable.
+
+### Timing contract and caveats
+
+- `request_to_child_probe_s` is elapsed from the **parent-side call/request
+  timestamp before Popen** to the child's first recorded statement inside
+  `characterize`; it includes OS process creation, interpreter bootstrap,
+  the benchmark module's imports and its CLI parsing. It is **not** a kernel
+  process-created timestamp. Parent/child `perf_counter()` readings are
+  comparable on the supported CPython 3.12 Windows runner; the tool checks
+  their numeric agreement and event chronology.
+- `request_to_app_import_complete_s`, `request_to_mainwindow_constructed_s`,
+  `request_to_show_return_s`, `request_to_first_qt_callback_s`,
+  `request_to_first_paint_event_s`, `request_to_post_paint_callback_s`,
+  `request_to_deferred_init_callback_s` are elapsed since that same parent
+  request. These represent pre-user-I/O **Qt-event milestones**, not actual
+  input-response measurements.
+- `app_module_import_s` measures `import app` after the probe's first
+  statement. Its internal dependency import order follows production
+  `app.py`; separately labelled `probe_post_app_import_s` measures
+  benchmark-only imports after app import. Together with
+  `qapplication_create_s`, `qt_configure_s`, `mainwindow_construct_s`,
+  `show_call_s` these isolate high-level critical-path stages. Import
+  overhead incurred by the probe **before** the first child statement is
+  included in parent-request measurements but cannot be attributed to
+  individual application imports; use `-X importtime` separately if needed.
+- `entry_to_*_s` are from the child's first statement; the
+  `event_loop_enter_to_*_s` timings measure queued Qt callbacks after entering
+  `app.exec()`. The first MainWindow Paint event is observed **before** its
+  normal Qt handler; a callback queued from the event filter does *not*
+  establish that every child widget finished painting or that a frame reached
+  the display compositor.
+- `subprocess_wall_s` is the separate parent's wall time through child
+  teardown. Each `request_to_*` milestone must precede it. A 12-second Qt
+  watchdog, 45-second parent subprocess timeout, explicit required-metric
+  schema and strict chronological validation reject incomplete/corrupt cases.
+  No missing timings are silently dropped by metric intersection.
+- Optional dependency **versions** for `vmbpy` and `matlabengine` are
+  captured in the report environment, and their **actual import availability**
+  is recorded as case context. Importing bindings can load SDK libraries, but
+  no device enumeration, native CT400/piezo DLL instantiation, Vimba system
+  entry, MATLAB session startup or `schedule_matlab_prewarm` is authorized.
+
+### Measurement scope
+
+Every fresh child has a fresh Python module cache but **not necessarily** a
+cold OS filesystem/DLL/antivirus/font cache. `--warmups N` runs N additional
+fresh processes before recording; it is not a reboot or controlled cold cache
+reset. Record machine/session conditions for meaningful cold-vs-warmed claims,
+and do not infer stable p95 tails from five samples. Offscreen Qt excludes RDP,
+GPU/window-compositor latency. This benchmark constructs the actual
+MainWindow with isolated QSettings, an explicit simulated CT400 backend and
+zero cameras. It **does not** execute production INI loading, logging setup,
+camera discovery, deferred instrument work, MATLAB prewarm, packaged EXE
+bootstrap or physically qualify any hardware. No app startup or Python
+lazy-import optimization is implemented by this PR.
