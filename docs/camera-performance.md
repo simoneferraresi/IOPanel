@@ -125,6 +125,24 @@ it includes all raw stage-duration and heartbeat samples, environment and
 cleanup results. These reports were recaptured after PR #175 on source
 `18f90ffa2f4777bbb2aa383f54f8fc7067af7a1a`.
 
+For a matched before/after view of PR #174's existing stylesheet change, the
+same diagnostic harness (commit above) was copied into the PR #174 parent
+`dba6c018ab04d4c9583a43c62f4e5166fe97c0e5` and run with the same machine,
+Qt-offscreen mode, frame sizes, simulator interval, and five-second duration.
+The raw pre-#174 reports are also retained beside the post-merge reports.
+
+| Layout | Conversion fps before → after | Median conversion ms before → after | Median preview scaling ms before → after | Qt heartbeat p95 before → after |
+| --- | ---: | ---: | ---: | ---: |
+| 1 × 640×480 | 49.0 → 49.0 | 0.153 → 0.145 | 0.857 → 0.866 | 23.5 → 16 ms |
+| 2 × 640×480 | 48.8 → 51.2 | 0.115–0.116 → 0.103 | 0.908–0.913 → 0.870–0.872 | 16 → 16–23.5 ms |
+| 1 × 1292×964 | 37.8 → 38.0 | 0.418 → 0.417 | 1.586 → 1.586 | 16 → 31 ms |
+| 2 × 1292×240 | 51.0–51.2 → 51.8 | 0.103–0.104 → 0.111–0.112 | 0.660–0.661 → 0.918–0.922 | 16 → 16 ms |
+
+The before/after differences are small and inconsistent across display stages;
+heartbeat tails also move in both directions. The comparison does not support
+another display optimization. It is a short offscreen simulation and does not
+establish physical Vimba performance.
+
 These rates include Python allocation tracing and offscreen Qt overhead. They
 are software-path characterization, not physical camera FPS claims. The two
 1292×240 simulated sources measure concurrent software display of ROI-shaped
