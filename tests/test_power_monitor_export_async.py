@@ -143,7 +143,10 @@ def test_independent_power_monitor_formats_and_atomic_approved_overwrite(monkeyp
     def fail_mat(*_args, **_kwargs):
         raise OSError("mat writer error")
 
-    monkeypatch.setattr(worker_module, "savemat", fail_mat)
+    # MAT serializer is now acquired on demand rather than at module import.
+    import scipy.io as sio
+
+    monkeypatch.setattr(sio, "savemat", fail_mat)
     worker = PowerMonitorExportWorker(_payload(), {"CSV": target, "MAT": mat_path}, frozenset({target}))
     results = []
     worker.outcome.connect(results.append)
