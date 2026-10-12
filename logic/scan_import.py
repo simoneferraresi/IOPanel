@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from scipy.io import loadmat
 
 from hardware.ct400_types import CT400ScanResultKind, Detector, LaserInput
 
@@ -237,6 +236,9 @@ def _mat_string(value: Any, name: str) -> str:
 
 
 def _load_mat(path: Path) -> dict[str, Any]:
+    # MAT files are optional: avoid importing SciPy on every application launch.
+    from scipy.io import loadmat
+
     raw: dict[str, Any] = loadmat(path, squeeze_me=False, chars_as_strings=True)
     required = {
         "schema_version",
