@@ -132,6 +132,7 @@ def test_scan_io_windows_offscreen_subprocess(tmp_path: Path):
         "build_payload",
         "csv_export",
         "mat_export",
+        "csv_file_read_decode",
         "csv_import",
         "mat_import",
         "prepare_malformed_csv",
