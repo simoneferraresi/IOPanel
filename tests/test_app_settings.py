@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 from PySide6.QtCore import QByteArray, QSettings
 
 from app_settings import AppSettings
@@ -181,3 +182,33 @@ def test_camera_preferences_are_keyed_by_identifier(tmp_path):
     assert settings.camera_controls_visible("serial-A") is True
     assert settings.camera_controls_visible("serial-B") is False
     assert settings.camera_controls_visible("new-camera") is False
+
+
+@pytest.mark.parametrize(("legacy_index", "new_index"), [(0, 1), (1, 0), (2, 2)])
+def test_legacy_active_tab_indices_preserve_logical_selection(tmp_path, legacy_index, new_index):
+    settings = make_settings(tmp_path / "legacy-tab.ini")
+    settings._settings.setValue("MainWindow/active_tab", legacy_index)
+    assert settings.active_tab(3) == new_index
+
+    # The new semantic key prevents old indices from being remapped repeatedly.
+    settings.set_active_tab(new_index)
+    settings.sync()
+    reloaded = AppSettings(QSettings(str(tmp_path / "legacy-tab.ini"), QSettings.Format.IniFormat))
+    assert reloaded.active_tab(3) == new_index
+    assert reloaded._settings.value("MainWindow/active_tab_id") == AppSettings.ACTIVE_TAB_IDS[new_index]
+
+
+def test_invalid_active_tab_identity_falls_back_without_legacy_reinterpretation(tmp_path):
+    settings = make_settings(tmp_path / "invalid-tab-id.ini")
+    settings._settings.setValue("MainWindow/active_tab", 0)
+    settings._settings.setValue("MainWindow/active_tab_id", "unrecognized_page")
+    assert settings.active_tab(3, fallback=2) == 2
+    assert settings.active_tab(3) == 0
+
+
+def test_new_tab_setting_prefers_semantic_identity_over_legacy_index(tmp_path):
+    settings = make_settings(tmp_path / "semantic-tab.ini")
+    settings.set_active_tab(1)
+    settings._settings.setValue("MainWindow/active_tab", 0)
+    assert settings.active_tab(3) == 1
+    assert settings._settings.value("MainWindow/active_tab_id") == "wavelength_scan"
