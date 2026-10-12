@@ -8,22 +8,22 @@ from __future__ import annotations
 
 import argparse
 import ctypes
-import io
 import json
 import sys
 import tempfile
 import time
+import tracemalloc
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
 from PySide6 import QtCore, QtWidgets
-from scipy.io import savemat
 
 from hardware.ct400_types import CT400ScanResultKind, Detector, LaserInput
 from logic.scan_export import build_scan_export_v2
-from logic.scan_import import load_scan
+from logic.scan_export_worker import _write_staged_format
+from logic.scan_import import ScanImportError, load_scan
 from logic.scan_measurement import ScanAcquisitionSettings, ScanMeasurement
 
 
@@ -61,9 +61,15 @@ def _windows_memory() -> dict[str, float]:
     }
 
 
-def _synthetic_scan(points: int, detectors: tuple[Detector, ...]) -> ScanMeasurement:
+def _synthetic_scan(
+    points: int, detectors: tuple[Detector, ...], *, include_nonfinite: bool = False
+) -> ScanMeasurement:
     wavelengths = np.linspace(1520.0, 1580.0, points, dtype=np.float64)
     values = np.vstack([-20.0 + index + np.sin(wavelengths * 0.123 + index) for index in range(len(detectors))])
+    if include_nonfinite:
+        # Include representative nonfinite detector readings; the schema preserves them.
+        values[0, points // 3] = np.nan
+        values[-1, 2 * points // 3] = np.inf
     settings = ScanAcquisitionSettings(1520.0, 1580.0, 1, "5", "1", "mW", 1.0, LaserInput.LI_1, detectors)
     return ScanMeasurement(
         settings,
@@ -90,7 +96,12 @@ def _timed_on_qt_thread[T](app: QtWidgets.QApplication, operation: Callable[[], 
     QtCore.QTimer.singleShot(0, lambda: callbacks.append(time.perf_counter()))
     started = time.perf_counter()
     cpu_started = time.process_time()
-    result = operation()
+    tracemalloc.start()
+    try:
+        result = operation()
+        traced_current_bytes, traced_peak_bytes = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
     elapsed = time.perf_counter() - started
     cpu = time.process_time() - cpu_started
     deadline = time.perf_counter() + 3.0
@@ -102,62 +113,89 @@ def _timed_on_qt_thread[T](app: QtWidgets.QApplication, operation: Callable[[], 
         "wall_s": elapsed,
         "cpu_s": cpu,
         "qt_pending_callback_delay_s": callbacks[0] - started,
+        "python_traced_current_bytes_after_operation": traced_current_bytes,
+        "python_traced_peak_bytes_during_operation": traced_peak_bytes,
+        "python_traced_memory_scope": "Python allocations tracked during operation; excludes native NumPy/SciPy/Qt allocations",
         **_windows_memory(),
     }
 
 
-def _verified_import(path: Path, expected: ScanMeasurement) -> None:
+def _verified_import(path: Path, expected: ScanMeasurement, expected_comment: str) -> None:
     scanned = load_scan(path)
     if scanned.detectors != expected.detectors or scanned.detector_data.shape != expected.detector_data.shape:
         raise AssertionError("Scan I/O benchmark round-trip changed detector identities or dimensions")
     if not np.allclose(scanned.wavelengths_nm, expected.wavelengths_nm, rtol=0, atol=1e-6):
         raise AssertionError("Scan I/O benchmark round-trip changed wavelength samples")
-    if not np.allclose(scanned.detector_data, expected.detector_data, rtol=0, atol=1e-6):
+    if not np.allclose(scanned.detector_data, expected.detector_data, rtol=0, atol=1e-6, equal_nan=True):
         raise AssertionError("Scan I/O benchmark round-trip changed detector data")
+    if scanned.comment != expected_comment:
+        raise AssertionError("Scan I/O benchmark round-trip changed comment metadata")
 
 
 def _characterize_case(
     app: QtWidgets.QApplication, folder: Path, count: int, num_detectors: int
 ) -> list[dict[str, object]]:
     """Keep operation callbacks scoped to one fixture instead of loop variables."""
-    measurement = _synthetic_scan(count, tuple(Detector(i + 1) for i in range(num_detectors)))
+    measurement = _synthetic_scan(count, tuple(Detector(i + 1) for i in range(num_detectors)), include_nonfinite=True)
+    comment = "synthetic I/O benchmark metadata; " + "\n".join(
+        "calibration note, unicode lambda, and escaped line" for _ in range(1800)
+    )
 
     def build():
-        return build_scan_export_v2(measurement, comment="synthetic I/O benchmark")
+        return build_scan_export_v2(measurement, comment=comment)
 
     payload, build_stats = _timed_on_qt_thread(app, build)
     csv_path = folder / f"scan-{count}-{num_detectors}.csv"
     mat_path = folder / f"scan-{count}-{num_detectors}.mat"
+    malformed_csv_path = folder / f"scan-{count}-{num_detectors}-malformed.csv"
 
     def export_csv() -> None:
-        buffer = io.StringIO()
-        np.savetxt(
-            buffer,
-            payload.csv_data,
-            delimiter=",",
-            header=payload.csv_header,
-            comments="",
-            fmt="%.6f",
-        )
-        with csv_path.open("w", encoding="utf-8", newline="") as stream:
-            stream.write(buffer.getvalue())
+        _write_staged_format("CSV", csv_path, payload, overwrite_confirmed=False)
 
     def export_mat() -> None:
-        savemat(str(mat_path), payload.mat_data, do_compression=True)
+        _write_staged_format("MAT", mat_path, payload, overwrite_confirmed=False)
+
+    def create_malformed_fixture() -> None:
+        with csv_path.open(encoding="utf-8") as source:
+            lines = source.readlines()
+        with malformed_csv_path.open("w", encoding="utf-8", newline="") as target:
+            target.writelines(lines[:-1])
+            target.write("malformed,row\n")
+
+    def reject_malformed_csv() -> None:
+        try:
+            load_scan(malformed_csv_path)
+        except ScanImportError:
+            return
+        raise AssertionError("Malformed scan CSV was accepted")
 
     operations: tuple[tuple[str, Callable[[], object]], ...] = (
         ("build_payload", build),
         ("csv_export", export_csv),
         ("mat_export", export_mat),
-        ("csv_import", lambda: _verified_import(csv_path, measurement)),
-        ("mat_import", lambda: _verified_import(mat_path, measurement)),
+        ("csv_import", lambda: _verified_import(csv_path, measurement, comment)),
+        ("mat_import", lambda: _verified_import(mat_path, measurement, comment)),
+        ("prepare_malformed_csv", create_malformed_fixture),
+        ("csv_malformed_rejection", reject_malformed_csv),
     )
     rows: list[dict[str, object]] = []
     for label, operation in operations:
         if label == "build_payload":
             stats = build_stats
+        elif label == "prepare_malformed_csv":
+            _, stats = _timed_on_qt_thread(app, operation)
         else:
             _, stats = _timed_on_qt_thread(app, operation)
+        artifact = {
+            "csv_export": csv_path,
+            "csv_import": csv_path,
+            "mat_export": mat_path,
+            "mat_import": mat_path,
+            "prepare_malformed_csv": malformed_csv_path,
+            "csv_malformed_rejection": malformed_csv_path,
+        }.get(label)
+        file_bytes = artifact.stat().st_size if artifact is not None and artifact.exists() else 0
+        wall_s = float(stats["wall_s"])
         rows.append(
             {
                 "points_per_scan": count,
@@ -165,6 +203,9 @@ def _characterize_case(
                 "operation": label,
                 "qt_platform": app.platformName(),
                 "window_system": sys.platform,
+                "comment_characters": len(comment),
+                "file_bytes": file_bytes,
+                "throughput_mib_s": file_bytes / wall_s / (1024**2) if file_bytes and wall_s > 0 else 0.0,
                 **stats,
             }
         )

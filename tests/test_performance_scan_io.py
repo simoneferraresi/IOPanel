@@ -127,13 +127,16 @@ def test_scan_io_windows_offscreen_subprocess(tmp_path: Path):
     assert completed.returncode == 0, completed.stderr[-4000:]
     result = _load_report(target)
     assert len(result["runs"]) == 2
-    assert len(result["statistics"]) == 5
+    assert len(result["statistics"]) == 7
     assert {item["case"]["operation"] for item in result["statistics"]} == {
         "build_payload",
         "csv_export",
         "mat_export",
         "csv_import",
         "mat_import",
+        "prepare_malformed_csv",
+        "csv_malformed_rejection",
     }
     assert all("qt_pending_callback_delay_s" in item["metrics"] for item in result["statistics"])
+    assert all("python_traced_peak_bytes_during_operation" in item["metrics"] for item in result["statistics"])
     assert all(item["case"]["qt_platform"] == "offscreen" for item in result["statistics"])
