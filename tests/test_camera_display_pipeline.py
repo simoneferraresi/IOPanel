@@ -88,6 +88,27 @@ def test_roi_screenshot_source_keeps_native_acquired_dimensions(qtbot):
     panel.close()
 
 
+def test_consecutive_frames_only_apply_transparent_style_once(qtbot, monkeypatch):
+    panel = CameraPanel(None, "Style", CameraConfig(identifier="style", name="Style"))
+    qtbot.addWidget(panel)
+    style_updates = []
+    original_set_style = panel.video_label.setStyleSheet
+
+    def record_style(style):
+        style_updates.append(style)
+        original_set_style(style)
+
+    monkeypatch.setattr(panel.video_label, "setStyleSheet", record_style)
+    image = QImage(16, 12, QImage.Format.Format_Grayscale8)
+    image.fill(127)
+
+    for _ in range(5):
+        panel._display_converted_image(image)
+
+    assert style_updates == ["background-color: transparent;"]
+    panel.close()
+
+
 def test_overlay_screenshot_button_saves_native_roi_without_gui_overlay(qtbot, monkeypatch, tmp_path):
     panel = CameraPanel(None, "Overlay Screenshot", CameraConfig(identifier="overlay-shot", name="Overlay Shot"))
     qtbot.addWidget(panel)
