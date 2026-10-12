@@ -99,10 +99,23 @@ with the timing and Python-allocation counters above) observed the following:
 
 | Simulated layout | Conversion fps per camera | Presentation calls per camera | Paint events per camera | Process CPU | Peak process RSS | Traced Python peak |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 × 640×480 | 49.4 | 49.5 | 160 | 1.31 s | 122.1 MiB | 2.56 MiB |
-| 2 × 640×480 | 48.6 | 48.7 | 158–159 | 2.92 s total | 127.7 MiB | 4.94 MiB |
-| 1 × 1292×964 full frame | 38.4 | 38.6 | 115 | 2.78 s | 131.7 MiB | 9.71 MiB |
-| 2 × 1292×240 ROI-shaped frames | 50.4–50.6 | 50.5 | 159 per camera | 2.08 s total | 128.3 MiB | 5.00 MiB |
+| 1 × 640×480 | 49.4 | 49.7 | 159 | 1.47 s | 119.2 MiB | 2.57 MiB |
+| 2 × 640×480 | 47.4 | 47.5 | 137–138 | 4.19 s total | 124.3 MiB | 4.99 MiB |
+| 1 × 1292×964 full frame | 34.0 | 34.2 | 103 | 3.22 s | 127.5 MiB | 9.73 MiB |
+| 2 × 1292×240 ROI-shaped frames | 49.8 | 49.7 | 151 per camera | 2.91 s total | 125.5 MiB | 4.99 MiB |
+
+In these runs, median conversion duration including the detached QImage copy was
+0.14 ms at 640×480, 0.54 ms at 1292×964, and 0.13 ms at 1292×240. Median GUI
+QPixmap presentation was 1.35 ms, 3.56 ms, and 1.10 ms respectively; delayed
+preview scaling plus FPS overlay was 1.16 ms, 2.02 ms, and 0.67 ms. The
+diagnostic also measured 100 NumPy mono-array copies as an owned-buffer copy
+proxy: for 307,200 bytes, the single-camera median/p95/max was 0.073/0.093/0.196
+ms; for 1,245,488 bytes, it was 0.392/0.571/1.012 ms. This isolates a normal
+memory-copy operation, not time inside the SDK frame callback.
+
+Per-run JSON is retained in `docs/performance-evidence/camera-display-*.json`;
+it includes all raw stage-duration and heartbeat samples, environment and
+cleanup results.
 
 These rates include Python allocation tracing and offscreen Qt overhead. They
 are software-path characterization, not physical camera FPS claims. The two

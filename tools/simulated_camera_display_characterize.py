@@ -35,12 +35,13 @@ from tools.performance_baseline import _environment
 
 def duration_summary(samples: list[float]) -> dict[str, float | int | None]:
     if not samples:
-        return {"count": 0, "median_ms": None, "p95_ms": None, "max_ms": None}
+        return {"count": 0, "median_ms": None, "p95_ms": None, "max_ms": None, "samples_ms": []}
     return {
         "count": len(samples),
         "median_ms": statistics.median(samples) * 1000,
         "p95_ms": float(np.percentile(samples, 95)) * 1000,
         "max_ms": max(samples) * 1000,
+        "samples_ms": [sample * 1000 for sample in samples],
     }
 
 
@@ -93,6 +94,7 @@ def characterize(*, camera_count: int, duration: float, width: int, height: int,
     panels: list[MeasuredCameraPanel] = []
     result = {
         "schema_version": 1,
+        "kind": "iopanel-simulated-camera-display-characterization",
         "recorded_utc": datetime.now(UTC).isoformat(),
         "evidence_scope": "SimulatedCamera through normal CameraPanel conversion/presentation; no physical camera or SDK",
         "environment": _environment(Path(__file__).resolve().parents[1], "offscreen"),
