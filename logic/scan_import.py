@@ -185,40 +185,47 @@ def _metadata(meta: dict[str, str]) -> dict[str, Any]:
 
 
 def _load_csv(path: Path) -> dict[str, Any]:
-    text = path.read_text(encoding="utf-8-sig")
     meta: dict[str, str] = {}
-    lines = text.splitlines()
-    header_index = None
-    for index, line in enumerate(lines):
-        if not line.startswith("#"):
-            if line.strip():
-                raise ScanImportError("CSV data begins before the required metadata and column header.")
-            continue
-        content = line[1:].strip()
-        if content.startswith("WL_[nm]"):
-            header_index = index
-            if tuple(value.strip() for value in content.split(",")) != _CSV_COLUMNS:
-                raise ScanImportError("CSV column header does not match the IOPanel schema-v2 columns.")
-            break
-        if ":" in content:
-            key, value = content.split(":", 1)
-            key = key.strip()
-            if key in meta:
-                raise ScanImportError(f"Duplicate metadata field '{key}'.")
-            meta[key] = value.strip()
-    if header_index is None:
-        raise ScanImportError("Missing required wavelength data column header.")
-    metadata = _metadata(meta)
-    rows = list(csv.reader(lines[header_index + 1 :]))
-    rows = [row for row in rows if row and any(cell.strip() for cell in row)]
-    if not rows:
+    with path.open(encoding="utf-8-sig", newline="") as stream:
+        for line in stream:
+            if not line.startswith("#"):
+                if line.strip():
+                    raise ScanImportError("CSV data begins before the required metadata and column header.")
+                continue
+            content = line[1:].strip()
+            if content.startswith("WL_[nm]"):
+                if tuple(value.strip() for value in content.split(",")) != _CSV_COLUMNS:
+                    raise ScanImportError("CSV column header does not match the IOPanel schema-v2 columns.")
+                break
+            if ":" in content:
+                key, value = content.split(":", 1)
+                key = key.strip()
+                if key in meta:
+                    raise ScanImportError(f"Duplicate metadata field '{key}'.")
+                meta[key] = value.strip()
+        else:
+            raise ScanImportError("Missing required wavelength data column header.")
+
+        metadata = _metadata(meta)
+        sample_count = 0
+
+        def numeric_values():
+            nonlocal sample_count
+            for row in csv.reader(stream):
+                if not row or not any(cell.strip() for cell in row):
+                    continue
+                if len(row) != 5:
+                    raise ScanImportError("CSV contains a truncated row or a row with an unexpected number of columns.")
+                sample_count += 1
+                try:
+                    yield from (float(cell.strip()) for cell in row)
+                except ValueError as error:
+                    raise ScanImportError("CSV contains invalid numeric scan data.") from error
+
+        data = np.fromiter(numeric_values(), dtype=float)
+    if sample_count == 0:
         raise ScanImportError("CSV contains no wavelength samples.")
-    if any(len(row) != 5 for row in rows):
-        raise ScanImportError("CSV contains a truncated row or a row with an unexpected number of columns.")
-    try:
-        data = np.asarray([[float(cell.strip()) for cell in row] for row in rows], dtype=float)
-    except ValueError as error:
-        raise ScanImportError("CSV contains invalid numeric scan data.") from error
+    data = data.reshape(sample_count, 5)
     return _assemble(data[:, 0], data[:, 1:].T, metadata)
 
 
