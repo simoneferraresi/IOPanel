@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from hardware.ct400 import CT400
 from hardware.ct400_types import Detector, LaserInput
 from logic.ct400_calibration import CalibrationCampaign, CalibrationRun, append_calibration_record, build_calibration_matrix
 
@@ -171,13 +172,15 @@ class CT400CalibrationRunDialog(QDialog):
         return bool(
             getattr(w, "_ct400_operation_state", None) is not None
             and w._ct400_operation_state.name == "IDLE"
-            and w.ct400_device is not None
+            and isinstance(w.ct400_device, CT400)
             and w.ct400_device is self.panel.ct400
             and w._ct400_connection_configured
             and not w._ct400_scan_state_uncertain
-            and not w._ct400_device_has_unresolved_laser_state()
+            and not w._ct400_recovery_disconnect_completed
+            and w._ct400_cleanup_laser_input is self._laser_input
             and w._ct400_connected_laser_input is self._laser_input
             and self.panel.connected_laser_input is self._laser_input
+            and w.is_ct400_connected_state
             and w._ct400_connect_speed_nm_s == speed
             and w.config.scan_defaults.speed_nm_s == speed
             and self.panel.scan_thread is None
@@ -338,6 +341,9 @@ class CT400CalibrationRunDialog(QDialog):
             reason = "Scan worker finished without a matching timing record"
         elif timing.get("cleanup_failed") or timing.get("failed_stages"):
             reason = "Scan worker reported failed stage(s) or cleanup"
+            outcome = "failed"
+        elif timing.get("simulated") is not False:
+            reason = "Hardware calibration received a simulated or unknown backend result"
             outcome = "failed"
         elif timing.get("scan_panel_speed_differs_from_configured"):
             reason = "Requested and Connect-time speed differed"
