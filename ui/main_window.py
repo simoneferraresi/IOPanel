@@ -1973,6 +1973,7 @@ class MainWindow(QMainWindow):
         # A failed operation revokes use authorization. Keep the last
         # successfully configured input separately for shutdown cleanup.
         self._ct400_connected_laser_input = None
+        self._ct400_connected_speed_nm_s = None
         self.control_panel.set_connected_laser_input(None)
         self.histogram_control.set_connected_laser_input(None)
 
