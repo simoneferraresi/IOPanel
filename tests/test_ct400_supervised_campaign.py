@@ -21,7 +21,9 @@ def _window(qtbot, monkeypatch, tmp_path):
     config.scan_defaults.min_wavelength_nm = 1530
     config.scan_defaults.max_wavelength_nm = 1565
     config.scan_defaults.speed_nm_s = 10
-    window = MainWindow(config, settings=AppSettings(QSettings(str(tmp_path / "prefs.ini"), QSettings.Format.IniFormat)))
+    window = MainWindow(
+        config, settings=AppSettings(QSettings(str(tmp_path / "prefs.ini"), QSettings.Format.IniFormat))
+    )
     qtbot.addWidget(window)
     window.show()
     device = CT400.__new__(CT400)
@@ -41,9 +43,7 @@ def _dialog(qtbot, monkeypatch, tmp_path):
     qtbot.addWidget(dialog)
     dialog.export_directory.setText(str(tmp_path / "calibration"))
     dialog.confirm_safe.setChecked(True)
-    monkeypatch.setattr(
-        QMessageBox, "question", lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes
-    )
+    monkeypatch.setattr(QMessageBox, "question", lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes)
     return window, dialog
 
 
