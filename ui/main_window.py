@@ -58,8 +58,8 @@ from logic.task_runner import TaskRunner
 from ui.alignment_panel import AlignmentPanel
 from ui.appearance_dialog import AppearanceDialog
 from ui.application_icons import application_icon
-from ui.ct400_calibration_dialog import CT400CalibrationDialog
 from ui.ct400_calibration_campaign import CT400SupervisedCampaignDialog
+from ui.ct400_calibration_dialog import CT400CalibrationDialog
 from ui.discovery_dialog import CameraDiscoveryDialog
 from ui.global_status import (
     CameraStatus,
