@@ -1953,9 +1953,7 @@ class MainWindow(QMainWindow):
         self._ct400_connected_laser_input = laser_input
         # This is the value submitted to CT400_SetLaser at Connect, not a device readback.
         speed_info = self._ct400_pending_connect_speed
-        self._ct400_connected_speed_nm_s = (
-            speed_info[1] if speed_info is not None and token == speed_info[0] else None
-        )
+        self._ct400_connected_speed_nm_s = speed_info[1] if speed_info is not None and token == speed_info[0] else None
         self._ct400_cleanup_laser_input = laser_input
         self._ct400_connection_configured = True
         self._ct400_recovery_input_matches = True
