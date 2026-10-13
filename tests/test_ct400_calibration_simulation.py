@@ -50,7 +50,7 @@ def test_complete_18_run_simulation_observes_speed_boundary_and_durable_records(
     csv_path = tmp_path / f"{coordinator.campaign.campaign_id}.csv"
     assert len(journal.read_text(encoding="utf-8").splitlines()) == 18
     assert json.loads(manifest.read_text(encoding="utf-8"))["records"] == coordinator.campaign.records
-    assert csv_path.read_bytes().startswith(b"\\xef\\xbb\\xbf")
+    assert csv_path.read_bytes().startswith(bytes((239, 187, 191)))
     with pytest.raises(RuntimeError, match="completed"):
         coordinator.begin_next_run()
 
