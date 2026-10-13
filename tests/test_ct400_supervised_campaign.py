@@ -379,9 +379,7 @@ def test_parent_close_during_worker_waits_for_journal_before_native_close(qtbot,
     entered = threading.Event()
     release = threading.Event()
     window, dialog = _dialog(qtbot, monkeypatch, tmp_path)
-    stopped, closed = _install_worker_backed_fake(
-        monkeypatch, window, start_entered=entered, release_start=release
-    )
+    stopped, closed = _install_worker_backed_fake(monkeypatch, window, start_entered=entered, release_start=release)
     try:
         dialog._start()
         qtbot.waitUntil(entered.is_set, timeout=5000)
