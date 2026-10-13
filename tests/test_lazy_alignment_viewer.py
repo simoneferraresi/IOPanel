@@ -256,7 +256,62 @@ def test_real_gl_render_requires_a_usable_context(qtbot):
     viewer.show()
     qtbot.wait(100)
     assert viewer.view.isValid()
-
     viewer.update_plot(np.array([0.0, 1.0]), np.array([0.0, 1.0]), np.array([[0.0, 1.0], [1.0, 3.0]]))
     qtbot.wait(100)
     assert viewer.view.isValid()
+
+
+def test_real_viewer_restored_map_title_survives_failure_then_retry(qtbot, tmp_path, monkeypatch):
+    capability_error = _offscreen_gl_capability_error()
+    if capability_error:
+        pytest.skip(capability_error)
+
+    from PySide6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(MainWindow, "_begin_lazy_init", lambda _self: None)
+    monkeypatch.setattr(QMessageBox, "information", lambda *args: None)
+    settings = AppSettings(QSettings(str(tmp_path / "real-viewer.ini"), QSettings.Format.IniFormat))
+    settings.set_active_tab(0)
+    window = MainWindow(AppConfig(instruments={"ct400_backend": "simulation"}), settings=settings)
+    qtbot.addWidget(window)
+    panel = window.alignment_tab
+    x_coords, y_coords, z_grid, title = _pending_map(panel)
+    panel.on_mapping_finished(x_coords, y_coords, z_grid)
+    original_factory = panel._create_plot3d_widget
+    attempts = 0
+
+    def fail_once_then_create_real_viewer():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("injected initial real-viewer failure")
+        return original_factory()
+
+    monkeypatch.setattr(panel, "_create_plot3d_widget", fail_once_then_create_real_viewer)
+    # Keep this lifecycle regression about widget ownership and map state. Actual
+    # GL painting is capability-gated separately because hosted/RDP contexts vary.
+    window.setUpdatesEnabled(False)
+    window.show()
+    window.tab_widget.setCurrentIndex(2)
+    qtbot.waitUntil(lambda: "viewer unavailable" in panel._plot_placeholder.text())
+    assert panel._pending_mapping is not None
+
+    window.tab_widget.setCurrentIndex(0)
+    window.tab_widget.setCurrentIndex(2)
+    qtbot.waitUntil(lambda: panel._plot3d_widget is not None)
+    qtbot.wait(150)
+
+    assert attempts == 2
+    assert panel._plot3d_widget.title_label.text() == title
+    assert panel._pending_mapping is None
+    assert panel._plot3d_widget.surface_plot is not None
+    assert panel._plot3d_widget.grid_item in panel._plot3d_widget.view.items
+    assert panel._plot3d_widget.x_axis in panel._plot3d_widget.view.items
+    assert panel._plot3d_widget.y_axis in panel._plot3d_widget.view.items
+    assert panel._plot3d_widget.z_axis in panel._plot3d_widget.view.items
+    assert panel._plot3d_widget.x_label.text == "X (\u00b5m)"
+    assert panel._plot3d_widget.y_label.text == "Y (\u00b5m)"
+    assert panel._plot3d_widget.z_label.text == "Power (a.u.)"
+    assert panel.colorbar_widget.min_label.text() == "0.000 mW"
+    assert panel.colorbar_widget.max_label.text() == "3.000 mW"
+    window.close()

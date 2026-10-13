@@ -256,6 +256,7 @@ class AlignmentPanel(QWidget):
 
         # Keep the plot area stable while the OpenGL renderer remains unloaded.
         self._plot3d_widget = None
+        self._plot3d_initializing = False
         self._pending_mapping = None
         self._plot_host = QWidget(self)
         self._plot_host_layout = QVBoxLayout(self._plot_host)
@@ -279,7 +280,11 @@ class AlignmentPanel(QWidget):
     def plot3d_widget(self):
         """Create and retain the OpenGL plot on the GUI thread when first needed."""
         if self._plot3d_widget is None:
+            if self._plot3d_initializing:
+                return None
+
             widget = None
+            self._plot3d_initializing = True
             self._plot_placeholder.setText("Select Auto Alignment to initialize the 3D viewer")
             try:
                 widget = self._create_plot3d_widget()
@@ -290,11 +295,13 @@ class AlignmentPanel(QWidget):
                     widget.title_label.setText(title)
                 self._plot_host_layout.removeWidget(self._plot_placeholder)
                 self._plot_placeholder.hide()
-                self._plot_host_layout.addWidget(widget)
                 self._plot3d_widget = widget
+                self._plot_host_layout.addWidget(widget)
                 if self._pending_mapping is not None:
                     self._pending_mapping = None
             except Exception:
+                if self._plot3d_widget is widget:
+                    self._plot3d_widget = None
                 if widget is not None:
                     self._plot_host_layout.removeWidget(widget)
                     widget.setParent(None)
@@ -303,6 +310,8 @@ class AlignmentPanel(QWidget):
                     self._plot_host_layout.addWidget(self._plot_placeholder)
                 self._plot_placeholder.show()
                 raise
+            finally:
+                self._plot3d_initializing = False
         return self._plot3d_widget
 
     def _create_plot3d_widget(self):
