@@ -1,0 +1,60 @@
+name: Opt-in Windows Qt stall diagnostic
+
+on:
+  workflow_dispatch:
+    inputs:
+      cycles:
+        description: Simulated MainWindow construction and shutdown cycles
+        type: number
+        default: 20
+        required: true
+      timeout_seconds:
+        description: External supervisor timeout
+        type: number
+        default: 300
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  qt-stress:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          version: "0.12.21"
+      - name: Install signed Microsoft ProcDump
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'procdump.zip'
+          $destination = Join-Path $env:RUNNER_TEMP 'procdump'
+          Invoke-WebRequest -Uri 'https://download.sysinternals.com/files/Procdump.zip' -OutFile $archive
+          Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force
+          $tool = Join-Path $destination 'procdump64.exe'
+          $signature = Get-AuthenticodeSignature -LiteralPath $tool
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'Microsoft Corporation') {
+            throw "ProcDump signature verification failed: $($signature.Status); $($signature.SignerCertificate.Subject)"
+          }
+          "PROCDUMP_PATH=$tool" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - run: uv sync --locked --extra test
+      - name: Run supervised native Qt stress
+        shell: pwsh
+        run: >-
+          uv run --no-sync python tools/qt_stall_stress_supervisor.py
+          --output qt-stall-artifacts
+          --cycles ${{ inputs.cycles }}
+          --timeout-seconds ${{ inputs.timeout_seconds }}
+      - name: Upload diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v6.0.0
+        with:
+          name: qt-stall-${{ github.run_id }}-${{ github.run_attempt }}
+          path: qt-stall-artifacts/
+          if-no-files-found: error
+          retention-days: 30
