@@ -4,6 +4,7 @@ import numpy as np
 import pyqtgraph as pg
 import pyqtgraph.opengl as gl
 from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtGui import QVector3D
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 from ui.typography import plot_title_font
@@ -131,16 +132,21 @@ class Plot3DWidget(QWidget):
         axis_len_x = x_max - x_min
         axis_len_y = y_max - y_min
         axis_len_z = z_scaled.max() - z_scaled.min()
+        self.view.setCameraPosition(
+            pos=QVector3D(0, 0, axis_len_z / 2), distance=max(xy_span * 2.5, axis_len_z * 2.5, 1.0)
+        )
 
         # X-Axis Line and Label
         x_axis_points = np.array([[x_shifted.min(), y_shifted.min(), 0], [x_shifted.max(), y_shifted.min(), 0]])
         self.x_axis.setData(pos=x_axis_points, color=(1, 1, 1, 1), width=2)
-        self.x_label.setData(pos=(0, y_shifted.min() - axis_len_y * 0.1, 0), text="X (µm)")
+        self.x_label.setData(pos=(x_shifted.max(), y_shifted.min() - axis_len_y * 0.2, 0), text="X (\u00b5m)")
 
         # Y-Axis Line and Label
         y_axis_points = np.array([[x_shifted.min(), y_shifted.min(), 0], [x_shifted.min(), y_shifted.max(), 0]])
         self.y_axis.setData(pos=y_axis_points, color=(1, 1, 1, 1), width=2)
-        self.y_label.setData(pos=(x_shifted.min() - axis_len_x * 0.1, 0, 0), text="Y (µm)")
+        self.y_label.setData(
+            pos=(x_shifted.min() - axis_len_x * 0.2, y_shifted.max() + axis_len_y * 0.5, 0), text="Y (\u00b5m)"
+        )
 
         # Z-Axis Line and Label
         z_axis_points = np.array(

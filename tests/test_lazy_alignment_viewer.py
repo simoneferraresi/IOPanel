@@ -257,6 +257,13 @@ def test_real_gl_render_requires_a_usable_context(qtbot):
     qtbot.wait(100)
     assert viewer.view.isValid()
     viewer.update_plot(np.array([0.0, 1.0]), np.array([0.0, 1.0]), np.array([[0.0, 1.0], [1.0, 3.0]]))
+    assert viewer.view.opts["distance"] == pytest.approx(2.5)
+    assert viewer.view.opts["center"].z() == pytest.approx(0.15)
+    assert (viewer.x_label.text, viewer.y_label.text, viewer.z_label.text) == (
+        "X (\u00b5m)",
+        "Y (\u00b5m)",
+        "Power (a.u.)",
+    )
     qtbot.wait(100)
     assert viewer.view.isValid()
 
