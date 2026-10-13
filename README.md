@@ -16,7 +16,7 @@ This application is architected for stability during long-running experiments, w
 -   **Modular Instrument Control:**
     -   **CT400 Wavelength Scan:** Full control over the Yenista CT400 for configurable wavelength scans. Set start/end wavelengths, resolution, laser power, and speed.
     -   **Real-time Power Monitor:** A multi-channel power monitor displayed as a live-updating histogram, perfect for alignment tasks and stability checks.
-    -   **Thorlabs PM5020 backend:** An optional, driver-free simulator and lazy-loaded physical adapter provide dual-channel readings and hardware-triggered burst data for future workflows. See [PM5020 backend notes](docs/pm5020-backend.md).
+    -   **Thorlabs PM5020 monitor:** A standalone dual-channel panel provides simulator or optional physical connection, per-channel settings, and live plots. The physical Thorlabs SDK is loaded only after a deliberate connection request. See [PM5020 panel and backend notes](docs/pm5020-backend.md).
 -   **High-Performance Multi-Camera Support:**
     -   Simultaneously stream from multiple Vimba-compatible cameras in parallel.
     -   Individual, thread-safe controls for gamma and exposure (including one-shot auto-exposure and auto-gain).

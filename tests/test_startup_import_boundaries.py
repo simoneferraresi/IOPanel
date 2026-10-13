@@ -18,6 +18,8 @@ def test_application_import_does_not_eagerly_load_scipy_io():
         "import app\n"
         "assert 'scipy.io' not in sys.modules, "
         "'SciPy MAT IO imported during app import'\n"
+        "assert 'TLPMX' not in sys.modules, "
+        "'Thorlabs wrapper imported during app import'\n"
         "assert 'logic.scan_import' in sys.modules\n"
         "assert 'logic.scan_export_worker' in sys.modules\n"
         "assert 'logic.power_monitor_export_worker' in sys.modules\n"

@@ -23,11 +23,13 @@ def test_fresh_window_uses_monitor_scan_alignment_order(qtbot, monkeypatch, tmp_
         "Power Monitor",
         "Wavelength Scan",
         "Auto Alignment",
+        "Thorlabs PM5020",
     ]
     assert window.tab_widget.currentIndex() == 0
     assert window.tab_widget.widget(0) is window.second_tab
     assert window.tab_widget.widget(1) is window.first_tab
     assert window.tab_widget.widget(2) is window.alignment_tab
+    assert window.tab_widget.widget(3) is window.pm5020_panel
     window.close()
 
 
@@ -41,7 +43,7 @@ def test_restored_legacy_tab_selects_same_logical_page(qtbot, monkeypatch, tmp_p
     window.close()
     settings.sync()
     reloaded = AppSettings(QSettings(str(tmp_path / "previous.ini"), QSettings.Format.IniFormat))
-    assert reloaded.active_tab(3) == expected_index
+    assert reloaded.active_tab(4) == expected_index
     assert reloaded._settings.value("MainWindow/active_tab_id") == AppSettings.ACTIVE_TAB_IDS[expected_index]
 
 
@@ -69,3 +71,16 @@ def test_menu_order_and_action_placement(qtbot, monkeypatch, tmp_path):
     assert window.log_console_action.shortcut() == QKeySequence("F12")
     assert window.log_console_action.isCheckable()
     window.close()
+
+
+def test_application_close_resumes_after_pm5020_worker_thread_finishes(qtbot, monkeypatch, tmp_path):
+    from hardware.pm5020_types import PM5020State
+
+    settings = AppSettings(QSettings(str(tmp_path / "pm-close.ini"), QSettings.Format.IniFormat))
+    window = _make_window(qtbot, monkeypatch, settings)
+    window.pm5020_panel._connect()
+    qtbot.waitUntil(lambda: window.pm5020_panel._backend_state is PM5020State.IDLE, timeout=2000)
+    assert not window.close()
+    assert window._pending_pm5020_close
+    qtbot.waitUntil(lambda: window.pm5020_panel.shutdown_finished, timeout=2000)
+    qtbot.waitUntil(lambda: not window._pending_pm5020_close, timeout=2000)
