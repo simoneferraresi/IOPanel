@@ -12,7 +12,14 @@ from .ct400_types import (
     PowerData,
     ScanWaitResult,
 )
-from .pm5020_types import BurstAcquisitionConfig, BurstPowerData, ChannelConfig, PowerChannel, PowerReading
+from .pm5020_types import (
+    BurstAcquisitionConfig,
+    BurstPowerData,
+    ChannelConfig,
+    PM5020State,
+    PowerChannel,
+    PowerReading,
+)
 
 
 class AbstractCT400(ABC):
@@ -89,6 +96,15 @@ class AbstractPM5020(ABC):
     @abstractmethod
     def is_connected(self) -> bool: ...
 
+    @property
+    @abstractmethod
+    def state(self) -> PM5020State: ...
+
+    @property
+    def is_ready(self) -> bool:
+        """Whether ordinary power readings are currently permitted."""
+        return self.state is PM5020State.IDLE
+
     @abstractmethod
     def connect(self, resource_name: str | None = None) -> None: ...
 
@@ -108,7 +124,7 @@ class AbstractPM5020(ABC):
     def retrieve_burst(
         self,
         *,
-        max_samples: int = 15_000,
+        max_samples: int | None = None,
         cancel_event: Event | None = None,
     ) -> BurstPowerData: ...
 

@@ -5,12 +5,22 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from enum import IntEnum
+from enum import Enum, IntEnum, auto
 
 
 class PowerChannel(IntEnum):
     CH1 = 1
     CH2 = 2
+
+
+class PM5020State(Enum):
+    """Read-only operational state shared by physical and simulated meters."""
+
+    DISCONNECTED = auto()
+    IDLE = auto()
+    ARMED = auto()
+    RETRIEVING = auto()
+    ERROR = auto()
 
 
 @dataclass(frozen=True, slots=True)

@@ -15,10 +15,20 @@ sample count.
 
 The physical adapter loads `TLPMX` only when `connect(resource_name)` is called.
 Pass the USB/VISA resource string from configuration; the laboratory notebook's
-resource identifier is not a default. A single lock serializes all wrapper
-calls. Once a burst is armed, monitoring reads are rejected until retrieval
-completes. Failed or cancelled physical burst retrieval requires closing and
-reconnecting to establish a known state.
+resource identifier is not a default. Device calls are serialized. A separate
+read-only `PM5020State` (`DISCONNECTED`, `IDLE`, `ARMED`, `RETRIEVING`, or
+`ERROR`) is shared by the simulator and physical adapter. `is_connected()` may
+remain true in `ERROR` while the driver handle exists; `is_ready` is true only
+in `IDLE`. State inspection does not wait for a blocking vendor call, so a
+consumer can observe `RETRIEVING`. Once a burst is armed, monitoring reads are
+rejected until retrieval completes. Failed or cancelled physical burst
+retrieval requires closing and reconnecting to establish a known state.
+
+`retrieve_burst(max_samples=None)` uses the active configuration's capacity.
+An explicit limit must be positive, no greater than 15,000, and no greater than
+the configured capacity. Invalid local limits are rejected before any device
+call and leave the burst `ARMED`; a device-reported count beyond the effective
+limit fails retrieval and moves the backend to `ERROR`.
 
 ## Verified burst behavior
 
@@ -40,9 +50,15 @@ validation with the laboratory instrument before experimental use.
 
 Single-channel optical power reads use the official Thorlabs Python example's
 `measPower(byref(c_double), channel)` signature. The official PM5020 example
-also demonstrates channel-specific wavelength and range settings. Unsupported
-sensor discovery is not inferred: sensor absence is reported by the driver
-operation that fails.
+also demonstrates channel-specific wavelength and range settings. The locally
+installed TLPMX wrapper and native SDK are not available in the development
+environment, and the documented API used here does not provide a verified
+typed classification for sensor absence versus timeout, disconnection, or
+other vendor failures. No vendor error-code mapping is inferred. Therefore any
+vendor exception during a measurement or configuration operation is treated
+conservatively as instrument-wide `ERROR`; the simulator follows the same
+recovery behavior for configured missing sensors and injected communication
+failures. Close and reconnect to recover.
 
 ## Windows requirements
 

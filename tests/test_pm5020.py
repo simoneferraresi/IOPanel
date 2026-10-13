@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ctypes import c_bool, c_double, c_uint16
-from threading import Event
+from threading import Event, Thread
 
 import pytest
 
@@ -12,9 +12,10 @@ from hardware.pm5020 import (
     PM5020Cancelled,
     PM5020CommunicationError,
     PM5020DependencyError,
+    PM5020Error,
     PM5020StateError,
 )
-from hardware.pm5020_types import BurstAcquisitionConfig, BurstPowerData, ChannelConfig, PowerChannel
+from hardware.pm5020_types import BurstAcquisitionConfig, BurstPowerData, ChannelConfig, PM5020State, PowerChannel
 
 
 class FakeTLPMX:
@@ -78,6 +79,18 @@ class FakeTLPMX:
             timestamps[i] = 1000 + index
             ch1[i] = index / 1000
             ch2[i] = index / 1_000_000
+
+
+class BlockingFakeTLPMX(FakeTLPMX):
+    def __init__(self):
+        super().__init__(sample_count=3)
+        self.retrieval_entered = Event()
+        self.release_retrieval = Event()
+
+    def getBurstArraySamples(self, start, count, timestamps, ch1, ch2):
+        self.retrieval_entered.set()
+        assert self.release_retrieval.wait(timeout=3)
+        super().getBurstArraySamples(start, count, timestamps, ch1, ch2)
 
 
 def driver_for(fake: FakeTLPMX | None = None) -> tuple[TLPMXPM5020, FakeTLPMX]:
@@ -170,6 +183,128 @@ def test_physical_channel_configuration_and_single_power_read_use_watts():
     meter.close()
 
 
+def test_physical_state_transitions_and_unknown_channel_failure_require_reconnection():
+    fake = FakeTLPMX()
+    meter, _ = driver_for(fake)
+    assert meter.state is PM5020State.DISCONNECTED
+    assert not meter.is_ready
+    meter.connect("USB0::TEST::INSTR")
+    assert meter.state is PM5020State.IDLE
+    assert meter.is_ready
+
+    fake.fail_operation = "measPower"
+    with pytest.raises(PM5020CommunicationError, match="Could not read PM5020 channel 2: measPower failed"):
+        meter.read_power(PowerChannel.CH2)
+    assert meter.state is PM5020State.ERROR
+    assert meter.is_connected()
+    assert not meter.is_ready
+    with pytest.raises(PM5020StateError):
+        meter.read_power(PowerChannel.CH1)
+
+    meter.close()
+    assert meter.state is PM5020State.DISCONNECTED
+    fake.fail_operation = None
+    meter.connect("USB0::TEST::INSTR")
+    assert meter.state is PM5020State.IDLE
+    assert meter.read_power(PowerChannel.CH1).power_w == pytest.approx(0.02)
+    meter.close()
+
+
+@pytest.mark.parametrize("capacity", [500, 1000])
+def test_physical_burst_capacity_defaults_to_configuration_and_accepts_explicit_limits(capacity):
+    meter, _ = driver_for(FakeTLPMX(sample_count=400))
+    meter.connect("USB0::TEST::INSTR")
+    meter.configure_burst(BurstAcquisitionConfig(max_samples=1000, chunk_size=100))
+    meter.start_burst()
+    result = meter.retrieve_burst(max_samples=capacity)
+    assert result.sample_count == 400
+    assert meter.state is PM5020State.IDLE
+    meter.close()
+
+
+def test_physical_default_burst_capacity_uses_active_configuration():
+    meter, _ = driver_for(FakeTLPMX(sample_count=999))
+    meter.connect("USB0::TEST::INSTR")
+    meter.configure_burst(BurstAcquisitionConfig(max_samples=1000, chunk_size=100))
+    meter.start_burst()
+    assert meter.retrieve_burst().sample_count == 999
+    assert meter.state is PM5020State.IDLE
+    meter.close()
+
+
+@pytest.mark.parametrize("capacity", [0, -1, 1001, 15_001, True, 1.5])
+def test_physical_invalid_burst_capacity_is_rejected_before_driver_calls_and_stays_armed(capacity):
+    meter, fake = driver_for(FakeTLPMX(sample_count=1))
+    meter.connect("USB0::TEST::INSTR")
+    meter.configure_burst(BurstAcquisitionConfig(max_samples=1000, chunk_size=100))
+    meter.start_burst()
+    calls_before = len(fake.calls)
+    with pytest.raises(ValueError):
+        meter.retrieve_burst(max_samples=capacity)
+    assert len(fake.calls) == calls_before
+    assert meter.state is PM5020State.ARMED
+    meter.close()
+
+
+def test_physical_reported_count_over_effective_capacity_requires_recovery():
+    meter, fake = driver_for(FakeTLPMX(sample_count=401))
+    meter.connect("USB0::TEST::INSTR")
+    meter.configure_burst(BurstAcquisitionConfig(max_samples=1000))
+    meter.start_burst()
+    with pytest.raises(PM5020AcquisitionError, match="exceeding capacity 400"):
+        meter.retrieve_burst(max_samples=400)
+    assert meter.state is PM5020State.ERROR
+    assert [call[0] for call in fake.calls].count("getBurstArraySamples") == 0
+    meter.close()
+
+
+def test_status_is_observable_during_blocked_retrieval_while_io_remains_serialized():
+    fake = BlockingFakeTLPMX()
+    meter, _ = driver_for(fake)
+    meter.connect("USB0::TEST::INSTR")
+    meter.configure_burst(BurstAcquisitionConfig(chunk_size=3))
+    meter.start_burst()
+    retrieval_result = []
+    thread_errors = []
+
+    def retrieve():
+        try:
+            retrieval_result.append(meter.retrieve_burst())
+        except PM5020Error as exc:
+            thread_errors.append(exc)
+
+    retrieval = Thread(target=retrieve)
+    retrieval.start()
+    assert fake.retrieval_entered.wait(timeout=2)
+    assert meter.state is PM5020State.RETRIEVING
+    assert not meter.is_ready
+
+    read_started = Event()
+    read_finished = Event()
+
+    def read_ch1():
+        read_started.set()
+        try:
+            meter.read_power(PowerChannel.CH1)
+            read_finished.set()
+        except PM5020Error as exc:
+            thread_errors.append(exc)
+
+    reader = Thread(target=read_ch1)
+    reader.start()
+    assert read_started.wait(timeout=2)
+    fake.release_retrieval.set()
+    retrieval.join(timeout=2)
+    reader.join(timeout=2)
+    assert not retrieval.is_alive()
+    assert not reader.is_alive()
+    assert read_finished.is_set()
+    assert not thread_errors
+    assert retrieval_result[0].sample_count == 3
+    assert meter.state is PM5020State.IDLE
+    meter.close()
+
+
 def test_physical_burst_config_and_chunked_retrieval_include_both_channels():
     meter, fake = driver_for()
     meter.connect("USB0::TEST::INSTR")
@@ -238,16 +373,22 @@ def test_physical_channel_configuration_failure_propagates_and_close_is_safe():
     meter.connect("USB0::TEST::INSTR")
     with pytest.raises(PM5020CommunicationError, match="setFreqMode failed"):
         meter.configure_channel(PowerChannel.CH1, ChannelConfig())
+    assert meter.state is PM5020State.ERROR
+    assert meter.is_connected()
+    assert not meter.is_ready
     meter.close()
     meter.close()
     assert fake.close_calls == 1
+    assert meter.state is PM5020State.DISCONNECTED
 
 
 def test_simulator_connect_read_disconnect_and_repeat_close():
     meter = DummyPM5020()
     assert not meter.is_connected()
+    assert meter.state is PM5020State.DISCONNECTED
     meter.connect()
     assert meter.is_connected()
+    assert meter.state is PM5020State.IDLE
     ch1 = meter.read_power(PowerChannel.CH1)
     ch2 = meter.read_power(PowerChannel.CH2)
     assert ch1.power_w == pytest.approx(0.01)
@@ -267,6 +408,86 @@ def test_simulator_configuration_validation_and_missing_sensor_errors():
     meter.connect()
     with pytest.raises(PM5020CommunicationError, match="No simulated sensor"):
         meter.read_power(PowerChannel.CH2)
+    assert meter.state is PM5020State.ERROR
+    with pytest.raises(PM5020StateError):
+        meter.read_power(PowerChannel.CH1)
+
+
+def test_simulator_empty_and_partial_configurations_are_preserved():
+    default = DummyPM5020()
+    default.connect()
+    assert default.read_power(PowerChannel.CH1).power_w == pytest.approx(0.01)
+    assert default.read_power(PowerChannel.CH2).power_w == pytest.approx(8e-7)
+
+    no_sensors = DummyPM5020(available_channels=set())
+    no_sensors.connect()
+    with pytest.raises(PM5020CommunicationError, match="No simulated sensor"):
+        no_sensors.read_power(PowerChannel.CH1)
+    assert no_sensors.state is PM5020State.ERROR
+
+    no_levels = DummyPM5020(power_levels_w={})
+    no_levels.connect()
+    with pytest.raises(PM5020CommunicationError, match="No simulated power level"):
+        no_levels.read_power(PowerChannel.CH1)
+    assert no_levels.state is PM5020State.ERROR
+
+    ch1_only = DummyPM5020(available_channels={PowerChannel.CH1})
+    ch1_only.connect()
+    assert ch1_only.read_power(PowerChannel.CH1).power_w == pytest.approx(0.01)
+    with pytest.raises(PM5020CommunicationError, match="No simulated sensor"):
+        ch1_only.read_power(PowerChannel.CH2)
+
+    ch2_only = DummyPM5020(
+        available_channels={PowerChannel.CH2},
+        power_levels_w={PowerChannel.CH2: 2e-6},
+    )
+    ch2_only.connect()
+    assert ch2_only.read_power(PowerChannel.CH2).power_w == pytest.approx(2e-6)
+
+    missing_level = DummyPM5020(power_levels_w={PowerChannel.CH1: 0.03})
+    missing_level.connect()
+    assert missing_level.read_power(PowerChannel.CH1).power_w == pytest.approx(0.03)
+    with pytest.raises(PM5020CommunicationError, match="No simulated power level"):
+        missing_level.read_power(PowerChannel.CH2)
+
+
+@pytest.mark.parametrize("capacity", [500, 1000])
+def test_simulator_burst_capacity_defaults_to_configuration_and_accepts_explicit_limits(capacity):
+    meter = DummyPM5020(burst_sample_count=400)
+    meter.connect()
+    meter.configure_burst(BurstAcquisitionConfig(max_samples=1000, chunk_size=100))
+    meter.start_burst()
+    assert meter.retrieve_burst(max_samples=capacity).sample_count == 400
+    assert meter.state is PM5020State.IDLE
+
+
+def test_simulator_default_burst_capacity_uses_active_configuration():
+    meter = DummyPM5020(burst_sample_count=999)
+    meter.connect()
+    meter.configure_burst(BurstAcquisitionConfig(max_samples=1000, chunk_size=100))
+    meter.start_burst()
+    assert meter.retrieve_burst().sample_count == 999
+
+
+@pytest.mark.parametrize("capacity", [0, -1, 1001, 15_001, True, 1.5])
+def test_simulator_invalid_capacity_is_rejected_before_retrieval_and_stays_armed(capacity):
+    meter = DummyPM5020(burst_sample_count=1)
+    meter.connect()
+    meter.configure_burst(BurstAcquisitionConfig(max_samples=1000))
+    meter.start_burst()
+    with pytest.raises(ValueError):
+        meter.retrieve_burst(max_samples=capacity)
+    assert meter.state is PM5020State.ARMED
+
+
+def test_simulator_reported_count_over_effective_capacity_requires_recovery():
+    meter = DummyPM5020(burst_sample_count=401)
+    meter.connect()
+    meter.configure_burst(BurstAcquisitionConfig(max_samples=1000))
+    meter.start_burst()
+    with pytest.raises(PM5020AcquisitionError, match="exceeding capacity 400"):
+        meter.retrieve_burst(max_samples=400)
+    assert meter.state is PM5020State.ERROR
 
 
 def test_simulator_burst_is_repeatable_and_includes_partial_final_chunk():
@@ -301,14 +522,20 @@ def test_simulator_cancellation_and_failure_are_recoverable_by_reconnection():
     meter.connect()
     with pytest.raises(PM5020CommunicationError, match="Simulated PM5020 read_power"):
         meter.read_power(PowerChannel.CH1)
+    assert meter.state is PM5020State.ERROR
+    with pytest.raises(PM5020StateError):
+        meter.read_power(PowerChannel.CH2)
     meter.close()
+    assert meter.state is PM5020State.DISCONNECTED
     meter.connect()
+    assert meter.state is PM5020State.IDLE
     meter.configure_burst(BurstAcquisitionConfig())
     meter.start_burst()
     cancel = Event()
     cancel.set()
     with pytest.raises(PM5020Cancelled):
         meter.retrieve_burst(cancel_event=cancel)
+    assert meter.state is PM5020State.ERROR
     meter.close()
     meter.connect()
     assert meter.is_connected()
