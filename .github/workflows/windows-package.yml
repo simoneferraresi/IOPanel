@@ -26,6 +26,18 @@ jobs:
         shell: pwsh
       - name: Launch packaged application and verify clean shutdown
         run: uv run --no-sync python tools/smoke_frozen.py dist/IOPanel/IOPanel.exe --timeout 45
+      - name: Safely exercise packaged OpenGL first view
+        run: >-
+          uv run --no-sync python tools/smoke_frozen_opengl.py
+          dist/IOPanel/IOPanel.exe --platform windows --timeout 30
+          --evidence-dir opengl-smoke-evidence
+      - uses: actions/upload-artifact@v7.0.0
+        if: always()
+        with:
+          name: IOPanel-packaged-opengl-smoke
+          path: opengl-smoke-evidence/
+          if-no-files-found: ignore
+          retention-days: 7
       - uses: actions/upload-artifact@v7.0.0
         with:
           name: IOPanel-windows-x64-simulation

@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 from hardware.alignment_worker import AlignmentSettings, AlignmentWorker, MappingSettings, SpiralSearchSettings
 from hardware.interfaces import AbstractCT400
 from hardware.piezo import PiezoController
-from ui.plot_widgets import ColorBarWidget, Plot3DWidget
+from ui.plot_widgets import ColorBarWidget
 from ui.typography import make_font, style_group_box_title
 
 logger = logging.getLogger("LabApp.AlignmentPanel")
@@ -254,13 +254,19 @@ class AlignmentPanel(QWidget):
         # --- Final Assembly ---
         main_layout.addWidget(controls_container)
 
-        # Create the new plot and color bar widgets
-        self.plot3d_widget = Plot3DWidget()
+        # Keep the plot area stable while the OpenGL renderer remains unloaded.
+        self._plot3d_widget = None
+        self._plot3d_initializing = False
+        self._pending_mapping = None
+        self._plot_host = QWidget(self)
+        self._plot_host_layout = QVBoxLayout(self._plot_host)
+        self._plot_host_layout.setContentsMargins(0, 0, 0, 0)
+        self._plot_placeholder = QLabel("Select Auto Alignment to initialize the 3D viewer")
+        self._plot_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._plot_host_layout.addWidget(self._plot_placeholder)
         self.colorbar_widget = ColorBarWidget()
-
-        # Add them to the main layout
-        main_layout.addWidget(self.plot3d_widget, stretch=1)  # Plot takes most space
-        main_layout.addWidget(self.colorbar_widget)  # Color bar sits to the right
+        main_layout.addWidget(self._plot_host, stretch=1)
+        main_layout.addWidget(self.colorbar_widget)
 
         # --- Connect signals to slots ---
         self.align_button.clicked.connect(self.toggle_alignment)
@@ -269,7 +275,68 @@ class AlignmentPanel(QWidget):
         self.stop_operation_button.clicked.connect(self.request_stop)
 
         # --- NEW: Connect the plot's signal to the color bar's slot ---
-        self.plot3d_widget.colormap_updated.connect(self.colorbar_widget.update_colormap)
+
+    @property
+    def plot3d_widget(self):
+        """Create and retain the OpenGL plot on the GUI thread when first needed."""
+        if self._plot3d_widget is None:
+            if self._plot3d_initializing:
+                return None
+
+            widget = None
+            self._plot3d_initializing = True
+            self._plot_placeholder.setText("Select Auto Alignment to initialize the 3D viewer")
+            try:
+                widget = self._create_plot3d_widget()
+                widget.colormap_updated.connect(self.colorbar_widget.update_colormap)
+                if self._pending_mapping is not None:
+                    x_coords, y_coords, z_grid, title = self._pending_mapping
+                    widget.update_plot(x_coords, y_coords, z_grid)
+                    widget.title_label.setText(title)
+                self._plot_host_layout.removeWidget(self._plot_placeholder)
+                self._plot_placeholder.hide()
+                self._plot3d_widget = widget
+                self._plot_host_layout.addWidget(widget)
+                if self._pending_mapping is not None:
+                    self._pending_mapping = None
+            except Exception:
+                if self._plot3d_widget is widget:
+                    self._plot3d_widget = None
+                if widget is not None:
+                    self._plot_host_layout.removeWidget(widget)
+                    widget.setParent(None)
+                    widget.deleteLater()
+                if self._plot_host_layout.indexOf(self._plot_placeholder) < 0:
+                    self._plot_host_layout.addWidget(self._plot_placeholder)
+                self._plot_placeholder.show()
+                raise
+            finally:
+                self._plot3d_initializing = False
+        return self._plot3d_widget
+
+    def _create_plot3d_widget(self):
+        """Factory seam for lifecycle tests; the production path imports OpenGL lazily."""
+        from ui.plot_3d_widget import Plot3DWidget
+
+        return Plot3DWidget(self._plot_host)
+
+    def _discard_plot3d_widget(self):
+        widget = self._plot3d_widget
+        if widget is not None:
+            self._plot_host_layout.removeWidget(widget)
+            widget.setParent(None)
+            widget.deleteLater()
+            self._plot3d_widget = None
+        self._plot_placeholder.show()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        try:
+            _ = self.plot3d_widget
+        except Exception as exc:
+            logger.exception("Could not initialize the 3D power map")
+            self._discard_plot3d_widget()
+            self._plot_placeholder.setText(f"3D viewer unavailable: {exc}. Select Auto Alignment to retry.")
 
     @Slot()
     def toggle_spiral_alignment(self):
@@ -658,22 +725,49 @@ class AlignmentPanel(QWidget):
     def on_mapping_finished(self, x_coords, y_coords, z_power_grid):
         """Receives the completed map data, updates the plot, and resets the UI."""
         logger.info("Mapping finished. Updating 3D plot.")
-        self.plot3d_widget.update_plot(x_coords, y_coords, z_power_grid)
-
-        # --- MAPPING SUMMARY ---
         peak_power = z_power_grid.max()
         peak_indices = np.unravel_index(np.argmax(z_power_grid), z_power_grid.shape)
         peak_x = x_coords[peak_indices[0]]
         peak_y = y_coords[peak_indices[1]]
-
-        self.plot3d_widget.title_label.setText(
-            f"Power Map (Peak: {peak_power:.3f} mW at X={peak_x:.2f}, Y={peak_y:.2f} µm)"
+        title = f"Power Map (Peak: {peak_power:.3f} mW at X={peak_x:.2f}, Y={peak_y:.2f} \u00b5m)"
+        snapshot = (
+            np.array(x_coords, copy=True),
+            np.array(y_coords, copy=True),
+            np.array(z_power_grid, copy=True),
+            title,
         )
-
+        plot = getattr(self, "_plot3d_widget", None)
+        pending_supported = hasattr(self, "_pending_mapping")
+        if plot is None and pending_supported:
+            self._pending_mapping = snapshot
+        else:
+            plot = plot if plot is not None else self.plot3d_widget
+            if pending_supported:
+                self._pending_mapping = snapshot
+        render_failed = False
+        if plot is not None:
+            try:
+                plot.update_plot(*snapshot[:3])
+                plot.title_label.setText(title)
+                if pending_supported:
+                    self._pending_mapping = None
+            except Exception as exc:
+                render_failed = True
+                logger.exception("Could not render the completed power map")
+                if pending_supported:
+                    self._discard_plot3d_widget()
+                    self._plot_placeholder.setText(
+                        f"Power map retained; 3D viewer unavailable: {exc}. Select Auto Alignment to retry."
+                    )
         self.reset_buttons()
         self.status_label.setText("Status: Finishing laser cleanup…")
         self.map_progress.setVisible(False)
-        QMessageBox.information(self, "Map Complete", "Power map has been generated.")
+        message = (
+            "Power map data is retained. Select Auto Alignment to retry the 3D viewer."
+            if render_failed
+            else "Power map has been generated."
+        )
+        QMessageBox.information(self, "Map Complete", message)
 
     @Slot(str)
     def on_worker_error(self, message: str):
