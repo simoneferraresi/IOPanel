@@ -130,6 +130,8 @@ class CT400ConnectionWorker(QRunnable):
         self.is_connect_operation = connect
         self.laser_input = laser_input or LaserInput(config.scan_defaults.input_port)
         self.operation_token = operation_token
+        # Freeze the Connect-time speed before handing execution to a worker thread.
+        self.configured_speed_nm_s = int(config.scan_defaults.speed_nm_s)
         self.signals = CT400ConnectionSignals()
 
     @override
@@ -143,7 +145,7 @@ class CT400ConnectionWorker(QRunnable):
                 laser_input = self.laser_input
                 min_wl = self.config.scan_defaults.min_wavelength_nm
                 max_wl = self.config.scan_defaults.max_wavelength_nm
-                speed = self.config.scan_defaults.speed_nm_s
+                speed = self.configured_speed_nm_s
                 laser_type_str = self.config.instruments.tunics_laser_type
                 laser_type_enum = getattr(LaserSource, laser_type_str, LaserSource.LS_TunicsT100s_HP)
                 self.ct400.set_laser(
@@ -880,6 +882,7 @@ class CT400ControlPanel(BaseControlPanel):
         self.scan_worker: ScanWorker | None = None
         self.scan_thread: QThread | None = None
         self.scan_detector_cbs: dict[Detector, QCheckBox] = {}
+        self._campaign_owner_id: str | None = None
 
         # Call base class __init__ which sets up common UI and properties
         super().__init__(ct400_device, config, parent)
@@ -900,6 +903,24 @@ class CT400ControlPanel(BaseControlPanel):
         self.input_port.currentIndexChanged.connect(self._refresh_action_state)
 
         self._connect_settings_signals()
+        self.on_instrument_connected(self.is_instrument_connected)
+
+    def reserve_calibration_campaign(self, campaign_id: str) -> None:
+        """Prevent manual scan starts while a supervised campaign owns the panel."""
+        if QThread.currentThread() != self.thread():
+            raise RuntimeError("calibration ownership requires the GUI thread")
+        if not campaign_id or self._campaign_owner_id is not None or self.scanning or self.is_busy():
+            raise RuntimeError("scan panel is not free for a calibration campaign")
+        self._campaign_owner_id = campaign_id
+        self.on_instrument_connected(self.is_instrument_connected)
+
+    def release_calibration_campaign(self, campaign_id: str) -> None:
+        if QThread.currentThread() != self.thread() or self._campaign_owner_id != campaign_id:
+            raise RuntimeError("cannot release another calibration campaign's reservation")
+        if self.scanning or self.scan_thread is not None:
+            raise RuntimeError("cannot release calibration ownership before the scan worker exits")
+        self._campaign_owner_id = None
+        self.clear_next_scan_id()
         self.on_instrument_connected(self.is_instrument_connected)
 
     def set_next_scan_id(self, scan_id: str) -> None:
@@ -996,6 +1017,12 @@ class CT400ControlPanel(BaseControlPanel):
 
         self.scan_btn.clicked.connect(self._toggle_scan)
 
+    @override
+    def on_instrument_connected(self, is_connected: bool):
+        super().on_instrument_connected(is_connected)
+        if self._campaign_owner_id is not None and not self.scanning:
+            self.scan_btn.setEnabled(False)
+
     def _connect_settings_signals(self):
         self.resolution.textChanged.connect(self.update_shared_settings)
         self.motor_speed.textChanged.connect(self.update_shared_settings)
@@ -1048,6 +1075,9 @@ class CT400ControlPanel(BaseControlPanel):
     @Slot()
     def _toggle_scan(self):
         if not self.scanning:
+            if self._campaign_owner_id is not None:
+                logger.warning("Manual scan start blocked: calibration campaign owns the scan panel.")
+                return
             self._start_scan()
         else:
             self._stop_scan(cancelled=True)
