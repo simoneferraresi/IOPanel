@@ -13,7 +13,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -374,7 +374,7 @@ class CT400SupervisedCampaignDialog(QDialog):
         }
         try:
             append_calibration_record(Path(self.export_directory.text().strip()), self.campaign, record)
-        except Exception as exc:  # noqa: BLE001  # Fail closed if any journal or report write fails.
+        except Exception as exc:  # Fail closed if any journal or report write fails.
             logger.exception("Supervised CT400 calibration journal failure")
             self._finish("failed", f"Journal write failed; inspect JSONL before any new scan: {exc}")
 
