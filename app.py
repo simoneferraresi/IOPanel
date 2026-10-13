@@ -89,10 +89,54 @@ def run_frozen_opengl_smoke(app: QApplication, log_file: Path, logger: logging.L
 
     import numpy as np
     from OpenGL import GL
+    from OpenGL.error import GLError
     from PySide6.QtCore import QTimer
+    from PySide6.QtGui import QOffscreenSurface, QOpenGLContext
     from PySide6.QtWidgets import QTabWidget, QWidget
 
     from ui.alignment_panel import AlignmentPanel
+
+    probe_surface = QOffscreenSurface()
+    probe_surface.create()
+    probe_context = QOpenGLContext()
+    if not probe_surface.isValid() or not probe_context.create() or not probe_context.isValid():
+        reason = "Qt could not create a valid offscreen OpenGL context"
+        logger.info("SMOKE_OPENGL_UNAVAILABLE %s", {"reason": reason})
+        return 0
+    if not probe_context.makeCurrent(probe_surface):
+        probe_surface.destroy()
+        reason = "Qt could not make the offscreen OpenGL context current"
+        logger.info("SMOKE_OPENGL_UNAVAILABLE %s", {"reason": reason})
+        return 0
+    probe_vendor = GL.glGetString(GL.GL_VENDOR)
+    probe_renderer = GL.glGetString(GL.GL_RENDERER)
+    probe_version = GL.glGetString(GL.GL_VERSION)
+    probe_format = probe_context.format()
+    probe_details = {
+        "vendor": probe_vendor.decode("ascii", errors="replace") if probe_vendor else "unknown",
+        "renderer": probe_renderer.decode("ascii", errors="replace") if probe_renderer else "unknown",
+        "version": probe_version.decode("ascii", errors="replace") if probe_version else "unknown",
+        "major": probe_format.majorVersion(),
+        "minor": probe_format.minorVersion(),
+        "profile": str(probe_format.profile()),
+    }
+    try:
+        GL.glClearColor(0.0, 0.0, 0.0, 1.0)
+        GL.glFinish()
+    except GLError as exc:
+        probe_context.doneCurrent()
+        probe_surface.destroy()
+        logger.info("SMOKE_OPENGL_UNAVAILABLE %s", {**probe_details, "reason": repr(exc)})
+        return 0
+    probe_context.doneCurrent()
+    probe_surface.destroy()
+    logger.info("SMOKE_OPENGL_CAPABILITY %s", probe_details)
+    if probe_format.majorVersion() < 2:
+        logger.info(
+            "SMOKE_OPENGL_UNAVAILABLE %s",
+            {**probe_details, "reason": "PyQtGraph 3D requires an OpenGL 2.0 capable context"},
+        )
+        return 0
 
     x = np.linspace(-2.0, 2.0, 5)
     y = np.linspace(-2.0, 2.0, 5)
