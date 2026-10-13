@@ -112,7 +112,7 @@ def run_scenario(
             app.processEvents()
             callback: list[float] = []
             start = time.perf_counter()
-            QTimer.singleShot(0, lambda: callback.append(time.perf_counter()))
+            QTimer.singleShot(0, lambda callback=callback: callback.append(time.perf_counter()))
             if mode == "direct":
                 # Reference only: reproduces one synchronous setter per intermediate value.
                 for value in values:
@@ -133,7 +133,7 @@ def run_scenario(
             elif mode == "mutex_contention":
                 locked = threading.Event()
 
-                def hold_camera_lock():
+                def hold_camera_lock(camera=camera, locked=locked):
                     with QMutexLocker(camera.lock):
                         locked.set()
                         time.sleep(contention_ms / 1000)
