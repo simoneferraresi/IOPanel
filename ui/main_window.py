@@ -107,6 +107,7 @@ from ui.control_panel import (
 )
 from ui.log_console import LogConsole
 from ui.plot_widgets import HistogramWidget, PlotWidget, PowerMonitorTraceWidget
+from ui.pm5020_panel import PM5020Panel
 
 logger = logging.getLogger("LabApp.main_window")
 
@@ -257,6 +258,8 @@ class MainWindow(QMainWindow):
         self._piezo_operations_in_flight: set[str] = set()
         self._lazy_init_started = False
         self.power_monitor_trace_widget: PowerMonitorTraceWidget | None = None
+        self.pm5020_panel: PM5020Panel | None = None
+        self._pending_pm5020_close = False
         self._ct400_error_reset_timer = QTimer(self)
         self._ct400_error_reset_timer.setSingleShot(True)
         self._ct400_error_reset_timer.timeout.connect(self._reset_ct400_error_visuals)
@@ -1026,6 +1029,10 @@ class MainWindow(QMainWindow):
 
         self.alignment_tab = AlignmentPanel(None, None, None, self)
         self.tab_widget.addTab(self.alignment_tab, "Auto Alignment")
+        self.pm5020_panel = PM5020Panel(self)
+        self.pm5020_panel.shutdown_complete.connect(self._resume_close_after_pm5020)
+        self.pm5020_panel.shutdown_timeout.connect(lambda message: self.statusBar().showMessage(message, 0))
+        self.tab_widget.addTab(self.pm5020_panel, "Thorlabs PM5020")
 
         self.setStatusBar(QStatusBar())
         self.ct400_status_label = QLabel("CT400: Initializing...")
@@ -2469,6 +2476,13 @@ class MainWindow(QMainWindow):
         """
         close_started_at = time.perf_counter()
         logger.info("Application close requested. Initiating shutdown sequence...")
+        pm5020_panel = getattr(self, "pm5020_panel", None)
+        if pm5020_panel is not None and not pm5020_panel.shutdown_finished:
+            event.ignore()
+            self._pending_pm5020_close = True
+            self.statusBar().showMessage("Closing PM5020 safely before application shutdown…", 0)
+            pm5020_panel.request_shutdown()
+            return
         scan_panel = getattr(self, "control_panel", None)
         scan_thread = getattr(scan_panel, "scan_thread", None)
         try:
@@ -2656,6 +2670,12 @@ class MainWindow(QMainWindow):
     def _resume_close_after_power_monitor_export(self) -> None:
         if self._pending_power_monitor_export_close:
             self._pending_power_monitor_export_close = False
+            QTimer.singleShot(0, self.close)
+
+    @Slot()
+    def _resume_close_after_pm5020(self) -> None:
+        if self._pending_pm5020_close:
+            self._pending_pm5020_close = False
             QTimer.singleShot(0, self.close)
 
     @Slot()

@@ -23,11 +23,13 @@ def test_fresh_window_uses_monitor_scan_alignment_order(qtbot, monkeypatch, tmp_
         "Power Monitor",
         "Wavelength Scan",
         "Auto Alignment",
+        "Thorlabs PM5020",
     ]
     assert window.tab_widget.currentIndex() == 0
     assert window.tab_widget.widget(0) is window.second_tab
     assert window.tab_widget.widget(1) is window.first_tab
     assert window.tab_widget.widget(2) is window.alignment_tab
+    assert window.tab_widget.widget(3) is window.pm5020_panel
     window.close()
 
 
@@ -41,7 +43,7 @@ def test_restored_legacy_tab_selects_same_logical_page(qtbot, monkeypatch, tmp_p
     window.close()
     settings.sync()
     reloaded = AppSettings(QSettings(str(tmp_path / "previous.ini"), QSettings.Format.IniFormat))
-    assert reloaded.active_tab(3) == expected_index
+    assert reloaded.active_tab(4) == expected_index
     assert reloaded._settings.value("MainWindow/active_tab_id") == AppSettings.ACTIVE_TAB_IDS[expected_index]
 
 

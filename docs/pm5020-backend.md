@@ -1,8 +1,9 @@
 # PM5020 backend
 
 The PM5020 backend provides a small device contract, a deterministic simulator,
-and an optional physical adapter. It does not add a GUI panel or coordinate a
-CT400 scan.
+and an optional physical adapter. The standalone monitoring panel is available
+as the **Thorlabs PM5020** tab. It operates independently of CT400 scans and
+does not coordinate a CT400 scan.
 
 ## API and data
 
@@ -72,12 +73,48 @@ supplied by Thorlabs and is not a PyPI dependency; IOPanel does not bundle it.
 The simulator and all backend imports work without that SDK. Unit tests use a
 fake wrapper and do not establish compatibility with a physical meter.
 
-## Future panel use
+## Standalone monitoring panel
 
-Call `read_power(channel)` from an existing background worker on a chosen
-interval. The adapter performs one blocking measurement call per request; it
-does not create a polling thread or touch Qt. The future panel should own one
-backend instance and submit monitoring and burst operations to one serialized
-worker, since vendor DLL calls are synchronous and Qt thread termination cannot
-interrupt them. Physical cancellation is checked between burst calls only; it
-cannot preempt a blocking native call.
+Open the **Thorlabs PM5020** tab in IOPanel. Select **Simulator** to run without
+hardware or the Thorlabs SDK. For physical operation, select **Physical PM5020**,
+enter the meter's USB/VISA resource identifier, and press **Connect**. The app
+does not discover devices or connect to a physical meter at startup. On the
+laboratory Windows computer, install Thorlabs Optical Power Meter software and
+its matching Python/native SDK as described above.
+
+Configure CH1 and CH2 independently, then press **Apply Channel Settings**.
+Wavelengths are editable; 1550 nm and 775 nm are example defaults only. The GUI
+checks that wavelength and manual range are positive and finite, but sensor
+heads have different supported wavelength and power ranges. Vendor-side
+validation remains authoritative and any rejected setting is shown in the
+panel. Input filtering and automatic or manual ranging use the shared backend
+configuration. A channel excluded from monitoring is not read.
+
+Start monitoring with a 250–5000 ms requested interval. Reads run sequentially
+on one persistent worker thread; CH1 and CH2 timestamps may differ. Actual
+sampling also depends on instrument latency. Each channel has its own plot
+scale. Plots use monotonic elapsed seconds and raw readings remain in watts;
+choosing W, mW, µW, nW, or dBm changes presentation only. Zero and negative
+measurements have no dBm display. History is limited to the selected time
+window and a 2,400 point ring buffer per channel.
+
+**Pause** stops new requests but keeps the session and history. **Resume**
+continues that session. **Stop** ends monitoring and leaves the meter connected.
+**Disconnect** stops monitoring and closes the backend. After a communication
+or configuration failure that leaves the backend in `ERROR`, monitoring stops
+and the UI requests deliberate disconnect/reconnect recovery; it does not
+silently reconnect.
+
+The panel uses a long-lived `TaskRunner`/`QThread` worker. That worker creates
+and owns exactly one backend for a connection and serializes all configuration,
+reads, and close operations. A worker-thread Qt timer prevents polling requests
+from accumulating. The GUI receives readings and states through Qt signals.
+Application shutdown queues an orderly close and waits asynchronously for the
+worker thread to finish; a blocked native call cannot be interrupted safely.
+
+The simulator path, unit conversion, UI, and worker lifecycle are covered by
+automated tests. Physical connection, sensor compatibility, vendor-side range
+validation, and physical sampling rate have not been exercised by this panel
+change. Hardware-triggered burst acquisition and synchronized SHG workflows
+remain future milestones. Recording/export and persistent panel settings are
+also deferred.
