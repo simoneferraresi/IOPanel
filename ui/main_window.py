@@ -59,6 +59,7 @@ from ui.alignment_panel import AlignmentPanel
 from ui.appearance_dialog import AppearanceDialog
 from ui.application_icons import application_icon
 from ui.ct400_calibration_dialog import CT400CalibrationDialog
+from ui.ct400_calibration_run_dialog import CT400CalibrationRunDialog
 from ui.discovery_dialog import CameraDiscoveryDialog
 from ui.global_status import (
     CameraStatus,
@@ -244,6 +245,9 @@ class MainWindow(QMainWindow):
         self._ct400_connected_laser_input: LaserInput | None = None
         self._ct400_cleanup_laser_input: LaserInput | None = None
         self._ct400_connection_operation_token = 0
+        self._ct400_connect_speed_pending: int | None = None
+        self._ct400_connect_speed_nm_s: int | None = None
+        self._ct400_calibration_run_dialog: CT400CalibrationRunDialog | None = None
         self._pending_ct400_device_replacement: AbstractCT400 | None = None
         self._ct400_connection_configured: bool = False
         self._ct400_scan_state_uncertain = False
@@ -1369,6 +1373,11 @@ class MainWindow(QMainWindow):
         calibration_action.setStatusTip("Preview and configure a supervised CT400 calibration campaign")
         calibration_action.triggered.connect(self._show_ct400_calibration)
         self.instrument_menu.addAction(calibration_action)
+        run_action = QAction("CT400 ETA Calibration — Supervised Runner…", self)
+        run_action.setObjectName("ct400CalibrationSupervisedAction")
+        run_action.setStatusTip("Operator-supervised calibration with explicit physical readiness checks")
+        run_action.triggered.connect(self._show_ct400_calibration_runner)
+        self.instrument_menu.addAction(run_action)
         self._update_scan_import_actions()
 
         help_menu = menu_bar.addMenu("&Help")
@@ -1386,6 +1395,20 @@ class MainWindow(QMainWindow):
         )
         dialog = CT400CalibrationDialog(self.config, self, enabled_detectors)
         dialog.exec()
+
+    @Slot()
+    def _show_ct400_calibration_runner(self) -> None:
+        """Keep the live campaign dialog nonmodal so operators can Disconnect/Connect."""
+        dialog = self._ct400_calibration_run_dialog
+        if dialog is None or not dialog.isVisible():
+            dialog = CT400CalibrationRunDialog(self)
+            dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            dialog.destroyed.connect(lambda: setattr(self, "_ct400_calibration_run_dialog", None))
+            self._ct400_calibration_run_dialog = dialog
+            dialog.show()
+        else:
+            dialog.raise_()
+            dialog.activateWindow()
 
     @Slot()
     def _open_scan_file(self) -> None:
@@ -1771,6 +1794,7 @@ class MainWindow(QMainWindow):
         worker = CT400ConnectionWorker(
             device, self.config, connect=checked, laser_input=laser_input, operation_token=token
         )
+        self._ct400_connect_speed_pending = worker.configured_speed_nm_s if checked else None
         worker.signals.connection_succeeded.connect(self._handle_ct400_connection_success)
         worker.signals.connection_failed.connect(self._handle_ct400_connection_failure)
         worker.signals.disconnection_succeeded.connect(self._handle_ct400_disconnection_success)
@@ -1913,6 +1937,7 @@ class MainWindow(QMainWindow):
             laser_input = LaserInput(self.config.scan_defaults.input_port)
         self._ct400_connected_laser_input = laser_input
         self._ct400_cleanup_laser_input = laser_input
+        self._ct400_connect_speed_nm_s = self._ct400_connect_speed_pending
         self._ct400_connection_configured = True
         self._ct400_recovery_input_matches = True
         self._update_ct400_visuals(state=CT400Status.CONNECTED, message=message)
@@ -1978,6 +2003,7 @@ class MainWindow(QMainWindow):
         self._ct400_connection_configured = False
         self._ct400_connected_laser_input = None
         self._ct400_cleanup_laser_input = None
+        self._ct400_connect_speed_nm_s = None
         self._ct400_scan_state_uncertain = False
         self._ct400_recovery_input_matches = True
         self._ct400_recovery_disconnect_completed = False
