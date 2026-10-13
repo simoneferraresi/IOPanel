@@ -171,10 +171,9 @@ class CT400SupervisedCampaignDialog(QDialog):
             raise ValueError("Operator must confirm physical laboratory readiness")
         if not self._physical_ready(self.runs[self.next_index].speed_block_nm_s):
             raise ValueError("CT400 must be idle and explicitly connected at the required Connect-time speed")
-        if (
-            self.window.config.scan_defaults.min_wavelength_nm > min(r.start_wavelength_nm for r in self.runs)
-            or self.window.config.scan_defaults.max_wavelength_nm < max(r.end_wavelength_nm for r in self.runs)
-        ):
+        if self.window.config.scan_defaults.min_wavelength_nm > min(
+            r.start_wavelength_nm for r in self.runs
+        ) or self.window.config.scan_defaults.max_wavelength_nm < max(r.end_wavelength_nm for r in self.runs):
             raise ValueError("The configured laser wavelength limits do not cover the campaign")
         if self.window._pending_init_close or self.window._pending_ct400_operation_close:
             raise ValueError("Application shutdown is pending")
@@ -274,9 +273,7 @@ class CT400SupervisedCampaignDialog(QDialog):
         self.state = "in_run"
         self._refresh_controls()
         try:
-            self.panel.run_calibration_scan(
-                self, run=run, laser_power_mw=self._power_mw, laser_input=self._laser_input
-            )
+            self.panel.run_calibration_scan(self, run=run, laser_power_mw=self._power_mw, laser_input=self._laser_input)
         except Exception as exc:  # noqa: BLE001  # Unexpected dispatch failure must not schedule later physical scans.
             if self.panel.scan_thread is not None or self.panel.scanning:
                 self._stop_requested = True
@@ -306,7 +303,11 @@ class CT400SupervisedCampaignDialog(QDialog):
         run = self.active_run
         if run is None:
             return
-        if self.panel.scanning or self.panel.scan_thread is not None or self.window._ct400_operation_state.name != "IDLE":
+        if (
+            self.panel.scanning
+            or self.panel.scan_thread is not None
+            or self.window._ct400_operation_state.name != "IDLE"
+        ):
             self._stop_requested = True
             self._status("Waiting for CT400 worker cleanup/operation ownership")
             QTimer.singleShot(100, self._finalize_active_run)
