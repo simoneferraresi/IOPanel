@@ -154,8 +154,7 @@ def characterize(width: int, height: int, samples: int, settling_ms: int = 3) ->
         raise AssertionError(f"Unexpected synthetic mapping error: {errors}")
     x, y, measured = results[0]
     expected_dbm = -30 + (
-        2 * x[:, None] * PiezoController.VOLTS_PER_NM * 1000
-        + 3 * y[None, :] * PiezoController.VOLTS_PER_NM * 1000
+        2 * x[:, None] * PiezoController.VOLTS_PER_NM * 1000 + 3 * y[None, :] * PiezoController.VOLTS_PER_NM * 1000
     )
     if measured.shape != (width, height) or not np.allclose(measured, 10 ** (expected_dbm / 10)):
         raise AssertionError("Power grid values or X/Y orientation changed")
