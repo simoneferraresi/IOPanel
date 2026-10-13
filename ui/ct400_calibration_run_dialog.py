@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -32,7 +32,12 @@ from PySide6.QtWidgets import (
 
 from hardware.ct400 import CT400
 from hardware.ct400_types import Detector, LaserInput
-from logic.ct400_calibration import CalibrationCampaign, CalibrationRun, append_calibration_record, build_calibration_matrix
+from logic.ct400_calibration import (
+    CalibrationCampaign,
+    CalibrationRun,
+    append_calibration_record,
+    build_calibration_matrix,
+)
 
 logger = logging.getLogger("LabApp.ct400_calibration_campaign")
 
@@ -313,7 +318,7 @@ class CT400CalibrationRunDialog(QDialog):
             p._start_scan()
             if not p.scanning or p.scan_worker is None or p.scan_worker.scan_id != run.run_id:
                 self._terminate("failed", "Normal scan panel rejected launch; campaign halted.")
-        except Exception as exc:  # noqa: BLE001  # Prevent the campaign from scheduling another scan.
+        except Exception as exc:  # Prevent the campaign from scheduling another scan.
             logger.exception("Failed to launch supervised calibration scan")
             self._terminate("failed", f"Could not dispatch next scan through the normal panel: {exc}")
 
@@ -411,7 +416,7 @@ class CT400CalibrationRunDialog(QDialog):
         try:
             append_calibration_record(self.directory, self.campaign, record)
             return True
-        except Exception as exc:  # noqa: BLE001  # Journal write may succeed before manifest/CSV fails.
+        except Exception as exc:  # Journal write may succeed before manifest/CSV fails.
             logger.exception("Calibration journal failure; no next scan is permitted")
             self._terminate("failed", f"Failed to persist run; inspect JSONL before any retry: {exc}")
             return False
@@ -493,7 +498,7 @@ class CT400CalibrationRunDialog(QDialog):
             try:
                 self.panel.release_calibration_campaign(self.campaign.campaign_id)
                 self._restore_scan_settings()
-            except Exception:  # noqa: BLE001  # Preserve fail-closed ownership on unsuccessful release.
+            except Exception:  # Preserve fail-closed ownership on unsuccessful release.
                 logger.exception("Cannot release calibration scan ownership")
                 self._set_state("failed", "Scan ownership release failed; do not start another scan.")
                 return
