@@ -802,7 +802,10 @@ class BaseControlPanel(QWidget, ABC, metaclass=QABCMeta):
         self.is_instrument_connected = is_connected
 
         # Enable configuration inputs only if connected AND not busy.
-        enable_config_inputs = is_connected and not self.is_busy() and self.ct400_operation_state == "IDLE"
+        enable_config_inputs = (
+            is_connected and not self.is_busy() and self.ct400_operation_state == "IDLE"
+            and not self._calibration_blocked
+        )
 
         for widget in self._get_configurable_widgets():
             widget.setEnabled(enable_config_inputs)
