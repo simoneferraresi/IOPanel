@@ -1,17 +1,13 @@
 """Real alignment worker exercised with synthetic DLL and virtual waits."""
 
+from types import SimpleNamespace
+from unittest.mock import patch
+
 import numpy as np
 import pytest
 
-from tools.characterize_alignment_latency import (
-    VirtualClock,
-    characterize,
-    make_worker,
-    mapping_settings,
-)
 from hardware import alignment_worker
-from types import SimpleNamespace
-from unittest.mock import patch
+from tools.characterize_alignment_latency import VirtualClock, characterize, make_worker, mapping_settings
 
 
 @pytest.mark.parametrize(("shape", "samples"), [((2, 3), 1), ((10, 10), 3), ((3, 2), 5)])
