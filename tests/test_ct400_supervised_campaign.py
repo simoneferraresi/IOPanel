@@ -43,6 +43,7 @@ def _window(qtbot, monkeypatch, tmp_path):
 def _dialog(qtbot, monkeypatch, tmp_path):
     window = _window(qtbot, monkeypatch, tmp_path)
     dialog = CT400SupervisedCampaignDialog(window)
+    window._ct400_campaign_dialog = dialog
     qtbot.addWidget(dialog)
     dialog.export_directory.setText(str(tmp_path / "calibration"))
     dialog.confirm_safe.setChecked(True)
