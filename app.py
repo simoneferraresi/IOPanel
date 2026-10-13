@@ -122,6 +122,14 @@ def run_frozen_opengl_smoke(app: QApplication, log_file: Path, logger: logging.L
         probe_renderer = GL.glGetString(GL.GL_RENDERER)
         probe_version = GL.glGetString(GL.GL_VERSION)
         probe_format = probe_context.format()
+    except GLError as exc:
+        probe_context.doneCurrent()
+        probe_surface.destroy()
+        logger.info(
+            "SMOKE_OPENGL_UNAVAILABLE %s",
+            {"reason": "OpenGL context rejected its basic capability query", "error": repr(exc)},
+        )
+        return 0
     except Exception:
         logger.exception("OpenGL capability probe setup failed")
         probe_context.doneCurrent()
