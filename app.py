@@ -149,6 +149,18 @@ def run_frozen_opengl_smoke(app: QApplication, log_file: Path, logger: logging.L
             vendor = GL.glGetString(GL.GL_VENDOR)
             renderer = GL.glGetString(GL.GL_RENDERER)
             version = GL.glGetString(GL.GL_VERSION)
+            context_format = context.format()
+            logger.info(
+                "SMOKE_OPENGL_CONTEXT vendor=%s renderer=%s version=%s requested=%d.%d profile=%s actual=%d.%d",
+                vendor.decode("ascii", errors="replace") if vendor else "unknown",
+                renderer.decode("ascii", errors="replace") if renderer else "unknown",
+                version.decode("ascii", errors="replace") if version else "unknown",
+                viewer.view.format().majorVersion(),
+                viewer.view.format().minorVersion(),
+                str(viewer.view.format().profile()),
+                context_format.majorVersion(),
+                context_format.minorVersion(),
+            )
             prior_error = GL.glGetError()
             GL.glClearColor(0.05, 0.05, 0.05, 1.0)
             GL.glFinish()

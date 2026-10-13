@@ -44,7 +44,24 @@ def run_smoke(executable: Path, timeout_seconds: float, qt_platform: str, eviden
         if not log_path.is_file():
             raise RuntimeError(f"Packaged OpenGL smoke did not create its log:\n{combined}")
         log = log_path.read_text(encoding="utf-8")
+        if evidence_dir is not None:
+            evidence_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(log_path, evidence_dir / "opengl-smoke.log")
         if result.returncode:
+            if evidence_dir is not None:
+                (evidence_dir / "opengl-smoke.json").write_text(
+                    json.dumps(
+                        {
+                            "result": "failed",
+                            "qt_platform": qt_platform,
+                            "exit_code": result.returncode,
+                            "executable": executable.name,
+                        },
+                        indent=2,
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
             raise RuntimeError(f"Packaged OpenGL smoke exited {result.returncode}:\n{log}\n{combined}")
         if FAILURE_MARKER in log or "Error while drawing item" in combined or "GLError" in combined:
             raise RuntimeError(f"Packaged OpenGL viewer reported a rendering failure:\n{log}\n{combined}")

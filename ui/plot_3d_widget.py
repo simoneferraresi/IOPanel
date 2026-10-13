@@ -4,7 +4,7 @@ import numpy as np
 import pyqtgraph as pg
 import pyqtgraph.opengl as gl
 from PySide6.QtCore import Qt, Signal, Slot
-from PySide6.QtGui import QVector3D
+from PySide6.QtGui import QSurfaceFormat, QVector3D
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 from ui.typography import plot_title_font
@@ -35,6 +35,10 @@ class Plot3DWidget(QWidget):
         layout.addWidget(self.title_label)
 
         self.view = gl.GLViewWidget()
+        surface_format = QSurfaceFormat()
+        surface_format.setVersion(2, 1)
+        surface_format.setProfile(QSurfaceFormat.OpenGLContextProfile.CompatibilityProfile)
+        self.view.setFormat(surface_format)
         self.view.opts["distance"] = 40
         self.view.opts["elevation"] = 30
         self.view.opts["azimuth"] = -30
