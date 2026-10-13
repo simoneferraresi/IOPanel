@@ -118,6 +118,9 @@ class CT400SupervisedCampaignDialog(QDialog):
         layout.addLayout(row)
 
         speed_row = QHBoxLayout()
+        self.prepare_initial_speed_button = QPushButton("Set next Connect to 10 nm/s")
+        self.prepare_initial_speed_button.clicked.connect(self._prepare_initial_connect_speed)
+        speed_row.addWidget(self.prepare_initial_speed_button)
         self.prepare_speed_button = QPushButton("Set next Connect to 5 nm/s")
         self.prepare_speed_button.clicked.connect(self._prepare_next_connect_speed)
         speed_row.addWidget(self.prepare_speed_button)
@@ -146,12 +149,15 @@ class CT400SupervisedCampaignDialog(QDialog):
             return False
         if self._device is not None and device is not self._device:
             return False
+        if self.panel.ct400 is not device:
+            return False
         if (
             not window._ct400_connection_configured
             or window._ct400_scan_state_uncertain
             or window._ct400_recovery_disconnect_completed
             or window._ct400_connected_laser_input is None
             or window._ct400_connected_laser_input is not window._ct400_cleanup_laser_input
+            or self.panel.connected_laser_input is not window._ct400_connected_laser_input
             or window._ct400_connected_speed_nm_s != required_speed
             or float(window.config.scan_defaults.speed_nm_s) != required_speed
             or window._ct400_operation_state.name != "IDLE"
@@ -243,6 +249,11 @@ class CT400SupervisedCampaignDialog(QDialog):
 
     def _dispatch_next(self) -> None:
         if self.state != "running" or not self._owns_panel or self.active_run is not None:
+            return
+        if not self.confirm_safe.isChecked():
+            self.state = "paused"
+            self._status("Optical readiness confirmation withdrawn; recheck before continuing.")
+            self._refresh_controls()
             return
         if self.next_index >= len(self.runs):
             self._finish("completed")
@@ -410,6 +421,30 @@ class CT400SupervisedCampaignDialog(QDialog):
         else:
             self._finish("stopped")
 
+    def _prepare_initial_connect_speed(self) -> None:
+        if self.state != "ready":
+            return
+        if (
+            self.window._ct400_operation_state.name != "IDLE"
+            or self.window._ct400_connected_laser_input is not None
+            or self.window._ct400_connection_configured
+            or self.window._ct400_scan_state_uncertain
+        ):
+            self._status("Disconnect normally and confirm optical safe state before setting the next Connect speed")
+            return
+        answer = QMessageBox.question(
+            self,
+            "Prepare initial 10 nm/s connection",
+            "The CT400 is disconnected. Set the next ordinary Connect command to 10 nm/s "
+            "(in-memory configuration only, no instrument call)? Follow the laboratory "
+            "safe-state procedure before using the normal Connect action.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self.window.config.scan_defaults.speed_nm_s = 10
+            self._status("Next Connect configured to 10 nm/s, not instrument readback. Connect normally.")
+
     def _prepare_next_connect_speed(self) -> None:
         if self.state != "checkpoint":
             return
@@ -503,6 +538,7 @@ class CT400SupervisedCampaignDialog(QDialog):
         self.continue_button.setEnabled(self.state == "paused" and self.confirm_safe.isChecked())
         self.pause_button.setEnabled(self.state in ("running", "in_run"))
         self.stop_button.setEnabled(self.state not in ("ready", "completed", "failed", "stopped"))
+        self.prepare_initial_speed_button.setEnabled(self.state == "ready")
         self.prepare_speed_button.setEnabled(self.state == "checkpoint")
         self.ack_speed_button.setEnabled(self.state == "checkpoint" and self.confirm_safe.isChecked())
         self.export_directory.setEnabled(self.state == "ready")
