@@ -12,6 +12,7 @@ from pathlib import Path
 REQUIRED_LOG_MARKERS = (
     "SMOKE_RESOURCES_OK",
     "SMOKE_SIMULATION_READY cameras=1/1",
+    "SMOKE_CAMERA_FRAME_OK",
     "Received device: <class 'hardware.dummy_ct400.DummyCT400'>",
     "Camera 'Simulated Camera' is online.",
     "Shutdown complete.",
