@@ -58,6 +58,7 @@ from logic.task_runner import TaskRunner
 from ui.alignment_panel import AlignmentPanel
 from ui.appearance_dialog import AppearanceDialog
 from ui.application_icons import application_icon
+from ui.ct400_calibration_campaign import CT400SupervisedCampaignDialog
 from ui.ct400_calibration_dialog import CT400CalibrationDialog
 from ui.discovery_dialog import CameraDiscoveryDialog
 from ui.global_status import (
@@ -245,6 +246,9 @@ class MainWindow(QMainWindow):
         self._ct400_connected_laser_input: LaserInput | None = None
         self._ct400_cleanup_laser_input: LaserInput | None = None
         self._ct400_connection_operation_token = 0
+        self._ct400_pending_connect_speed: tuple[int, int] | None = None
+        self._ct400_connected_speed_nm_s: int | None = None
+        self._ct400_campaign_dialog: CT400SupervisedCampaignDialog | None = None
         self._pending_ct400_device_replacement: AbstractCT400 | None = None
         self._ct400_connection_configured: bool = False
         self._ct400_scan_state_uncertain = False
@@ -451,6 +455,9 @@ class MainWindow(QMainWindow):
 
     def _is_alignment_operation_authorized(self) -> bool:
         """Authorize alignment only for simulation or the explicitly connected physical input."""
+        dialog = self._ct400_campaign_dialog
+        if dialog is not None and dialog.active:
+            return False
         if self._ct400_operation_state is not CT400OperationState.IDLE:
             return False
         if self._ct400_scan_state_uncertain or self._ct400_recovery_disconnect_completed:
@@ -1376,6 +1383,11 @@ class MainWindow(QMainWindow):
         calibration_action.setStatusTip("Preview and configure a supervised CT400 calibration campaign")
         calibration_action.triggered.connect(self._show_ct400_calibration)
         self.instrument_menu.addAction(calibration_action)
+        supervised_calibration_action = QAction("CT400 ETA Campaign (Supervised)…", self)
+        supervised_calibration_action.setObjectName("ct400SupervisedCampaignAction")
+        supervised_calibration_action.setStatusTip("Operator-supervised CT400 ETA campaign; no unattended execution")
+        supervised_calibration_action.triggered.connect(self._show_ct400_supervised_campaign)
+        self.instrument_menu.addAction(supervised_calibration_action)
         self._update_scan_import_actions()
 
         help_menu = menu_bar.addMenu("&Help")
@@ -1393,6 +1405,25 @@ class MainWindow(QMainWindow):
         )
         dialog = CT400CalibrationDialog(self.config, self, enabled_detectors)
         dialog.exec()
+
+    @Slot()
+    def _show_ct400_supervised_campaign(self) -> None:
+        """Open one modeless session; ordinary Connect remains under operator control."""
+        dialog = self._ct400_campaign_dialog
+        if dialog is not None:
+            dialog.show()
+            dialog.raise_()
+            dialog.activateWindow()
+            return
+        dialog = CT400SupervisedCampaignDialog(self)
+        self._ct400_campaign_dialog = dialog
+        dialog.finished.connect(lambda _result: self._on_ct400_supervised_campaign_closed(dialog))
+        dialog.show()
+
+    def _on_ct400_supervised_campaign_closed(self, dialog: CT400SupervisedCampaignDialog) -> None:
+        if self._ct400_campaign_dialog is dialog:
+            self._ct400_campaign_dialog = None
+        dialog.deleteLater()
 
     @Slot()
     def _open_scan_file(self) -> None:
@@ -1775,8 +1806,16 @@ class MainWindow(QMainWindow):
         self._ct400_connection_operation_token += 1
         token = self._ct400_connection_operation_token
         device = self.ct400_device
+        connect_speed = int(self.config.scan_defaults.speed_nm_s) if checked else None
+        if checked and connect_speed is not None:
+            self._ct400_pending_connect_speed = (token, connect_speed)
         worker = CT400ConnectionWorker(
-            device, self.config, connect=checked, laser_input=laser_input, operation_token=token
+            device,
+            self.config,
+            connect=checked,
+            laser_input=laser_input,
+            operation_token=token,
+            connect_speed_nm_s=connect_speed,
         )
         worker.signals.connection_succeeded.connect(self._handle_ct400_connection_success)
         worker.signals.connection_failed.connect(self._handle_ct400_connection_failure)
@@ -1919,6 +1958,9 @@ class MainWindow(QMainWindow):
         if laser_input is None:
             laser_input = LaserInput(self.config.scan_defaults.input_port)
         self._ct400_connected_laser_input = laser_input
+        # This is the value submitted to CT400_SetLaser at Connect, not a device readback.
+        speed_info = self._ct400_pending_connect_speed
+        self._ct400_connected_speed_nm_s = speed_info[1] if speed_info is not None and token == speed_info[0] else None
         self._ct400_cleanup_laser_input = laser_input
         self._ct400_connection_configured = True
         self._ct400_recovery_input_matches = True
@@ -1938,6 +1980,7 @@ class MainWindow(QMainWindow):
         # A failed operation revokes use authorization. Keep the last
         # successfully configured input separately for shutdown cleanup.
         self._ct400_connected_laser_input = None
+        self._ct400_connected_speed_nm_s = None
         self.control_panel.set_connected_laser_input(None)
         self.histogram_control.set_connected_laser_input(None)
 
@@ -1950,6 +1993,7 @@ class MainWindow(QMainWindow):
             logger.info("Ignoring stale CT400 disconnection-failure callback.")
             return
         self._ct400_connected_laser_input = None
+        self._ct400_connected_speed_nm_s = None
         self.control_panel.set_connected_laser_input(None)
         self.histogram_control.set_connected_laser_input(None)
         state = (
@@ -1984,6 +2028,7 @@ class MainWindow(QMainWindow):
             return
         self._ct400_connection_configured = False
         self._ct400_connected_laser_input = None
+        self._ct400_connected_speed_nm_s = None
         self._ct400_cleanup_laser_input = None
         self._ct400_scan_state_uncertain = False
         self._ct400_recovery_input_matches = True
@@ -2002,6 +2047,7 @@ class MainWindow(QMainWindow):
             return
         self._ct400_scan_state_uncertain = True
         self._ct400_connected_laser_input = None
+        self._ct400_connected_speed_nm_s = None
         captured_input = self._ct400_cleanup_laser_input
         self._ct400_recovery_input_matches = captured_input is not None and captured_input is issue.laser_input
         self.control_panel.set_connected_laser_input(None)
@@ -2474,6 +2520,16 @@ class MainWindow(QMainWindow):
         Handles the user closing the window. Ensures all hardware and threads
         are shut down gracefully. This is the single source of truth for cleanup.
         """
+        # A paused/checkpoint campaign still owns the scan panel even if no scan
+        # thread exists. Defer all native cleanup until its final record is
+        # committed and the CT400 reservation is released.
+        campaign_dialog = getattr(self, "_ct400_campaign_dialog", None)
+        if campaign_dialog is not None and campaign_dialog.active:
+            event.ignore()
+            self.statusBar().showMessage("Stopping CT400 ETA campaign and saving its final record…", 0)
+            campaign_dialog.request_shutdown()
+            return
+
         close_started_at = time.perf_counter()
         logger.info("Application close requested. Initiating shutdown sequence...")
         pm5020_panel = getattr(self, "pm5020_panel", None)

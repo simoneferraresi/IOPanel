@@ -123,8 +123,10 @@ class CT400ConnectionWorker(QRunnable):
         connect: bool,
         laser_input: LaserInput | None = None,
         operation_token: int = 0,
+        connect_speed_nm_s: int | None = None,
     ):
         super().__init__()
+        self.connect_speed_nm_s = config.scan_defaults.speed_nm_s if connect_speed_nm_s is None else connect_speed_nm_s
         self.ct400 = ct400_device
         self.config = config
         self.is_connect_operation = connect
@@ -143,7 +145,7 @@ class CT400ConnectionWorker(QRunnable):
                 laser_input = self.laser_input
                 min_wl = self.config.scan_defaults.min_wavelength_nm
                 max_wl = self.config.scan_defaults.max_wavelength_nm
-                speed = self.config.scan_defaults.speed_nm_s
+                speed = self.connect_speed_nm_s
                 laser_type_str = self.config.instruments.tunics_laser_type
                 laser_type_enum = getattr(LaserSource, laser_type_str, LaserSource.LS_TunicsT100s_HP)
                 self.ct400.set_laser(
@@ -254,6 +256,8 @@ class ScanWorker(QtCore.QObject):
         self._timing_outcome = "error"
         self._timing_cleanup_failed = False
         self._returned_sample_count: int | None = None
+        self._scan_result_raw_code: int | None = None
+        self._scan_result_message: str | None = None
         self.finished_emitted_at: float | None = None
         self.disable_wl = disable_wl
         self.disable_power = disable_power
@@ -332,6 +336,12 @@ class ScanWorker(QtCore.QObject):
             "failed_stages": self._failed_stages.copy(),
             "known_stabilization_delay_seconds": self._LASER_COMMAND_DELAY_MS / 1000.0,
             "cleanup_failed": self._timing_cleanup_failed,
+            "raw_result_code": self._scan_result_raw_code,
+            "result_message": self._scan_result_message,
+            "terminal_result_kind": self.final_kind.name if self.final_kind is not None else None,
+            "failure_stage": self._failure_stage,
+            "failure_type": self._failure_type,
+            "stop_failed": self._stop_failed,
             "worker_duration_seconds": worker_duration_seconds,
         }
 
@@ -457,6 +467,8 @@ class ScanWorker(QtCore.QObject):
             raw_code = int(result.raw_code)
             error_msg = result.error_message
             kind = result.kind
+            self._scan_result_raw_code = raw_code
+            self._scan_result_message = error_msg
             self._set_final_kind(kind)
 
             if kind == CT400ScanResultKind.USER_CANCELLED:
@@ -719,6 +731,7 @@ class BaseControlPanel(QWidget, ABC, metaclass=QABCMeta):
         self.is_instrument_connected = self.is_simulated
         self.connected_laser_input: LaserInput | None = None
         self.ct400_operation_state = "IDLE"
+        self._calibration_blocked = False
 
         # These will be created in _init_base_ui and used by subclasses
         self.main_layout: QVBoxLayout
@@ -797,7 +810,12 @@ class BaseControlPanel(QWidget, ABC, metaclass=QABCMeta):
         self.is_instrument_connected = is_connected
 
         # Enable configuration inputs only if connected AND not busy.
-        enable_config_inputs = is_connected and not self.is_busy() and self.ct400_operation_state == "IDLE"
+        enable_config_inputs = (
+            is_connected
+            and not self.is_busy()
+            and self.ct400_operation_state == "IDLE"
+            and not self._calibration_blocked
+        )
 
         for widget in self._get_configurable_widgets():
             widget.setEnabled(enable_config_inputs)
@@ -807,12 +825,18 @@ class BaseControlPanel(QWidget, ABC, metaclass=QABCMeta):
             is_connected
             and (self.ct400_operation_state == "IDLE" or owns_operation)
             and (owns_operation or self._selected_input_is_authorized())
+            and not self._calibration_blocked
         )
 
         # If the instrument disconnects while the panel is busy, force a stop.
         if not is_connected and self.is_busy():
             logger.warning(f"Instrument disconnected during operation on '{self.objectName()}'. Forcing stop.")
             self._force_stop()
+
+    def set_calibration_blocked(self, blocked: bool) -> None:
+        """Block normal UI actions while a supervised calibration owns this panel."""
+        self._calibration_blocked = blocked
+        self.on_instrument_connected(self.is_instrument_connected)
 
     def set_ct400_operation_state(self, state: str):
         self.ct400_operation_state = state
@@ -892,6 +916,8 @@ class CT400ControlPanel(BaseControlPanel):
         self._scan_elapsed_timer.setInterval(1000)
         self._scan_elapsed_timer.timeout.connect(self._update_scan_elapsed)
         self._scan_warning_received = False
+        self._calibration_owner: object | None = None
+        self._calibration_dispatch_armed = False
 
         self.setObjectName(ID_CT400_SCAN_PANEL)
 
@@ -917,6 +943,53 @@ class CT400ControlPanel(BaseControlPanel):
         if QThread.currentThread() != self.thread():
             raise RuntimeError("scan IDs must be cleared from the control panel's GUI thread")
         self._next_scan_id = None
+
+    def reserve_calibration(self, owner: object) -> None:
+        """Reserve the ordinary scan path for one supervised UI coordinator."""
+        if self._calibration_owner is not None or self.scanning or self.scan_thread is not None:
+            raise RuntimeError("CT400 scan panel is already owned or busy")
+        if self.ct400_operation_state != "IDLE" or not self.is_instrument_connected:
+            raise RuntimeError("CT400 scan panel must be connected and idle")
+        self._calibration_owner = owner
+        self.set_calibration_blocked(True)
+
+    def release_calibration(self, owner: object) -> None:
+        if self._calibration_owner is not owner:
+            raise RuntimeError("Only the reservation owner can release CT400 calibration")
+        if self.scanning or self.scan_thread is not None:
+            raise RuntimeError("Cannot release calibration before scan cleanup finishes")
+        self._calibration_owner = None
+        self._next_scan_id = None
+        self.set_calibration_blocked(False)
+
+    def run_calibration_scan(self, owner: object, *, run, laser_power_mw: float, laser_input: LaserInput) -> None:
+        """Dispatch an operator-authorized run through the existing ScanWorker."""
+        if self._calibration_owner is not owner or self._calibration_dispatch_armed:
+            raise RuntimeError("Calibration ownership missing")
+        if self.scanning or self.scan_thread is not None or self.ct400_operation_state != "IDLE":
+            raise RuntimeError("CT400 is busy")
+        if not self.is_instrument_connected or self.connected_laser_input is not laser_input:
+            raise RuntimeError("Calibration laser input is not authorized")
+        if run.speed_block_nm_s != float(self.config.scan_defaults.speed_nm_s):
+            raise RuntimeError("Calibration requested speed differs from configured next Connect speed")
+        self.initial_wl.setText(f"{run.start_wavelength_nm:g}")
+        self.final_wl.setText(f"{run.end_wavelength_nm:g}")
+        self.resolution.setText(str(run.resolution_pm))
+        self.motor_speed.setText(f"{run.speed_block_nm_s:g}")
+        self.laser_power.setText(f"{laser_power_mw:g}")
+        self.power_unit.setCurrentText("mW")
+        self.input_port.setCurrentIndex(self.input_port.findData(laser_input))
+        for detector, checkbox in self.scan_detector_cbs.items():
+            checkbox.setChecked(detector.name in run.detectors)
+        self.set_next_scan_id(run.run_id)
+        self._calibration_dispatch_armed = True
+        try:
+            self._start_scan()
+        finally:
+            self._calibration_dispatch_armed = False
+        if not self.scanning:
+            self.clear_next_scan_id()
+            raise RuntimeError("CT400 ScanWorker did not start")
 
     @override
     def _init_subclass_ui(self) -> None:
@@ -1069,6 +1142,9 @@ class CT400ControlPanel(BaseControlPanel):
         return value
 
     def _start_scan(self):
+        if self._calibration_owner is not None and not self._calibration_dispatch_armed:
+            logger.warning("Rejected manually requested scan during supervised calibration.")
+            return
         if self.ct400_operation_state != "IDLE":
             return
         ct400 = self.ct400
