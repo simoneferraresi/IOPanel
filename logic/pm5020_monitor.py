@@ -6,6 +6,7 @@ import logging
 import math
 import time
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 
 from PySide6.QtCore import QTimer, Signal, Slot
 
@@ -16,6 +17,15 @@ from hardware.pm5020_types import ChannelConfig, PM5020State, PowerChannel
 from logic.task_runner import BaseWorker
 
 logger = logging.getLogger("LabApp.pm5020_monitor")
+
+
+@dataclass(frozen=True)
+class ConfigurationRequest:
+    generation: int
+    request_id: int
+    settings_revision: int
+    channel_configs: tuple[tuple[PowerChannel, ChannelConfig], ...]
+
 
 DISPLAY_UNITS = ("W", "mW", "µW", "nW", "dBm")
 _UNIT_SCALE = {"W": 1.0, "mW": 1e3, "µW": 1e6, "nW": 1e9}
@@ -53,6 +63,8 @@ class PM5020MonitorWorker(BaseWorker):
     reading_ready = Signal(object, float)
     error_occurred = Signal(str)
     shutdown_complete = Signal()
+    configuration_result = Signal(int, int, int, bool, str)
+    monitoring_started = Signal(int, int)
 
     def __init__(
         self,
@@ -70,6 +82,8 @@ class PM5020MonitorWorker(BaseWorker):
         self._poll_in_progress = False
         self._monitor_started_at = 0.0
         self._channels = (PowerChannel.CH1, PowerChannel.CH2)
+        self._connection_generation = 0
+        self._monitor_session_id = 0
 
     @Slot()
     def initialize(self) -> None:
@@ -79,8 +93,9 @@ class PM5020MonitorWorker(BaseWorker):
         self.instrument_state.emit(PM5020State.DISCONNECTED)
         self.activity_state.emit("Disconnected" if not self._connected() else "Recovery required")
 
-    @Slot(str, str)
-    def connect_instrument(self, mode: str, resource_name: str) -> None:
+    @Slot(str, str, int)
+    def connect_instrument(self, mode: str, resource_name: str, generation: int) -> None:
+        self._connection_generation = generation
         if self._backend is not None and self._backend.is_connected():
             self.error_occurred.emit("Disconnect the current PM5020 before connecting again.")
             return
@@ -105,18 +120,27 @@ class PM5020MonitorWorker(BaseWorker):
             self.error_occurred.emit(f"PM5020 connection failed: {exc}")
 
     @Slot(object)
-    def configure_channels(self, channel_configs: Sequence[tuple[PowerChannel, ChannelConfig]]) -> None:
+    def configure_channels(self, request: ConfigurationRequest) -> None:
+        if request.generation != self._connection_generation:
+            return
         backend = self._ready_backend()
         if backend is None:
+            self.configuration_result.emit(
+                request.generation, request.request_id, request.settings_revision, False, "PM5020 is not ready."
+            )
             return
         try:
-            for channel, config in channel_configs:
+            for channel, config in request.channel_configs:
                 backend.configure_channel(PowerChannel(channel), config)
                 self._publish_state()
             self.activity_state.emit("Connected / idle")
+            self.configuration_result.emit(request.generation, request.request_id, request.settings_revision, True, "")
         except Exception as exc:
             logger.exception("PM5020 channel configuration failed")
             self._publish_state()
+            self.configuration_result.emit(
+                request.generation, request.request_id, request.settings_revision, False, str(exc)
+            )
             self.error_occurred.emit(f"Channel configuration failed: {exc}")
 
     @Slot(object)
@@ -133,7 +157,9 @@ class PM5020MonitorWorker(BaseWorker):
         self._monitoring = True
         self._paused = False
         self._monitor_started_at = time.monotonic()
+        self._monitor_session_id += 1
         self._timer.start(max(250, min(5000, int(interval_ms))))
+        self.monitoring_started.emit(self._connection_generation, self._monitor_session_id)
         self.activity_state.emit("Monitoring")
         self._poll()
 
@@ -159,10 +185,11 @@ class PM5020MonitorWorker(BaseWorker):
     @Slot()
     def stop_monitoring(self) -> None:
         self._stop_timer()
-        self.activity_state.emit("Connected / idle" if self._connected() else "Disconnected")
+        self.activity_state.emit(self._activity_for_state())
 
-    @Slot()
-    def disconnect_instrument(self) -> None:
+    @Slot(int)
+    def disconnect_instrument(self, generation: int) -> None:
+        self._connection_generation = generation
         self._stop_timer()
         if self._backend is not None:
             self.activity_state.emit("Disconnecting")
@@ -231,6 +258,16 @@ class PM5020MonitorWorker(BaseWorker):
 
     def _connected(self) -> bool:
         return self._backend is not None and self._backend.is_connected()
+
+    def _activity_for_state(self) -> str:
+        state = PM5020State.DISCONNECTED if self._backend is None else self._backend.state
+        return {
+            PM5020State.DISCONNECTED: "Disconnected",
+            PM5020State.IDLE: "Connected / idle",
+            PM5020State.ERROR: "Recovery required",
+            PM5020State.ARMED: "Busy with acquisition",
+            PM5020State.RETRIEVING: "Busy with acquisition",
+        }[state]
 
     def _stop_timer(self) -> None:
         self._monitoring = False

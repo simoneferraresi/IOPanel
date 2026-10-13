@@ -87,7 +87,10 @@ Wavelengths are editable; 1550 nm and 775 nm are example defaults only. The GUI
 checks that wavelength and manual range are positive and finite, but sensor
 heads have different supported wavelength and power ranges. Vendor-side
 validation remains authoritative and any rejected setting is shown in the
-panel. Input filtering and automatic or manual ranging use the shared backend
+panel. Start remains disabled until the worker confirms all requested channel
+settings for the current connection. Editing wavelength, range, filter, or the
+enabled-channel selection invalidates that confirmation; display-unit changes
+do not. Input filtering and automatic or manual ranging use the shared backend
 configuration. A channel excluded from monitoring is not read.
 
 Start monitoring with a 250–5000 ms requested interval. Reads run sequentially
@@ -99,7 +102,11 @@ measurements have no dBm display. History is limited to the selected time
 window and a 2,400 point ring buffer per channel.
 
 **Pause** stops new requests but keeps the session and history. **Resume**
-continues that session. **Stop** ends monitoring and leaves the meter connected.
+continues that session. **Stop** ends monitoring, preserves its history, and
+leaves the meter connected. A successful new Start begins a fresh elapsed-time
+session and clears the previous plot and latest-reading labels. **Clear Plot**
+clears both traces and latest-reading labels without stopping monitoring or
+disconnecting the meter.
 **Disconnect** stops monitoring and closes the backend. After a communication
 or configuration failure that leaves the backend in `ERROR`, monitoring stops
 and the UI requests deliberate disconnect/reconnect recovery; it does not

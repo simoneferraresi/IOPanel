@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from hardware.pm5020_types import ChannelConfig, PM5020State, PowerChannel, PowerReading
-from logic.pm5020_monitor import DISPLAY_UNITS, PM5020MonitorWorker, convert_power, format_power
+from logic.pm5020_monitor import DISPLAY_UNITS, ConfigurationRequest, PM5020MonitorWorker, convert_power, format_power
 from logic.task_runner import TaskRunner
 
 logger = logging.getLogger("LabApp.pm5020_panel")
@@ -141,14 +141,14 @@ class PM5020ChannelControls(QGroupBox):
 class PM5020Panel(QWidget):
     """Independent PM5020 connection, configuration, measurement, and plotting UI."""
 
-    connect_requested = Signal(str, str)
+    connect_requested = Signal(str, str, int)
     configure_requested = Signal(object)
     channels_requested = Signal(object)
     start_requested = Signal(int)
     pause_requested = Signal()
     resume_requested = Signal(int)
     stop_requested = Signal()
-    disconnect_requested = Signal()
+    disconnect_requested = Signal(int)
     shutdown_requested = Signal()
     shutdown_complete = Signal()
     shutdown_timeout = Signal(str)
@@ -158,11 +158,16 @@ class PM5020Panel(QWidget):
         self._backend_state = PM5020State.DISCONNECTED
         self._activity = "Disconnected"
         self._configuration_applied = False
+        self._settings_revision = 0
+        self._connection_generation = 0
+        self._configuration_request_id = 0
+        self._pending_configuration: tuple[int, int, int] | None = None
         self._monitor_session = False
         self._paused = False
         self._last_elapsed = 0.0
         self._shutdown_requested = False
         self._shutdown_complete = False
+        self._thread_started = False
         self._shutdown_timer = QTimer(self)
         self._shutdown_timer.setSingleShot(True)
         self._shutdown_timer.setInterval(5000)
@@ -176,7 +181,9 @@ class PM5020Panel(QWidget):
         self.worker.activity_state.connect(self._on_activity_state)
         self.worker.reading_ready.connect(self._on_reading)
         self.worker.error_occurred.connect(self._show_error)
-        self.task.worker_thread.finished.connect(self._on_thread_finished, Qt.ConnectionType.DirectConnection)
+        self.task.worker_thread.finished.connect(self._on_thread_finished, Qt.ConnectionType.QueuedConnection)
+        self.worker.configuration_result.connect(self._on_configuration_result)
+        self.worker.monitoring_started.connect(self._on_monitoring_started)
         self._set_request_connections()
 
         root = QVBoxLayout(self)
@@ -252,7 +259,7 @@ class PM5020Panel(QWidget):
         root.addWidget(scroll)
 
         self.connect_button.clicked.connect(self._connect)
-        self.disconnect_button.clicked.connect(self.disconnect_requested)
+        self.disconnect_button.clicked.connect(self._disconnect)
         self.apply_button.clicked.connect(self._apply_configuration)
         self.start_button.clicked.connect(self._start)
         self.pause_button.clicked.connect(self.pause_requested)
@@ -285,18 +292,31 @@ class PM5020Panel(QWidget):
 
     def _ensure_worker_started(self) -> None:
         if not self.task.worker_thread.isRunning() and not self._shutdown_requested:
+            self._thread_started = True
             self.task.start()
 
     @Slot()
     def _connect(self) -> None:
         self.error_label.clear()
         self._ensure_worker_started()
-        self.connect_requested.emit(self.mode.currentText(), self.resource.text())
+        self._connection_generation += 1
+        self._invalidate_configuration()
+        self.connect_requested.emit(self.mode.currentText(), self.resource.text(), self._connection_generation)
         self._activity = "Connecting"
         self._update_controls()
 
     @Slot()
+    def _disconnect(self) -> None:
+        self._connection_generation += 1
+        self._invalidate_configuration()
+        self.disconnect_requested.emit(self._connection_generation)
+        self._activity = "Disconnecting"
+        self._update_controls()
+
+    @Slot()
     def _apply_configuration(self) -> None:
+        if self._pending_configuration is not None or self._backend_state is not PM5020State.IDLE:
+            return
         channels = [channel for channel in (self.ch1, self.ch2) if channel.enabled.isChecked()]
         if not channels:
             self.error_label.setText("Enable at least one channel before applying settings.")
@@ -307,32 +327,45 @@ class PM5020Panel(QWidget):
             self.error_label.setText(f"Invalid channel settings: {exc}")
             return
         self.channels_requested.emit(tuple(channel.channel for channel in channels))
-        self.configure_requested.emit(tuple(settings))
-        self._configuration_applied = True
+        self._configuration_request_id += 1
+        request = ConfigurationRequest(
+            self._connection_generation,
+            self._configuration_request_id,
+            self._settings_revision,
+            tuple(settings),
+        )
+        self._pending_configuration = (request.generation, request.request_id, request.settings_revision)
+        self._configuration_applied = False
+        self.configure_requested.emit(request)
         self._update_controls()
 
     @Slot()
     def _start(self) -> None:
+        if not self.start_button.isEnabled():
+            return
         enabled = tuple(channel.channel for channel in (self.ch1, self.ch2) if channel.enabled.isChecked())
         if not enabled:
             self.error_label.setText("Enable at least one channel before monitoring.")
             return
         self.channels_requested.emit(enabled)
         self.start_requested.emit(self.interval.value())
-        self._monitor_session = True
-        self._paused = False
-        self._activity = "Monitoring"
-        self._last_elapsed = 0.0
-        self._update_controls()
 
     @Slot()
     def _configuration_edited(self, *_args: object) -> None:
+        self._settings_revision += 1
         self._configuration_applied = False
+        self._pending_configuration = None
         self._update_controls()
+
+    def _invalidate_configuration(self) -> None:
+        self._configuration_applied = False
+        self._pending_configuration = None
 
     @Slot(object)
     def _on_instrument_state(self, state: PM5020State) -> None:
         self._backend_state = state
+        if state is PM5020State.DISCONNECTED or state is PM5020State.ERROR:
+            self._invalidate_configuration()
         self.readiness_label.setText(f"{state.name.title()} — {'Ready' if state is PM5020State.IDLE else 'Not ready'}")
         if state is PM5020State.ERROR:
             self._activity = "Recovery required"
@@ -343,6 +376,8 @@ class PM5020Panel(QWidget):
 
     @Slot(str)
     def _on_activity_state(self, activity: str) -> None:
+        if self._backend_state is PM5020State.ERROR and activity != "Recovery required":
+            activity = "Recovery required"
         self._activity = activity
         if activity in {"Connected / idle", "Disconnected"}:
             self.error_label.clear()
@@ -370,6 +405,45 @@ class PM5020Panel(QWidget):
     def _clear_history(self) -> None:
         self.ch1.clear_history()
         self.ch2.clear_history()
+        for channel in (self.ch1, self.ch2):
+            channel._latest_power_w = None
+            channel._latest_timestamp = None
+            channel.reading_label.setText("—")
+            channel.measurement_status.setText("Cleared")
+            channel.age_label.setText("Last reading: —")
+        self._last_elapsed = 0.0
+        self._redraw()
+
+    @Slot(int, int, int, bool, str)
+    def _on_configuration_result(
+        self, generation: int, request_id: int, revision: int, success: bool, message: str
+    ) -> None:
+        if self._pending_configuration != (generation, request_id, revision):
+            return
+        self._pending_configuration = None
+        valid = (
+            success
+            and generation == self._connection_generation
+            and revision == self._settings_revision
+            and self._backend_state is PM5020State.IDLE
+        )
+        self._configuration_applied = valid
+        if valid:
+            self.error_label.clear()
+            self._activity = "Connected / idle"
+        else:
+            self.error_label.setText(message or "Settings changed or the PM5020 state changed before confirmation.")
+        self._update_controls()
+
+    @Slot(int, int)
+    def _on_monitoring_started(self, generation: int, _session_id: int) -> None:
+        if generation != self._connection_generation:
+            return
+        self._clear_history()
+        self._monitor_session = True
+        self._paused = False
+        self._activity = "Monitoring"
+        self._update_controls()
 
     def _redraw(self) -> None:
         window_s = int(self.history.currentData())
@@ -386,8 +460,21 @@ class PM5020Panel(QWidget):
         self.disconnect_button.setEnabled(connected and not busy)
         self.mode.setEnabled(not connected and not busy)
         self.resource.setEnabled(not connected and not busy and self.mode.currentText() == "Physical PM5020")
-        self.apply_button.setEnabled(connected and not recovering and not self._monitor_session and not self._paused)
-        can_start = connected and self._configuration_applied and not recovering and not self._monitor_session
+        if self._pending_configuration is not None:
+            self.apply_button.setText("Applying…")
+        elif self._configuration_applied:
+            self.apply_button.setText("Settings Applied")
+        else:
+            self.apply_button.setText("Apply Channel Settings")
+        ready = self._backend_state is PM5020State.IDLE
+        self.apply_button.setEnabled(
+            ready
+            and not recovering
+            and not self._monitor_session
+            and not self._paused
+            and self._pending_configuration is None
+        )
+        can_start = ready and self._configuration_applied and not recovering and not self._monitor_session
         self.start_button.setEnabled(can_start)
         self.pause_button.setEnabled(self._monitor_session and not self._paused and not recovering)
         self.resume_button.setEnabled(self._monitor_session and self._paused and not recovering)
@@ -403,6 +490,8 @@ class PM5020Panel(QWidget):
 
     @Slot()
     def _on_thread_finished(self) -> None:
+        if self._shutdown_complete:
+            return
         self._shutdown_timer.stop()
         self._shutdown_complete = True
         self.shutdown_complete.emit()
@@ -434,9 +523,7 @@ class PM5020Panel(QWidget):
 
     @property
     def shutdown_finished(self) -> bool:
-        if self._shutdown_complete:
-            return True
-        return not self.task.worker_thread.isRunning()
+        return self._shutdown_complete or not self._thread_started
 
     @override
     def closeEvent(self, event: QCloseEvent) -> None:

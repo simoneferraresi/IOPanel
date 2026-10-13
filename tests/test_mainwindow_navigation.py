@@ -71,3 +71,16 @@ def test_menu_order_and_action_placement(qtbot, monkeypatch, tmp_path):
     assert window.log_console_action.shortcut() == QKeySequence("F12")
     assert window.log_console_action.isCheckable()
     window.close()
+
+
+def test_application_close_resumes_after_pm5020_worker_thread_finishes(qtbot, monkeypatch, tmp_path):
+    from hardware.pm5020_types import PM5020State
+
+    settings = AppSettings(QSettings(str(tmp_path / "pm-close.ini"), QSettings.Format.IniFormat))
+    window = _make_window(qtbot, monkeypatch, settings)
+    window.pm5020_panel._connect()
+    qtbot.waitUntil(lambda: window.pm5020_panel._backend_state is PM5020State.IDLE, timeout=2000)
+    assert not window.close()
+    assert window._pending_pm5020_close
+    qtbot.waitUntil(lambda: window.pm5020_panel.shutdown_finished, timeout=2000)
+    qtbot.waitUntil(lambda: not window._pending_pm5020_close, timeout=2000)
