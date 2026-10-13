@@ -234,3 +234,52 @@ def test_refuses_stale_fake_timing_and_never_starts_next_run(qtbot, monkeypatch,
     finally:
         window._ct400_error_reset_timer.stop()
         window.close()
+
+
+def test_withdrawing_operator_approval_pauses_before_next_fake_scan(qtbot, monkeypatch, tmp_path):
+    window, dialog = _dialog(qtbot, monkeypatch, tmp_path)
+    dialog.auto_next.setChecked(True)
+    calls = []
+
+    def fake_scan(_owner, *, run, **_kwargs):
+        calls.append(run.run_id)
+        dialog.confirm_safe.setChecked(False)
+        QTimer.singleShot(
+            0,
+            lambda: (
+                window.control_panel.scan_timing_ready.emit(
+                    {"scan_id": run.run_id, "outcome": "success", "failed_stages": [], "cleanup_failed": False}
+                ),
+                window.control_panel.operation_finished.emit(),
+            ),
+        )
+
+    monkeypatch.setattr(window.control_panel, "run_calibration_scan", fake_scan)
+    try:
+        dialog._start()
+        qtbot.waitUntil(lambda: dialog.state == "paused", timeout=3000)
+        assert len(calls) == 1
+        assert dialog.next_index == 1
+        dialog._continue()
+        assert len(calls) == 1
+        dialog._stop()
+    finally:
+        window._ct400_error_reset_timer.stop()
+        window.close()
+
+
+def test_initial_connect_speed_preparation_never_calls_hardware(qtbot, monkeypatch, tmp_path):
+    window, dialog = _dialog(qtbot, monkeypatch, tmp_path)
+    try:
+        window.config.scan_defaults.speed_nm_s = 5
+        dialog._prepare_initial_connect_speed()
+        assert window.config.scan_defaults.speed_nm_s == 5
+        window._handle_ct400_disconnection_success("Disconnected")
+        dialog._prepare_initial_connect_speed()
+        assert window.config.scan_defaults.speed_nm_s == 10
+        assert dialog.state == "ready"
+        assert window._ct400_connected_laser_input is None
+        assert not dialog._owns_panel
+    finally:
+        window._ct400_error_reset_timer.stop()
+        window.close()
