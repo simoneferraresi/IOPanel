@@ -4,7 +4,6 @@ import threading
 from types import SimpleNamespace
 
 import numpy as np
-
 import pytest
 from PySide6.QtCore import QSettings, QTimer
 from PySide6.QtWidgets import QMessageBox
@@ -13,8 +12,8 @@ from app_settings import AppSettings
 from config_model import AppConfig
 from hardware.ct400 import CT400
 from hardware.ct400_types import CT400ScanResultKind, LaserInput
-from ui.control_panel import ScanWorker
 from ui.ct400_calibration_campaign import CT400SupervisedCampaignDialog
+from ui.control_panel import ScanWorker
 from ui.main_window import CT400OperationState, MainWindow
 
 
