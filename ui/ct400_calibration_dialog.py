@@ -34,8 +34,8 @@ class CT400CalibrationDialog(QDialog):
         self.resize(1000, 680)
         layout = QVBoxLayout(self)
         self.gate_notice = QLabel(
-            "Dry-run planning only. Physical campaign execution is disabled while Issue #125 connection-state "
-            "safety remains open. No instrument calls are made from this dialog."
+            "Dry-run planning only. Physical campaign execution remains disabled pending Issue #140 "
+            "coordinator integration and separate operator approval. No instrument calls are made from this dialog."
         )
         self.gate_notice.setWordWrap(True)
         layout.addWidget(self.gate_notice)
@@ -78,7 +78,7 @@ class CT400CalibrationDialog(QDialog):
         buttons = QHBoxLayout()
         self.start_button = QPushButton("Start campaign")
         self.start_button.setEnabled(False)
-        self.start_button.setToolTip("Physical execution is not implemented; Issue #125 remains open.")
+        self.start_button.setToolTip("Physical execution is not implemented or authorized; Issue #140 remains open.")
         close_button = QPushButton("Close")
         close_button.clicked.connect(self.accept)
         buttons.addStretch(1)
