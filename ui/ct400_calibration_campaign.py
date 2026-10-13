@@ -95,7 +95,6 @@ class CT400SupervisedCampaignDialog(QDialog):
             "I am present and have independently verified the approved optical safe state, "
             "range, power, connected laser input, detector wiring and laboratory authorization."
         )
-        self.confirm_safe.setWordWrap(True)
         self.confirm_safe.toggled.connect(self._refresh_controls)
         layout.addWidget(self.confirm_safe)
         self.confirm_extra = QCheckBox("DE2–DE4 are connected and approved for case F; otherwise skip F.")
