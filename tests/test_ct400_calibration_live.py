@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 from PySide6.QtCore import QTimer, Signal
-from PySide6.QtWidgets import QCheckBox, QComboBox, QLineEdit, QWidget, QMessageBox
+from PySide6.QtWidgets import QCheckBox, QComboBox, QLineEdit, QMessageBox, QWidget
 
 from config_model import AppConfig
 from hardware.ct400 import CT400
