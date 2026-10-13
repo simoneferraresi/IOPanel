@@ -97,21 +97,36 @@ def run_frozen_opengl_smoke(app: QApplication, log_file: Path, logger: logging.L
     from ui.alignment_panel import AlignmentPanel
 
     probe_surface = QOffscreenSurface()
-    probe_surface.create()
     probe_context = QOpenGLContext()
-    if not probe_surface.isValid() or not probe_context.create() or not probe_context.isValid():
-        reason = "Qt could not create a valid offscreen OpenGL context"
-        logger.info("SMOKE_OPENGL_UNAVAILABLE %s", {"reason": reason})
-        return 0
-    if not probe_context.makeCurrent(probe_surface):
+    try:
+        probe_surface.create()
+        logger.info("SMOKE_OPENGL_PROBE surface_valid=%s", probe_surface.isValid())
+        if not probe_surface.isValid():
+            probe_surface.destroy()
+            reason = "Qt could not create an offscreen OpenGL surface"
+            logger.info("SMOKE_OPENGL_UNAVAILABLE %s", {"reason": reason})
+            return 0
+        context_created = probe_context.create()
+        logger.info("SMOKE_OPENGL_PROBE context_created=%s", context_created)
+        if not context_created or not probe_context.isValid():
+            probe_surface.destroy()
+            reason = "Qt could not create a valid offscreen OpenGL context"
+            logger.info("SMOKE_OPENGL_UNAVAILABLE %s", {"reason": reason})
+            return 0
+        if not probe_context.makeCurrent(probe_surface):
+            probe_surface.destroy()
+            reason = "Qt could not make the offscreen OpenGL context current"
+            logger.info("SMOKE_OPENGL_UNAVAILABLE %s", {"reason": reason})
+            return 0
+        probe_vendor = GL.glGetString(GL.GL_VENDOR)
+        probe_renderer = GL.glGetString(GL.GL_RENDERER)
+        probe_version = GL.glGetString(GL.GL_VERSION)
+        probe_format = probe_context.format()
+    except Exception:
+        logger.exception("OpenGL capability probe setup failed")
+        probe_context.doneCurrent()
         probe_surface.destroy()
-        reason = "Qt could not make the offscreen OpenGL context current"
-        logger.info("SMOKE_OPENGL_UNAVAILABLE %s", {"reason": reason})
-        return 0
-    probe_vendor = GL.glGetString(GL.GL_VENDOR)
-    probe_renderer = GL.glGetString(GL.GL_RENDERER)
-    probe_version = GL.glGetString(GL.GL_VERSION)
-    probe_format = probe_context.format()
+        raise
     probe_details = {
         "vendor": probe_vendor.decode("ascii", errors="replace") if probe_vendor else "unknown",
         "renderer": probe_renderer.decode("ascii", errors="replace") if probe_renderer else "unknown",
