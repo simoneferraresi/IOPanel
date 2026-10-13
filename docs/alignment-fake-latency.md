@@ -2,20 +2,20 @@
 
 Run on a driver-free Python 3.12 environment:
 
-\`\`\`powershell
+```powershell
 uv run --no-sync python -m tools.characterize_alignment_latency --output alignment-fake.json
-\`\`\`
+```
 
-This executes **the actual** \`AlignmentWorker.run_mapping\`, \`PiezoController.set_voltage\` and voltage-range/read functions against an in-memory fake DLL and fake CT400. No device discovery, WinDLL loading, laser operation or motion occurs.
+This executes **the actual** `AlignmentWorker.run_mapping`, `PiezoController.set_voltage` and voltage-range/read functions against an in-memory fake DLL and fake CT400. No device discovery, WinDLL loading, laser operation or motion occurs.
 
-The fake backend uses a virtual clock. It advances when the real worker requests Qt sleeps, when the fake DLL is called, or when the fake detector is read. This makes large 100×100 maps testable without delaying CI for minutes. The emitted \`python_overhead_ms_wall\` measures host Python execution and **excludes virtual device delays**; it is not a prediction of physical acquisition time.
+The fake backend uses a virtual clock. It advances when the real worker requests Qt sleeps, when the fake DLL is called, or when the fake detector is read. This makes large 100×100 maps testable without delaying CI for minutes. The emitted `python_overhead_ms_wall` measures host Python execution and **excludes virtual device delays**; it is not a prediction of physical acquisition time.
 
 The command model is checked against the actual executed calls, not merely copied into a formula:
 
 - For P points: 2P axis writes, 4P in-setter bounds reads, 4 initial bounds reads, 2 voltage reads, and 4 restoration writes with 8 bounds reads = **6P + 18 fake DLL calls** on successful maps.
 - For S samples per point: **P × S** synthetic detector reads.
 - Requested waits: 200 ms laser stabilization + P × settling_ms + (20 × P × S ms if S > 1).
-- Normal-path restoration currently repeats the stage write in the success branch and \`finally\` block. Some raster axis writes are unchanged/no-op; the generated report counts them as **hypotheses**, not as candidates already safe to remove.
+- Normal-path restoration currently repeats the stage write in the success branch and `finally` block. Some raster axis writes are unchanged/no-op; the generated report counts them as **hypotheses**, not as candidates already safe to remove.
 - Synthetic power intentionally depends differently on X and Y, asserting both power-grid orientation and the original X/Y units.
 
 Failures/cancellation use separate synthetic regression tests to check stage restoration and laser-disable request.

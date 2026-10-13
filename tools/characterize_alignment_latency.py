@@ -99,7 +99,8 @@ class FakePowerMeter:
         if self.on_read is not None:
             self.on_read()
         dbm = -30.0 + 2 * (self.dll.voltage["x"] - 5) + 3 * (self.dll.voltage["y"] - 5)
-        return PowerData(pout=0.0, detectors={Detector.DE_1: self.override_dbm if self.override_dbm is not None else dbm})
+        result_dbm = self.override_dbm if self.override_dbm is not None else dbm
+        return PowerData(pout=0.0, detectors={Detector.DE_1: result_dbm})
 
 
 def make_worker(clock: VirtualClock) -> tuple[AlignmentWorker, FakePiezoDLL, FakePowerMeter]:
