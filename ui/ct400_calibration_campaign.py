@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import logging
 import math
+import os
+import tempfile
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -68,6 +70,7 @@ class CT400SupervisedCampaignDialog(QDialog):
         self.state = "ready"
         self._stop_requested = False
         self._close_after_stop = False
+        self._shutdown_requested = False
         self._speed_checkpoint_approved: float | None = None
 
         self.setWindowTitle("CT400 ETA Campaign — Operator Supervised")
@@ -192,6 +195,25 @@ class CT400SupervisedCampaignDialog(QDialog):
         if any((directory / f"{self.campaign.campaign_id}.{suffix}").exists() for suffix in ("jsonl", "json", "csv")):
             raise FileExistsError("A campaign with this ID already exists")
         directory.mkdir(parents=True, exist_ok=True)
+        # Verify durable output writes and atomic rename before any CT400
+        # acquisition, without creating the campaign's first JSONL file.
+        probe_path = None
+        renamed_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="wb", dir=directory, prefix=".ct400-eta-preflight-", delete=False
+            ) as probe:
+                probe_path = Path(probe.name)
+                probe.write(b"IOPanel CT400 ETA preflight\n")
+                probe.flush()
+                os.fsync(probe.fileno())
+            renamed_path = probe_path.with_name(probe_path.name + ".renamed")
+            os.replace(probe_path, renamed_path)
+        finally:
+            if probe_path is not None:
+                probe_path.unlink(missing_ok=True)
+            if renamed_path is not None:
+                renamed_path.unlink(missing_ok=True)
         self._power_mw = power
         self._laser_input = self.window._ct400_connected_laser_input
         self._device = self.window.ct400_device
@@ -381,6 +403,12 @@ class CT400SupervisedCampaignDialog(QDialog):
             "returned_sample_count": timing.get("returned_sample_count") if timing is not None else None,
             "failed_stages": timing.get("failed_stages", []) if timing is not None else [],
             "cleanup_failed": timing.get("cleanup_failed") if timing is not None else None,
+            "raw_result_code": timing.get("raw_result_code") if timing is not None else None,
+            "result_message": timing.get("result_message") if timing is not None else None,
+            "terminal_result_kind": timing.get("terminal_result_kind") if timing is not None else None,
+            "failure_stage": timing.get("failure_stage") if timing is not None else None,
+            "failure_type": timing.get("failure_type") if timing is not None else None,
+            "stop_failed": timing.get("stop_failed") if timing is not None else None,
             "reason": reason,
             "recorded_at_utc": datetime.now(UTC).isoformat(),
         }
@@ -420,6 +448,13 @@ class CT400SupervisedCampaignDialog(QDialog):
             self._refresh_controls()
         else:
             self._finish("stopped")
+
+    def request_shutdown(self) -> None:
+        """Cancel dispatch and defer parent close until journal and worker release."""
+        if self._shutdown_requested:
+            return
+        self._shutdown_requested = True
+        self._stop()
 
     def _prepare_initial_connect_speed(self) -> None:
         if self.state != "ready":
@@ -502,6 +537,8 @@ class CT400SupervisedCampaignDialog(QDialog):
                 self.panel.release_calibration(self)
             except RuntimeError:
                 logger.exception("Unable to release CT400 calibration scan reservation")
+                self._status("CT400 calibration reservation release failed; shutdown deferred.")
+                return
             self.window.histogram_control.set_calibration_blocked(False)
             self._owns_panel = False
             self._restore_fields()
@@ -512,6 +549,8 @@ class CT400SupervisedCampaignDialog(QDialog):
         self._refresh_controls()
         if self._close_after_stop and not self._owns_panel:
             QTimer.singleShot(0, self.close)
+        if self._shutdown_requested and not self._owns_panel:
+            QTimer.singleShot(0, self.window.close)
 
     def _restore_fields(self) -> None:
         fields = self._original_fields

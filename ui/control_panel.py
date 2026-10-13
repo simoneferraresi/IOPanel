@@ -256,6 +256,8 @@ class ScanWorker(QtCore.QObject):
         self._timing_outcome = "error"
         self._timing_cleanup_failed = False
         self._returned_sample_count: int | None = None
+        self._scan_result_raw_code: int | None = None
+        self._scan_result_message: str | None = None
         self.finished_emitted_at: float | None = None
         self.disable_wl = disable_wl
         self.disable_power = disable_power
@@ -334,6 +336,12 @@ class ScanWorker(QtCore.QObject):
             "failed_stages": self._failed_stages.copy(),
             "known_stabilization_delay_seconds": self._LASER_COMMAND_DELAY_MS / 1000.0,
             "cleanup_failed": self._timing_cleanup_failed,
+            "raw_result_code": self._scan_result_raw_code,
+            "result_message": self._scan_result_message,
+            "terminal_result_kind": self.final_kind.name if self.final_kind is not None else None,
+            "failure_stage": self._failure_stage,
+            "failure_type": self._failure_type,
+            "stop_failed": self._stop_failed,
             "worker_duration_seconds": worker_duration_seconds,
         }
 
@@ -459,6 +467,8 @@ class ScanWorker(QtCore.QObject):
             raw_code = int(result.raw_code)
             error_msg = result.error_message
             kind = result.kind
+            self._scan_result_raw_code = raw_code
+            self._scan_result_message = error_msg
             self._set_final_kind(kind)
 
             if kind == CT400ScanResultKind.USER_CANCELLED:

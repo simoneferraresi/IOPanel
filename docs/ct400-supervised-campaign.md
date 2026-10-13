@@ -7,8 +7,9 @@ The legacy **CT400 ETA Calibration…** menu item remains a dry-run preview.
 ## Safety and prerequisites
 
 - **No laboratory runs were executed in development or CI.** This feature is
-  not physically qualified until a separate authorized, attended test on the
-  laboratory PC. Review the code, UI and fake tests before using real hardware.
+  not physically qualified until an authorized, attended test on the
+  laboratory PC. The merged runner is explicitly operator-acknowledged, not
+  automatically armed; this is an experimental calibration feature.
 - No code in the new dialog calls a CT400 DLL method. Real acquisitions are
   submitted through `CT400ControlPanel.run_calibration_scan()`, which delegates
   to the **existing ScanWorker**, including laser disables, ScanStop ownership,
@@ -83,11 +84,12 @@ GUI tests verify results, speed checkpoint, Stop, warning/failure, stale run IDs
 and output. None proves real DLL concurrency, detector wiring, native return
 codes, safe laser disable, the speed readback, or physically correct delays.
 
-**Do not merge or use for physical measurements** until a separate
-review has confirmed that the revised Connect-time speed snapshot does not
-alter unrelated connection behavior and that a qualified operator accepts
-native-risk mitigations (the former intermittent ScanStart fault is still
-unexplained). Begin physical qualification with *one* attended short scan,
-verify Stop and journal, and only then separately authorize the 18-run
-campaign. Issues #143 and #148 being administratively closed did not
-physically eliminate the intermittent DLL risk.
+Merge is permitted once the software review and Windows CI pass; **merging
+does not establish physical qualification**. The operator must independently
+approve use on the lab CT400. Begin with one attended short scan, check
+the written journal and the optical/CT400 state, then verify attended Stop
+before proceeding to the 18-run matrix. The former intermittent ScanStart
+fault remains unexplained; Issues #143 and #148 being administratively
+closed did not resolve that native uncertainty. Closing the main window during
+a campaign stops further dispatch and waits for the last worker, journal
+and scan-panel reservation before CT400 shutdown.

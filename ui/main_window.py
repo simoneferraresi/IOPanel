@@ -2513,6 +2513,16 @@ class MainWindow(QMainWindow):
         Handles the user closing the window. Ensures all hardware and threads
         are shut down gracefully. This is the single source of truth for cleanup.
         """
+        # A paused/checkpoint campaign still owns the scan panel even if no scan
+        # thread exists. Defer all native cleanup until its final record is
+        # committed and the CT400 reservation is released.
+        campaign_dialog = getattr(self, "_ct400_campaign_dialog", None)
+        if campaign_dialog is not None and campaign_dialog.active:
+            event.ignore()
+            self.statusBar().showMessage("Stopping CT400 ETA campaign and saving its final record…", 0)
+            campaign_dialog.request_shutdown()
+            return
+
         close_started_at = time.perf_counter()
         logger.info("Application close requested. Initiating shutdown sequence...")
         scan_panel = getattr(self, "control_panel", None)

@@ -1,6 +1,9 @@
 """Hardware-free GUI acceptance tests for the real campaign control path."""
 
+import threading
 from types import SimpleNamespace
+
+import numpy as np
 
 import pytest
 from PySide6.QtCore import QSettings, QTimer
@@ -9,7 +12,8 @@ from PySide6.QtWidgets import QMessageBox
 from app_settings import AppSettings
 from config_model import AppConfig
 from hardware.ct400 import CT400
-from hardware.ct400_types import LaserInput
+from hardware.ct400_types import CT400ScanResultKind, LaserInput
+from ui.control_panel import ScanWorker
 from ui.ct400_calibration_campaign import CT400SupervisedCampaignDialog
 from ui.main_window import CT400OperationState, MainWindow
 
@@ -280,6 +284,139 @@ def test_initial_connect_speed_preparation_never_calls_hardware(qtbot, monkeypat
         assert dialog.state == "ready"
         assert window._ct400_connected_laser_input is None
         assert not dialog._owns_panel
+    finally:
+        window._ct400_error_reset_timer.stop()
+        window.close()
+
+
+def _install_worker_backed_fake(monkeypatch, window, *, start_entered=None, release_start=None):
+    """Use the real scan-dispatch and QThread lifecycle with a no-DLL CT400."""
+    device = window.ct400_device
+    stopped = []
+    closed = []
+    monkeypatch.setattr(ScanWorker, "_LASER_COMMAND_DELAY_MS", 0)
+    monkeypatch.setattr(device, "set_scan", lambda *_args: None)
+    monkeypatch.setattr(device, "set_sampling_res", lambda *_args: None)
+    monkeypatch.setattr(device, "set_detector_array", lambda *_args: None)
+
+    def start_scan():
+        if start_entered is not None:
+            start_entered.set()
+        if release_start is not None:
+            assert release_start.wait(timeout=4)
+
+    monkeypatch.setattr(device, "start_scan", start_scan)
+    monkeypatch.setattr(device, "stop_scan", lambda: stopped.append(True))
+    monkeypatch.setattr(
+        device,
+        "scan_wait_end",
+        lambda: SimpleNamespace(
+            raw_code=1 if stopped else 0,
+            error_message="User stopped scan" if stopped else "",
+            kind=CT400ScanResultKind.USER_CANCELLED if stopped else CT400ScanResultKind.SUCCESS,
+        ),
+    )
+    monkeypatch.setattr(
+        device,
+        "get_data_points",
+        lambda _detectors: (np.array([1550.0, 1550.5, 1551.0]), np.array([[-10.0, -11.0, -12.0]])),
+    )
+    monkeypatch.setattr(device, "get_all_powers", lambda: SimpleNamespace(pout=1.0))
+
+    def close_native():
+        closed.append(True)
+        device.handle = None
+
+    monkeypatch.setattr(device, "close", close_native)
+    # Plot rendering is not part of the worker/journal contract being tested.
+    window.control_panel.scan_data_ready.disconnect(window._handle_scan_data)
+    return stopped, closed
+
+
+def test_worker_backed_scan_journals_native_result_and_releases(qtbot, monkeypatch, tmp_path):
+    window, dialog = _dialog(qtbot, monkeypatch, tmp_path)
+    stopped, closed = _install_worker_backed_fake(monkeypatch, window)
+    try:
+        dialog._start()
+        qtbot.waitUntil(lambda: dialog.state == "paused", timeout=5000)
+        assert not stopped
+        assert not closed
+        assert dialog.next_index == 1
+        assert window.control_panel.scan_thread is None
+        assert window._ct400_operation_state is CT400OperationState.IDLE
+        record = dialog.campaign.records[0]
+        assert record["run_id"] == dialog.runs[0].run_id
+        assert record["raw_result_code"] == 0
+        assert record["terminal_result_kind"] == "SUCCESS"
+        assert record["outcome"] == "success"
+        assert record["stage_seconds"]["start_scan_seconds"] >= 0
+        assert (tmp_path / "calibration" / f"{dialog.campaign.campaign_id}.jsonl").exists()
+        dialog._stop()
+        assert not dialog.active
+    finally:
+        window._ct400_error_reset_timer.stop()
+        window.close()
+
+
+def test_parent_close_while_campaign_paused_releases_before_native_close(qtbot, monkeypatch, tmp_path):
+    window, dialog = _dialog(qtbot, monkeypatch, tmp_path)
+    _stopped, closed = _install_worker_backed_fake(monkeypatch, window)
+    try:
+        dialog._start()
+        qtbot.waitUntil(lambda: dialog.state == "paused", timeout=5000)
+        assert dialog.active
+        window.close()
+        qtbot.waitUntil(lambda: not window.isVisible(), timeout=5000)
+        assert dialog.state == "stopped"
+        assert len(dialog.campaign.records) == 1
+        assert not dialog.active
+        assert closed == [True]
+    finally:
+        window._ct400_error_reset_timer.stop()
+        window.close()
+
+
+def test_parent_close_during_worker_waits_for_journal_before_native_close(qtbot, monkeypatch, tmp_path):
+    entered = threading.Event()
+    release = threading.Event()
+    window, dialog = _dialog(qtbot, monkeypatch, tmp_path)
+    stopped, closed = _install_worker_backed_fake(
+        monkeypatch, window, start_entered=entered, release_start=release
+    )
+    try:
+        dialog._start()
+        qtbot.waitUntil(entered.is_set, timeout=5000)
+        window.close()
+        assert window.isVisible()
+        assert not closed
+        assert dialog.active
+        release.set()
+        qtbot.waitUntil(lambda: not window.isVisible(), timeout=5000)
+        assert stopped
+        assert len(dialog.campaign.records) == 1
+        assert dialog.campaign.records[0]["outcome"] == "cancelled"
+        assert dialog.campaign.records[0]["raw_result_code"] == 1
+        assert not dialog.active
+        assert closed == [True]
+    finally:
+        release.set()
+        window._ct400_error_reset_timer.stop()
+        window.close()
+
+
+def test_export_probe_failure_blocks_before_reserving_scan(qtbot, monkeypatch, tmp_path):
+    window, dialog = _dialog(qtbot, monkeypatch, tmp_path)
+
+    def deny_write(**_kwargs):
+        raise PermissionError("Output directory is read-only")
+
+    monkeypatch.setattr("ui.ct400_calibration_campaign.tempfile.NamedTemporaryFile", deny_write)
+    try:
+        dialog._start()
+        assert dialog.state == "ready"
+        assert not dialog.active
+        assert not window.control_panel._calibration_blocked
+        assert "Preflight blocked" in dialog.progress.text()
     finally:
         window._ct400_error_reset_timer.stop()
         window.close()
