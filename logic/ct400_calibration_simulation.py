@@ -85,8 +85,7 @@ class SimulatedCalibrationCoordinator:
         self._require(SimulationState.READY)
         # Do not join or overwrite artifacts belonging to a previous campaign.
         if any(
-            (self.directory / f"{self.campaign.campaign_id}.{suffix}").exists()
-            for suffix in ("jsonl", "json", "csv")
+            (self.directory / f"{self.campaign.campaign_id}.{suffix}").exists() for suffix in ("jsonl", "json", "csv")
         ):
             raise FileExistsError("A campaign with this ID already exists")
         self._ready_for_next()
@@ -138,10 +137,7 @@ class SimulatedCalibrationCoordinator:
             raise ValueError("Synthetic GUI duration must be finite and nonnegative")
         stages = {} if stage_seconds is None else dict(stage_seconds)
         if any(
-            not isinstance(name, str)
-            or not isinstance(value, (int, float))
-            or not math.isfinite(value)
-            or value < 0
+            not isinstance(name, str) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0
             for name, value in stages.items()
         ):
             raise ValueError("Synthetic stage timings must be finite, nonnegative numbers")
