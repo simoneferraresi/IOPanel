@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from threading import Event
 
 import numpy as np
 
@@ -10,6 +11,14 @@ from .ct400_types import (
     LaserSource,
     PowerData,
     ScanWaitResult,
+)
+from .pm5020_types import (
+    BurstAcquisitionConfig,
+    BurstPowerData,
+    ChannelConfig,
+    PM5020State,
+    PowerChannel,
+    PowerReading,
 )
 
 
@@ -76,6 +85,48 @@ class AbstractCT400(ABC):
 
     @abstractmethod
     def get_all_powers(self) -> PowerData: ...
+
+    @abstractmethod
+    def close(self) -> None: ...
+
+
+class AbstractPM5020(ABC):
+    """Small shared contract for the PM5020 hardware and simulated backends."""
+
+    @abstractmethod
+    def is_connected(self) -> bool: ...
+
+    @property
+    @abstractmethod
+    def state(self) -> PM5020State: ...
+
+    @property
+    def is_ready(self) -> bool:
+        """Whether ordinary power readings are currently permitted."""
+        return self.state is PM5020State.IDLE
+
+    @abstractmethod
+    def connect(self, resource_name: str | None = None) -> None: ...
+
+    @abstractmethod
+    def configure_channel(self, channel: PowerChannel, config: ChannelConfig) -> None: ...
+
+    @abstractmethod
+    def read_power(self, channel: PowerChannel) -> PowerReading: ...
+
+    @abstractmethod
+    def configure_burst(self, config: BurstAcquisitionConfig) -> None: ...
+
+    @abstractmethod
+    def start_burst(self) -> None: ...
+
+    @abstractmethod
+    def retrieve_burst(
+        self,
+        *,
+        max_samples: int | None = None,
+        cancel_event: Event | None = None,
+    ) -> BurstPowerData: ...
 
     @abstractmethod
     def close(self) -> None: ...
