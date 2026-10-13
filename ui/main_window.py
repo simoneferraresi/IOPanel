@@ -452,6 +452,9 @@ class MainWindow(QMainWindow):
 
     def _is_alignment_operation_authorized(self) -> bool:
         """Authorize alignment only for simulation or the explicitly connected physical input."""
+        dialog = self._ct400_campaign_dialog
+        if dialog is not None and dialog.active:
+            return False
         if self._ct400_operation_state is not CT400OperationState.IDLE:
             return False
         if self._ct400_scan_state_uncertain or self._ct400_recovery_disconnect_completed:
