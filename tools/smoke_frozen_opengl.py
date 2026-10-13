@@ -63,7 +63,7 @@ def run_smoke(executable: Path, timeout_seconds: float, qt_platform: str, eviden
                     encoding="utf-8",
                 )
             raise RuntimeError(f"Packaged OpenGL smoke exited {result.returncode}:\n{log}\n{combined}")
-        if FAILURE_MARKER in log or "Error while drawing item" in combined or "GLError" in combined:
+        if FAILURE_MARKER in log:
             raise RuntimeError(f"Packaged OpenGL viewer reported a rendering failure:\n{log}\n{combined}")
         physical_config = root / "physical.ini"
         physical_config.write_text("[Instruments]\nct400_backend = physical\n", encoding="utf-8")
@@ -86,6 +86,8 @@ def run_smoke(executable: Path, timeout_seconds: float, qt_platform: str, eviden
             raise RuntimeError("Hardware-independent OpenGL smoke constructed MainWindow")
 
         if SUCCESS_MARKER in log:
+            if "Error while drawing item" in combined or "GLError" in combined or "GLError" in log:
+                raise RuntimeError(f"Packaged OpenGL viewer reported a rendering failure:\n{log}\n{combined}")
             image = root / "logs" / "smoke-opengl.png"
             framebuffer = root / "logs" / "smoke-opengl-framebuffer.png"
             colorbar = root / "logs" / "smoke-opengl-colorbar.png"
