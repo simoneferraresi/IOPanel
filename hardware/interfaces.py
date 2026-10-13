@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from threading import Event
 
 import numpy as np
 
@@ -11,6 +12,7 @@ from .ct400_types import (
     PowerData,
     ScanWaitResult,
 )
+from .pm5020_types import BurstAcquisitionConfig, BurstPowerData, ChannelConfig, PowerChannel, PowerReading
 
 
 class AbstractCT400(ABC):
@@ -76,6 +78,39 @@ class AbstractCT400(ABC):
 
     @abstractmethod
     def get_all_powers(self) -> PowerData: ...
+
+    @abstractmethod
+    def close(self) -> None: ...
+
+
+class AbstractPM5020(ABC):
+    """Small shared contract for the PM5020 hardware and simulated backends."""
+
+    @abstractmethod
+    def is_connected(self) -> bool: ...
+
+    @abstractmethod
+    def connect(self, resource_name: str | None = None) -> None: ...
+
+    @abstractmethod
+    def configure_channel(self, channel: PowerChannel, config: ChannelConfig) -> None: ...
+
+    @abstractmethod
+    def read_power(self, channel: PowerChannel) -> PowerReading: ...
+
+    @abstractmethod
+    def configure_burst(self, config: BurstAcquisitionConfig) -> None: ...
+
+    @abstractmethod
+    def start_burst(self) -> None: ...
+
+    @abstractmethod
+    def retrieve_burst(
+        self,
+        *,
+        max_samples: int = 15_000,
+        cancel_event: Event | None = None,
+    ) -> BurstPowerData: ...
 
     @abstractmethod
     def close(self) -> None: ...
