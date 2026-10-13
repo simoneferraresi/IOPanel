@@ -357,10 +357,25 @@ def main() -> int:
                     expected_cameras = sum(cam.enabled for cam in app_config.cameras.values())
                     actual_cameras = len(window.cameras)
                     logger.info("SMOKE_SIMULATION_READY cameras=%d/%d", actual_cameras, expected_cameras)
-                    window.close()
                     if actual_cameras != expected_cameras:
                         logger.error("Smoke camera initialization incomplete.")
+                        window.close()
                         app.exit(4)
+                        return
+                    panels = list(window.camera_panels.values())
+                    if expected_cameras:
+                        displayed_pixmaps = [getattr(panel, "_latest_pixmap", None) for panel in panels]
+                        if not panels or any(pixmap is None or pixmap.isNull() for pixmap in displayed_pixmaps):
+                            QTimer.singleShot(100, close_when_initialized)
+                            return
+                        image_path = Path(log_file_path).parent / "smoke-camera.png"
+                        if displayed_pixmaps[0].save(str(image_path)):
+                            logger.info("SMOKE_CAMERA_FRAME_OK screenshot=%s", image_path)
+                        else:
+                            logger.error("Smoke camera frame could not be saved.")
+                            app.exit(5)
+                            return
+                    window.close()
 
             QTimer.singleShot(100, close_when_initialized)
         else:

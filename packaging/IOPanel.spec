@@ -1,6 +1,8 @@
 # Reproducible Windows x64 one-folder build. Dependencies are installed from uv.lock.
 from pathlib import Path
 
+from PyInstaller.building.datastruct import TOC
+
 repo_root = Path(SPECPATH).parent
 hiddenimports = ["resources.resources_rc"]
 
@@ -15,6 +17,14 @@ a = Analysis(
     runtime_hooks=[],
     excludes=["matlab", "matlabengine", "vmbpy"],
     noarchive=False,
+)
+# IOPanel obtains frames from the camera backends and uses OpenCV for array
+# transforms only. No production path opens or writes video files, so retain
+# OpenCV itself while omitting its optional FFmpeg video I/O plugin.
+a.binaries = TOC(
+    entry
+    for entry in a.binaries
+    if not Path(entry[0]).name.lower().startswith("opencv_videoio_ffmpeg")
 )
 pyz = PYZ(a.pure)
 exe = EXE(

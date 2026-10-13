@@ -13,7 +13,7 @@ Copy-Item packaging/config.simulation.ini dist/IOPanel/config.ini
 uv run --no-sync python tools/smoke_frozen.py dist/IOPanel/IOPanel.exe
 ```
 
-Distribute the entire `dist/IOPanel/` folder together and launch `IOPanel.exe` from any working directory. The external `config.ini` beside the EXE is a driver-free example profile. Edit a copy for site use; never substitute the repository's lab-specific `config.ini` into a general distribution. The CI smoke launches this actual executable from a different CWD, verifies Qt resources and simulated device startup, and requires logged graceful shutdown before its 45-second timeout.
+Distribute the entire `dist/IOPanel/` folder together and launch `IOPanel.exe` from any working directory. The external `config.ini` beside the EXE is a driver-free example profile. Edit a copy for site use; never substitute the repository's lab-specific `config.ini` into a general distribution. The CI smoke launches this actual executable from a different CWD, verifies Qt resources and simulated device startup, waits for and saves a displayed simulated camera frame, and requires logged graceful shutdown before its 45-second timeout.
 
 ## Configuration and writable paths
 
@@ -32,3 +32,5 @@ The CT400 native DLL is different: a separately approved physical site INI can p
 ## Build scope
 
 PyInstaller's analysis and platform hooks package the locked application's imported Python and Qt runtime dependencies, including the already compiled Qt resources. The spec explicitly excludes MATLAB, MATLAB Engine, and VmbPy. The output is an unpacked one-folder application with a visible console for startup diagnostics. No installer, updater, signing, or proprietary SDK redistribution is included.
+
+The spec also excludes OpenCV's optional FFmpeg video I/O plugin. IOPanel receives camera frames through its camera backends and uses the retained OpenCV extension for array transforms; it does not open or write video files. See [the measured package inventory and size comparison](windows-package-optimization.md).

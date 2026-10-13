@@ -1,0 +1,66 @@
+{
+  "baseline": {
+    "executable": "IOPanel.exe",
+    "runs": [
+      {
+        "run": 1,
+        "ready_seconds": 2.046262900112197,
+        "wall_seconds": 2.614330400014296
+      },
+      {
+        "run": 2,
+        "ready_seconds": 1.7527847001329064,
+        "wall_seconds": 2.4272619001567364
+      },
+      {
+        "run": 3,
+        "ready_seconds": 1.8169470999855548,
+        "wall_seconds": 2.360401999903843
+      },
+      {
+        "run": 4,
+        "ready_seconds": 1.714808200020343,
+        "wall_seconds": 2.2680178999435157
+      },
+      {
+        "run": 5,
+        "ready_seconds": 1.6735165000427514,
+        "wall_seconds": 2.310494299978018
+      }
+    ],
+    "median_ready_seconds": 1.7527847001329064,
+    "median_wall_seconds": 2.360401999903843
+  },
+  "candidate": {
+    "executable": "IOPanel.exe",
+    "runs": [
+      {
+        "run": 1,
+        "ready_seconds": 1.8399485999252647,
+        "wall_seconds": 2.4766464000567794
+      },
+      {
+        "run": 2,
+        "ready_seconds": 1.7603707001544535,
+        "wall_seconds": 2.4140163001138717
+      },
+      {
+        "run": 3,
+        "ready_seconds": 1.850881400052458,
+        "wall_seconds": 2.5538119999691844
+      },
+      {
+        "run": 4,
+        "ready_seconds": 1.7141714000608772,
+        "wall_seconds": 2.390441399998963
+      },
+      {
+        "run": 5,
+        "ready_seconds": 1.7271420999895781,
+        "wall_seconds": 2.361300599994138
+      }
+    ],
+    "median_ready_seconds": 1.7603707001544535,
+    "median_wall_seconds": 2.4140163001138717
+  }
+}
