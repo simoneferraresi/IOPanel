@@ -43,7 +43,9 @@ The legacy **CT400 ETA Calibration…** menu item remains a dry-run preview.
 1. Independently verify laser model/range, approved 1 mW (or appropriate)
    power, Input 1 or the actual wired input, and detector cabling. Start from
    CT400 Ready (Disconnected). Set the application's ordinary Connect speed
-   to **10 nm/s**, then explicitly Connect. Verify connected status. Do not
+   to **10 nm/s** using the dialog's explicit **Set next Connect to
+   10 nm/s** button *while disconnected*, then perform the ordinary Connect.
+   Verify connected status. Do not
    treat panel speed edits as an instrument speed change.
 2. Open **Instruments → CT400 ETA Campaign (Supervised)…**. Select an empty
    output directory (per-run filenames have a fresh campaign UUID).
