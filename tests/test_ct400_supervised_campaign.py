@@ -12,8 +12,8 @@ from app_settings import AppSettings
 from config_model import AppConfig
 from hardware.ct400 import CT400
 from hardware.ct400_types import CT400ScanResultKind, LaserInput
-from ui.ct400_calibration_campaign import CT400SupervisedCampaignDialog
 from ui.control_panel import ScanWorker
+from ui.ct400_calibration_campaign import CT400SupervisedCampaignDialog
 from ui.main_window import CT400OperationState, MainWindow
 
 
