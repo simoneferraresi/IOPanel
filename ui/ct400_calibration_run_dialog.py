@@ -106,7 +106,6 @@ class CT400CalibrationRunDialog(QDialog):
         )
         self.confirm_four = QCheckBox("DE2–DE4 are wired and approved (otherwise the three F runs will be skipped).")
         for check in (self.confirm_range, self.confirm_power, self.confirm_risk, self.confirm_four):
-            check.setWordWrap(True)
             layout.addWidget(check)
         self.notice = QLabel(
             "The physical laser speed is set at Connect (not read back). Initial 10 nm/s runs require an "
@@ -263,7 +262,7 @@ class CT400CalibrationRunDialog(QDialog):
         p.initial_wl.setText(original["start"])
         p.final_wl.setText(original["end"])
         p.resolution.setText(original["resolution"])
-        p.motor_speed.setText(original["speed"])
+        # Keep the panel speed aligned to the approved/current Connect-time\n        # setting; restoring an obsolete 10 nm/s label after a 5 nm/s\n        # reconnect would falsely describe the actual laser configuration.\n        connected_speed = self.window._ct400_connect_speed_nm_s\n        p.motor_speed.setText(str(connected_speed if connected_speed is not None else self.window.config.scan_defaults.speed_nm_s))
         p.laser_power.setText(original["power"])
         p.power_unit.setCurrentText(original["unit"])
         p.input_port.setCurrentIndex(original["input"])
