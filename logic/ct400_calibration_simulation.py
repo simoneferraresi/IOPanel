@@ -238,7 +238,7 @@ class SimulatedCalibrationCoordinator:
         }
         try:
             append_calibration_record(self.directory, self.campaign, record)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001  # Fail closed on any persistence or serialization error.
             # A JSONL row may already be durable if the CSV/manifest update
             # failed. Do not silently retry or schedule another fake run.
             self.state = SimulationState.FAILED
