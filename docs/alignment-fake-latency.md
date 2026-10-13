@@ -23,3 +23,5 @@ Failures/cancellation use separate synthetic regression tests to check stage res
 **Decision:** No changes to physical voltage commands, measurement ordering, bounds, settling, averaging, speed or motion trajectories. No real-hardware throughput claim. Candidates such as caching DLL range reads, no-op suppression and duplicate restoration require independent vendor/laboratory acceptance before altering a command path. Fine/spiral routines can be assessed using the same fake interfaces if a future physical performance problem justifies additional investment.
 
 Physical Alignment safety/positive-path qualification remains tracked by #144.
+
+For fine and spiral alignment, the same model executes the real algorithms on a **flat -30 dBm synthetic response** using one hill-climb iteration and a bounded small spiral. Output separately records observed fake calls and waits; these are fixture-specific, not general bounds on arbitrary power landscapes or real devices.

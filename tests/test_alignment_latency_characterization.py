@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from hardware import alignment_worker
-from tools.characterize_alignment_latency import VirtualClock, characterize, make_worker, mapping_settings
+from tools.characterize_alignment_latency import VirtualClock, characterize, characterize_search, make_worker, mapping_settings
 
 
 @pytest.mark.parametrize(("shape", "samples"), [((2, 3), 1), ((10, 10), 3), ((3, 2), 5)])
@@ -61,3 +61,13 @@ def test_mapping_stop_cancels_following_points_and_restores_stage():
     assert not worker._is_running
     assert np.isclose(dll.voltage["x"], 5.0)
     assert np.isclose(dll.voltage["y"], 5.0)
+
+
+@pytest.mark.parametrize("mode", ["fine", "spiral"])
+def test_fake_fine_and_spiral_latency_path(mode):
+    row = characterize_search(mode)
+    assert row["dll_calls_observed"] > 0
+    assert row["detector_reads_observed"] > 0
+    assert row["virtual_wait_ms_observed"] >= 200
+    assert row["laser_cleanup_requested"]
+    assert not row["physical_measurement"]

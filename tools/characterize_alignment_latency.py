@@ -20,7 +20,7 @@ from unittest.mock import patch
 import numpy as np
 
 from hardware import alignment_worker
-from hardware.alignment_worker import AlignmentWorker, MappingSettings
+from hardware.alignment_worker import AlignmentSettings, AlignmentWorker, MappingSettings, SpiralSearchSettings
 from hardware.ct400_types import Detector, PowerData
 from hardware.piezo import PiezoController
 
@@ -86,6 +86,7 @@ class FakePowerMeter:
         self.laser_states: list[int] = []
         self.fail_after: int | None = None
         self.on_read = None
+        self.override_dbm: float | None = None
 
     def cmd_laser(self, *, laser_input, enable, wavelength, power) -> None:
         self.laser_states.append(int(enable))
@@ -98,7 +99,7 @@ class FakePowerMeter:
         if self.on_read is not None:
             self.on_read()
         dbm = -30.0 + 2 * (self.dll.voltage["x"] - 5) + 3 * (self.dll.voltage["y"] - 5)
-        return PowerData(pout=0.0, detectors={Detector.DE_1: dbm})
+        return PowerData(pout=0.0, detectors={Detector.DE_1: self.override_dbm if self.override_dbm is not None else dbm})
 
 
 def make_worker(clock: VirtualClock) -> tuple[AlignmentWorker, FakePiezoDLL, FakePowerMeter]:
@@ -198,6 +199,58 @@ def characterize(width: int, height: int, samples: int, settling_ms: int = 3) ->
     }
 
 
+def characterize_search(mode: str, samples: int = 1) -> dict:
+    """Run fine/spiral search using a flat fake-power landscape."""
+    if mode not in ("fine", "spiral"):
+        raise ValueError("Unknown synthetic alignment mode")
+    clock = VirtualClock()
+    worker, dll, meter = make_worker(clock)
+    meter.override_dbm = -30.0
+    settings = AlignmentSettings(
+        laser_wavelength_nm=1550.0,
+        laser_power=1.0,
+        power_unit="mW",
+        input_port=1,
+        iterations=1,
+        step_nm=5.0,
+        samples_per_point=samples,
+        coupling_type="butt",
+        settling_time_ms=3,
+    )
+    completed = []
+    errors: list[str] = []
+    progress = []
+    worker.alignment_finished.connect(lambda *args: completed.append(args))
+    worker.progress_updated.connect(lambda *args: progress.append(args))
+    worker.error_occurred.connect(errors.append)
+    worker.begin_operation()
+    start = time.perf_counter()
+    with patch.object(alignment_worker, "QThread", SimpleNamespace(msleep=clock.sleep_ms)):
+        if mode == "fine":
+            worker.run_alignment(settings)
+        else:
+            worker.run_spiral_alignment(settings, SpiralSearchSettings(radius_um=0.1, step_um=0.1))
+    elapsed_ms = (time.perf_counter() - start) * 1000
+    if errors or len(completed) != 1 or "successful" not in completed[0][0]:
+        raise AssertionError(f"Unexpected fake {mode} alignment outcome: {errors} / {completed}")
+    if meter.laser_states != [1, 0] or worker._is_running:
+        raise AssertionError("The synthetic search did not release laser ownership")
+    return {
+        "mode": mode,
+        "fake_power_landscape": "flat_-30_dBm",
+        "samples_per_point": samples,
+        "dll_calls_observed": sum(dll.calls.values()),
+        "voltage_writes_observed": len(dll.writes),
+        "detector_reads_observed": meter.read_calls,
+        "virtual_wait_ms_observed": clock.wait_ms,
+        "virtual_total_ms_observed": round(clock.wait_ms + clock.dll_ms + clock.read_ms, 3),
+        "python_overhead_ms_wall": round(elapsed_ms, 3),
+        "progress_signals": len(progress),
+        "laser_cleanup_requested": True,
+        "physical_measurement": False,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path)
@@ -209,6 +262,7 @@ def main() -> int:
         "method": "real AlignmentWorker/PiezoController methods; fake ctypes DLL, fake meter, virtual delays",
         "hardware": "none",
         "cases": cases,
+        "search_cases": [characterize_search("fine"), characterize_search("spiral")],
     }
     encoded = json.dumps(payload, indent=2) + "\n"
     if args.output:
