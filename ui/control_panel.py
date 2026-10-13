@@ -126,9 +126,7 @@ class CT400ConnectionWorker(QRunnable):
         connect_speed_nm_s: int | None = None,
     ):
         super().__init__()
-        self.connect_speed_nm_s = (
-            config.scan_defaults.speed_nm_s if connect_speed_nm_s is None else connect_speed_nm_s
-        )
+        self.connect_speed_nm_s = config.scan_defaults.speed_nm_s if connect_speed_nm_s is None else connect_speed_nm_s
         self.ct400 = ct400_device
         self.config = config
         self.is_connect_operation = connect
@@ -803,7 +801,9 @@ class BaseControlPanel(QWidget, ABC, metaclass=QABCMeta):
 
         # Enable configuration inputs only if connected AND not busy.
         enable_config_inputs = (
-            is_connected and not self.is_busy() and self.ct400_operation_state == "IDLE"
+            is_connected
+            and not self.is_busy()
+            and self.ct400_operation_state == "IDLE"
             and not self._calibration_blocked
         )
 
