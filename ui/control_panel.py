@@ -1192,9 +1192,7 @@ class CT400ControlPanel(BaseControlPanel):
             # configured by ConnectionWorker from scan_defaults when Connect is used.
             # DummyCT400 does not model that sweep timing, so avoid implying otherwise.
             effective_speed = None if isinstance(ct400, DummyCT400) else self.config.scan_defaults.speed_nm_s
-            estimate = estimate_scan_duration(
-                start_wl, end_wl, effective_speed, resolution, len(selected_detectors)
-            )
+            estimate = estimate_scan_duration(start_wl, end_wl, effective_speed, resolution, len(selected_detectors))
             self._scan_estimated_duration_seconds = estimate.seconds if estimate is not None else None
             self._scan_eta_calibrated = estimate.calibrated if estimate is not None else False
 
