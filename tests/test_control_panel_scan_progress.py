@@ -236,3 +236,17 @@ def test_terminal_scan_results_reset_activity_after_thread_finishes(qtbot, monke
         release_wait.set()
         if panel.scan_thread is not None:
             panel.scan_thread.wait(3000)
+
+
+def test_calibrated_total_duration_tooltip_is_distinct_from_nominal_fallback(qtbot):
+    panel = _panel(qtbot)
+    panel._scan_eta_calibrated = True
+    panel._scan_estimated_duration_seconds = 9.66
+    panel._start_scan_activity_ui()
+
+    assert "Lab-calibrated" in panel.scan_elapsed_label.toolTip()
+    assert "Calibrated ETA remaining: 00:10" in panel.scan_elapsed_label.text()
+
+    panel._reset_scan_ui()
+    assert not panel._scan_eta_calibrated
+    assert panel.scan_elapsed_label.toolTip() == ""

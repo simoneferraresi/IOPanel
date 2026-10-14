@@ -240,11 +240,33 @@ def summarize_calibration(records: list[dict[str, Any]]) -> dict[str, Any]:
         actual = record.get("gui_start_to_completion_seconds")
         nominal = record.get("nominal_sweep_seconds")
         if (
-            record.get("outcome") != "success"
+            outcome not in ("success", "warning")
+            or record.get("cleanup_failed")
+            or record.get("stop_failed")
+            or record.get("failed_stages")
+            or record.get("simulated") is True
             or not isinstance(actual, (int, float))
             or not isinstance(nominal, (int, float))
             or not math.isfinite(actual)
             or not math.isfinite(nominal)
+        ):
+            continue
+        predicted_count = record.get("predicted_sample_count")
+        returned_count = record.get("returned_sample_count")
+        simulation_only = record.get("simulation_only") is True
+        # The standalone, hardware-inaccessible simulation does not have a
+        # returned device sample count. Preserve its existing success metrics,
+        # but require matching real sample counts for physical acquisitions.
+        if predicted_count is not None and (
+            (not simulation_only and returned_count != predicted_count)
+            or (simulation_only and returned_count is not None and returned_count != predicted_count)
+        ):
+            continue
+        # Only include observed nonfatal warnings with complete sample counts.
+        # Warning 101 (slow scan) affects hardware validation but still provides
+        # a measured completion time; warning 117 is the known low-input-power case.
+        if outcome == "warning" and (
+            record.get("raw_result_code") not in (101, 117) or predicted_count is None or returned_count is None
         ):
             continue
         error = float(actual) - float(nominal)
@@ -283,9 +305,12 @@ def summarize_calibration(records: list[dict[str, Any]]) -> dict[str, Any]:
             "max_error_seconds": max(errors),
             "median_stage_seconds": {stage: median(values) for stage, values in sorted(stage_values.items())},
         }
+    included_successes = sum(record.get("outcome") == "success" for case in case_groups.values() for record in case)
     return {
         "total_measurements": len(records),
-        "successful_measurements": len(rows),
+        "successful_measurements": included_successes,
+        "timing_valid_measurements": len(rows),
+        "timing_valid_warnings": len(rows) - included_successes,
         "outcome_counts": outcome_counts,
         "by_speed_nm_s": by_speed,
         "by_case": by_case,

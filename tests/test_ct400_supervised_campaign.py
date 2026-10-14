@@ -40,6 +40,24 @@ def _window(qtbot, monkeypatch, tmp_path):
     return window
 
 
+def test_confirmed_connect_speed_is_captured_and_cleared(qtbot, monkeypatch, tmp_path):
+    window = _window(qtbot, monkeypatch, tmp_path)
+    try:
+        device = window.ct400_device
+        window._ct400_connection_operation_token = 41
+        window._ct400_pending_connect_speed = (41, 10)
+        window._handle_ct400_connection_success("Connected at 10", LaserInput.LI_1, 41, device)
+        assert window._ct400_connected_speed_nm_s == 10
+        assert window.control_panel.connected_speed_nm_s == 10
+        window.config.scan_defaults.speed_nm_s = 5
+        assert window.control_panel.connected_speed_nm_s == 10
+        window._handle_ct400_disconnection_success("Disconnected", 41, device)
+        assert window.control_panel.connected_speed_nm_s is None
+    finally:
+        window._ct400_error_reset_timer.stop()
+        window.close()
+
+
 def _dialog(qtbot, monkeypatch, tmp_path):
     window = _window(qtbot, monkeypatch, tmp_path)
     dialog = CT400SupervisedCampaignDialog(window)
