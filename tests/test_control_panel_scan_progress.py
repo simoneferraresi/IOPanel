@@ -245,7 +245,7 @@ def test_calibrated_total_duration_tooltip_is_distinct_from_nominal_fallback(qtb
     panel._start_scan_activity_ui()
 
     assert "Lab-calibrated" in panel.scan_elapsed_label.toolTip()
-    assert "Estimated remaining: 00:10" in panel.scan_elapsed_label.text()
+    assert "Calibrated ETA remaining: 00:10" in panel.scan_elapsed_label.text()
 
     panel._reset_scan_ui()
     assert not panel._scan_eta_calibrated
