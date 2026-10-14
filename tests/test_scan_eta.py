@@ -75,3 +75,9 @@ def test_unsupported_calibration_settings_fall_back_to_nominal(span, speed, reso
 def test_invalid_nominal_scan_has_no_empirical_eta():
     assert estimate_scan_duration(1530, 1565, None, 1, 1) is None
     assert estimate_scan_duration(1530, 1565, 0, 1, 1) is None
+
+def test_empirical_eta_does_not_extrapolate_to_untested_absolute_wavelengths():
+    estimate = estimate_scan_duration(1570, 1605, 10, 1, 1)
+    assert estimate is not None
+    assert not estimate.calibrated
+    assert estimate.seconds == pytest.approx(3.5)
