@@ -59,6 +59,8 @@ def test_empirical_ct400_calibration_matches_physical_case_medians(start, end, s
         (40, 10, 1, 1),
         (35, 3, 1, 1),
         (35, 5, 10, 1),
+        (15, 5, 1, 1),
+        (15, 10, 10, 1),
         (35, 10, 5, 1),
         (35, 10, 1, 4),
         (35, 10, "invalid", 1),
