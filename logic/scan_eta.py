@@ -38,8 +38,8 @@ def estimate_scan_duration(
     """Estimate full CT400 GUI scan time for supported lab conditions.
 
     Supported conditions: one detector, wavelengths within 1530-1565 nm,
-    a 5-35 nm scan span, and (speed nm/s,
-    resolution pm) = (10, 1), (10, 10), or (5, 1). The 5 nm/s correction is
+    a 5-35 nm span at (10 nm/s, 1 pm), or a 35 nm span at
+    (10 nm/s, 10 pm) or (5 nm/s, 1 pm). The 5 nm/s correction is
     provisional (only one campaign). All other settings retain the nominal
     sweep estimate, flagged as not calibrated.
 
@@ -62,6 +62,8 @@ def estimate_scan_duration(
         or not 1530.0 <= float(end_nm) <= 1565.0
         or not 5.0 <= span <= 35.0
         or (speed, resolution) not in ((10.0, 1.0), (10.0, 10.0), (5.0, 1.0))
+        or (resolution == 10.0 and abs(span - 35.0) > 1e-6)
+        or (speed == 5.0 and abs(span - 35.0) > 1e-6)
         or count != 1
     ):
         return ScanTimeEstimate(sweep, calibrated=False)
