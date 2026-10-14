@@ -8,7 +8,7 @@ IOPanel documents a preferred validated laboratory profile, a historical rollbac
 |---|---|---|
 | Preferred laboratory candidate | Windows x64; Python 3.12.8; Vimba X 2026-2; VmbPy 1.2.2; VmbC 1.3.1; VmbImageTransform 2.3 | Physically validated with two Allied Vision Mako G-125B cameras using the Vimba/Vimba X backend in an isolated project/candidate environment. |
 | Historical rollback | Windows x64; Python 3.12.8; Vimba X 2024.1.0.3916; VmbC 1.0.6; VmbPy 1.0.5 | Previously validated profile retained for rollback/reference. |
-| Driver-free development | Project-local environment without the camera extra | Supported for simulated-camera and non-camera work. VmbPy is optional. |
+| Driver-free development | Project-local `uv sync --locked --no-default-groups` | Supported for simulated-camera and non-camera work. The default `lab` group is intentionally excluded; VmbPy remains unavailable. |
 
 Keep the preferred VmbPy 1.2.2 environment isolated from the historical VmbPy 1.0.5 / VmbC 1.0.6 rollback environment. Vimba 6 may remain installed for rollback/reference; current IOPanel camera operation has been shown not to require its GenTL transport layers.
 
@@ -41,6 +41,19 @@ The 1.0.5 column was checked against the read-only system-Python installation on
 **Scope limit:** these results establish the listed IOPanel camera path and controls only. They do not establish every VmbPy API, every camera feature, or long-duration endurance.
 
 No meaningful physical-compatibility CI matrix is claimed: testing each wheel without its matching VmbC runtime and installed transport layer would not establish camera compatibility. Hardware-independent tests cover the adapter's expected import/API surface and optional-binding failure behavior only.
+
+## Default lab binding installation
+
+The `camera` extra has been retired. On Windows x64 / CPython 3.12, plain
+`uv sync --locked` installs the qualified `vmbpy==1.2.2` Python wheel
+through the default `lab` group. Vimba X itself, its transport layers
+and camera drivers are still separate machine-level installations. Keep
+Vimba X 2026-2 / VmbC 1.3.1 for the validated lab configuration.
+A standalone VmbPy wheel does **not** substitute for those drivers.
+
+Driver-free systems and CI use `uv sync --locked --no-default-groups`
+to skip both lab bindings. Keep this fallback path and do not start the
+native SDK during CI.
 
 ## Optional import behavior
 
