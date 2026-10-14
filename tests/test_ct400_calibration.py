@@ -145,3 +145,78 @@ def test_summary_tolerates_missing_or_partial_stage_timings():
         ]
     )
     assert summary["by_case"]["A"]["median_stage_seconds"] == {}
+
+
+def test_timing_valid_warnings_are_included_but_not_relabelled_as_successes():
+    records = [
+        {
+            "run_id": "ok",
+            "case_id": "D",
+            "outcome": "warning",
+            "raw_result_code": 101,
+            "speed_block_nm_s": 5,
+            "nominal_sweep_seconds": 7,
+            "gui_start_to_completion_seconds": 17.4,
+            "predicted_sample_count": 35001,
+            "returned_sample_count": 35001,
+            "failed_stages": [],
+            "cleanup_failed": False,
+            "simulated": False,
+            "stage_seconds": {"scan_wait_end_seconds": 12.5},
+        },
+        {
+            "run_id": "power-low",
+            "case_id": "A",
+            "outcome": "warning",
+            "raw_result_code": 117,
+            "speed_block_nm_s": 10,
+            "nominal_sweep_seconds": 0.5,
+            "gui_start_to_completion_seconds": 6.4,
+            "predicted_sample_count": 5001,
+            "returned_sample_count": 5001,
+            "failed_stages": [],
+            "cleanup_failed": False,
+        },
+        {
+            "run_id": "bad-sample-count",
+            "case_id": "D",
+            "outcome": "warning",
+            "raw_result_code": 101,
+            "speed_block_nm_s": 5,
+            "nominal_sweep_seconds": 7,
+            "gui_start_to_completion_seconds": 17.4,
+            "predicted_sample_count": 35001,
+            "returned_sample_count": 35000,
+        },
+        {
+            "run_id": "other-warning",
+            "case_id": "D",
+            "outcome": "warning",
+            "raw_result_code": 121,
+            "speed_block_nm_s": 5,
+            "nominal_sweep_seconds": 7,
+            "gui_start_to_completion_seconds": 17.4,
+            "predicted_sample_count": 35001,
+            "returned_sample_count": 35001,
+        },
+        {
+            "run_id": "failed-cleanup",
+            "case_id": "D",
+            "outcome": "warning",
+            "raw_result_code": 101,
+            "speed_block_nm_s": 5,
+            "nominal_sweep_seconds": 7,
+            "gui_start_to_completion_seconds": 17.4,
+            "predicted_sample_count": 35001,
+            "returned_sample_count": 35001,
+            "cleanup_failed": True,
+        },
+    ]
+    summary = summarize_calibration(records)
+    assert summary["successful_measurements"] == 0
+    assert summary["timing_valid_measurements"] == 2
+    assert summary["timing_valid_warnings"] == 2
+    assert summary["outcome_counts"]["warning"] == 5
+    assert summary["by_speed_nm_s"]["5"]["count"] == 1
+    assert summary["by_speed_nm_s"]["10"]["count"] == 1
+    assert summary["by_case"]["D"]["median_stage_seconds"]["scan_wait_end_seconds"] == 12.5
