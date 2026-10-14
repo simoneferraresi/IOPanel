@@ -1333,7 +1333,8 @@ class CT400ControlPanel(BaseControlPanel):
             state = "Estimated duration exceeded"
         else:
             remaining = self._scan_estimated_duration_seconds - elapsed
-            state = f"Estimated remaining: {format_duration(remaining)}"
+            remaining_prefix = "Calibrated ETA remaining" if self._scan_eta_calibrated else "Estimated remaining"
+            state = f"{remaining_prefix}: {format_duration(remaining)}"
         self.scan_elapsed_label.setText(f"Elapsed: {elapsed_text}    {state}")
 
     def _stop_scan_activity_ui(self) -> None:
