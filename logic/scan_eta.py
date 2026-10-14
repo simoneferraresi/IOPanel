@@ -1,6 +1,18 @@
-"""Pure helpers for nominal wavelength sweep time estimates."""
+"""Pure nominal and lab-calibrated CT400 scan ETA helpers.
 
+The empirical coefficients come from 51 physical single-detector runs across
+four operator-supervised campaigns (October 2026). They represent *GUI total
+duration*, not a speed readback, and are only used within observed settings.
+"""
+
+from dataclasses import dataclass
 import math
+
+
+@dataclass(frozen=True)
+class ScanTimeEstimate:
+    seconds: float
+    calibrated: bool
 
 
 def estimate_sweep_seconds(start_nm: object, end_nm: object, speed_nm_s: object) -> float | None:
@@ -14,6 +26,54 @@ def estimate_sweep_seconds(start_nm: object, end_nm: object, speed_nm_s: object)
     if not all(math.isfinite(value) for value in (start, end, speed)) or speed <= 0:
         return None
     return abs(end - start) / speed
+
+
+def estimate_scan_duration(
+    start_nm: object,
+    end_nm: object,
+    speed_nm_s: object,
+    resolution_pm: object,
+    detector_count: object,
+) -> ScanTimeEstimate | None:
+    """Estimate full CT400 GUI scan time for supported lab conditions.
+
+    Supported conditions: one detector, 5-35 nm scan span, (speed nm/s,
+    resolution pm) = (10, 1), (10, 10), or (5, 1). The 5 nm/s correction is
+    provisional (only one campaign). All other settings retain the nominal
+    sweep estimate, flagged as not calibrated.
+
+    The model is a descriptive laboratory fit, not instrument telemetry.
+    """
+    sweep = estimate_sweep_seconds(start_nm, end_nm, speed_nm_s)
+    if sweep is None:
+        return None
+    try:
+        span = abs(float(end_nm) - float(start_nm))
+        speed = float(speed_nm_s)
+        resolution = float(resolution_pm)
+        count = int(detector_count)
+    except (TypeError, ValueError, OverflowError):
+        return ScanTimeEstimate(sweep, calibrated=False)
+
+    if (
+        not math.isfinite(resolution)
+        or not 5.0 <= span <= 35.0
+        or (speed, resolution) not in ((10.0, 1.0), (10.0, 10.0), (5.0, 1.0))
+        or count != 1
+    ):
+        return ScanTimeEstimate(sweep, calibrated=False)
+
+    # Least-squares fit to real total GUI durations (success + timing-valid
+    # vendor warnings 101/117). Rounded coefficients yield 0.046 s in-sample
+    # MAE; leave-one-campaign-out MAE for the 10 nm/s block is 0.033-0.080 s.
+    # The 5 nm/s offset is not independently campaign-validated.
+    sample_intervals = math.ceil(span * 1000.0 / resolution)
+    overhead = 5.45 + 0.0000824 * sample_intervals
+    if speed == 5.0:
+        overhead += 2.04
+    if resolution == 10.0:
+        overhead += 0.42
+    return ScanTimeEstimate(sweep + overhead, calibrated=True)
 
 
 def format_duration(seconds: float) -> str:
