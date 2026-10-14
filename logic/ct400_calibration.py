@@ -259,9 +259,7 @@ def summarize_calibration(records: list[dict[str, Any]]) -> dict[str, Any]:
         # Warning 101 (slow scan) affects hardware validation but still provides
         # a measured completion time; warning 117 is the known low-input-power case.
         if outcome == "warning" and (
-            record.get("raw_result_code") not in (101, 117)
-            or predicted_count is None
-            or returned_count is None
+            record.get("raw_result_code") not in (101, 117) or predicted_count is None or returned_count is None
         ):
             continue
         error = float(actual) - float(nominal)
