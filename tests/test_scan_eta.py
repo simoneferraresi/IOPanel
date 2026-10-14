@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from logic.scan_eta import estimate_sweep_seconds, format_duration
+from logic.scan_eta import estimate_scan_duration, estimate_sweep_seconds, format_duration
 
 
 @pytest.mark.parametrize(
@@ -33,3 +33,45 @@ def test_duration_format_rounds_up(seconds, expected):
 def test_duration_format_rejects_invalid_values(seconds):
     with pytest.raises(ValueError):
         format_duration(seconds)
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "speed", "resolution", "expected"),
+    [
+        (1530, 1535, 10, 1, 6.362),
+        (1530, 1545, 10, 1, 8.186),
+        (1530, 1565, 10, 1, 11.834),
+        (1530, 1565, 10, 10, 9.6584),
+        (1530, 1565, 5, 1, 17.374),
+    ],
+)
+def test_empirical_ct400_calibration_matches_physical_case_medians(start, end, speed, resolution, expected):
+    estimate = estimate_scan_duration(start, end, speed, resolution, 1)
+    assert estimate is not None
+    assert estimate.calibrated is True
+    assert estimate.seconds == pytest.approx(expected, abs=0.001)
+
+
+@pytest.mark.parametrize(
+    ("span", "speed", "resolution", "detectors"),
+    [
+        (4, 10, 1, 1),
+        (40, 10, 1, 1),
+        (35, 3, 1, 1),
+        (35, 5, 10, 1),
+        (35, 10, 5, 1),
+        (35, 10, 1, 4),
+        (35, 10, "invalid", 1),
+        (35, 10, 1, None),
+    ],
+)
+def test_unsupported_calibration_settings_fall_back_to_nominal(span, speed, resolution, detectors):
+    estimate = estimate_scan_duration(1530, 1530 + span, speed, resolution, detectors)
+    assert estimate is not None
+    assert estimate.calibrated is False
+    assert estimate.seconds == pytest.approx(span / speed)
+
+
+def test_invalid_nominal_scan_has_no_empirical_eta():
+    assert estimate_scan_duration(1530, 1565, None, 1, 1) is None
+    assert estimate_scan_duration(1530, 1565, 0, 1, 1) is None
