@@ -42,8 +42,9 @@ T = span_nm / configured_speed_nm_s
 
 This formula describes **total GUI start-to-completion time** rather than
 physical sweep time. It is enabled only for one detector (DE1), with start/end
-wavelengths within 1530–1565 nm, span from 5 to 35 nm, and these exact
-`(Connect-speed nm/s, resolution pm)` pairs: `(10,1)`, `(10,10)`, `(5,1)`.
+wavelengths within 1530–1565 nm, a span of 5–35 nm for `(10 nm/s, 1 pm)`,
+or **exactly a 35 nm span** for `(10 nm/s, 10 pm)` and `(5 nm/s, 1 pm)`.
+The latter two settings have only been tested at that single span.
 It does not extrapolate to other speeds, larger scan ranges, other resolutions,
 or additional detectors. Any unsupported setting falls back to the clearly
 labelled nominal estimate instead of silently extrapolating.
