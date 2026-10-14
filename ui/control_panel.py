@@ -57,7 +57,7 @@ from logic.power_monitor_recording import (
     PowerMonitorRecordingSample,
     PowerMonitorRecordingStopReason,
 )
-from logic.scan_eta import estimate_sweep_seconds, format_duration
+from logic.scan_eta import estimate_scan_duration, format_duration
 from logic.scan_measurement import ScanAcquisitionSettings, ScanMeasurement
 from ui.constants import (
     ID_CT400_MONITOR_PANEL,
@@ -911,6 +911,7 @@ class CT400ControlPanel(BaseControlPanel):
         self._scan_started_at: float | None = None
         self._next_scan_id: str | None = None
         self._scan_estimated_duration_seconds: float | None = None
+        self._scan_eta_calibrated = False
         self._scan_stopping = False
         self._scan_elapsed_timer = QTimer(self)
         self._scan_elapsed_timer.setInterval(1000)
@@ -1191,7 +1192,11 @@ class CT400ControlPanel(BaseControlPanel):
             # configured by ConnectionWorker from scan_defaults when Connect is used.
             # DummyCT400 does not model that sweep timing, so avoid implying otherwise.
             effective_speed = None if isinstance(ct400, DummyCT400) else self.config.scan_defaults.speed_nm_s
-            self._scan_estimated_duration_seconds = estimate_sweep_seconds(start_wl, end_wl, effective_speed)
+            estimate = estimate_scan_duration(
+                start_wl, end_wl, effective_speed, resolution, len(selected_detectors)
+            )
+            self._scan_estimated_duration_seconds = estimate.seconds if estimate is not None else None
+            self._scan_eta_calibrated = estimate.calibrated if estimate is not None else False
 
             self.scanning = True
             self.operation_started.emit()
@@ -1300,10 +1305,17 @@ class CT400ControlPanel(BaseControlPanel):
         self.progress_bar.setVisible(True)
         self.scan_elapsed_label.setText("Elapsed: 00:00")
         self.scan_elapsed_label.setVisible(True)
-        self.scan_elapsed_label.setToolTip(
-            "Approximate wavelength sweep time only, using the speed configured at Connect. "
-            "Setup and data retrieval time are not included; actual duration may exceed this estimate."
-        )
+        if self._scan_eta_calibrated:
+            self.scan_elapsed_label.setToolTip(
+                "Lab-calibrated approximate total scan duration (including worker setup and cleanup). "
+                "Valid only for the tested single-detector CT400 conditions; speed is a Connect-time command, "
+                "not device readback. The 5 nm/s correction is provisional."
+            )
+        else:
+            self.scan_elapsed_label.setToolTip(
+                "Nominal wavelength sweep time only; no validated empirical calibration for these settings. "
+                "Setup and cleanup are excluded. Speed is the configured Connect-time command, not device readback."
+            )
         self._update_scan_elapsed()
         self._scan_elapsed_timer.start()
 
@@ -1330,6 +1342,7 @@ class CT400ControlPanel(BaseControlPanel):
         self._scan_elapsed_timer.stop()
         self._scan_started_at = None
         self._scan_estimated_duration_seconds = None
+        self._scan_eta_calibrated = False
         self._scan_stopping = False
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
