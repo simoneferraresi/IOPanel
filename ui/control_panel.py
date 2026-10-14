@@ -730,6 +730,7 @@ class BaseControlPanel(QWidget, ABC, metaclass=QABCMeta):
         self.is_simulated = isinstance(ct400_device, DummyCT400)
         self.is_instrument_connected = self.is_simulated
         self.connected_laser_input: LaserInput | None = None
+        self.connected_speed_nm_s: int | None = None
         self.ct400_operation_state = "IDLE"
         self._calibration_blocked = False
 
@@ -786,9 +787,12 @@ class BaseControlPanel(QWidget, ABC, metaclass=QABCMeta):
         self.connected_laser_input = None
         self.on_instrument_connected(self.is_simulated)
 
-    def set_connected_laser_input(self, laser_input: LaserInput | None) -> None:
-        """Project MainWindow's confirmed physical input into this panel."""
+    def set_connected_laser_input(
+        self, laser_input: LaserInput | None, *, configured_speed_nm_s: int | None = None
+    ) -> None:
+        """Project confirmed Connect-time input and speed into this panel."""
         self.connected_laser_input = laser_input
+        self.connected_speed_nm_s = configured_speed_nm_s if laser_input is not None else None
         self.on_instrument_connected(self.is_simulated or laser_input is not None)
 
     def _selected_input_is_authorized(self) -> bool:
@@ -1191,7 +1195,7 @@ class CT400ControlPanel(BaseControlPanel):
             # The scan panel speed is requested metadata. The physical laser speed is
             # configured by ConnectionWorker from scan_defaults when Connect is used.
             # DummyCT400 does not model that sweep timing, so avoid implying otherwise.
-            effective_speed = None if isinstance(ct400, DummyCT400) else self.config.scan_defaults.speed_nm_s
+            effective_speed = None if isinstance(ct400, DummyCT400) else self.connected_speed_nm_s
             estimate = estimate_scan_duration(start_wl, end_wl, effective_speed, resolution, len(selected_detectors))
             self._scan_estimated_duration_seconds = estimate.seconds if estimate is not None else None
             self._scan_eta_calibrated = estimate.calibrated if estimate is not None else False
@@ -1218,7 +1222,9 @@ class CT400ControlPanel(BaseControlPanel):
                 laser_power_mw,
                 input_port_enum,
                 acquisition_settings=acquisition_settings,
-                configured_speed_nm_s=self.config.scan_defaults.speed_nm_s,
+                configured_speed_nm_s=(
+                    self.config.scan_defaults.speed_nm_s if isinstance(ct400, DummyCT400) else effective_speed
+                ),
                 scan_id=scan_id,
                 disable_wl=self.config.scan_defaults.safe_parking_wavelength,
                 disable_power=self.config.scan_defaults.laser_power,
