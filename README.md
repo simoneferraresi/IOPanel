@@ -43,7 +43,7 @@ This project is designed to be run from a local Python environment and uses [`uv
 
 ### 1. Prerequisites
 
--   **Python 3.12+**
+-   **Python 3.12 x64 for the default laboratory setup** (the MATLAB R2024b Engine is not compatible with Python 3.13+; driver-free setups may use newer supported Python versions).
 -   **`uv`**: Install `uv` on your system.
     -   On macOS / Linux: `curl -LsSf https://astral.sh/uv/install.sh | sh`
     -   On Windows: `powershell -c "irm https://astral.sh/uv/install.ps1 | iex"`
@@ -53,7 +53,7 @@ This project is designed to be run from a local Python environment and uses [`uv
     -   **Allied Vision Vimba X:** For physical camera support. The preferred laboratory profile is Vimba X 2026-2 with VmbPy 1.2.2, VmbC 1.3.1 and VmbImageTransform 2.3 on Windows x64 / Python 3.12.8. See the [VmbPy compatibility profiles](docs/vmbpy-compatibility.md).
     -   Camera capability, exposure/gain, ROI, frame-pacing, and GigE validation guidance is in [Camera performance and image quality](docs/camera-performance.md).
     -   **Yenista CT400 Drivers:** The `CT400_lib.dll` file is required. This is provided with the instrument. Ensure you have the correct 32-bit or 64-bit version that matches your Python interpreter.
--   **(Optional) MATLAB:** Required *only* for saving scan plots as `.fig` files. If you need this feature, you must also install the MATLAB Engine for Python.
+-   **MATLAB R2024b installed and licensed on the Windows lab PC:** The default `uv sync` installs the matching MATLAB Engine Python binding. MATLAB remains necessary for actual `.fig` export. Driver-free setups can skip the lab group.
 
 ### 2. Environment Setup
 
@@ -64,7 +64,7 @@ The `uv` workflow simplifies environment creation and dependency installation in
 git clone https://github.com/simoneferraresi/IOPanel.git
 cd IOPanel
 
-# 2. Create a virtual environment and install core dependencies
+# 2. Create/update .venv including the default lab integrations (Windows x64)
 uv sync --locked
 
 # 3. Activate the virtual environment
@@ -74,32 +74,49 @@ uv sync --locked
 source .venv/bin/activate
 ```
 
-### 3. Optional lab profiles
+### 3. Default laboratory profile and driver-free override
 
-Camera and MATLAB support are optional extras. The qualified laboratory MATLAB
-profile is MATLAB R2024b Update 4 at
-`C:\Program Files\MATLAB\R2024b`, with CPython 3.12.8 and
-`matlabengine==24.2.2`. The Engine package is intentionally pinned to match
-that MATLAB release; review and update the pin when changing MATLAB releases.
+On **Windows x64 / CPython 3.12**, plain `uv sync --locked` installs the
+`lab` dependency group by default:
 
-Install the camera and MATLAB extras for that lab profile with:
+- `vmbpy==1.2.2`, matched to the validated Vimba X 2026-2 /
+  VmbC 1.3.1 laboratory camera profile.
+- `matlabengine==24.2.2`, matched to **MATLAB R2024b Update 4** at
+  `C:\Program Files\MATLAB\R2024b`.
+
+The lab Python bindings are no longer `camera`/`matlab` optional extras.
+Both bindings are installed automatically by the default setup, but **uv does
+not install or license MATLAB or install Vimba X device drivers/GenTL layers**.
+Install and configure those native applications first. MATLAB Engine 24.2.2 is
+release-specific; do not replace it with the current PyPI version unless the
+lab's MATLAB release also changes.
+
+On a machine without MATLAB or Vimba X, preserve the hardware-independent
+environment by **explicitly disabling the default lab group**:
 
 ```powershell
-uv sync --locked --extra camera --extra matlab
+uv sync --locked --no-default-groups
+# For tests:
+uv sync --locked --no-default-groups --extra test
 ```
 
-MATLAB Engine is not required to run IOPanel. Without it, CSV and MAT scan
-exports and PNG/JPG plot-image exports remain available; only MATLAB `.fig`
-export is unavailable. For MATLAB Engine installation details, see the
-[official MATLAB documentation](https://www.mathworks.com/help/matlab/matlab_external/install-the-matlab-engine-for-python.html).
+This is the CI/driver-free route. To return to the full lab setup, use
+`uv sync --locked` again after installing the native prerequisites; uv will
+reconcile the virtual environment. Any `uv run` invocation without
+`--no-default-groups` also selects the default lab group, so use
+`uv run --no-default-groups ...` for driver-free work when synchronization is
+enabled.
 
-When the MATLAB extra is installed, IOPanel asynchronously prewarms one Engine
-350 ms after the main window is shown and reuses it for `.fig` exports. Startup
-failure leaves the rest of the application available, and the Engine is shut
-down when IOPanel exits.
+Without a functioning Engine, CSV and MAT data exports and PNG/JPG plot
+images remain available; only MATLAB `.fig` output requires MATLAB.
+IOPanel asynchronously prewarms the Engine 350 ms after opening the main
+window, reuses it for `.fig` exports, and shuts it down at exit. An Engine
+startup failure does not disable the rest of the application.
 
-These commands are for manual lab diagnostics only; CI does not require MATLAB
-or the MATLAB extra. In PowerShell, check the Engine import and runtime with:
+For setup diagnostics, run these commands on the lab PC after the sync (these
+do not acquire data or operate cameras; the second explicitly starts MATLAB).
+See [MathWorks' Engine installation guidance](https://www.mathworks.com/help/matlab/matlab_external/install-the-matlab-engine-for-python.html)
+if installation fails:
 
 ```powershell
 .\.venv\Scripts\python.exe -c "import matlab.engine; print('MATLAB Engine import OK')"
@@ -122,12 +139,13 @@ The importer retains wavelength samples, active optical detector identities in a
 Run `python -m tools.check_environment` from the project root for a concise
 report, or add `--json` for schema-versioned JSON suitable for bug reports.
 Use `--config path\to\config.ini` to inspect a different configuration file.
-The command reports Python details, core and optional package metadata,
+The command reports Python details, core and lab-integration package metadata,
 configuration validation, and static CT400 DLL existence/PE architecture.
 Configuration validation reuses `AppConfig` without importing the GUI or
 hardware adapters. VmbPy and MATLAB Engine are detected through package
-metadata only; missing optional packages mean their features are unavailable,
-not that IOPanel itself is broken. Installed metadata does not verify native
+metadata only. Missing lab bindings are expected only when the lab group is
+explicitly excluded; metadata presence does not establish native runtime
+readiness. Installed metadata does not verify native
 SDK loading or runtime compatibility. The command never starts MATLAB, loads a
 DLL, initializes Vimba, or contacts hardware. It cannot qualify physical
 camera or CT400 operation; follow the [laboratory validation protocol](docs/laboratory-hardware-validation.md)
@@ -213,13 +231,12 @@ python app.py --log-level DEBUG --config config.production.ini
 
 ### Local development workflow
 
-The hardware-independent install does not require the optional Vimba driver dependency. Use a project-local environment and the committed lock file:
-
-Use a project-local environment; do not install project packages into the system Python. After cloning or switching branches, create/update the environment with:
+For driver-free tests (including CI), explicitly exclude the default lab
+group. Keep dependencies isolated in the project environment:
 
 ```bash
-uv sync --extra test
-uv run pytest -q
+uv sync --locked --no-default-groups --extra test
+uv run --no-default-groups --no-sync pytest -q
 ```
 
 The test extra installs pytest and pytest-qt. Run a focused test while iterating, for example `uv run pytest tests/test_config_model.py -q` or `uv run pytest tests/test_mainwindow_camera_integration.py -q`. The full suite exercises Qt widgets and currently runs on the standard Windows GitHub Actions runner without proprietary drivers.
@@ -230,11 +247,11 @@ Development and CI should not require proprietary hardware drivers. `hardware/du
 
 Camera support has driver-free development, the preferred physical-camera profile, and a historical rollback profile:
 
-- **Driver-free development:** VmbPy is not required. Use the simulated camera backend for camera UI work; application and simulation imports remain available when VmbPy or its runtime is unavailable.
+- **Driver-free development:** Exclude the default `lab` group with `uv sync --locked --no-default-groups`. Use the simulated camera backend; camera UI work remains available without VmbPy or its runtime.
 - **Preferred laboratory camera profile:** Windows x64, Python 3.12.8, Allied Vision Vimba X 2026-2, VmbPy 1.2.2, VmbC 1.3.1, and VmbImageTransform 2.3, using the Vimba/Vimba X physical backend. This isolated project/candidate environment has been physically validated with two Allied Vision Mako G-125B cameras. See the [qualification record](docs/laboratory-validation-report.md).
 - **Historical rollback profile:** Windows x64, Python 3.12.8, Vimba X 2024.1.0.3916, VmbC 1.0.6, and VmbPy 1.0.5 was previously validated and is retained for rollback/reference.
 
-The completed camera qualification includes both standalone streams; normal IOPanel startup with both cameras and DummyCT400; converted-frame display; clean shutdown and VmbSystem release; manual Exposure and Gamma on both cameras; one-shot Auto Exposure on both; and one-shot Auto Gain on both after the Vimba X update. Continuous dual-camera use succeeded during normal operation, but no timed endurance gate was run. CT400 was intentionally simulated, so physical CT400 operation remains unvalidated and requires separate validation. The VmbPy API is optional for CT400-only and simulated-camera work.
+The completed camera qualification includes both standalone streams; normal IOPanel startup with both cameras and DummyCT400; converted-frame display; clean shutdown and VmbSystem release; manual Exposure and Gamma on both cameras; one-shot Auto Exposure on both; and one-shot Auto Gain on both after the Vimba X update. Continuous dual-camera use succeeded during normal operation, but no timed endurance gate was run. CT400 was intentionally simulated, so physical CT400 operation remains unvalidated and requires separate validation. The VmbPy runtime is still not required for CT400-only and simulated-camera work, although its Python binding is installed in the default lab profile.
 
 For driver-free camera UI development, set `backend = simulation` in an enabled `[Camera:*]` section. The simulator delivers a deterministic mono8 quadrant pattern through the normal camera panel pipeline; its displayed name is marked `[SIMULATED]`. `simulation_width` and `simulation_height` configure frame dimensions. The default backend remains `vimba`, and a missing or failed physical camera is never replaced by the simulator. For operator-supervised CT400 and Allied Vision checks, follow the [laboratory hardware validation protocol](docs/laboratory-hardware-validation.md); no driver-free result establishes physical compatibility.
 
