@@ -37,7 +37,8 @@ def estimate_scan_duration(
 ) -> ScanTimeEstimate | None:
     """Estimate full CT400 GUI scan time for supported lab conditions.
 
-    Supported conditions: one detector, wavelengths within 1530-1565 nm,\n    5-35 nm scan span, (speed nm/s,
+    Supported conditions: one detector, wavelengths within 1530-1565 nm,
+    a 5-35 nm scan span, and (speed nm/s,
     resolution pm) = (10, 1), (10, 10), or (5, 1). The 5 nm/s correction is
     provisional (only one campaign). All other settings retain the nominal
     sweep estimate, flagged as not calibrated.
