@@ -785,6 +785,7 @@ class BaseControlPanel(QWidget, ABC, metaclass=QABCMeta):
         self.ct400 = ct400_device
         self.is_simulated = isinstance(ct400_device, DummyCT400) if simulated is None else simulated
         self.connected_laser_input = None
+        self.connected_speed_nm_s = None
         self.on_instrument_connected(self.is_simulated)
 
     def set_connected_laser_input(
