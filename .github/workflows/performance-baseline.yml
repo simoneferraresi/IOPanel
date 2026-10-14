@@ -37,7 +37,7 @@ jobs:
         with:
           version: "0.12.21"
       - name: Install locked driver-free application dependencies
-        run: uv sync --locked --extra test
+        run: uv sync --locked --no-default-groups --extra test
       - name: Capture synthetic Qt offscreen scan-overlay profile
         run: >-
           uv run --no-sync python -m tools.performance_baseline capture
@@ -69,7 +69,7 @@ jobs:
         with:
           version: "0.12.21"
       - name: Install locked driver-free application dependencies
-        run: uv sync --locked --extra test
+        run: uv sync --locked --no-default-groups --extra test
       - name: Capture synthetic scan CSV/MAT I/O and Qt pending-callback latency
         run: >-
           uv run --no-sync python -m tools.performance_baseline capture-io
@@ -100,7 +100,7 @@ jobs:
         with:
           version: "0.12.21"
       - name: Install locked driver-free application dependencies
-        run: uv sync --locked --extra test
+        run: uv sync --locked --no-default-groups --extra test
       - name: Capture MainWindow/PlotWidget synchronous scan I/O callbacks
         run: >-
           uv run --no-sync python -m tools.performance_baseline capture-gui
@@ -131,7 +131,7 @@ jobs:
         with:
           version: "0.12.21"
       - name: Install locked driver-free application dependencies
-        run: uv sync --locked --extra test
+        run: uv sync --locked --no-default-groups --extra test
       - name: Capture first-responsive MainWindow startup without device initialization
         run: >-
           uv run --no-sync python -m tools.performance_baseline capture-startup

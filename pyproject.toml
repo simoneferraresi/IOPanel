@@ -32,15 +32,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# --- Optional Dependencies ---
-# Use this for features that are not strictly required, like MATLAB integration.
-# To install: uv sync --locked --extra matlab
-matlab = [
-    "matlabengine==24.2.2", # Qualified against the lab's MATLAB R2024b installation
-]
-camera = [
-    "vmbpy>=1.0.5,<2", # Lab SDK-managed and packaged-wheel profiles are documented separately
-]
+# --- Opt-in testing and developer tooling only ---
 test = [
     "pytest>=8.0.0",
     "pytest-qt>=4.0.0",
@@ -56,6 +48,18 @@ typecheck = [
 lint = [
     "ruff==0.16.10",
 ]
+
+# Install these integrations by default with 'uv sync' on the supported
+# Windows x64 / CPython 3.12 lab profile. They remain external to the
+# hardware-independent core to preserve driver-free CI and packaging.
+[dependency-groups]
+lab = [
+    "vmbpy==1.2.2; sys_platform == 'win32' and platform_machine == 'AMD64'",
+    "matlabengine==24.2.2; sys_platform == 'win32' and platform_machine == 'AMD64'",
+]
+
+[tool.uv.dependency-groups]
+lab = { requires-python = ">=3.12,<3.13" }
 
 [project.urls]
 Homepage = "https://github.com/simoneferraresi/IOPanel"
@@ -80,6 +84,9 @@ exclude = [
 
 [tool.uv]
 required-version = "==0.12.21"
+# 'uv sync --locked' on the lab PC installs VmbPy and MATLAB Engine automatically.
+# CI and driver-free users explicitly pass --no-default-groups.
+default-groups = ["lab"]
 
 [tool.pyright]
 include = [

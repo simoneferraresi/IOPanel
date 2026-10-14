@@ -1,13 +1,13 @@
 # Windows x64 one-folder distribution
 
-The package targets 64-bit Windows and CPython 3.12. It is built from the locked core, `dev`, and `test` dependency sets; the optional `camera` and `matlab` extras are not installed. The PyInstaller spec is `packaging/IOPanel.spec`, and output is the unpacked `dist/IOPanel/` directory.
+The package targets 64-bit Windows and CPython 3.12. It is built from the locked core, `dev`, and `test` dependency sets, explicitly excluding the default `lab` group (VmbPy and MATLAB Engine). The PyInstaller spec is `packaging/IOPanel.spec`, and output is the unpacked `dist/IOPanel/` directory.
 
 ## Reproduce the build
 
 From a clean Windows x64 checkout at the repository root, install the pinned uv release and locked dependencies, then run:
 
 ```powershell
-uv sync --locked --extra dev --extra test
+uv sync --locked --no-default-groups --extra dev --extra test
 uv run --no-sync pyinstaller --clean --noconfirm packaging/IOPanel.spec
 Copy-Item packaging/config.simulation.ini dist/IOPanel/config.ini
 uv run --no-sync python tools/smoke_frozen.py dist/IOPanel/IOPanel.exe
