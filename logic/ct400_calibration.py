@@ -253,7 +253,14 @@ def summarize_calibration(records: list[dict[str, Any]]) -> dict[str, Any]:
             continue
         predicted_count = record.get("predicted_sample_count")
         returned_count = record.get("returned_sample_count")
-        if predicted_count is not None and returned_count != predicted_count:
+        simulation_only = record.get("simulation_only") is True
+        # The standalone, hardware-inaccessible simulation does not have a
+        # returned device sample count. Preserve its existing success metrics,
+        # but require matching real sample counts for physical acquisitions.
+        if predicted_count is not None and (
+            (not simulation_only and returned_count != predicted_count)
+            or (simulation_only and returned_count is not None and returned_count != predicted_count)
+        ):
             continue
         # Only include observed nonfatal warnings with complete sample counts.
         # Warning 101 (slow scan) affects hardware validation but still provides
