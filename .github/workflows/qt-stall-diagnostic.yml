@@ -42,7 +42,7 @@ jobs:
             throw "ProcDump signature verification failed: $($signature.Status); $($signature.SignerCertificate.Subject)"
           }
           "PROCDUMP_PATH=$tool" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-      - run: uv sync --locked --extra test
+      - run: uv sync --locked --no-default-groups --extra test
       - name: Run supervised native Qt stress
         shell: pwsh
         run: >-
