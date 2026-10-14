@@ -220,3 +220,40 @@ def test_timing_valid_warnings_are_included_but_not_relabelled_as_successes():
     assert summary["by_speed_nm_s"]["5"]["count"] == 1
     assert summary["by_speed_nm_s"]["10"]["count"] == 1
     assert summary["by_case"]["D"]["median_stage_seconds"]["scan_wait_end_seconds"] == 12.5
+
+
+def test_summary_preserves_offline_simulated_successes_without_device_samples():
+    record = {
+        "run_id": "synthetic",
+        "case_id": "A",
+        "simulation_only": True,
+        "outcome": "success",
+        "speed_block_nm_s": 10,
+        "nominal_sweep_seconds": 0.5,
+        "gui_start_to_completion_seconds": 1.0,
+        "predicted_sample_count": 5001,
+        "stage_seconds": {"scan_wait_end_seconds": 0.5},
+    }
+    summary = summarize_calibration([record])
+    assert summary["successful_measurements"] == 1
+    assert summary["timing_valid_measurements"] == 1
+    assert summary["timing_valid_warnings"] == 0
+    assert summary["by_case"]["A"]["count"] == 1
+
+
+def test_summary_does_not_count_real_success_missing_returned_samples():
+    record = {
+        "run_id": "physical-incomplete",
+        "case_id": "A",
+        "simulated": False,
+        "outcome": "success",
+        "speed_block_nm_s": 10,
+        "nominal_sweep_seconds": 0.5,
+        "gui_start_to_completion_seconds": 6.4,
+        "predicted_sample_count": 5001,
+        "returned_sample_count": None,
+    }
+    summary = summarize_calibration([record])
+    assert summary["successful_measurements"] == 0
+    assert summary["timing_valid_measurements"] == 0
+    assert summary["outcome_counts"]["success"] == 1
