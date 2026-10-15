@@ -9,17 +9,20 @@ from typing import override
 
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, QTimer, Signal, Slot
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtGui import QCloseEvent, QFont, QIcon
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
+    QFrame,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -28,11 +31,20 @@ from PySide6.QtWidgets import (
 from hardware.pm5020_types import ChannelConfig, PM5020State, PowerChannel, PowerReading
 from logic.pm5020_monitor import DISPLAY_UNITS, ConfigurationRequest, PM5020MonitorWorker, convert_power, format_power
 from logic.task_runner import TaskRunner
+from ui.typography import make_font, pyqtgraph_title_style, style_group_box_title
 
 logger = logging.getLogger("LabApp.pm5020_panel")
 
 HISTORY_SECONDS = (10, 30, 60, 300, 600)
 MAX_HISTORY_POINTS = 2400
+
+# Follow the existing CT400 monitor (blue) and Stop Alignment (red) controls.
+PM5020_ACTION_BUTTON_STYLE = """
+QPushButton#pm5020StartButton { background-color: #1976d2; color: white; }
+QPushButton#pm5020StartButton:disabled { background-color: #e0e0e0; color: #888888; }
+QPushButton#pm5020StopButton { background-color: #c62828; color: white; }
+QPushButton#pm5020StopButton:disabled { background-color: #e0e0e0; color: #888888; }
+"""
 
 
 class PM5020ChannelControls(QGroupBox):
@@ -40,13 +52,15 @@ class PM5020ChannelControls(QGroupBox):
 
     def __init__(self, channel: PowerChannel, *, default_wavelength_nm: float, default_unit: str):
         super().__init__(f"CH{channel.value} — Optical Power")
+        style_group_box_title(self)
         self.channel = channel
         self._rows: deque[tuple[float, float]] = deque(maxlen=MAX_HISTORY_POINTS)
         layout = QVBoxLayout(self)
 
         self.reading_label = QLabel("—")
         self.reading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.reading_label.setStyleSheet("font-size: 24px; font-weight: 600;")
+        self.reading_label.setFont(make_font("mono", 20, QFont.Weight.Bold))
+        self.reading_label.setMinimumHeight(48)
         self.measurement_status = QLabel("Not measured")
         self.age_label = QLabel("Last reading: —")
         layout.addWidget(self.reading_label)
@@ -87,10 +101,10 @@ class PM5020ChannelControls(QGroupBox):
         self.plot.setLabel("bottom", "Elapsed time", units="s")
         self.plot.setLabel("left", "Optical power", units="W")
         self.plot.showGrid(x=True, y=True, alpha=0.2)
-        self.plot.setMinimumHeight(145)
-        self.plot.setTitle(f"CH{channel.value} Power vs Time")
+        self.plot.setMinimumHeight(155)
+        self.plot.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.plot.setTitle(f"CH{channel.value} Power vs Time", **pyqtgraph_title_style())
         self.curve = self.plot.plot(pen=pg.mkPen("#1976d2" if channel is PowerChannel.CH1 else "#d95f02", width=2))
-        layout.addWidget(self.plot, stretch=1)
         self.unit.currentTextChanged.connect(self.refresh_reading)
         self._latest_power_w: float | None = None
         self._latest_timestamp: datetime | None = None
@@ -205,14 +219,25 @@ class PM5020Panel(QWidget):
         self.worker.monitoring_started.connect(self._on_monitoring_started)
         self._set_request_connections()
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(8, 8, 8, 8)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
+        # Match the Wavelength Scan and Power Monitor tabs: settings on the left,
+        # visualization on the right. Only settings scroll in a shallow splitter.
+        root = QHBoxLayout(self)
+        root.setContentsMargins(5, 5, 5, 5)
+        root.setSpacing(10)
+        self.controls_scroll = QScrollArea()
+        self.controls_scroll.setObjectName("pm5020ControlsScroll")
+        self.controls_scroll.setWidgetResizable(True)
+        self.controls_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.controls_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.controls_scroll.setMinimumWidth(305)
+        self.controls_scroll.setMaximumWidth(435)
         content = QWidget()
         layout = QVBoxLayout(content)
+        layout.setSpacing(10)
 
-        connection_box = QGroupBox("Connection and instrument status")
+        connection_box = QGroupBox("Instrument Status")
+        connection_box.setObjectName("pm5020InstrumentStatusGroup")
+        style_group_box_title(connection_box)
         connection_form = QFormLayout(connection_box)
         mode_text = "Simulation — readings are simulated" if backend_mode == "simulation" else "Physical PM5020"
         self.mode_label = QLabel(mode_text)
@@ -220,6 +245,8 @@ class PM5020Panel(QWidget):
         if backend_mode == "simulation":
             self.mode_label.setStyleSheet("font-weight: bold; color: #8a5700;")
         self.resource_label = QLabel(resource_name or "Not configured")
+        self.resource_label.setWordWrap(True)
+        self.resource_label.setToolTip(resource_name)
         self.status_label = QLabel("Disconnected")
         self.readiness_label = QLabel("Not ready")
         connection_form.addRow("Configured backend:", self.mode_label)
@@ -234,13 +261,13 @@ class PM5020Panel(QWidget):
 
         self.ch1 = PM5020ChannelControls(PowerChannel.CH1, default_wavelength_nm=1550.0, default_unit="mW")
         self.ch2 = PM5020ChannelControls(PowerChannel.CH2, default_wavelength_nm=775.0, default_unit="nW")
-        channels = QHBoxLayout()
-        channels.addWidget(self.ch1, stretch=1)
-        channels.addWidget(self.ch2, stretch=1)
-        layout.addLayout(channels, stretch=1)
+        layout.addWidget(self.ch1)
+        layout.addWidget(self.ch2)
 
-        controls = QGroupBox("Live monitoring")
-        controls_layout = QHBoxLayout(controls)
+        controls = QGroupBox("Operation")
+        controls.setObjectName("pm5020OperationGroup")
+        style_group_box_title(controls)
+        controls_layout = QGridLayout(controls)
         self.interval = QSpinBox()
         self.interval.setRange(250, 5000)
         self.interval.setSingleStep(250)
@@ -252,25 +279,43 @@ class PM5020Panel(QWidget):
             self.history.addItem(label, seconds)
         self.apply_button = QPushButton("Apply Channel Settings")
         self.start_button = QPushButton("Start")
+        self.start_button.setObjectName("pm5020StartButton")
+        self.start_button.setStyleSheet(PM5020_ACTION_BUTTON_STYLE)
+        self.start_button.setIcon(QIcon(":/icons/play.svg"))
+        self.start_button.setMinimumHeight(35)
         self.pause_button = QPushButton("Pause")
         self.resume_button = QPushButton("Resume")
         self.stop_button = QPushButton("Stop")
+        self.stop_button.setObjectName("pm5020StopButton")
+        self.stop_button.setStyleSheet(PM5020_ACTION_BUTTON_STYLE)
+        self.stop_button.setIcon(QIcon(":/icons/stop.svg"))
+        self.stop_button.setMinimumHeight(35)
         self.clear_button = QPushButton("Clear Plot")
         for button in (self.start_button, self.pause_button, self.resume_button, self.stop_button):
             button.setEnabled(False)
-        controls_layout.addWidget(QLabel("Update:"))
-        controls_layout.addWidget(self.interval)
-        controls_layout.addWidget(QLabel("History:"))
-        controls_layout.addWidget(self.history)
-        controls_layout.addWidget(self.apply_button)
-        controls_layout.addWidget(self.start_button)
-        controls_layout.addWidget(self.pause_button)
-        controls_layout.addWidget(self.resume_button)
-        controls_layout.addWidget(self.stop_button)
-        controls_layout.addWidget(self.clear_button)
+        controls_layout.addWidget(QLabel("Update interval:"), 0, 0)
+        controls_layout.addWidget(self.interval, 0, 1)
+        controls_layout.addWidget(QLabel("Plot history:"), 1, 0)
+        controls_layout.addWidget(self.history, 1, 1)
+        controls_layout.addWidget(self.apply_button, 2, 0, 1, 2)
+        controls_layout.addWidget(self.start_button, 3, 0)
+        controls_layout.addWidget(self.stop_button, 3, 1)
+        controls_layout.addWidget(self.pause_button, 4, 0)
+        controls_layout.addWidget(self.resume_button, 4, 1)
+        controls_layout.addWidget(self.clear_button, 5, 0, 1, 2)
         layout.addWidget(controls)
-        scroll.setWidget(content)
-        root.addWidget(scroll)
+        layout.addStretch(1)
+        self.controls_scroll.setWidget(content)
+        root.addWidget(self.controls_scroll, stretch=0)
+
+        self.plot_container = QWidget()
+        self.plot_container.setObjectName("pm5020PlotsContainer")
+        plots = QVBoxLayout(self.plot_container)
+        plots.setContentsMargins(0, 0, 0, 0)
+        plots.setSpacing(6)
+        plots.addWidget(self.ch1.plot, stretch=1)
+        plots.addWidget(self.ch2.plot, stretch=1)
+        root.addWidget(self.plot_container, stretch=1)
 
         self.apply_button.clicked.connect(self._apply_configuration)
         self.start_button.clicked.connect(self._start)
