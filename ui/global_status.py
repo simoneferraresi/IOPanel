@@ -121,7 +121,11 @@ def format_pm5020_status(
     if state.name == "ERROR" or activity == "Recovery required":
         return StatusText("PM5020: Error", tooltip + "; disconnect and reconnect to recover", "error")
     if state.name == "DISCONNECTED":
-        return StatusText("PM5020: Sim (Off)" if simulated else "PM5020: Disconnected", tooltip, "simulated" if simulated else "disconnected")
+        return StatusText(
+            "PM5020: Sim (Off)" if simulated else "PM5020: Disconnected",
+            tooltip,
+            "simulated" if simulated else "disconnected",
+        )
     if simulated:
         return StatusText("PM5020: SIMULATED", tooltip, "simulated")
     if activity in {"Monitoring", "Busy with acquisition"}:
