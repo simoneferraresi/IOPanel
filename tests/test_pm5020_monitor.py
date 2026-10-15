@@ -59,11 +59,11 @@ def test_simulator_panel_reads_channels_and_plots_independent_units(qtbot):
     assert created_on and created_on[0] != threading.get_ident()
     panel._apply_configuration()
     qtbot.waitUntil(lambda: panel._configuration_applied, timeout=2000)
-    panel.interval.setValue(250)
+    panel.interval.setValue(0.25)
     panel._start()
     qtbot.waitUntil(lambda: readings.count() >= 2, timeout=3000)
-    assert panel.ch1.reading_label.text() == "10 mW"
-    assert panel.ch2.reading_label.text() == "800 nW"
+    assert panel.ch1.reading_label.text() == "10"
+    assert panel.ch2.reading_label.text() == "800"
     assert panel.ch1.curve.getData()[1][-1] == pytest.approx(10)
     assert panel.ch2.curve.getData()[1][-1] == pytest.approx(800)
     assert panel.ch1.plot.getAxis("left").labelText == "Optical power"
@@ -110,7 +110,7 @@ def test_slow_simulated_reads_are_serialized_and_gui_remains_responsive(qtbot):
     qtbot.waitUntil(lambda: panel._backend_state is PM5020State.IDLE, timeout=3000)
     panel._apply_configuration()
     qtbot.waitUntil(lambda: panel._configuration_applied, timeout=2000)
-    panel.interval.setValue(250)
+    panel.interval.setValue(0.25)
     panel._start()
     handled: list[bool] = []
     from PySide6.QtCore import QTimer
@@ -169,8 +169,8 @@ def test_panel_does_not_start_or_connect_hardware_until_user_action(qtbot):
     assert not hasattr(panel, "connect_button")
     assert not hasattr(panel, "disconnect_button")
     assert panel.start_button.isEnabled() is False
-    assert math.isclose(panel.ch1.wavelength.value(), 1550)
-    assert math.isclose(panel.ch2.wavelength.value(), 775)
+    assert math.isclose(float(panel.ch1.wavelength.text()), 1550)
+    assert math.isclose(float(panel.ch2.wavelength.text()), 775)
 
 
 def test_invalid_physical_configuration_restores_menu_operation_state(qtbot):
@@ -205,14 +205,14 @@ def test_configuration_is_pending_until_ack_and_invalidated_by_edits_and_disconn
     first_request = panel._pending_configuration
     panel._apply_configuration()
     assert panel._pending_configuration == first_request
-    panel.ch1.wavelength.setValue(1549)
+    panel.ch1.wavelength.setText("1549")
     assert panel._pending_configuration is None
     assert not panel._configuration_applied
     panel._apply_configuration()
     qtbot.waitUntil(lambda: panel._configuration_applied, timeout=2000)
     assert panel.apply_button.text() == "Settings Applied"
     assert panel.start_button.isEnabled()
-    panel.ch1.wavelength.setValue(1548)
+    panel.ch1.wavelength.setText("1548")
     assert not panel._configuration_applied
     assert not panel.start_button.isEnabled()
     panel._apply_configuration()
@@ -334,12 +334,15 @@ def test_pm5020_layout_matches_control_column_and_plot_conventions(qtbot):
     assert panel.plot_container.objectName() == "pm5020PlotsContainer"
     settings = panel.controls_scroll.widget()
     assert settings is not None
-    assert settings.findChild(QGroupBox, "pm5020InstrumentStatusGroup") is not None
+    assert settings.findChild(QGroupBox, "pm5020InstrumentStatusGroup") is None
     assert settings.findChild(QGroupBox, "pm5020OperationGroup") is not None
+    assert panel.error_label.parentWidget() is settings
     assert panel.ch1.parentWidget() is settings
     assert panel.ch2.parentWidget() is settings
-    assert panel.ch1.plot.parentWidget() is panel.plot_container
-    assert panel.ch2.plot.parentWidget() is panel.plot_container
+    assert panel.ch1.plot_host.parentWidget() is panel.plot_container
+    assert panel.ch2.plot_host.parentWidget() is panel.plot_container
+    assert panel.ch1.plot.parentWidget() is panel.ch1.plot_host
+    assert panel.ch2.plot.parentWidget() is panel.ch2.plot_host
     assert panel.ch1.reading_label.font().pointSize() == 20
     assert panel.ch2.reading_label.font().pointSize() == 20
     assert panel.start_button.objectName() == "pm5020StartButton"
@@ -349,4 +352,81 @@ def test_pm5020_layout_matches_control_column_and_plot_conventions(qtbot):
     assert not hasattr(panel, "connect_button")
     assert not hasattr(panel, "disconnect_button")
     assert not panel.task.worker_thread.isRunning()
+    panel.close()
+
+
+def test_display_units_match_initial_axes_and_rescale_existing_data(qtbot):
+    from hardware.pm5020_types import PowerReading
+
+    panel = PM5020Panel()
+    qtbot.addWidget(panel)
+    assert panel.ch1.plot.getAxis("left").labelUnits == "mW"
+    assert panel.ch2.plot.getAxis("left").labelUnits == "nW"
+
+    panel._on_reading(PowerReading.now(PowerChannel.CH1, 0.002), 0.3)
+    panel._on_reading(PowerReading.now(PowerChannel.CH2, 0.000000008), 0.3)
+    assert panel.ch1.reading_label.text() == "2"
+    assert panel.ch2.reading_label.text() == "8"
+    assert panel.ch1.curve.getData()[1][-1] == pytest.approx(2)
+    assert panel.ch2.curve.getData()[1][-1] == pytest.approx(8)
+
+    panel.ch1.unit.setCurrentText("µW")
+    assert panel.ch1.plot.getAxis("left").labelUnits == "µW"
+    assert panel.ch1.reading_label.text() == "2000"
+    assert panel.ch1.curve.getData()[1][-1] == pytest.approx(2000)
+    assert panel.ch2.plot.getAxis("left").labelUnits == "nW"
+    assert panel.ch2.curve.getData()[1][-1] == pytest.approx(8)
+    assert panel.ch1._rows[-1][1] == pytest.approx(0.002)
+    panel.close()
+
+
+def test_channel_clear_erasers_do_not_clear_the_other_channel(qtbot):
+    from hardware.pm5020_types import PowerReading
+
+    panel = PM5020Panel()
+    qtbot.addWidget(panel)
+    panel._on_reading(PowerReading.now(PowerChannel.CH1, 0.001), 1)
+    panel._on_reading(PowerReading.now(PowerChannel.CH2, 1e-8), 1)
+    panel.ch1.clear_button.click()
+    assert not panel.ch1._rows
+    assert panel.ch1.reading_label.text() == "—"
+    assert len(panel.ch2._rows) == 1
+    assert panel.ch2.reading_label.text() == "10"
+    assert panel.ch1.plot.getAxis("bottom").labelUnits == "s"
+    assert panel.ch2.plot.getAxis("bottom").labelUnits == "s"
+    assert panel.ch1.plot.viewRange()[0] == pytest.approx(panel.ch2.plot.viewRange()[0])
+    panel.close()
+
+
+def test_manual_power_range_unit_switch_preserves_watts_and_requires_valid_range(qtbot):
+    panel = PM5020Panel()
+    qtbot.addWidget(panel)
+    ch = panel.ch1
+    ch.auto_range.setChecked(False)
+    assert ch.channel_config().power_range_w == pytest.approx(0.001)
+    ch.range_unit.setCurrentText("µW")
+    assert ch.manual_range.value() == pytest.approx(1000)
+    assert ch.channel_config().power_range_w == pytest.approx(0.001)
+    ch.manual_range.setValue(5)
+    assert ch.channel_config().power_range_w == pytest.approx(5e-6)
+    ch.wavelength.setText("")
+    with pytest.raises(ValueError, match="valid wavelength"):
+        ch.channel_config()
+    ch.wavelength.setText("775")
+    assert ch.channel_config().wavelength_nm == pytest.approx(775)
+    panel.close()
+
+
+def test_update_every_units_preserve_requested_interval(qtbot):
+    panel = PM5020Panel()
+    qtbot.addWidget(panel)
+    assert panel._interval_ms() == 1000
+    panel.interval_unit.setCurrentText("ms")
+    assert panel.interval.value() == pytest.approx(1000)
+    assert panel._interval_ms() == 1000
+    panel.interval.setValue(250)
+    assert panel._interval_ms() == 250
+    panel.interval_unit.setCurrentText("s")
+    assert panel.interval.value() == pytest.approx(0.25)
+    assert panel._interval_ms() == 250
     panel.close()
