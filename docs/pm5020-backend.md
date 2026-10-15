@@ -107,7 +107,12 @@ fake wrapper and do not establish compatibility with a physical meter.
 The **Instruments** menu owns PM5020 connection. It shows **Connect PM5020** or
 **Disconnect PM5020** from worker-confirmed state and disables the action while
 an operation is pending. The measurement tab retains channel configuration,
-readings, plots, monitoring, and status. Its status area displays the configured
+readings, plots, monitoring, and status. It follows the other IOPanel tabs with
+a scrollable left column for instrument status, independent channel controls, and
+operation buttons, plus an expanding right column containing two vertically
+stacked live plots. The plots stay visible as settings scroll. The numerical
+readouts, group headings, plot titles, spacing, and action-button colors use the
+existing application conventions. Its status area displays the configured
 backend and clearly labels simulated readings. Simulation and physical mode are
 selected by `pm5020_backend = simulation` or `physical` in `[Instruments]`;
 resource and SDK paths are configured there as well. No physical meter is
