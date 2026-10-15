@@ -224,3 +224,46 @@ def test_physical_pm5020_is_never_connected_automatically_or_replaced_by_simulat
     assert not isinstance(panel.worker._backend, DummyPM5020)
     assert window.pm5020_connect_action.text() == "Connect PM5020"
     window.close()
+
+
+def test_pm5020_status_bar_shows_simulation_and_worker_lifecycle(qtbot, monkeypatch, tmp_path):
+    settings = AppSettings(QSettings(str(tmp_path / "pm-global-status.ini"), QSettings.Format.IniFormat))
+    window = _make_window(qtbot, monkeypatch, settings)
+    indicator = window.pm5020_status_label
+    action = window.pm5020_connect_action
+    assert indicator.objectName() == "pm5020StatusLabel"
+    assert "Sim (Off)" in indicator.text()
+    assert "Simulator" in indicator.toolTip()
+
+    action.trigger()
+    qtbot.waitUntil(lambda: window.pm5020_panel._backend_state is PM5020State.IDLE, timeout=2000)
+    assert indicator.text() == "PM5020: SIMULATED"
+    window.pm5020_panel._apply_configuration()
+    qtbot.waitUntil(lambda: window.pm5020_panel._configuration_applied, timeout=2000)
+    window.pm5020_panel._start()
+    qtbot.waitUntil(lambda: window.pm5020_panel._monitor_session, timeout=2000)
+    assert "SIMULATED" in indicator.text()
+    action.trigger()
+    qtbot.waitUntil(lambda: window.pm5020_panel._backend_state is PM5020State.DISCONNECTED, timeout=2000)
+    assert "Sim (Off)" in indicator.text()
+    window.close()
+
+
+def test_pm5020_status_formatter_maps_errors_and_physical_states():
+    from ui.global_status import format_pm5020_status
+
+    physical = format_pm5020_status(
+        PM5020State.IDLE, activity="Connected / idle", simulated=False, resource="USB0::SERIAL::INSTR"
+    )
+    assert physical.text == "PM5020: Ready"
+    assert "USB0::SERIAL::INSTR" in physical.tooltip
+    assert physical.state == "ready"
+    error = format_pm5020_status(
+        PM5020State.ERROR, activity="Recovery required", simulated=False, resource=""
+    )
+    assert error.state == "error"
+    assert error.text == "PM5020: Error"
+    simulated = format_pm5020_status(
+        PM5020State.IDLE, activity="Monitoring", simulated=True, resource=""
+    )
+    assert simulated.text == "PM5020: SIMULATED"
