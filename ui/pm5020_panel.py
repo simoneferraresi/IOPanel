@@ -8,22 +8,22 @@ from datetime import datetime
 from typing import override
 
 import pyqtgraph as pg
-from PySide6.QtCore import Qt, QTimer, Signal, Slot
-from PySide6.QtGui import QCloseEvent, QFont, QIcon
+from PySide6.QtCore import QSignalBlocker, Qt, QTimer, Signal, Slot
+from PySide6.QtGui import QCloseEvent, QDoubleValidator, QFont, QIcon
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
-    QFormLayout,
     QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QScrollArea,
     QSizePolicy,
-    QSpinBox,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -37,6 +37,7 @@ logger = logging.getLogger("LabApp.pm5020_panel")
 
 HISTORY_SECONDS = (10, 30, 60, 300, 600)
 MAX_HISTORY_POINTS = 2400
+POWER_RANGE_SCALES = {"W": 1.0, "mW": 1e-3, "µW": 1e-6, "nW": 1e-9}
 
 # Follow the existing CT400 monitor (blue) and Stop Alignment (red) controls.
 PM5020_ACTION_BUTTON_STYLE = """
@@ -48,7 +49,7 @@ QPushButton#pm5020StopButton:disabled { background-color: #e0e0e0; color: #88888
 
 
 class PM5020ChannelControls(QGroupBox):
-    """Settings and current reading for one independent meter channel."""
+    """Channel settings and display; raw powers are always stored in watts."""
 
     def __init__(self, channel: PowerChannel, *, default_wavelength_nm: float, default_unit: str):
         super().__init__(f"CH{channel.value} — Optical Power")
@@ -56,63 +57,111 @@ class PM5020ChannelControls(QGroupBox):
         self.channel = channel
         self._rows: deque[tuple[float, float]] = deque(maxlen=MAX_HISTORY_POINTS)
         layout = QVBoxLayout(self)
+        layout.setSpacing(5)
 
+        reading_row = QHBoxLayout()
         self.reading_label = QLabel("—")
         self.reading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.reading_label.setFont(make_font("mono", 20, QFont.Weight.Bold))
-        self.reading_label.setMinimumHeight(48)
+        self.reading_label.setMinimumHeight(44)
+        reading_row.addWidget(self.reading_label, stretch=1)
+        self.unit = QComboBox()
+        self.unit.setObjectName(f"pm5020Ch{channel.value}DisplayUnit")
+        self.unit.addItems(DISPLAY_UNITS)
+        self.unit.setCurrentText(default_unit)
+        self.unit.setToolTip("Display only; also selects this channel's plot Y-axis units")
+        reading_row.addWidget(self.unit)
+        self.enabled = QCheckBox("Enabled")
+        self.enabled.setChecked(True)
+        self.enabled.setToolTip("Include this sensor channel in configuration and monitoring")
+        reading_row.addWidget(self.enabled)
+        layout.addLayout(reading_row)
+
         self.measurement_status = QLabel("Not measured")
         self.age_label = QLabel("Last reading: —")
-        layout.addWidget(self.reading_label)
         layout.addWidget(self.measurement_status)
         layout.addWidget(self.age_label)
 
-        form = QFormLayout()
-        self.wavelength = QDoubleSpinBox()
-        self.wavelength.setRange(1, 100_000)
-        self.wavelength.setDecimals(2)
-        self.wavelength.setSuffix(" nm")
-        self.wavelength.setValue(default_wavelength_nm)
-        self.auto_range = QCheckBox("Automatic")
-        self.auto_range.setChecked(True)
-        self.manual_range = QDoubleSpinBox()
-        self.manual_range.setRange(1e-15, 1e3)
-        self.manual_range.setDecimals(12)
-        self.manual_range.setValue(1e-3)
-        self.manual_range.setSuffix(" W")
-        self.manual_range.setEnabled(False)
-        self.auto_range.toggled.connect(self.manual_range.setDisabled)
-        self.input_filter = QCheckBox("Enabled")
-        self.enabled = QCheckBox("Include in monitoring")
-        self.enabled.setChecked(True)
-        self.unit = QComboBox()
-        self.unit.addItems(DISPLAY_UNITS)
-        self.unit.setCurrentText(default_unit)
+        form = QGridLayout()
+        form.setHorizontalSpacing(5)
+        form.addWidget(QLabel("Wavelength (nm):"), 0, 0)
+        self.wavelength = QLineEdit(f"{default_wavelength_nm:g}")
+        self.wavelength.setObjectName(f"pm5020Ch{channel.value}Wavelength")
+        self.wavelength.setValidator(QDoubleValidator(1.0, 100000.0, 3, self.wavelength))
+        self.wavelength.setToolTip("Sensor-specific wavelength support is checked by the Thorlabs driver")
+        form.addWidget(self.wavelength, 0, 1, 1, 3)
 
-        form.addRow("Wavelength:", self.wavelength)
-        form.addRow("Power range:", self.auto_range)
-        form.addRow("Manual range:", self.manual_range)
-        form.addRow("Input filter:", self.input_filter)
-        form.addRow("Display unit:", self.unit)
-        form.addRow("", self.enabled)
+        form.addWidget(QLabel("Power range:"), 1, 0)
+        self.auto_range = QCheckBox("Auto")
+        self.auto_range.setChecked(True)
+        form.addWidget(self.auto_range, 1, 1)
+        self.manual_range = QDoubleSpinBox()
+        self.manual_range.setObjectName(f"pm5020Ch{channel.value}ManualRange")
+        self.manual_range.setDecimals(12)
+        self.manual_range.setRange(0.0, 1e12)
+        self.manual_range.setValue(1.0)
+        self.manual_range.setToolTip("Requested manual range. Physical SDK validates supported sensor ranges.")
+        form.addWidget(self.manual_range, 1, 2)
+        self.range_unit = QComboBox()
+        self.range_unit.addItems(POWER_RANGE_SCALES)
+        self.range_unit.setCurrentText("mW")
+        self._previous_range_unit = "mW"
+        form.addWidget(self.range_unit, 1, 3)
+        self.auto_range.toggled.connect(self.manual_range.setDisabled)
+        self.auto_range.toggled.connect(self.range_unit.setDisabled)
+        self.range_unit.currentTextChanged.connect(self._change_range_unit)
+        self.manual_range.setEnabled(False)
+        self.range_unit.setEnabled(False)
+
+        form.addWidget(QLabel("Input filter:"), 2, 0)
+        self.input_filter = QCheckBox("Enabled")
+        form.addWidget(self.input_filter, 2, 1, 1, 3)
+        form.setColumnStretch(2, 1)
         layout.addLayout(form)
 
         self.plot = pg.PlotWidget(background="w")
         self.plot.setLabel("bottom", "Elapsed time", units="s")
-        self.plot.setLabel("left", "Optical power", units="W")
+        self.plot.setLabel("left", "Optical power", units=default_unit)
         self.plot.showGrid(x=True, y=True, alpha=0.2)
         self.plot.setMinimumHeight(155)
         self.plot.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.plot.setTitle(f"CH{channel.value} Power vs Time", **pyqtgraph_title_style())
         self.curve = self.plot.plot(pen=pg.mkPen("#1976d2" if channel is PowerChannel.CH1 else "#d95f02", width=2))
+        self.plot_host = QWidget()
+        plot_layout = QGridLayout(self.plot_host)
+        plot_layout.setContentsMargins(0, 0, 0, 0)
+        plot_layout.addWidget(self.plot, 0, 0)
+        self.clear_button = QToolButton(self.plot_host)
+        self.clear_button.setObjectName(f"pm5020Ch{channel.value}ClearPlotButton")
+        self.clear_button.setIcon(QIcon(":/icons/eraser.svg"))
+        self.clear_button.setToolTip(f"Clear CH{channel.value} history and latest reading only")
+        self.clear_button.setAccessibleName(f"Clear PM5020 channel {channel.value} plot")
+        self.clear_button.setAutoRaise(True)
+        self.clear_button.setFixedSize(28, 28)
+        plot_layout.addWidget(
+            self.clear_button, 0, 0, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight
+        )
+        self.clear_button.raise_()
         self.unit.currentTextChanged.connect(self.refresh_reading)
         self._latest_power_w: float | None = None
         self._latest_timestamp: datetime | None = None
 
+    @Slot(str)
+    def _change_range_unit(self, unit: str) -> None:
+        """Change manual-range presentation without changing the physical range."""
+        watts = self.manual_range.value() * POWER_RANGE_SCALES[self._previous_range_unit]
+        with QSignalBlocker(self.manual_range):
+            self.manual_range.setValue(watts / POWER_RANGE_SCALES[unit])
+        self._previous_range_unit = unit
+
     def channel_config(self) -> ChannelConfig:
-        manual_range = None if self.auto_range.isChecked() else self.manual_range.value()
+        if not self.wavelength.hasAcceptableInput():
+            raise ValueError(f"CH{self.channel.value}: enter a valid wavelength in nm")
+        manual_range = None
+        if not self.auto_range.isChecked():
+            manual_range = self.manual_range.value() * POWER_RANGE_SCALES[self.range_unit.currentText()]
         return ChannelConfig(
-            wavelength_nm=self.wavelength.value(),
+            wavelength_nm=float(self.wavelength.text()),
             auto_range=self.auto_range.isChecked(),
             power_range_w=manual_range,
             input_filter_enabled=self.input_filter.isChecked(),
@@ -129,7 +178,8 @@ class PM5020ChannelControls(QGroupBox):
     @Slot()
     def refresh_reading(self) -> None:
         if self._latest_power_w is not None:
-            self.reading_label.setText(format_power(self._latest_power_w, self.unit.currentText()))
+            formatted = format_power(self._latest_power_w, self.unit.currentText())
+            self.reading_label.setText(formatted.rsplit(" ", 1)[0] if formatted != "—" else formatted)
 
     def redraw(self, elapsed_now: float, window_s: float) -> None:
         visible = [(x, y) for x, y in self._rows if x >= elapsed_now - window_s]
@@ -139,13 +189,19 @@ class PM5020ChannelControls(QGroupBox):
             times, raw_powers = zip(*visible, strict=True)
             powers = [convert_power(power, unit) for power in raw_powers]
             self.curve.setData(times, [float("nan") if power is None else power for power in powers])
-            self.plot.setXRange(max(0.0, elapsed_now - window_s), max(window_s, elapsed_now))
         else:
             self.curve.setData([], [])
+        # Keep both channel plots on the same elapsed-time window even if one is empty.
+        self.plot.setXRange(max(0.0, elapsed_now - window_s), max(window_s, elapsed_now))
 
     def clear_history(self) -> None:
         self._rows.clear()
         self.curve.setData([], [])
+        self._latest_power_w = None
+        self._latest_timestamp = None
+        self.reading_label.setText("—")
+        self.measurement_status.setText("Cleared")
+        self.age_label.setText("Last reading: —")
 
     def mark_stale(self) -> None:
         self.measurement_status.setText("No new readings")
@@ -235,29 +291,21 @@ class PM5020Panel(QWidget):
         layout = QVBoxLayout(content)
         layout.setSpacing(10)
 
-        connection_box = QGroupBox("Instrument Status")
-        connection_box.setObjectName("pm5020InstrumentStatusGroup")
-        style_group_box_title(connection_box)
-        connection_form = QFormLayout(connection_box)
+        # Connection ownership and status live in MainWindow's Instruments menu
+        # and permanent status bar. Keep only a compact simulation warning here.
         mode_text = "Simulation — readings are simulated" if backend_mode == "simulation" else "Physical PM5020"
         self.mode_label = QLabel(mode_text)
         self.mode_label.setObjectName("pm5020BackendModeLabel")
+        self.mode_label.setVisible(backend_mode == "simulation")
         if backend_mode == "simulation":
             self.mode_label.setStyleSheet("font-weight: bold; color: #8a5700;")
-        self.resource_label = QLabel(resource_name or "Not configured")
-        self.resource_label.setWordWrap(True)
-        self.resource_label.setToolTip(resource_name)
-        self.status_label = QLabel("Disconnected")
-        self.readiness_label = QLabel("Not ready")
-        connection_form.addRow("Configured backend:", self.mode_label)
-        connection_form.addRow("Configured resource:", self.resource_label)
-        connection_form.addRow("Panel status:", self.status_label)
-        connection_form.addRow("Instrument state:", self.readiness_label)
+        layout.addWidget(self.mode_label)
         self.error_label = QLabel("")
+        self.error_label.setObjectName("pm5020ErrorLabel")
         self.error_label.setWordWrap(True)
         self.error_label.setStyleSheet("color: #b71c1c;")
-        connection_form.addRow("Message:", self.error_label)
-        layout.addWidget(connection_box)
+        self.error_label.hide()
+        layout.addWidget(self.error_label)
 
         self.ch1 = PM5020ChannelControls(PowerChannel.CH1, default_wavelength_nm=1550.0, default_unit="mW")
         self.ch2 = PM5020ChannelControls(PowerChannel.CH2, default_wavelength_nm=775.0, default_unit="nW")
@@ -268,11 +316,17 @@ class PM5020Panel(QWidget):
         controls.setObjectName("pm5020OperationGroup")
         style_group_box_title(controls)
         controls_layout = QGridLayout(controls)
-        self.interval = QSpinBox()
-        self.interval.setRange(250, 5000)
-        self.interval.setSingleStep(250)
-        self.interval.setValue(1000)
-        self.interval.setSuffix(" ms")
+        self.interval = QDoubleSpinBox()
+        self.interval.setDecimals(3)
+        self.interval.setRange(0.25, 5.0)
+        self.interval.setSingleStep(0.25)
+        self.interval.setValue(1.0)
+        self.interval.setToolTip("Requested polling interval; actual acquisition rate depends on USB/instrument latency")
+        self.interval_unit = QComboBox()
+        self.interval_unit.addItems(("ms", "s"))
+        self.interval_unit.setCurrentText("s")
+        self._previous_interval_unit = "s"
+        self.interval_unit.currentTextChanged.connect(self._change_interval_unit)
         self.history = QComboBox()
         for seconds in HISTORY_SECONDS:
             label = f"{seconds} s" if seconds < 60 else f"{seconds // 60} min"
@@ -290,11 +344,13 @@ class PM5020Panel(QWidget):
         self.stop_button.setStyleSheet(PM5020_ACTION_BUTTON_STYLE)
         self.stop_button.setIcon(QIcon(":/icons/stop.svg"))
         self.stop_button.setMinimumHeight(35)
-        self.clear_button = QPushButton("Clear Plot")
         for button in (self.start_button, self.pause_button, self.resume_button, self.stop_button):
             button.setEnabled(False)
-        controls_layout.addWidget(QLabel("Update interval:"), 0, 0)
-        controls_layout.addWidget(self.interval, 0, 1)
+        controls_layout.addWidget(QLabel("Update every:"), 0, 0)
+        update_row = QHBoxLayout()
+        update_row.addWidget(self.interval, stretch=1)
+        update_row.addWidget(self.interval_unit)
+        controls_layout.addLayout(update_row, 0, 1)
         controls_layout.addWidget(QLabel("Plot history:"), 1, 0)
         controls_layout.addWidget(self.history, 1, 1)
         controls_layout.addWidget(self.apply_button, 2, 0, 1, 2)
@@ -302,7 +358,6 @@ class PM5020Panel(QWidget):
         controls_layout.addWidget(self.stop_button, 3, 1)
         controls_layout.addWidget(self.pause_button, 4, 0)
         controls_layout.addWidget(self.resume_button, 4, 1)
-        controls_layout.addWidget(self.clear_button, 5, 0, 1, 2)
         layout.addWidget(controls)
         layout.addStretch(1)
         self.controls_scroll.setWidget(content)
@@ -313,26 +368,47 @@ class PM5020Panel(QWidget):
         plots = QVBoxLayout(self.plot_container)
         plots.setContentsMargins(0, 0, 0, 0)
         plots.setSpacing(6)
-        plots.addWidget(self.ch1.plot, stretch=1)
-        plots.addWidget(self.ch2.plot, stretch=1)
+        plots.addWidget(self.ch1.plot_host, stretch=1)
+        plots.addWidget(self.ch2.plot_host, stretch=1)
         root.addWidget(self.plot_container, stretch=1)
 
         self.apply_button.clicked.connect(self._apply_configuration)
         self.start_button.clicked.connect(self._start)
         self.pause_button.clicked.connect(self.pause_requested)
-        self.resume_button.clicked.connect(lambda: self.resume_requested.emit(self.interval.value()))
+        self.resume_button.clicked.connect(lambda: self.resume_requested.emit(self._interval_ms()))
         self.stop_button.clicked.connect(self.stop_requested)
-        self.clear_button.clicked.connect(self._clear_history)
+        self.ch1.clear_button.clicked.connect(lambda: self._clear_channel(self.ch1))
+        self.ch2.clear_button.clicked.connect(lambda: self._clear_channel(self.ch2))
         self.history.currentIndexChanged.connect(self._redraw)
         self.interval.valueChanged.connect(self._update_controls)
         for channel in (self.ch1, self.ch2):
-            channel.wavelength.valueChanged.connect(self._configuration_edited)
+            channel.wavelength.textChanged.connect(self._configuration_edited)
             channel.auto_range.toggled.connect(self._configuration_edited)
             channel.manual_range.valueChanged.connect(self._configuration_edited)
             channel.input_filter.toggled.connect(self._configuration_edited)
             channel.enabled.toggled.connect(self._configuration_edited)
             channel.unit.currentTextChanged.connect(lambda _text: self._redraw())
+        self._redraw()
         self._update_controls()
+
+    @Slot(str)
+    def _change_interval_unit(self, unit: str) -> None:
+        """Keep the requested interval constant when the display unit changes."""
+        milliseconds = self.interval.value() * (1000 if self._previous_interval_unit == "s" else 1)
+        with QSignalBlocker(self.interval):
+            if unit == "s":
+                self.interval.setRange(0.25, 5.0)
+                self.interval.setSingleStep(0.25)
+                self.interval.setValue(milliseconds / 1000)
+            else:
+                self.interval.setRange(250, 5000)
+                self.interval.setSingleStep(250)
+                self.interval.setValue(milliseconds)
+        self._previous_interval_unit = unit
+
+    def _interval_ms(self) -> int:
+        factor = 1000 if self.interval_unit.currentText() == "s" else 1
+        return max(250, min(5000, round(self.interval.value() * factor)))
 
     def _set_request_connections(self) -> None:
         self.connect_requested.connect(self.worker.connect_instrument)
@@ -360,6 +436,7 @@ class PM5020Panel(QWidget):
         if self._backend_state is not PM5020State.DISCONNECTED or self._activity in {"Connecting", "Disconnecting"}:
             return
         self.error_label.clear()
+        self.error_label.hide()
         self._ensure_worker_started()
         self._connection_generation += 1
         self._invalidate_configuration()
@@ -395,12 +472,12 @@ class PM5020Panel(QWidget):
             return
         channels = [channel for channel in (self.ch1, self.ch2) if channel.enabled.isChecked()]
         if not channels:
-            self.error_label.setText("Enable at least one channel before applying settings.")
+            self._show_error("Enable at least one channel before applying settings.")
             return
         try:
             settings = [(channel.channel, channel.channel_config()) for channel in channels]
         except ValueError as exc:
-            self.error_label.setText(f"Invalid channel settings: {exc}")
+            self._show_error(f"Invalid channel settings: {exc}")
             return
         self.channels_requested.emit(tuple(channel.channel for channel in channels))
         self._configuration_request_id += 1
@@ -421,10 +498,10 @@ class PM5020Panel(QWidget):
             return
         enabled = tuple(channel.channel for channel in (self.ch1, self.ch2) if channel.enabled.isChecked())
         if not enabled:
-            self.error_label.setText("Enable at least one channel before monitoring.")
+            self._show_error("Enable at least one channel before monitoring.")
             return
         self.channels_requested.emit(enabled)
-        self.start_requested.emit(self.interval.value())
+        self.start_requested.emit(self._interval_ms())
 
     @Slot()
     def _configuration_edited(self, *_args: object) -> None:
@@ -453,12 +530,11 @@ class PM5020Panel(QWidget):
             self._connection_operation_started = False
         if state is PM5020State.DISCONNECTED or state is PM5020State.ERROR:
             self._invalidate_configuration()
-        self.readiness_label.setText(f"{state.name.title()} — {'Ready' if state is PM5020State.IDLE else 'Not ready'}")
         if state is PM5020State.ERROR:
             self._activity = "Recovery required"
             self._monitor_session = False
             self._paused = False
-            self.error_label.setText("Recovery required. Stop monitoring, disconnect, and reconnect deliberately.")
+            self._show_error("Recovery required. Stop monitoring, disconnect, and reconnect deliberately.")
         self._update_controls()
         self.connection_status_changed.emit(self._backend_state, self._activity)
 
@@ -473,6 +549,7 @@ class PM5020Panel(QWidget):
         self._activity = activity
         if activity in {"Connected / idle", "Disconnected"}:
             self.error_label.clear()
+            self.error_label.hide()
         if activity == "Paused":
             self._paused = True
         elif activity in {"Monitoring", "Busy with acquisition"}:
@@ -496,17 +573,17 @@ class PM5020Panel(QWidget):
     @Slot(str)
     def _show_error(self, message: str) -> None:
         self.error_label.setText(message)
+        self.error_label.setVisible(bool(message))
+
+    def _clear_channel(self, channel: PM5020ChannelControls) -> None:
+        """Clear only this channel; monitoring and the other channel continue."""
+        channel.clear_history()
+        self._redraw()
 
     @Slot()
     def _clear_history(self) -> None:
         self.ch1.clear_history()
         self.ch2.clear_history()
-        for channel in (self.ch1, self.ch2):
-            channel._latest_power_w = None
-            channel._latest_timestamp = None
-            channel.reading_label.setText("—")
-            channel.measurement_status.setText("Cleared")
-            channel.age_label.setText("Last reading: —")
         self._last_elapsed = 0.0
         self._redraw()
 
@@ -526,9 +603,10 @@ class PM5020Panel(QWidget):
         self._configuration_applied = valid
         if valid:
             self.error_label.clear()
+            self.error_label.hide()
             self._activity = "Connected / idle"
         else:
-            self.error_label.setText(message or "Settings changed or the PM5020 state changed before confirmation.")
+            self._show_error(message or "Settings changed or the PM5020 state changed before confirmation.")
         self._update_controls()
 
     @Slot(int, int)
@@ -571,11 +649,10 @@ class PM5020Panel(QWidget):
         for channel in (self.ch1, self.ch2):
             for widget in (channel.wavelength, channel.auto_range, channel.input_filter, channel.enabled):
                 widget.setEnabled(not self._monitor_session and not self._paused)
-            channel.manual_range.setEnabled(
-                not self._monitor_session and not self._paused and not channel.auto_range.isChecked()
-            )
+            manual_enabled = not self._monitor_session and not self._paused and not channel.auto_range.isChecked()
+            channel.manual_range.setEnabled(manual_enabled)
+            channel.range_unit.setEnabled(manual_enabled)
             channel.unit.setEnabled(True)
-        self.status_label.setText(self._activity)
 
     @Slot()
     def _on_thread_finished(self) -> None:
@@ -594,7 +671,7 @@ class PM5020Panel(QWidget):
             "PM5020 is still finishing a device call. The application is waiting safely; "
             "the instrument thread will not be terminated."
         )
-        self.error_label.setText(message)
+        self._show_error(message)
         self.shutdown_timeout.emit(message)
 
     def request_shutdown(self) -> None:
