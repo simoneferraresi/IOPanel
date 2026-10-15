@@ -138,9 +138,7 @@ class PM5020ChannelControls(QGroupBox):
         self.clear_button.setAccessibleName(f"Clear PM5020 channel {channel.value} plot")
         self.clear_button.setAutoRaise(True)
         self.clear_button.setFixedSize(28, 28)
-        plot_layout.addWidget(
-            self.clear_button, 0, 0, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight
-        )
+        plot_layout.addWidget(self.clear_button, 0, 0, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight)
         self.clear_button.raise_()
         self.unit.currentTextChanged.connect(self.refresh_reading)
         self._latest_power_w: float | None = None
@@ -321,7 +319,9 @@ class PM5020Panel(QWidget):
         self.interval.setRange(0.25, 5.0)
         self.interval.setSingleStep(0.25)
         self.interval.setValue(1.0)
-        self.interval.setToolTip("Requested polling interval; actual acquisition rate depends on USB/instrument latency")
+        self.interval.setToolTip(
+            "Requested polling interval; actual acquisition rate depends on USB/instrument latency"
+        )
         self.interval_unit = QComboBox()
         self.interval_unit.addItems(("ms", "s"))
         self.interval_unit.setCurrentText("s")
