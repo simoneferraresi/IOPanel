@@ -59,7 +59,7 @@ def test_simulator_panel_reads_channels_and_plots_independent_units(qtbot):
     assert created_on and created_on[0] != threading.get_ident()
     panel._apply_configuration()
     qtbot.waitUntil(lambda: panel._configuration_applied, timeout=2000)
-    panel.interval.setValue(0.25)
+    panel.interval.setText("0.25")
     panel._start()
     qtbot.waitUntil(lambda: readings.count() >= 2, timeout=3000)
     assert panel.ch1.reading_label.text() == "10"
@@ -110,7 +110,7 @@ def test_slow_simulated_reads_are_serialized_and_gui_remains_responsive(qtbot):
     qtbot.waitUntil(lambda: panel._backend_state is PM5020State.IDLE, timeout=3000)
     panel._apply_configuration()
     qtbot.waitUntil(lambda: panel._configuration_applied, timeout=2000)
-    panel.interval.setValue(0.25)
+    panel.interval.setText("0.25")
     panel._start()
     handled: list[bool] = []
     from PySide6.QtCore import QTimer
@@ -325,7 +325,7 @@ def test_configuration_failure_and_stop_preserve_recovery_state(qtbot):
 
 
 def test_pm5020_layout_matches_control_column_and_plot_conventions(qtbot):
-    from PySide6.QtWidgets import QGroupBox, QHBoxLayout
+    from PySide6.QtWidgets import QGroupBox, QHBoxLayout, QLineEdit
 
     panel = PM5020Panel()
     qtbot.addWidget(panel)
@@ -343,6 +343,16 @@ def test_pm5020_layout_matches_control_column_and_plot_conventions(qtbot):
     assert panel.ch2.plot_host.parentWidget() is panel.plot_container
     assert panel.ch1.plot.parentWidget() is panel.ch1.plot_host
     assert panel.ch2.plot.parentWidget() is panel.ch2.plot_host
+    assert isinstance(panel.ch1.wavelength, QLineEdit)
+    assert isinstance(panel.ch1.manual_range, QLineEdit)
+    assert isinstance(panel.interval, QLineEdit)
+    assert panel.mode_label.isHidden()
+    assert not hasattr(panel.ch1, "measurement_status")
+    assert not hasattr(panel.ch1, "age_label")
+    assert panel.advanced_settings.isHidden()
+    assert panel.ch1.input_filter.parentWidget() is panel.advanced_settings
+    assert panel.ch1.wavelength.width() <= 90
+    assert panel.ch1.manual_range.width() <= 90
     assert panel.ch1.reading_label.font().pointSize() == 20
     assert panel.ch2.reading_label.font().pointSize() == 20
     assert panel.start_button.objectName() == "pm5020StartButton"
@@ -405,10 +415,15 @@ def test_manual_power_range_unit_switch_preserves_watts_and_requires_valid_range
     ch.auto_range.setChecked(False)
     assert ch.channel_config().power_range_w == pytest.approx(0.001)
     ch.range_unit.setCurrentText("µW")
-    assert ch.manual_range.value() == pytest.approx(1000)
+    assert float(ch.manual_range.text()) == pytest.approx(1000)
     assert ch.channel_config().power_range_w == pytest.approx(0.001)
-    ch.manual_range.setValue(5)
+    ch.manual_range.setText("5")
     assert ch.channel_config().power_range_w == pytest.approx(5e-6)
+    ch.manual_range.setText("0")
+    assert not ch.manual_range.hasAcceptableInput()
+    with pytest.raises(ValueError, match="valid manual power range"):
+        ch.channel_config()
+    ch.manual_range.setText("5")
     ch.wavelength.setText("")
     with pytest.raises(ValueError, match="valid wavelength"):
         ch.channel_config()
@@ -422,11 +437,39 @@ def test_update_every_units_preserve_requested_interval(qtbot):
     qtbot.addWidget(panel)
     assert panel._interval_ms() == 1000
     panel.interval_unit.setCurrentText("ms")
-    assert panel.interval.value() == pytest.approx(1000)
+    assert float(panel.interval.text()) == pytest.approx(1000)
     assert panel._interval_ms() == 1000
-    panel.interval.setValue(250)
+    panel.interval.setText("250")
     assert panel._interval_ms() == 250
     panel.interval_unit.setCurrentText("s")
-    assert panel.interval.value() == pytest.approx(0.25)
+    assert float(panel.interval.text()) == pytest.approx(0.25)
     assert panel._interval_ms() == 250
+    panel.close()
+
+
+def test_update_interval_validates_effective_250_to_5000_ms_range(qtbot):
+    panel = PM5020Panel()
+    qtbot.addWidget(panel)
+    panel.interval_unit.setCurrentText("ms")
+    assert panel.interval.hasAcceptableInput()
+    panel.interval.setText("200")
+    assert not panel.interval.hasAcceptableInput()
+    assert not panel.start_button.isEnabled()
+    panel.interval.setText("5000")
+    assert panel.interval.hasAcceptableInput()
+    assert panel._interval_ms() == 5000
+    panel.interval_unit.setCurrentText("s")
+    assert panel.interval.text() == "5"
+    assert panel._interval_ms() == 5000
+    panel.close()
+
+
+def test_input_filter_controls_are_demoted_to_collapsible_advanced_area(qtbot):
+    panel = PM5020Panel()
+    qtbot.addWidget(panel)
+    assert panel.advanced_settings.isHidden()
+    panel.advanced_toggle.click()
+    assert not panel.advanced_settings.isHidden()
+    assert panel.ch1.input_filter.parentWidget() is panel.advanced_settings
+    assert panel.ch2.input_filter.parentWidget() is panel.advanced_settings
     panel.close()
