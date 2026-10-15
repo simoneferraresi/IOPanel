@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib
+import importlib.util
 import logging
+import os
+import shutil
+import sys
+import tempfile
 import threading
+import uuid
 from collections.abc import Callable
 from ctypes import byref, c_bool, c_double, c_float, c_uint16, c_uint32, create_string_buffer
+from pathlib import Path
 from threading import Event
 from typing import Any, Self, override
 
@@ -47,6 +55,95 @@ class PM5020Cancelled(PM5020Error):
     """Cancellation was observed between blocking vendor calls."""
 
 
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _replace_staged_file(source: Path, target: Path, expected_hash: str) -> None:
+    if target.is_file() and _file_sha256(target) == expected_hash:
+        return
+    temporary = target.with_name(f"{target.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        shutil.copyfile(source, temporary)
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _load_thorlabs_factory(wrapper_path: Path | None, dll_path: Path | None) -> tuple[Callable[[], Any], Any | None]:
+    """Load configured vendor files from a hash-validated, application-owned stage."""
+    if wrapper_path is None and dll_path is None:
+        # Preserve the legacy vendor-installed/importable wrapper use case.
+        # The import remains lazy and is never attempted by the simulator.
+        try:
+            module = importlib.import_module("TLPMX")
+        except ImportError as exc:
+            raise PM5020DependencyError(
+                "Thorlabs TLPMX.py is not importable. Configure both pm5020_wrapper_path "
+                "and pm5020_dll_path in config.ini, or install an importable Thorlabs SDK."
+            ) from exc
+        factory = getattr(module, "TLPMX", None)
+        if not callable(factory):
+            raise PM5020DependencyError("Importable Thorlabs TLPMX module does not define a callable TLPMX.")
+        return factory, None
+    if wrapper_path is None or dll_path is None:
+        raise PM5020DependencyError(
+            "Physical PM5020 support requires both pm5020_wrapper_path and "
+            "pm5020_dll_path when specifying SDK paths in config.ini."
+        )
+    if not wrapper_path.is_file():
+        raise PM5020DependencyError(f"Thorlabs wrapper was not found: {wrapper_path}")
+    if not dll_path.is_file():
+        raise PM5020DependencyError(f"Thorlabs native DLL was not found: {dll_path}")
+
+    wrapper_hash = _file_sha256(wrapper_path)
+    dll_hash = _file_sha256(dll_path)
+    cache_root = Path(os.environ.get("LOCALAPPDATA", tempfile.gettempdir())) / "IOPanel" / "pm5020-sdk"
+    cache_dir = cache_root / f"{wrapper_hash[:16]}-{dll_hash[:16]}"
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        staged_wrapper = cache_dir / "TLPMX.py"
+        dll_name = "TLPMX_64.dll" if sys.maxsize > 2**32 else "TLPMX_32.dll"
+        staged_dll = cache_dir / dll_name
+        _replace_staged_file(wrapper_path, staged_wrapper, wrapper_hash)
+        _replace_staged_file(dll_path, staged_dll, dll_hash)
+    except OSError as exc:
+        raise PM5020DependencyError(f"Could not stage the Thorlabs SDK under {cache_dir}: {exc}") from exc
+
+    module_name = f"_iopanel_tlpmx_{wrapper_hash[:16]}_{dll_hash[:16]}"
+    module = sys.modules.get(module_name)
+    if module is None:
+        spec = importlib.util.spec_from_file_location(module_name, staged_wrapper)
+        if spec is None or spec.loader is None:
+            raise PM5020DependencyError(f"Could not create an import loader for Thorlabs wrapper: {staged_wrapper}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        try:
+            spec.loader.exec_module(module)
+        except Exception:
+            sys.modules.pop(module_name, None)
+            raise
+    factory = getattr(module, "TLPMX", None)
+    if not callable(factory):
+        raise PM5020DependencyError(f"Thorlabs wrapper does not define a callable TLPMX class: {wrapper_path}")
+    if not hasattr(os, "add_dll_directory"):
+        return factory, None
+    handles = []
+    try:
+        handles.append(os.add_dll_directory(str(cache_dir)))
+        if dll_path.parent != cache_dir:
+            handles.append(os.add_dll_directory(str(dll_path.parent)))
+    except OSError:
+        for handle in reversed(handles):
+            handle.close()
+        raise
+    return factory, tuple(handles)
+
+
 class TLPMXPM5020(AbstractPM5020):
     """PM5020 backend using Thorlabs' locally installed ``TLPMX`` wrapper.
 
@@ -56,14 +153,34 @@ class TLPMXPM5020(AbstractPM5020):
     retrieval succeeds or the caller closes the connection.
     """
 
-    def __init__(self, driver_factory: Callable[[], Any] | None = None):
+    def __init__(
+        self,
+        driver_factory: Callable[[], Any] | None = None,
+        *,
+        wrapper_path: str | Path | None = None,
+        dll_path: str | Path | None = None,
+    ):
         self._driver_factory = driver_factory
+        self._wrapper_path = Path(wrapper_path).expanduser() if wrapper_path else None
+        self._dll_path = Path(dll_path).expanduser() if dll_path else None
+        self._dll_directory_handle: Any | None = None
         self._driver: Any | None = None
         self._state = PM5020State.DISCONNECTED
         self._state_lock = threading.Lock()
         self._io_lock = threading.Lock()
         self._burst_config: BurstAcquisitionConfig | None = None
         self.resource_name: str | None = None
+
+    def _release_dll_directory_handles(self) -> None:
+        """Release DLL search paths after native session cleanup, including failures."""
+        handles, self._dll_directory_handle = self._dll_directory_handle, None
+        if handles is None:
+            return
+        for handle in reversed(handles if isinstance(handles, tuple) else (handles,)):
+            try:
+                handle.close()
+            except Exception:
+                logger.exception("Failed to release a PM5020 DLL search-directory handle")
 
     @override
     def is_connected(self) -> bool:
@@ -96,13 +213,15 @@ class TLPMXPM5020(AbstractPM5020):
                 raise PM5020StateError("PM5020 is already connected; close it before reconnecting")
             if self._driver_factory is None:
                 try:
-                    module = importlib.import_module("TLPMX")
-                    factory = module.TLPMX
-                except (ImportError, AttributeError) as exc:
+                    factory, self._dll_directory_handle = _load_thorlabs_factory(self._wrapper_path, self._dll_path)
+                except PM5020DependencyError:
+                    raise
+                except (ImportError, AttributeError, OSError) as exc:
                     raise PM5020DependencyError(
-                        "Physical PM5020 support requires the Thorlabs Optical Power Meter SDK, "
-                        "its TLPMX.py wrapper, and a matching native TLPMX DLL. Install these "
-                        "through Thorlabs' Windows software installer."
+                        "Could not load the Thorlabs PM5020 SDK. Configure valid pm5020_wrapper_path and "
+                        "pm5020_dll_path values in config.ini, install the Thorlabs VISA runtime, and "
+                        "use a Python process with matching 32-bit or 64-bit architecture. "
+                        f"Details: {exc}"
                     ) from exc
             else:
                 factory = self._driver_factory
@@ -112,16 +231,19 @@ class TLPMXPM5020(AbstractPM5020):
                 driver = factory()
                 driver.open(create_string_buffer(encoded_resource), c_bool(True), c_bool(False))
             except Exception as exc:
-                if driver is not None:
-                    try:
-                        driver.close()
-                    except Exception:
-                        logger.exception("Failed to close a PM5020 session after connection failure")
+                try:
+                    if driver is not None:
+                        try:
+                            driver.close()
+                        except Exception:
+                            logger.exception("Failed to close a PM5020 session after connection failure")
+                finally:
+                    self._release_dll_directory_handles()
                 if driver is None and isinstance(exc, OSError):
                     raise PM5020DependencyError(
-                        "Could not load the Thorlabs native TLPMX DLL. Install the Thorlabs Optical "
-                        "Power Meter software and use a Python process with matching 32-bit or "
-                        "64-bit architecture."
+                        "Could not load the staged Thorlabs native TLPMX DLL or one of its dependencies. "
+                        "Check the configured SDK paths, install the Thorlabs VISA runtime, and ensure "
+                        "the DLL architecture matches Python (matching 32-bit or 64-bit architecture)."
                     ) from exc
                 raise PM5020CommunicationError(f"Could not open PM5020 resource {resource_name!r}: {exc}") from exc
 
@@ -277,13 +399,14 @@ class TLPMXPM5020(AbstractPM5020):
             self._set_state(PM5020State.DISCONNECTED)
             self._burst_config = None
             self.resource_name = None
-            if driver is None:
-                return
             try:
-                driver.close()
+                if driver is not None:
+                    driver.close()
             except Exception as exc:
                 logger.exception("Failed to close PM5020 session")
                 raise PM5020CommunicationError(f"Failed to close PM5020 session: {exc}") from exc
+            finally:
+                self._release_dll_directory_handles()
 
     def _require_idle(self) -> Any:
         if self._driver is None:

@@ -69,12 +69,16 @@ class PM5020MonitorWorker(BaseWorker):
     def __init__(
         self,
         *,
-        physical_factory: Callable[[], AbstractPM5020] = TLPMXPM5020,
+        physical_factory: Callable[[], AbstractPM5020] | None = None,
         simulator_factory: Callable[[], AbstractPM5020] = DummyPM5020,
+        wrapper_path: str | None = None,
+        dll_path: str | None = None,
     ) -> None:
         super().__init__()
         self._physical_factory = physical_factory
         self._simulator_factory = simulator_factory
+        self._wrapper_path = wrapper_path
+        self._dll_path = dll_path
         self._backend: AbstractPM5020 | None = None
         self._timer: QTimer | None = None
         self._monitoring = False
@@ -96,20 +100,32 @@ class PM5020MonitorWorker(BaseWorker):
     @Slot(str, str, int)
     def connect_instrument(self, mode: str, resource_name: str, generation: int) -> None:
         self._connection_generation = generation
+        self.activity_state.emit("Connecting")
         if self._backend is not None and self._backend.is_connected():
+            self._publish_state()
+            self.activity_state.emit(self._activity_for_state())
             self.error_occurred.emit("Disconnect the current PM5020 before connecting again.")
             return
         if mode not in {"Simulator", "Physical PM5020"}:
+            self._publish_state()
+            self.activity_state.emit(self._activity_for_state())
             self.error_occurred.emit("Select Simulator or Physical PM5020.")
             return
         if mode == "Physical PM5020" and not resource_name.strip():
+            self._publish_state()
+            self.activity_state.emit(self._activity_for_state())
             self.error_occurred.emit("Enter the PM5020 USB/VISA resource identifier.")
             return
-        self.activity_state.emit("Connecting")
         try:
-            factory = self._simulator_factory if mode == "Simulator" else self._physical_factory
-            self._backend = factory()
-            self._backend.connect(None if mode == "Simulator" else resource_name.strip())
+            if mode == "Simulator":
+                self._backend = self._simulator_factory()
+                self._backend.connect(None)
+            elif self._physical_factory is not None:
+                self._backend = self._physical_factory()
+                self._backend.connect(resource_name.strip())
+            else:
+                self._backend = TLPMXPM5020(wrapper_path=self._wrapper_path, dll_path=self._dll_path)
+                self._backend.connect(resource_name.strip())
             self._publish_state()
             self.activity_state.emit("Connected / idle")
         except Exception as exc:  # Vendor wrappers may raise types outside the backend hierarchy.

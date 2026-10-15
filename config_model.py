@@ -42,6 +42,15 @@ class InstrumentsConfig(BaseModel):
         default="physical", description="Select the physical CT400 driver or deterministic DummyCT400 backend."
     )
     ct400_dll_path: str = Field(default="", description="The absolute path to the CT400_lib.dll file.")
+    pm5020_backend: Literal["physical", "simulation"] = Field(
+        default="simulation", description="Select the physical PM5020 driver or deterministic simulator."
+    )
+    pm5020_resource_name: str = Field(
+        default="",
+        description="USB/VISA resource name used by an operator-requested physical PM5020 connection.",
+    )
+    pm5020_wrapper_path: str = Field(default="", description="Optional path to the Thorlabs TLPMX.py wrapper.")
+    pm5020_dll_path: str = Field(default="", description="Optional path to the matching native Thorlabs TLPMX DLL.")
     tunics_gpib_address: int = Field(
         default=10, ge=0, le=30, description="The GPIB address of the Tunics laser source (0-30)."
     )

@@ -27,7 +27,7 @@ Frozen export dialogs default to `%LOCALAPPDATA%\IOPanel\output` (or the system 
 
 **This specific frozen EXE is a simulation-only distribution for camera and MATLAB integration.** Its build excludes the VmbPy and MATLAB Engine Python modules, so installing Vimba X, MATLAB, or their Python packages on the destination computer does **not** make them available inside this executable. To enable physical camera functionality or MATLAB `.fig` export in a frozen application, create a **separately built and validated packaging profile** containing the compatible Python modules and required PyInstaller hooks, alongside the externally installed Vimba X SDK or MATLAB application, dependencies, and licenses. Do not use this simulation package as evidence of those integrations.
 
-The CT400 native DLL is different: a separately approved physical site INI can point to an external `CT400_lib.dll` loaded at runtime, but that physical path has **not** been qualified in this package. This milestone includes no physical-device operation, no cross-host SDK compatibility claim, and no proprietary SDK redistributions.
+The CT400 native DLL and Thorlabs PM5020 wrapper/native DLL are external SDK files: a site INI may configure their paths, but they are not bundled. The PM5020 loader stages configured vendor files in a per-user cache only when the operator explicitly connects. These physical paths have **not** been qualified in this package. This milestone includes no physical-device operation, no cross-host SDK compatibility claim, and no proprietary SDK redistributions.
 
 ## Build scope
 

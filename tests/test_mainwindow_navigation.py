@@ -6,6 +6,8 @@ from PySide6.QtGui import QKeySequence
 
 from app_settings import AppSettings
 from config_model import AppConfig
+from hardware.dummy_pm5020 import DummyPM5020
+from hardware.pm5020_types import PM5020State
 from ui.main_window import MainWindow
 
 
@@ -50,8 +52,14 @@ def test_restored_legacy_tab_selects_same_logical_page(qtbot, monkeypatch, tmp_p
 def test_menu_order_and_action_placement(qtbot, monkeypatch, tmp_path):
     settings = AppSettings(QSettings(str(tmp_path / "menus.ini"), QSettings.Format.IniFormat))
     window = _make_window(qtbot, monkeypatch, settings)
-    menus = {action.text().replace("&", ""): action.menu() for action in window.menuBar().actions()}
-    assert list(menus) == ["File", "View", "Instruments", "Cameras", "Help"]
+    menus = {
+        "File": window.file_menu,
+        "View": window.view_menu,
+        "Instruments": window.instrument_menu,
+        "Cameras": window.cameras_menu,
+        "Help": window.help_menu,
+    }
+    assert [action.text().replace("&", "") for action in window.menuBar().actions()] == list(menus)
 
     def labels(name):
         return [action.text() for action in menus[name].actions() if not action.isSeparator()]
@@ -59,6 +67,7 @@ def test_menu_order_and_action_placement(qtbot, monkeypatch, tmp_path):
     assert labels("File") == ["Open Scan...", "Add Scan to Plot...", "E&xit"]
     assert labels("View") == ["Application Icon…", "Log Console"]
     assert "CT400 ETA Calibration…" in labels("Instruments")
+    assert "Connect PM5020" in labels("Instruments")
     assert "CT400 ETA Calibration…" not in labels("File")
     assert labels("Cameras") == ["Discover Cameras..."]
     assert labels("Help") == ["&About"]
@@ -74,8 +83,6 @@ def test_menu_order_and_action_placement(qtbot, monkeypatch, tmp_path):
 
 
 def test_application_close_resumes_after_pm5020_worker_thread_finishes(qtbot, monkeypatch, tmp_path):
-    from hardware.pm5020_types import PM5020State
-
     settings = AppSettings(QSettings(str(tmp_path / "pm-close.ini"), QSettings.Format.IniFormat))
     window = _make_window(qtbot, monkeypatch, settings)
     window.pm5020_panel._connect()
@@ -84,3 +91,136 @@ def test_application_close_resumes_after_pm5020_worker_thread_finishes(qtbot, mo
     assert window._pending_pm5020_close
     qtbot.waitUntil(lambda: window.pm5020_panel.shutdown_finished, timeout=2000)
     qtbot.waitUntil(lambda: not window._pending_pm5020_close, timeout=2000)
+
+
+def test_pm5020_menu_owns_simulator_connect_and_disconnect(qtbot, monkeypatch, tmp_path):
+    window = _make_window(
+        qtbot,
+        monkeypatch,
+        AppSettings(QSettings(str(tmp_path / "pm-menu.ini"), QSettings.Format.IniFormat)),
+    )
+    action = window.pm5020_connect_action
+    panel = window.pm5020_panel
+    assert panel is not None
+    assert action.text() == "Connect PM5020"
+    assert panel.backend_mode == "simulation"
+    assert panel.mode_label.text() == "Simulation — readings are simulated"
+    assert not hasattr(panel, "connect_button") and not hasattr(panel, "disconnect_button")
+
+    action.trigger()
+    assert action.text() == "Connecting PM5020…"
+    assert not action.isEnabled()
+    qtbot.waitUntil(lambda: panel._backend_state is PM5020State.IDLE, timeout=2000)
+    assert action.text() == "Disconnect PM5020"
+    backend = panel.worker._backend
+    assert isinstance(backend, DummyPM5020)
+
+    action.trigger()
+    assert action.text() == "Disconnecting PM5020…"
+    assert not action.isEnabled()
+    qtbot.waitUntil(lambda: panel._backend_state is PM5020State.DISCONNECTED, timeout=2000)
+    assert action.text() == "Connect PM5020"
+    assert panel.worker._backend is backend
+    window.close()
+
+
+def test_pm5020_menu_recovers_after_connection_failure_and_repeated_action(qtbot, monkeypatch, tmp_path):
+    import threading
+
+    entered = threading.Event()
+    release = threading.Event()
+    instances = []
+
+    class PendingMeter(DummyPM5020):
+        def connect(self, resource_name=None):
+            entered.set()
+            assert release.wait(timeout=2)
+            super().connect(resource_name)
+
+    window = _make_window(
+        qtbot,
+        monkeypatch,
+        AppSettings(QSettings(str(tmp_path / "pm-pending.ini"), QSettings.Format.IniFormat)),
+    )
+    panel = window.pm5020_panel
+    assert panel is not None
+    panel.worker._simulator_factory = lambda: instances.append(PendingMeter()) or instances[-1]
+    action = window.pm5020_connect_action
+    action.trigger()
+    qtbot.waitUntil(entered.is_set, timeout=2000)
+    assert action.text() == "Connecting PM5020…"
+    window._handle_pm5020_connect_action_triggered()
+    assert len(instances) == 1
+    release.set()
+    qtbot.waitUntil(lambda: panel._backend_state is PM5020State.IDLE, timeout=2000)
+    assert action.text() == "Disconnect PM5020"
+
+    action.trigger()
+    qtbot.waitUntil(lambda: panel._backend_state is PM5020State.DISCONNECTED, timeout=2000)
+
+    class FailedMeter(DummyPM5020):
+        def connect(self, resource_name=None):
+            raise RuntimeError("simulated connection failure")
+
+    panel.worker._simulator_factory = FailedMeter
+    action.trigger()
+    qtbot.waitUntil(lambda: "connection failed" in panel.error_label.text().lower(), timeout=2000)
+    assert panel._backend_state is PM5020State.DISCONNECTED
+    assert action.text() == "Connect PM5020"
+    assert action.isEnabled()
+    window.close()
+
+
+def test_pm5020_menu_shows_recovery_state_from_worker_backend(qtbot, monkeypatch, tmp_path):
+    window = _make_window(
+        qtbot,
+        monkeypatch,
+        AppSettings(QSettings(str(tmp_path / "pm-recovery.ini"), QSettings.Format.IniFormat)),
+    )
+    panel = window.pm5020_panel
+    assert panel is not None
+    panel.worker._simulator_factory = lambda: DummyPM5020(fail_operations={"read_power"})
+    action = window.pm5020_connect_action
+    action.trigger()
+    qtbot.waitUntil(lambda: panel._backend_state is PM5020State.IDLE, timeout=2000)
+    backend = panel.worker._backend
+    panel._apply_configuration()
+    qtbot.waitUntil(lambda: panel._configuration_applied, timeout=2000)
+    panel._start()
+    qtbot.waitUntil(lambda: panel._backend_state is PM5020State.ERROR, timeout=2000)
+    assert action.text() == "Disconnect PM5020 (Recovery)"
+    assert action.isEnabled()
+    action.trigger()
+    qtbot.waitUntil(lambda: panel._backend_state is PM5020State.DISCONNECTED, timeout=2000)
+    assert action.text() == "Connect PM5020"
+    assert panel.worker._backend is backend
+    window.close()
+
+
+def test_physical_pm5020_is_never_connected_automatically_or_replaced_by_simulation(qtbot, monkeypatch, tmp_path):
+    settings = AppSettings(QSettings(str(tmp_path / "pm-physical.ini"), QSettings.Format.IniFormat))
+    monkeypatch.setattr(MainWindow, "_begin_lazy_init", lambda _self: None)
+    config = AppConfig.from_ini_dict(
+        {
+            "Instruments": {
+                "ct400_backend": "simulation",
+                "pm5020_backend": "physical",
+                "pm5020_resource_name": "USB0::0x1313::0x80BB::M01213392::INSTR",
+            }
+        }
+    )
+    window = MainWindow(config, settings=settings)
+    qtbot.addWidget(window)
+    panel = window.pm5020_panel
+    assert panel is not None
+    assert not panel.task.worker_thread.isRunning()
+    assert panel._backend_state is PM5020State.DISCONNECTED
+    assert panel.mode_label.text() == "Physical PM5020"
+    assert window.pm5020_connect_action.text() == "Connect PM5020"
+
+    window.pm5020_connect_action.trigger()
+    qtbot.waitUntil(lambda: "pm5020_wrapper_path" in panel.error_label.text(), timeout=2000)
+    assert panel._backend_state is PM5020State.DISCONNECTED
+    assert not isinstance(panel.worker._backend, DummyPM5020)
+    assert window.pm5020_connect_action.text() == "Connect PM5020"
+    window.close()

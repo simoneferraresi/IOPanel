@@ -14,9 +14,9 @@ instrument ticks: the reference notebook does not document their time scale or
 epoch. Burst results carry separate CH1 and CH2 arrays with an enforced shared
 sample count.
 
-The physical adapter loads `TLPMX` only when `connect(resource_name)` is called.
-Pass the USB/VISA resource string from configuration; the laboratory notebook's
-resource identifier is not a default. Device calls are serialized. A separate
+The physical adapter loads the configured `TLPMX.py` only after an operator
+selects **Connect PM5020**. The backend mode is configured in `[Instruments]`;
+the default is `simulation`. Physical mode never connects during startup. Device calls are serialized. A separate
 read-only `PM5020State` (`DISCONNECTED`, `IDLE`, `ARMED`, `RETRIEVING`, or
 `ERROR`) is shared by the simulator and physical adapter. `is_connected()` may
 remain true in `ERROR` while the driver handle exists; `is_ready` is true only
@@ -64,23 +64,54 @@ failures. Close and reconnect to recover.
 ## Windows requirements
 
 Install Thorlabs Optical Power Meter software/SDK on the laboratory Windows
-machine. It supplies the vendor `TLPMX.py` ctypes wrapper and the native
-`TLPMX_32.dll` or `TLPMX_64.dll`, together with VISA runtime components. Match
-the native DLL to the Python process bitness and make sure the vendor DLL is
-loadable through the SDK's normal installation paths. The wrapper is locally
-supplied by Thorlabs and is not a PyPI dependency; IOPanel does not bundle it.
+machine. Configure `pm5020_wrapper_path` and `pm5020_dll_path` independently.
+IOPanel copies the configured files into a per-user `%LOCALAPPDATA%/IOPanel/pm5020-sdk`
+cache on first physical connection. The cache directory name includes both
+source file hashes, and each staged file is hash-checked and atomically
+replaced if it does not match. This gives the vendor wrapper and native DLL a
+shared directory without changing the vendor installation. DLL search-path
+handles remain active through native driver shutdown and are released afterward,
+including failed connection and close paths. The wrapper is imported lazily
+and is never added to `PYTHONPATH`.
+
+The Thorlabs wrapper and DLL are proprietary SDK files and are not bundled or
+committed. IOPanel selects `TLPMX_64.dll` or `TLPMX_32.dll` according to the
+Python process bitness. Install the matching Thorlabs VISA runtime and use
+matching wrapper/DLL architectures. Missing source files, staging failures,
+architecture problems, and missing native dependencies produce actionable
+connection errors. The application-managed copy does not validate vendor
+signatures or qualify SDK compatibility; it is a file staging mechanism only.
+
+Portable code defaults use simulation and empty resource, wrapper, and DLL
+paths. In physical mode, leaving **both** SDK paths empty preserves the legacy
+lazy `import TLPMX` behavior, provided the vendor wrapper is importable and
+its native DLL can be loaded by that wrapper. Supplying exactly one SDK path
+is rejected; configure both when the files are in separate directories.
+The checked-in `config.ini` contains this site's configured resource
+and SDK paths; adjust them for other installations.
+Example laboratory settings:
+
+```ini
+[Instruments]
+pm5020_backend = simulation
+pm5020_resource_name = USB0::0x1313::0x80BB::M01213392::INSTR
+pm5020_wrapper_path = C:/Program Files (x86)/IVI Foundation/VISA/WinNT/TLPMX/Examples/Python/TLPMX.py
+pm5020_dll_path = C:/Program Files/IVI Foundation/VISA/Win64/Bin/TLPMX_64.dll
+```
 
 The simulator and all backend imports work without that SDK. Unit tests use a
 fake wrapper and do not establish compatibility with a physical meter.
 
 ## Standalone monitoring panel
 
-Open the **Thorlabs PM5020** tab in IOPanel. Select **Simulator** to run without
-hardware or the Thorlabs SDK. For physical operation, select **Physical PM5020**,
-enter the meter's USB/VISA resource identifier, and press **Connect**. The app
-does not discover devices or connect to a physical meter at startup. On the
-laboratory Windows computer, install Thorlabs Optical Power Meter software and
-its matching Python/native SDK as described above.
+The **Instruments** menu owns PM5020 connection. It shows **Connect PM5020** or
+**Disconnect PM5020** from worker-confirmed state and disables the action while
+an operation is pending. The measurement tab retains channel configuration,
+readings, plots, monitoring, and status. Its status area displays the configured
+backend and clearly labels simulated readings. Simulation and physical mode are
+selected by `pm5020_backend = simulation` or `physical` in `[Instruments]`;
+resource and SDK paths are configured there as well. No physical meter is
+connected until the operator chooses **Connect PM5020** from the menu.
 
 Configure CH1 and CH2 independently, then press **Apply Channel Settings**.
 Wavelengths are editable; 1550 nm and 775 nm are example defaults only. The GUI
@@ -107,7 +138,7 @@ leaves the meter connected. A successful new Start begins a fresh elapsed-time
 session and clears the previous plot and latest-reading labels. **Clear Plot**
 clears both traces and latest-reading labels without stopping monitoring or
 disconnecting the meter.
-**Disconnect** stops monitoring and closes the backend. After a communication
+**Disconnect PM5020** in the Instruments menu stops monitoring and closes the backend. After a communication
 or configuration failure that leaves the backend in `ERROR`, monitoring stops
 and the UI requests deliberate disconnect/reconnect recovery; it does not
 silently reconnect.

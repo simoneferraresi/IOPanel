@@ -52,6 +52,7 @@ from hardware.ct400_init_worker import CT400InitOutcome, CT400InitWorker
 from hardware.dummy_ct400 import DummyCT400
 from hardware.piezo import PiezoController
 from hardware.piezo_init_worker import PiezoInitWorker
+from hardware.pm5020_types import PM5020State
 from logic.scan_import import load_scan
 from logic.scan_import_worker import ScanImportOutcome, ScanImportWorker
 from logic.task_runner import TaskRunner
@@ -420,6 +421,47 @@ class MainWindow(QMainWindow):
         else:
             connected = piezo.is_connected()
             action.setText(f"{'Disconnect' if connected else 'Connect'} {title} Piezo")
+            action.setEnabled(True)
+
+    @Slot()
+    def _handle_pm5020_connect_action_triggered(self) -> None:
+        panel = self.pm5020_panel
+        if panel is None:
+            return
+        if panel._backend_state is PM5020State.DISCONNECTED:
+            panel.request_connect()
+        else:
+            panel.request_disconnect()
+
+    @Slot(object, str)
+    def _on_pm5020_connection_status_changed(self, _state: object, _activity: str) -> None:
+        self._update_pm5020_action()
+
+    def _update_pm5020_action(self) -> None:
+        action = getattr(self, "pm5020_connect_action", None)
+        if action is None:
+            return
+        panel = getattr(self, "pm5020_panel", None)
+        if panel is None:
+            action.setText("PM5020 Unavailable")
+            action.setEnabled(False)
+            return
+        state = panel._backend_state
+        activity = panel._activity
+        if panel._shutdown_requested or activity == "Shutting down":
+            action.setText("PM5020 Shutting Down…")
+            action.setEnabled(False)
+        elif activity in {"Connecting", "Disconnecting"} or panel._connection_request_pending:
+            action.setText("Disconnecting PM5020…" if activity == "Disconnecting" else "Connecting PM5020…")
+            action.setEnabled(False)
+        elif state is PM5020State.DISCONNECTED:
+            action.setText("Connect PM5020")
+            action.setEnabled(True)
+        elif state is PM5020State.ERROR:
+            action.setText("Disconnect PM5020 (Recovery)")
+            action.setEnabled(True)
+        else:
+            action.setText("Disconnect PM5020")
             action.setEnabled(True)
 
     def _alignment_hardware_transition_blocked(self) -> bool:
@@ -1036,7 +1078,15 @@ class MainWindow(QMainWindow):
 
         self.alignment_tab = AlignmentPanel(None, None, None, self)
         self.tab_widget.addTab(self.alignment_tab, "Auto Alignment")
-        self.pm5020_panel = PM5020Panel(self)
+        self.pm5020_panel = PM5020Panel(
+            self,
+            backend_mode=self.config.instruments.pm5020_backend,
+            resource_name=self.config.instruments.pm5020_resource_name,
+            wrapper_path=self.config.instruments.pm5020_wrapper_path,
+            dll_path=self.config.instruments.pm5020_dll_path,
+        )
+        self.pm5020_panel.connection_status_changed.connect(self._on_pm5020_connection_status_changed)
+        self._update_pm5020_action()
         self.pm5020_panel.shutdown_complete.connect(self._resume_close_after_pm5020)
         self.pm5020_panel.shutdown_timeout.connect(lambda message: self.statusBar().showMessage(message, 0))
         self.tab_widget.addTab(self.pm5020_panel, "Thorlabs PM5020")
@@ -1322,7 +1372,7 @@ class MainWindow(QMainWindow):
         logger.debug("Creating menus...")
         menu_bar = self.menuBar()
 
-        file_menu = menu_bar.addMenu("&File")
+        file_menu = self.file_menu = menu_bar.addMenu("&File")
         self.open_scan_action = QAction("Open Scan...", self)
         self.open_scan_action.setObjectName("openScanAction")
         self.open_scan_action.setStatusTip("Open a saved IOPanel schema-v2 scan for offline plotting")
@@ -1362,6 +1412,12 @@ class MainWindow(QMainWindow):
         self.ct400_connect_action.triggered.connect(self._handle_ct400_connect_action_triggered)
         self.instrument_menu.addAction(self.ct400_connect_action)
 
+        self.pm5020_connect_action = QAction("Connect PM5020", self)
+        self.pm5020_connect_action.setObjectName("pm5020ConnectAction")
+        self.pm5020_connect_action.setStatusTip("Connect or disconnect the configured PM5020 backend")
+        self.pm5020_connect_action.triggered.connect(self._handle_pm5020_connect_action_triggered)
+        self.instrument_menu.addAction(self.pm5020_connect_action)
+
         self.cameras_menu = menu_bar.addMenu("&Cameras")
         discover_action = QAction("Discover Cameras...", self)
         discover_action.setStatusTip("List all available Vimba cameras and their IDs")
@@ -1389,8 +1445,9 @@ class MainWindow(QMainWindow):
         supervised_calibration_action.triggered.connect(self._show_ct400_supervised_campaign)
         self.instrument_menu.addAction(supervised_calibration_action)
         self._update_scan_import_actions()
+        self._update_pm5020_action()
 
-        help_menu = menu_bar.addMenu("&Help")
+        help_menu = self.help_menu = menu_bar.addMenu("&Help")
         about_action = QAction("&About", self)
         about_action.setStatusTip("Show application information")
         about_action.triggered.connect(self._show_about_dialog)

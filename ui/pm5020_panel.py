@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QPushButton,
     QScrollArea,
     QSpinBox,
@@ -139,8 +138,9 @@ class PM5020ChannelControls(QGroupBox):
 
 
 class PM5020Panel(QWidget):
-    """Independent PM5020 connection, configuration, measurement, and plotting UI."""
+    """PM5020 configuration, measurement, and plotting UI owned by one worker."""
 
+    connection_status_changed = Signal(object, str)
     connect_requested = Signal(str, str, int)
     configure_requested = Signal(object)
     channels_requested = Signal(object)
@@ -153,8 +153,23 @@ class PM5020Panel(QWidget):
     shutdown_complete = Signal()
     shutdown_timeout = Signal(str)
 
-    def __init__(self, parent: QWidget | None = None, *, worker: PM5020MonitorWorker | None = None):
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        worker: PM5020MonitorWorker | None = None,
+        backend_mode: str = "simulation",
+        resource_name: str = "",
+        wrapper_path: str = "",
+        dll_path: str = "",
+    ):
         super().__init__(parent)
+        if backend_mode not in {"physical", "simulation"}:
+            raise ValueError(f"Unsupported PM5020 backend mode: {backend_mode!r}")
+        self.backend_mode = backend_mode
+        self.resource_name = resource_name
+        self._connection_request_pending = False
+        self._connection_operation_started = False
         self._backend_state = PM5020State.DISCONNECTED
         self._activity = "Disconnected"
         self._configuration_applied = False
@@ -173,7 +188,11 @@ class PM5020Panel(QWidget):
         self._shutdown_timer.setInterval(5000)
         self._shutdown_timer.timeout.connect(self._on_shutdown_timeout)
 
-        self.worker = worker if worker is not None else PM5020MonitorWorker()
+        self.worker = (
+            worker
+            if worker is not None
+            else PM5020MonitorWorker(wrapper_path=wrapper_path or None, dll_path=dll_path or None)
+        )
         self.task = TaskRunner(self.worker, auto_start_run=False)
         self.task.worker_thread.setObjectName("PM5020-monitor")
         self.task.worker_thread.started.connect(self.worker.initialize)
@@ -195,23 +214,18 @@ class PM5020Panel(QWidget):
 
         connection_box = QGroupBox("Connection and instrument status")
         connection_form = QFormLayout(connection_box)
-        self.mode = QComboBox()
-        self.mode.addItems(("Simulator", "Physical PM5020"))
-        self.resource = QLineEdit()
-        self.resource.setPlaceholderText("USB0::...::INSTR (enter the instrument's VISA resource)")
+        mode_text = "Simulation — readings are simulated" if backend_mode == "simulation" else "Physical PM5020"
+        self.mode_label = QLabel(mode_text)
+        self.mode_label.setObjectName("pm5020BackendModeLabel")
+        if backend_mode == "simulation":
+            self.mode_label.setStyleSheet("font-weight: bold; color: #8a5700;")
+        self.resource_label = QLabel(resource_name or "Not configured")
         self.status_label = QLabel("Disconnected")
         self.readiness_label = QLabel("Not ready")
-        self.connect_button = QPushButton("Connect")
-        self.disconnect_button = QPushButton("Disconnect")
-        self.disconnect_button.setEnabled(False)
-        connection_form.addRow("Instrument:", self.mode)
-        connection_form.addRow("USB/VISA resource:", self.resource)
+        connection_form.addRow("Configured backend:", self.mode_label)
+        connection_form.addRow("Configured resource:", self.resource_label)
         connection_form.addRow("Panel status:", self.status_label)
         connection_form.addRow("Instrument state:", self.readiness_label)
-        connection_buttons = QHBoxLayout()
-        connection_buttons.addWidget(self.connect_button)
-        connection_buttons.addWidget(self.disconnect_button)
-        connection_form.addRow("", connection_buttons)
         self.error_label = QLabel("")
         self.error_label.setWordWrap(True)
         self.error_label.setStyleSheet("color: #b71c1c;")
@@ -258,8 +272,6 @@ class PM5020Panel(QWidget):
         scroll.setWidget(content)
         root.addWidget(scroll)
 
-        self.connect_button.clicked.connect(self._connect)
-        self.disconnect_button.clicked.connect(self._disconnect)
         self.apply_button.clicked.connect(self._apply_configuration)
         self.start_button.clicked.connect(self._start)
         self.pause_button.clicked.connect(self.pause_requested)
@@ -267,8 +279,6 @@ class PM5020Panel(QWidget):
         self.stop_button.clicked.connect(self.stop_requested)
         self.clear_button.clicked.connect(self._clear_history)
         self.history.currentIndexChanged.connect(self._redraw)
-        self.mode.currentTextChanged.connect(self._update_controls)
-        self.resource.textChanged.connect(self._update_controls)
         self.interval.valueChanged.connect(self._update_controls)
         for channel in (self.ch1, self.ch2):
             channel.wavelength.valueChanged.connect(self._configuration_edited)
@@ -297,21 +307,42 @@ class PM5020Panel(QWidget):
 
     @Slot()
     def _connect(self) -> None:
+        self.request_connect()
+
+    def request_connect(self) -> None:
+        if self._shutdown_requested or self._connection_request_pending:
+            return
+        if self._backend_state is not PM5020State.DISCONNECTED or self._activity in {"Connecting", "Disconnecting"}:
+            return
         self.error_label.clear()
         self._ensure_worker_started()
         self._connection_generation += 1
         self._invalidate_configuration()
-        self.connect_requested.emit(self.mode.currentText(), self.resource.text(), self._connection_generation)
+        mode = "Simulator" if self.backend_mode == "simulation" else "Physical PM5020"
+        self.connect_requested.emit(mode, self.resource_name, self._connection_generation)
+        self._connection_request_pending = True
+        self._connection_operation_started = False
         self._activity = "Connecting"
         self._update_controls()
+        self.connection_status_changed.emit(self._backend_state, self._activity)
 
     @Slot()
     def _disconnect(self) -> None:
+        self.request_disconnect()
+
+    def request_disconnect(self) -> None:
+        if self._shutdown_requested or self._connection_request_pending:
+            return
+        if self._backend_state is PM5020State.DISCONNECTED or self._activity in {"Connecting", "Disconnecting"}:
+            return
         self._connection_generation += 1
         self._invalidate_configuration()
         self.disconnect_requested.emit(self._connection_generation)
+        self._connection_request_pending = True
+        self._connection_operation_started = False
         self._activity = "Disconnecting"
         self._update_controls()
+        self.connection_status_changed.emit(self._backend_state, self._activity)
 
     @Slot()
     def _apply_configuration(self) -> None:
@@ -363,7 +394,18 @@ class PM5020Panel(QWidget):
 
     @Slot(object)
     def _on_instrument_state(self, state: PM5020State) -> None:
+        if (
+            state is PM5020State.DISCONNECTED
+            and self._connection_request_pending
+            and not self._connection_operation_started
+        ):
+            return
         self._backend_state = state
+        if state in {PM5020State.IDLE, PM5020State.ERROR} or (
+            state is PM5020State.DISCONNECTED and self._connection_operation_started
+        ):
+            self._connection_request_pending = False
+            self._connection_operation_started = False
         if state is PM5020State.DISCONNECTED or state is PM5020State.ERROR:
             self._invalidate_configuration()
         self.readiness_label.setText(f"{state.name.title()} — {'Ready' if state is PM5020State.IDLE else 'Not ready'}")
@@ -373,9 +415,14 @@ class PM5020Panel(QWidget):
             self._paused = False
             self.error_label.setText("Recovery required. Stop monitoring, disconnect, and reconnect deliberately.")
         self._update_controls()
+        self.connection_status_changed.emit(self._backend_state, self._activity)
 
     @Slot(str)
     def _on_activity_state(self, activity: str) -> None:
+        if activity in {"Connecting", "Disconnecting"}:
+            self._connection_operation_started = True
+        elif activity == "Disconnected" and self._connection_request_pending and not self._connection_operation_started:
+            return
         if self._backend_state is PM5020State.ERROR and activity != "Recovery required":
             activity = "Recovery required"
         self._activity = activity
@@ -390,6 +437,10 @@ class PM5020Panel(QWidget):
             self._monitor_session = False
             self._paused = False
         self._update_controls()
+        if activity in {"Connected / idle", "Disconnected", "Recovery required"}:
+            self._connection_request_pending = False
+            self._connection_operation_started = False
+        self.connection_status_changed.emit(self._backend_state, self._activity)
 
     @Slot(object, float)
     def _on_reading(self, reading: PowerReading, elapsed_s: float) -> None:
@@ -452,14 +503,7 @@ class PM5020Panel(QWidget):
 
     @Slot()
     def _update_controls(self, *_args: object) -> None:
-        connected = self._backend_state is not PM5020State.DISCONNECTED
         recovering = self._backend_state is PM5020State.ERROR
-        busy = self._activity in {"Connecting", "Disconnecting", "Busy"}
-        physical_missing_resource = self.mode.currentText() == "Physical PM5020" and not self.resource.text().strip()
-        self.connect_button.setEnabled(not connected and not busy and not physical_missing_resource)
-        self.disconnect_button.setEnabled(connected and not busy)
-        self.mode.setEnabled(not connected and not busy)
-        self.resource.setEnabled(not connected and not busy and self.mode.currentText() == "Physical PM5020")
         if self._pending_configuration is not None:
             self.apply_button.setText("Applying…")
         elif self._configuration_applied:
@@ -494,6 +538,7 @@ class PM5020Panel(QWidget):
             return
         self._shutdown_timer.stop()
         self._shutdown_complete = True
+        self.connection_status_changed.emit(self._backend_state, "Disconnected")
         self.shutdown_complete.emit()
 
     @Slot()
@@ -514,6 +559,7 @@ class PM5020Panel(QWidget):
         if self._shutdown_requested:
             return
         self._shutdown_requested = True
+        self.connection_status_changed.emit(self._backend_state, "Shutting down")
         if self.task.worker_thread.isRunning():
             self._shutdown_timer.start()
             self.shutdown_requested.emit()
