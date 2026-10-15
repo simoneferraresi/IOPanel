@@ -69,10 +69,13 @@ def test_simulator_panel_reads_channels_and_plots_independent_units(qtbot):
     assert panel.ch1.plot.getAxis("left").labelText == "Optical power"
     assert panel.ch1.plot.getAxis("left").labelUnits == "mW"
 
-    panel.pause_requested.emit()
+    assert panel.pause_resume_button.text() == "Pause"
+    panel.pause_resume_button.click()
     qtbot.waitUntil(lambda: panel._paused, timeout=2000)
-    panel.resume_requested.emit(250)
+    assert panel.pause_resume_button.text() == "Resume"
+    panel.pause_resume_button.click()
     qtbot.waitUntil(lambda: not panel._paused and readings.count() >= 4, timeout=2000)
+    assert panel.pause_resume_button.text() == "Pause"
     panel.stop_requested.emit()
     qtbot.waitUntil(lambda: not panel._monitor_session, timeout=2000)
     panel._clear_history()
@@ -325,17 +328,21 @@ def test_configuration_failure_and_stop_preserve_recovery_state(qtbot):
 
 
 def test_pm5020_layout_matches_control_column_and_plot_conventions(qtbot):
-    from PySide6.QtWidgets import QGroupBox, QHBoxLayout, QLineEdit
+    from PySide6.QtWidgets import QGroupBox, QHBoxLayout, QLineEdit, QSizePolicy
 
     panel = PM5020Panel()
     qtbot.addWidget(panel)
     assert isinstance(panel.layout(), QHBoxLayout)
     assert panel.controls_scroll.objectName() == "pm5020ControlsScroll"
+    assert panel.controls_scroll.minimumWidth() == 320
+    assert panel.controls_scroll.maximumWidth() == 400
     assert panel.plot_container.objectName() == "pm5020PlotsContainer"
     settings = panel.controls_scroll.widget()
     assert settings is not None
     assert settings.findChild(QGroupBox, "pm5020InstrumentStatusGroup") is None
     assert settings.findChild(QGroupBox, "pm5020OperationGroup") is not None
+    assert settings.objectName() == "pm5020ControlsContent"
+    assert settings.styleSheet() == "QWidget#pm5020ControlsContent { background-color: white; }"
     assert panel.error_label.parentWidget() is settings
     assert panel.ch1.parentWidget() is settings
     assert panel.ch2.parentWidget() is settings
@@ -349,16 +356,28 @@ def test_pm5020_layout_matches_control_column_and_plot_conventions(qtbot):
     assert panel.mode_label.isHidden()
     assert not hasattr(panel.ch1, "measurement_status")
     assert not hasattr(panel.ch1, "age_label")
-    assert panel.advanced_settings.isHidden()
-    assert panel.ch1.input_filter.parentWidget() is panel.advanced_settings
-    assert panel.ch1.wavelength.width() <= 90
-    assert panel.ch1.manual_range.width() <= 90
+    assert not hasattr(panel, "advanced_toggle")
+    assert not hasattr(panel, "advanced_settings")
+    assert panel.ch1.enabled.text() == "CH1 — Optical Power"
+    assert panel.ch2.enabled.text() == "CH2 — Optical Power"
+    assert panel.ch1.enabled.parentWidget() is panel.ch1
+    assert panel.ch1.input_filter.parentWidget() is panel.ch1.plot_actions
+    assert panel.ch1.input_filter.isCheckable()
+    assert not panel.ch1.input_filter.icon().isNull()
+    assert "input filter / smoothing" in panel.ch1.input_filter.toolTip()
+    assert panel.ch1.input_filter.objectName() == "pm5020Ch1InputFilterButton"
+    assert panel.ch1.wavelength.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Expanding
+    assert panel.ch1.manual_range.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Expanding
+    assert panel.interval.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Expanding
     assert panel.ch1.reading_label.font().pointSize() == 20
     assert panel.ch2.reading_label.font().pointSize() == 20
     assert panel.start_button.objectName() == "pm5020StartButton"
     assert panel.stop_button.objectName() == "pm5020StopButton"
     assert panel.start_button.minimumHeight() >= 35
     assert panel.stop_button.minimumHeight() >= 35
+    assert not hasattr(panel, "pause_button")
+    assert not hasattr(panel, "resume_button")
+    assert panel.pause_resume_button.text() == "Pause"
     assert not hasattr(panel, "connect_button")
     assert not hasattr(panel, "disconnect_button")
     assert not panel.task.worker_thread.isRunning()
@@ -464,12 +483,24 @@ def test_update_interval_validates_effective_250_to_5000_ms_range(qtbot):
     panel.close()
 
 
-def test_input_filter_controls_are_demoted_to_collapsible_advanced_area(qtbot):
+def test_plot_filter_buttons_toggle_per_channel_configuration(qtbot):
     panel = PM5020Panel()
     qtbot.addWidget(panel)
-    assert panel.advanced_settings.isHidden()
-    panel.advanced_toggle.click()
-    assert not panel.advanced_settings.isHidden()
-    assert panel.ch1.input_filter.parentWidget() is panel.advanced_settings
-    assert panel.ch2.input_filter.parentWidget() is panel.advanced_settings
+    assert not panel.ch1.input_filter.isChecked()
+    assert not panel.ch2.input_filter.isChecked()
+    panel.ch1.input_filter.click()
+    assert panel.ch1.channel_config().input_filter_enabled
+    assert not panel.ch2.channel_config().input_filter_enabled
+    panel.ch1.input_filter.click()
+    assert not panel.ch1.channel_config().input_filter_enabled
+    panel.close()
+
+
+def test_control_column_fits_without_vertical_scrolling_at_typical_height(qtbot):
+    panel = PM5020Panel()
+    qtbot.addWidget(panel)
+    panel.resize(1280, 720)
+    panel.show()
+    qtbot.wait(50)
+    assert panel.controls_scroll.verticalScrollBar().maximum() == 0
     panel.close()

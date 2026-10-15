@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import override
 
 import pyqtgraph as pg
-from PySide6.QtCore import QLocale, QSignalBlocker, Qt, QTimer, Signal, Slot
+from PySide6.QtCore import QLocale, QSignalBlocker, QSize, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QCloseEvent, QDoubleValidator, QFont, QIcon
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -53,14 +53,22 @@ class PM5020ChannelControls(QGroupBox):
     def __init__(self, channel: PowerChannel, *, default_wavelength_nm: float, default_unit: str):
         super().__init__(f"CH{channel.value} — Optical Power")
         style_group_box_title(self)
+        self.setTitle("")
         self.channel = channel
         self._rows: deque[tuple[float, float]] = deque(maxlen=MAX_HISTORY_POINTS)
         layout = QVBoxLayout(self)
         layout.setSpacing(5)
 
+        self.enabled = QCheckBox(f"CH{channel.value} — Optical Power")
+        self.enabled.setObjectName(f"pm5020Ch{channel.value}Enabled")
+        self.enabled.setChecked(True)
+        self.enabled.setFont(make_font("sans", 10, QFont.Weight.Bold))
+        self.enabled.setToolTip("Include this sensor channel in configuration and monitoring")
+        layout.addWidget(self.enabled)
+
         reading_row = QHBoxLayout()
         self.reading_label = QLabel("—")
-        self.reading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.reading_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.reading_label.setFont(make_font("mono", 20, QFont.Weight.Bold))
         self.reading_label.setMinimumHeight(44)
         reading_row.addWidget(self.reading_label, stretch=1)
@@ -70,10 +78,7 @@ class PM5020ChannelControls(QGroupBox):
         self.unit.setCurrentText(default_unit)
         self.unit.setToolTip("Display only; also selects this channel's plot Y-axis units")
         reading_row.addWidget(self.unit)
-        self.enabled = QCheckBox("Enabled")
-        self.enabled.setChecked(True)
-        self.enabled.setToolTip("Include this sensor channel in configuration and monitoring")
-        reading_row.addWidget(self.enabled)
+        reading_row.addStretch(1)
         layout.addLayout(reading_row)
 
         form = QGridLayout()
@@ -85,7 +90,6 @@ class PM5020ChannelControls(QGroupBox):
         wavelength_validator.setLocale(QLocale.c())
         self.wavelength.setValidator(wavelength_validator)
         self.wavelength.setToolTip("Sensor-specific wavelength support is checked by the Thorlabs driver")
-        self.wavelength.setFixedWidth(78)
         form.addWidget(self.wavelength, 0, 1, 1, 3)
 
         form.addWidget(QLabel("Power range:"), 1, 0)
@@ -94,7 +98,7 @@ class PM5020ChannelControls(QGroupBox):
         form.addWidget(self.auto_range, 1, 1)
         self.manual_range = QLineEdit("1")
         self.manual_range.setObjectName(f"pm5020Ch{channel.value}ManualRange")
-        self.manual_range.setFixedWidth(76)
+        self.manual_range.setMinimumWidth(56)
         self._set_range_validator("mW")
         self.manual_range.setToolTip("Requested manual range. Physical SDK validates supported sensor ranges.")
         form.addWidget(self.manual_range, 1, 2)
@@ -109,8 +113,20 @@ class PM5020ChannelControls(QGroupBox):
         self.manual_range.setEnabled(False)
         self.range_unit.setEnabled(False)
 
-        self.input_filter = QCheckBox("Enabled")
-        form.setColumnStretch(2, 1)
+        self.input_filter = QToolButton()
+        self.input_filter.setObjectName(f"pm5020Ch{channel.value}InputFilterButton")
+        self.input_filter.setCheckable(True)
+        self.input_filter.setAutoRaise(True)
+        self.input_filter.setIcon(QIcon(":/icons/filter-lowpass.svg"))
+        self.input_filter.setToolTip(
+            f"Toggle the PM5020 input filter / smoothing for CH{channel.value}"
+        )
+        self.input_filter.setAccessibleName(f"Toggle PM5020 input filter for channel {channel.value}")
+        self.input_filter.setIconSize(QSize(18, 18))
+        self.input_filter.setFixedSize(28, 28)
+        self.input_filter.setStyleSheet(
+            "QToolButton:checked { background-color: #e3f2fd; border: 1px solid #1976d2; border-radius: 4px; }"
+        )
         layout.addLayout(form)
 
         self.plot = pg.PlotWidget(background="w")
@@ -125,6 +141,11 @@ class PM5020ChannelControls(QGroupBox):
         plot_layout = QGridLayout(self.plot_host)
         plot_layout.setContentsMargins(0, 0, 0, 0)
         plot_layout.addWidget(self.plot, 0, 0)
+        self.plot_actions = QWidget(self.plot_host)
+        actions_layout = QHBoxLayout(self.plot_actions)
+        actions_layout.setContentsMargins(0, 0, 0, 0)
+        actions_layout.setSpacing(2)
+        actions_layout.addWidget(self.input_filter)
         self.clear_button = QToolButton(self.plot_host)
         self.clear_button.setObjectName(f"pm5020Ch{channel.value}ClearPlotButton")
         self.clear_button.setIcon(QIcon(":/icons/eraser.svg"))
@@ -132,7 +153,10 @@ class PM5020ChannelControls(QGroupBox):
         self.clear_button.setAccessibleName(f"Clear PM5020 channel {channel.value} plot")
         self.clear_button.setAutoRaise(True)
         self.clear_button.setFixedSize(28, 28)
-        plot_layout.addWidget(self.clear_button, 0, 0, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight)
+        actions_layout.addWidget(self.clear_button)
+        plot_layout.addWidget(
+            self.plot_actions, 0, 0, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight
+        )
         self.clear_button.raise_()
         self.unit.currentTextChanged.connect(self.refresh_reading)
         self._latest_power_w: float | None = None
@@ -289,9 +313,14 @@ class PM5020Panel(QWidget):
         self.controls_scroll.setWidgetResizable(True)
         self.controls_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.controls_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.controls_scroll.setMinimumWidth(305)
-        self.controls_scroll.setMaximumWidth(435)
+        self.controls_scroll.setMinimumWidth(320)
+        self.controls_scroll.setMaximumWidth(400)
+        self.controls_scroll.setStyleSheet("QScrollArea { background-color: white; border: none; }")
+        self.controls_scroll.viewport().setStyleSheet("background-color: white;")
         content = QWidget()
+        content.setObjectName("pm5020ControlsContent")
+        content.setAutoFillBackground(True)
+        content.setStyleSheet("QWidget#pm5020ControlsContent { background-color: white; }")
         layout = QVBoxLayout(content)
         layout.setSpacing(10)
 
@@ -313,40 +342,13 @@ class PM5020Panel(QWidget):
         layout.addWidget(self.ch1)
         layout.addWidget(self.ch2)
 
-        self.advanced_toggle = QToolButton()
-        self.advanced_toggle.setObjectName("pm5020AdvancedToggle")
-        self.advanced_toggle.setText("Advanced")
-        self.advanced_toggle.setCheckable(True)
-        self.advanced_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.advanced_toggle.setArrowType(Qt.ArrowType.RightArrow)
-        self.advanced_settings = QWidget()
-        self.advanced_settings.setObjectName("pm5020AdvancedSettings")
-        advanced_layout = QHBoxLayout(self.advanced_settings)
-        advanced_layout.setContentsMargins(8, 0, 0, 0)
-        advanced_layout.addWidget(QLabel("Input filter:"))
-        advanced_layout.addWidget(QLabel("CH1"))
-        advanced_layout.addWidget(self.ch1.input_filter)
-        advanced_layout.addSpacing(8)
-        advanced_layout.addWidget(QLabel("CH2"))
-        advanced_layout.addWidget(self.ch2.input_filter)
-        advanced_layout.addStretch(1)
-        self.advanced_settings.hide()
-        self.advanced_toggle.toggled.connect(self.advanced_settings.setVisible)
-        self.advanced_toggle.toggled.connect(
-            lambda expanded: self.advanced_toggle.setArrowType(
-                Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
-            )
-        )
-        layout.addWidget(self.advanced_toggle)
-        layout.addWidget(self.advanced_settings)
-
         controls = QGroupBox("Operation")
         controls.setObjectName("pm5020OperationGroup")
         style_group_box_title(controls)
         controls_layout = QGridLayout(controls)
         self.interval = QLineEdit("1")
         self.interval.setObjectName("pm5020UpdateInterval")
-        self.interval.setFixedWidth(76)
+        self.interval.setMinimumWidth(56)
         interval_validator = QDoubleValidator(0.25, 5.0, 3, self.interval)
         interval_validator.setLocale(QLocale.c())
         self.interval.setValidator(interval_validator)
@@ -369,14 +371,16 @@ class PM5020Panel(QWidget):
         self.start_button.setStyleSheet(PM5020_ACTION_BUTTON_STYLE)
         self.start_button.setIcon(QIcon(":/icons/play.svg"))
         self.start_button.setMinimumHeight(35)
-        self.pause_button = QPushButton("Pause")
-        self.resume_button = QPushButton("Resume")
+        self.pause_resume_button = QPushButton("Pause")
+        self.pause_resume_button.setObjectName("pm5020PauseResumeButton")
+        self.pause_resume_button.setIcon(QIcon(":/icons/pause.svg"))
+        self.pause_resume_button.setMinimumHeight(35)
         self.stop_button = QPushButton("Stop")
         self.stop_button.setObjectName("pm5020StopButton")
         self.stop_button.setStyleSheet(PM5020_ACTION_BUTTON_STYLE)
         self.stop_button.setIcon(QIcon(":/icons/stop.svg"))
         self.stop_button.setMinimumHeight(35)
-        for button in (self.start_button, self.pause_button, self.resume_button, self.stop_button):
+        for button in (self.start_button, self.pause_resume_button, self.stop_button):
             button.setEnabled(False)
         controls_layout.addWidget(QLabel("Update every:"), 0, 0)
         update_row = QHBoxLayout()
@@ -386,10 +390,11 @@ class PM5020Panel(QWidget):
         controls_layout.addWidget(QLabel("Plot history:"), 1, 0)
         controls_layout.addWidget(self.history, 1, 1)
         controls_layout.addWidget(self.apply_button, 2, 0, 1, 2)
-        controls_layout.addWidget(self.start_button, 3, 0)
-        controls_layout.addWidget(self.stop_button, 3, 1)
-        controls_layout.addWidget(self.pause_button, 4, 0)
-        controls_layout.addWidget(self.resume_button, 4, 1)
+        actions_layout = QHBoxLayout()
+        actions_layout.addWidget(self.start_button, stretch=1)
+        actions_layout.addWidget(self.pause_resume_button, stretch=1)
+        actions_layout.addWidget(self.stop_button, stretch=1)
+        controls_layout.addLayout(actions_layout, 3, 0, 1, 2)
         layout.addWidget(controls)
         layout.addStretch(1)
         self.controls_scroll.setWidget(content)
@@ -406,8 +411,7 @@ class PM5020Panel(QWidget):
 
         self.apply_button.clicked.connect(self._apply_configuration)
         self.start_button.clicked.connect(self._start)
-        self.pause_button.clicked.connect(self.pause_requested)
-        self.resume_button.clicked.connect(lambda: self.resume_requested.emit(self._interval_ms()))
+        self.pause_resume_button.clicked.connect(self._toggle_pause_resume)
         self.stop_button.clicked.connect(self.stop_requested)
         self.ch1.clear_button.clicked.connect(lambda: self._clear_channel(self.ch1))
         self.ch2.clear_button.clicked.connect(lambda: self._clear_channel(self.ch2))
@@ -543,6 +547,15 @@ class PM5020Panel(QWidget):
             return
         self.channels_requested.emit(enabled)
         self.start_requested.emit(self._interval_ms())
+
+    @Slot()
+    def _toggle_pause_resume(self) -> None:
+        if not self.pause_resume_button.isEnabled():
+            return
+        if self._paused:
+            self.resume_requested.emit(self._interval_ms())
+        else:
+            self.pause_requested.emit()
 
     @Slot()
     def _configuration_edited(self, *_args: object) -> None:
@@ -685,8 +698,13 @@ class PM5020Panel(QWidget):
         interval_valid = self.interval.hasAcceptableInput()
         can_start = ready and self._configuration_applied and interval_valid and not recovering and not self._monitor_session
         self.start_button.setEnabled(can_start)
-        self.pause_button.setEnabled(self._monitor_session and not self._paused and not recovering)
-        self.resume_button.setEnabled(self._monitor_session and self._paused and interval_valid and not recovering)
+        self.pause_resume_button.setText("Resume" if self._paused else "Pause")
+        self.pause_resume_button.setIcon(
+            QIcon(":/icons/play.svg") if self._paused else QIcon(":/icons/pause.svg")
+        )
+        self.pause_resume_button.setEnabled(
+            self._monitor_session and not recovering and (not self._paused or interval_valid)
+        )
         self.stop_button.setEnabled(self._monitor_session or self._paused)
         for channel in (self.ch1, self.ch2):
             for widget in (channel.wavelength, channel.auto_range, channel.input_filter, channel.enabled):
