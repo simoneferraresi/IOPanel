@@ -69,8 +69,9 @@ IOPanel copies the configured files into a per-user `%LOCALAPPDATA%/IOPanel/pm50
 cache on first physical connection. The cache directory name includes both
 source file hashes, and each staged file is hash-checked and atomically
 replaced if it does not match. This gives the vendor wrapper and native DLL a
-shared directory without changing the vendor installation. A DLL search-path
-handle is kept for the lifetime of the backend. The wrapper is imported lazily
+shared directory without changing the vendor installation. DLL search-path
+handles remain active through native driver shutdown and are released afterward,
+including failed connection and close paths. The wrapper is imported lazily
 and is never added to `PYTHONPATH`.
 
 The Thorlabs wrapper and DLL are proprietary SDK files and are not bundled or
@@ -82,7 +83,11 @@ connection errors. The application-managed copy does not validate vendor
 signatures or qualify SDK compatibility; it is a file staging mechanism only.
 
 Portable code defaults use simulation and empty resource, wrapper, and DLL
-paths. The checked-in `config.ini` contains this site's configured resource
+paths. In physical mode, leaving **both** SDK paths empty preserves the legacy
+lazy `import TLPMX` behavior, provided the vendor wrapper is importable and
+its native DLL can be loaded by that wrapper. Supplying exactly one SDK path
+is rejected; configure both when the files are in separate directories.
+The checked-in `config.ini` contains this site's configured resource
 and SDK paths; adjust them for other installations.
 Example laboratory settings:
 
