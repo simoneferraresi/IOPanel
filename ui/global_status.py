@@ -104,3 +104,28 @@ def format_activity_status(operation: Enum) -> StatusText:
     }
     text, tooltip, state = labels[getattr(operation, "name", str(operation))]
     return StatusText(f"Activity: {text}", tooltip, state)
+
+
+def format_pm5020_status(
+    state: Enum,
+    *,
+    activity: str,
+    simulated: bool,
+    resource: str,
+) -> StatusText:
+    """Summarize confirmed PM5020 state; never read the hardware here."""
+    detail = "Simulator" if simulated else (resource or "No VISA resource configured")
+    tooltip = f"PM5020 backend: {detail}; activity: {activity}"
+    if activity in {"Connecting", "Disconnecting", "Shutting down"}:
+        return StatusText(f"PM5020: {activity}", tooltip, "busy")
+    if state.name == "ERROR" or activity == "Recovery required":
+        return StatusText("PM5020: Error", tooltip + "; disconnect and reconnect to recover", "error")
+    if state.name == "DISCONNECTED":
+        return StatusText("PM5020: Sim (Off)" if simulated else "PM5020: Disconnected", tooltip, "simulated" if simulated else "disconnected")
+    if simulated:
+        return StatusText("PM5020: SIMULATED", tooltip, "simulated")
+    if activity in {"Monitoring", "Busy with acquisition"}:
+        return StatusText("PM5020: Monitoring", tooltip, "busy")
+    if activity == "Paused":
+        return StatusText("PM5020: Paused", tooltip, "idle")
+    return StatusText("PM5020: Ready", tooltip, "ready")
