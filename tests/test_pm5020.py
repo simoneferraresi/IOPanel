@@ -124,7 +124,7 @@ def test_legacy_importable_sdk_fallback_when_both_paths_absent(monkeypatch):
 
     def vendor_import(name):
         requested.append(name)
-        return type("ImportableSDK", (), {"TLPMX": lambda: fake})()
+        return type("ImportableSDK", (), {"TLPMX": staticmethod(lambda: fake)})()
 
     monkeypatch.setattr(pm5020.importlib, "import_module", vendor_import)
     meter = TLPMXPM5020()
