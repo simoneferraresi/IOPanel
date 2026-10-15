@@ -322,3 +322,31 @@ def test_configuration_failure_and_stop_preserve_recovery_state(qtbot):
     qtbot.waitUntil(lambda: panel._activity == "Disconnected", timeout=2000)
     panel.request_shutdown()
     qtbot.waitUntil(lambda: panel.shutdown_finished, timeout=2000)
+
+
+def test_pm5020_layout_matches_control_column_and_plot_conventions(qtbot):
+    from PySide6.QtWidgets import QGroupBox, QHBoxLayout
+
+    panel = PM5020Panel()
+    qtbot.addWidget(panel)
+    assert isinstance(panel.layout(), QHBoxLayout)
+    assert panel.controls_scroll.objectName() == "pm5020ControlsScroll"
+    assert panel.plot_container.objectName() == "pm5020PlotsContainer"
+    settings = panel.controls_scroll.widget()
+    assert settings is not None
+    assert settings.findChild(QGroupBox, "pm5020InstrumentStatusGroup") is not None
+    assert settings.findChild(QGroupBox, "pm5020OperationGroup") is not None
+    assert panel.ch1.parentWidget() is settings
+    assert panel.ch2.parentWidget() is settings
+    assert panel.ch1.plot.parentWidget() is panel.plot_container
+    assert panel.ch2.plot.parentWidget() is panel.plot_container
+    assert panel.ch1.reading_label.font().pointSize() == 20
+    assert panel.ch2.reading_label.font().pointSize() == 20
+    assert panel.start_button.objectName() == "pm5020StartButton"
+    assert panel.stop_button.objectName() == "pm5020StopButton"
+    assert panel.start_button.minimumHeight() >= 35
+    assert panel.stop_button.minimumHeight() >= 35
+    assert not hasattr(panel, "connect_button")
+    assert not hasattr(panel, "disconnect_button")
+    assert not panel.task.worker_thread.isRunning()
+    panel.close()
