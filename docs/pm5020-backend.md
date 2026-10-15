@@ -106,19 +106,23 @@ fake wrapper and do not establish compatibility with a physical meter.
 
 The **Instruments** menu owns PM5020 connection. It shows **Connect PM5020** or
 **Disconnect PM5020** from worker-confirmed state and disables the action while
-an operation is pending. The measurement tab retains channel configuration,
-readings, plots, monitoring, and status. It follows the other IOPanel tabs with
-a scrollable left column for instrument status, independent channel controls, and
-operation buttons, plus an expanding right column containing two vertically
-stacked live plots. The plots stay visible as settings scroll. The numerical
-readouts, group headings, plot titles, spacing, and action-button colors use the
-existing application conventions. Its status area displays the configured
-backend and clearly labels simulated readings. Simulation and physical mode are
+an operation is pending. The measurement tab follows the other IOPanel tabs with a scrollable
+left column for independent channel controls and operation buttons, plus an
+expanding right column containing two vertically stacked live plots. The plots
+remain visible as settings scroll. Instrument state lives in the permanent
+bottom-right PM5020 status-bar indicator (with resource and backend details in
+its tooltip); connection errors stay visible in the controls and log. Simulation
+remains explicitly labeled so simulated readings are never mistaken for
+physical readings. Connect/Disconnect stays in the Instruments menu. Simulation and physical mode are
 selected by `pm5020_backend = simulation` or `physical` in `[Instruments]`;
 resource and SDK paths are configured there as well. No physical meter is
 connected until the operator chooses **Connect PM5020** from the menu.
 
 Configure CH1 and CH2 independently, then press **Apply Channel Settings**.
+Each channel has a compact Enabled checkbox (disabled channels are not read),
+a validated wavelength text field matching the CT400 input style, automatic
+or manual range on one row, and a manual-range W/mW/µW/nW selector. Changing
+the manual-range display unit preserves the requested physical range in watts.
 Wavelengths are editable; 1550 nm and 775 nm are example defaults only. The GUI
 checks that wavelength and manual range are positive and finite, but sensor
 heads have different supported wavelength and power ranges. Vendor-side
@@ -129,20 +133,23 @@ enabled-channel selection invalidates that confirmation; display-unit changes
 do not. Input filtering and automatic or manual ranging use the shared backend
 configuration. A channel excluded from monitoring is not read.
 
-Start monitoring with a 250–5000 ms requested interval. Reads run sequentially
-on one persistent worker thread; CH1 and CH2 timestamps may differ. Actual
-sampling also depends on instrument latency. Each channel has its own plot
-scale. Plots use monotonic elapsed seconds and raw readings remain in watts;
-choosing W, mW, µW, nW, or dBm changes presentation only. Zero and negative
-measurements have no dBm display. History is limited to the selected time
-window and a 2,400 point ring buffer per channel.
+Start monitoring with an **Update every** value in milliseconds or seconds,
+representing the same 250–5000 ms requested interval. Changing the time unit
+preserves the requested duration. Reads run sequentially on one persistent
+worker thread; CH1 and CH2 timestamps may differ. Actual sampling also
+depends on instrument latency. Each channel has an independent Y-axis and
+display-unit selector beside its numeric readout; the selected units apply
+immediately to the Y-axis and stored trace without altering the underlying
+watts data or channel settings. X-axis elapsed-time windows stay aligned.
+Zero and negative measurements have no dBm display. History is limited to
+the selected time window and a 2,400 point ring buffer per channel.
 
 **Pause** stops new requests but keeps the session and history. **Resume**
 continues that session. **Stop** ends monitoring, preserves its history, and
 leaves the meter connected. A successful new Start begins a fresh elapsed-time
-session and clears the previous plot and latest-reading labels. **Clear Plot**
-clears both traces and latest-reading labels without stopping monitoring or
-disconnecting the meter.
+session and clears the previous plot and latest-reading labels. Each plot's
+eraser toolbutton clears only that channel's trace and latest-reading display,
+without stopping monitoring, clearing the other channel, or disconnecting.
 **Disconnect PM5020** in the Instruments menu stops monitoring and closes the backend. After a communication
 or configuration failure that leaves the backend in `ERROR`, monitoring stops
 and the UI requests deliberate disconnect/reconnect recovery; it does not
