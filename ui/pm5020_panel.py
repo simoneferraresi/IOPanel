@@ -118,9 +118,7 @@ class PM5020ChannelControls(QGroupBox):
         self.input_filter.setCheckable(True)
         self.input_filter.setAutoRaise(True)
         self.input_filter.setIcon(QIcon(":/icons/filter-lowpass.svg"))
-        self.input_filter.setToolTip(
-            f"Toggle the PM5020 input filter / smoothing for CH{channel.value}"
-        )
+        self.input_filter.setToolTip(f"Toggle the PM5020 input filter / smoothing for CH{channel.value}")
         self.input_filter.setAccessibleName(f"Toggle PM5020 input filter for channel {channel.value}")
         self.input_filter.setIconSize(QSize(18, 18))
         self.input_filter.setFixedSize(28, 28)
@@ -154,9 +152,7 @@ class PM5020ChannelControls(QGroupBox):
         self.clear_button.setAutoRaise(True)
         self.clear_button.setFixedSize(28, 28)
         actions_layout.addWidget(self.clear_button)
-        plot_layout.addWidget(
-            self.plot_actions, 0, 0, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight
-        )
+        plot_layout.addWidget(self.plot_actions, 0, 0, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight)
         self.clear_button.raise_()
         self.unit.currentTextChanged.connect(self.refresh_reading)
         self._latest_power_w: float | None = None
@@ -696,12 +692,12 @@ class PM5020Panel(QWidget):
             and self._pending_configuration is None
         )
         interval_valid = self.interval.hasAcceptableInput()
-        can_start = ready and self._configuration_applied and interval_valid and not recovering and not self._monitor_session
+        can_start = (
+            ready and self._configuration_applied and interval_valid and not recovering and not self._monitor_session
+        )
         self.start_button.setEnabled(can_start)
         self.pause_resume_button.setText("Resume" if self._paused else "Pause")
-        self.pause_resume_button.setIcon(
-            QIcon(":/icons/play.svg") if self._paused else QIcon(":/icons/pause.svg")
-        )
+        self.pause_resume_button.setIcon(QIcon(":/icons/play.svg") if self._paused else QIcon(":/icons/pause.svg"))
         self.pause_resume_button.setEnabled(
             self._monitor_session and not recovering and (not self._paused or interval_valid)
         )
