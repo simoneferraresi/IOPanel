@@ -99,7 +99,7 @@ def driver_for(fake: FakeTLPMX | None = None) -> tuple[TLPMXPM5020, FakeTLPMX]:
 
 
 def test_backend_import_is_vendor_driver_free_and_missing_sdk_is_reported(monkeypatch):
-    import hardware.pm5020 as pm5020
+    from hardware import pm5020
 
     calls = []
 
@@ -117,7 +117,7 @@ def test_backend_import_is_vendor_driver_free_and_missing_sdk_is_reported(monkey
 
 
 def test_legacy_importable_sdk_fallback_when_both_paths_absent(monkeypatch):
-    import hardware.pm5020 as pm5020
+    from hardware import pm5020
 
     fake = FakeTLPMX()
     requested = []
@@ -138,7 +138,7 @@ def test_legacy_importable_sdk_fallback_when_both_paths_absent(monkeypatch):
 
 @pytest.mark.parametrize("missing_path", ["wrapper", "dll"])
 def test_partial_sdk_paths_are_rejected_without_import(missing_path, monkeypatch):
-    import hardware.pm5020 as pm5020
+    from hardware import pm5020
 
     monkeypatch.setattr(
         pm5020.importlib, "import_module",
@@ -151,7 +151,7 @@ def test_partial_sdk_paths_are_rejected_without_import(missing_path, monkeypatch
 
 
 def test_dll_search_handles_outlive_native_driver_close(monkeypatch):
-    import hardware.pm5020 as pm5020
+    from hardware import pm5020
 
     events = []
     fake = FakeTLPMX()
@@ -185,7 +185,7 @@ def test_dll_search_handles_outlive_native_driver_close(monkeypatch):
 
 @pytest.mark.parametrize("fail_during", ["open", "close"])
 def test_dll_search_handles_release_after_failed_native_cleanup(monkeypatch, fail_during):
-    import hardware.pm5020 as pm5020
+    from hardware import pm5020
 
     events = []
     fake = FakeTLPMX(fail_open=fail_during == "open")
