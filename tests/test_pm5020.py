@@ -141,7 +141,8 @@ def test_partial_sdk_paths_are_rejected_without_import(missing_path, monkeypatch
     from hardware import pm5020
 
     monkeypatch.setattr(
-        pm5020.importlib, "import_module",
+        pm5020.importlib,
+        "import_module",
         lambda name: pytest.fail("Partially configured SDK must not fall back to global import"),
     )
     kwargs = {"dll_path": "vendor.dll"} if missing_path == "wrapper" else {"wrapper_path": "vendor.py"}
@@ -171,7 +172,8 @@ def test_dll_search_handles_outlive_native_driver_close(monkeypatch):
             events.append(self.name)
 
     monkeypatch.setattr(
-        pm5020, "_load_thorlabs_factory",
+        pm5020,
+        "_load_thorlabs_factory",
         lambda wrapper, dll: (lambda: fake, (Handle("stage"), Handle("vendor"))),
     )
     meter = TLPMXPM5020(wrapper_path="vendor.py", dll_path="native.dll")
@@ -204,7 +206,8 @@ def test_dll_search_handles_release_after_failed_native_cleanup(monkeypatch, fai
             events.append("handle.close")
 
     monkeypatch.setattr(
-        pm5020, "_load_thorlabs_factory",
+        pm5020,
+        "_load_thorlabs_factory",
         lambda wrapper, dll: (lambda: fake, (Handle(),)),
     )
     meter = TLPMXPM5020(wrapper_path="vendor.py", dll_path="native.dll")
