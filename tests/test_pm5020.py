@@ -98,11 +98,125 @@ def driver_for(fake: FakeTLPMX | None = None) -> tuple[TLPMXPM5020, FakeTLPMX]:
     return TLPMXPM5020(driver_factory=lambda: instance), instance
 
 
-def test_backend_import_is_vendor_driver_free_and_missing_sdk_is_reported():
+def test_backend_import_is_vendor_driver_free_and_missing_sdk_is_reported(monkeypatch):
+    import hardware.pm5020 as pm5020
+
+    calls = []
+
+    def missing_wrapper(name):
+        calls.append(name)
+        raise ImportError("TLPMX is unavailable")
+
+    monkeypatch.setattr(pm5020.importlib, "import_module", missing_wrapper)
     meter = TLPMXPM5020()
     assert not meter.is_connected()
-    with pytest.raises(PM5020DependencyError, match="pm5020_wrapper_path and pm5020_dll_path"):
+    assert calls == []
+    with pytest.raises(PM5020DependencyError, match="not importable"):
         meter.connect("USB0::0x1313::0x80BB::SERIAL::INSTR")
+    assert calls == ["TLPMX"]
+
+
+def test_legacy_importable_sdk_fallback_when_both_paths_absent(monkeypatch):
+    import hardware.pm5020 as pm5020
+
+    fake = FakeTLPMX()
+    requested = []
+
+    def vendor_import(name):
+        requested.append(name)
+        return type("ImportableSDK", (), {"TLPMX": lambda: fake})()
+
+    monkeypatch.setattr(pm5020.importlib, "import_module", vendor_import)
+    meter = TLPMXPM5020()
+    assert requested == []
+    meter.connect("USB0::TEST::INSTR")
+    assert requested == ["TLPMX"]
+    assert fake.calls[0][0] == "open"
+    meter.close()
+    assert fake.close_calls == 1
+
+
+@pytest.mark.parametrize("missing_path", ["wrapper", "dll"])
+def test_partial_sdk_paths_are_rejected_without_import(missing_path, monkeypatch):
+    import hardware.pm5020 as pm5020
+
+    monkeypatch.setattr(
+        pm5020.importlib, "import_module",
+        lambda name: pytest.fail("Partially configured SDK must not fall back to global import"),
+    )
+    kwargs = {"dll_path": "vendor.dll"} if missing_path == "wrapper" else {"wrapper_path": "vendor.py"}
+    meter = TLPMXPM5020(**kwargs)
+    with pytest.raises(PM5020DependencyError, match="requires both"):
+        meter.connect("USB0::TEST::INSTR")
+
+
+def test_dll_search_handles_outlive_native_driver_close(monkeypatch):
+    import hardware.pm5020 as pm5020
+
+    events = []
+    fake = FakeTLPMX()
+    actual_close = fake.close
+
+    def driver_close():
+        events.append("driver.close")
+        actual_close()
+
+    fake.close = driver_close
+
+    class Handle:
+        def __init__(self, name):
+            self.name = name
+
+        def close(self):
+            events.append(self.name)
+
+    monkeypatch.setattr(
+        pm5020, "_load_thorlabs_factory",
+        lambda wrapper, dll: (lambda: fake, (Handle("stage"), Handle("vendor"))),
+    )
+    meter = TLPMXPM5020(wrapper_path="vendor.py", dll_path="native.dll")
+    meter.connect("USB0::TEST::INSTR")
+    assert events == []
+    meter.close()
+    assert events == ["driver.close", "vendor", "stage"]
+    meter.close()
+    assert events == ["driver.close", "vendor", "stage"]
+
+
+@pytest.mark.parametrize("fail_during", ["open", "close"])
+def test_dll_search_handles_release_after_failed_native_cleanup(monkeypatch, fail_during):
+    import hardware.pm5020 as pm5020
+
+    events = []
+    fake = FakeTLPMX(fail_open=fail_during == "open")
+    actual_close = fake.close
+
+    def driver_close():
+        events.append("driver.close")
+        actual_close()
+        if fail_during == "close":
+            raise RuntimeError("native close failed")
+
+    fake.close = driver_close
+
+    class Handle:
+        def close(self):
+            events.append("handle.close")
+
+    monkeypatch.setattr(
+        pm5020, "_load_thorlabs_factory",
+        lambda wrapper, dll: (lambda: fake, (Handle(),)),
+    )
+    meter = TLPMXPM5020(wrapper_path="vendor.py", dll_path="native.dll")
+    if fail_during == "open":
+        with pytest.raises(PM5020CommunicationError, match="Could not open"):
+            meter.connect("USB0::TEST::INSTR")
+    else:
+        meter.connect("USB0::TEST::INSTR")
+        with pytest.raises(PM5020CommunicationError, match="Failed to close"):
+            meter.close()
+    assert events == ["driver.close", "handle.close"]
+    assert not meter.is_connected()
 
 
 def test_configured_sdk_files_are_staged_together_and_cache_invalidates(tmp_path, monkeypatch):
