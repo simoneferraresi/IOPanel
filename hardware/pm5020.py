@@ -76,9 +76,24 @@ def _replace_staged_file(source: Path, target: Path, expected_hash: str) -> None
 
 def _load_thorlabs_factory(wrapper_path: Path | None, dll_path: Path | None) -> tuple[Callable[[], Any], Any | None]:
     """Load configured vendor files from a hash-validated, application-owned stage."""
+    if wrapper_path is None and dll_path is None:
+        # Preserve the legacy vendor-installed/importable wrapper use case.
+        # The import remains lazy and is never attempted by the simulator.
+        try:
+            module = importlib.import_module("TLPMX")
+        except ImportError as exc:
+            raise PM5020DependencyError(
+                "Thorlabs TLPMX.py is not importable. Configure both pm5020_wrapper_path "
+                "and pm5020_dll_path in config.ini, or install an importable Thorlabs SDK."
+            ) from exc
+        factory = getattr(module, "TLPMX", None)
+        if not callable(factory):
+            raise PM5020DependencyError("Importable Thorlabs TLPMX module does not define a callable TLPMX.")
+        return factory, None
     if wrapper_path is None or dll_path is None:
         raise PM5020DependencyError(
-            "Physical PM5020 support needs both pm5020_wrapper_path and pm5020_dll_path in config.ini."
+            "Physical PM5020 support requires both pm5020_wrapper_path and "
+            "pm5020_dll_path when specifying SDK paths in config.ini."
         )
     if not wrapper_path.is_file():
         raise PM5020DependencyError(f"Thorlabs wrapper was not found: {wrapper_path}")
@@ -117,9 +132,15 @@ def _load_thorlabs_factory(wrapper_path: Path | None, dll_path: Path | None) -> 
         raise PM5020DependencyError(f"Thorlabs wrapper does not define a callable TLPMX class: {wrapper_path}")
     if not hasattr(os, "add_dll_directory"):
         return factory, None
-    handles = [os.add_dll_directory(str(cache_dir))]
-    if dll_path.parent != cache_dir:
-        handles.append(os.add_dll_directory(str(dll_path.parent)))
+    handles = []
+    try:
+        handles.append(os.add_dll_directory(str(cache_dir)))
+        if dll_path.parent != cache_dir:
+            handles.append(os.add_dll_directory(str(dll_path.parent)))
+    except OSError:
+        for handle in reversed(handles):
+            handle.close()
+        raise
     return factory, tuple(handles)
 
 
@@ -149,6 +170,17 @@ class TLPMXPM5020(AbstractPM5020):
         self._io_lock = threading.Lock()
         self._burst_config: BurstAcquisitionConfig | None = None
         self.resource_name: str | None = None
+
+    def _release_dll_directory_handles(self) -> None:
+        """Release DLL search paths after native session cleanup, including failures."""
+        handles, self._dll_directory_handle = self._dll_directory_handle, None
+        if handles is None:
+            return
+        for handle in reversed(handles if isinstance(handles, tuple) else (handles,)):
+            try:
+                handle.close()
+            except Exception:
+                logger.exception("Failed to release a PM5020 DLL search-directory handle")
 
     @override
     def is_connected(self) -> bool:
@@ -199,13 +231,15 @@ class TLPMXPM5020(AbstractPM5020):
                 driver = factory()
                 driver.open(create_string_buffer(encoded_resource), c_bool(True), c_bool(False))
             except Exception as exc:
-                if driver is not None:
-                    try:
-                        driver.close()
-                    except Exception:
-                        logger.exception("Failed to close a PM5020 session after connection failure")
+                try:
+                    if driver is not None:
+                        try:
+                            driver.close()
+                        except Exception:
+                            logger.exception("Failed to close a PM5020 session after connection failure")
+                finally:
+                    self._release_dll_directory_handles()
                 if driver is None and isinstance(exc, OSError):
-                    self._dll_directory_handle = None
                     raise PM5020DependencyError(
                         "Could not load the staged Thorlabs native TLPMX DLL or one of its dependencies. "
                         "Check the configured SDK paths, install the Thorlabs VISA runtime, and ensure "
@@ -365,14 +399,14 @@ class TLPMXPM5020(AbstractPM5020):
             self._set_state(PM5020State.DISCONNECTED)
             self._burst_config = None
             self.resource_name = None
-            self._dll_directory_handle = None
-            if driver is None:
-                return
             try:
-                driver.close()
+                if driver is not None:
+                    driver.close()
             except Exception as exc:
                 logger.exception("Failed to close PM5020 session")
                 raise PM5020CommunicationError(f"Failed to close PM5020 session: {exc}") from exc
+            finally:
+                self._release_dll_directory_handles()
 
     def _require_idle(self) -> Any:
         if self._driver is None:
