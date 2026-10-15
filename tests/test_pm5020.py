@@ -98,22 +98,55 @@ def driver_for(fake: FakeTLPMX | None = None) -> tuple[TLPMXPM5020, FakeTLPMX]:
     return TLPMXPM5020(driver_factory=lambda: instance), instance
 
 
-def test_backend_import_is_vendor_driver_free_and_missing_sdk_is_reported(monkeypatch):
-    import importlib
-
-    calls = []
-
-    def fail_import(name):
-        calls.append(name)
-        raise ImportError("not installed")
-
-    monkeypatch.setattr(importlib, "import_module", fail_import)
+def test_backend_import_is_vendor_driver_free_and_missing_sdk_is_reported():
     meter = TLPMXPM5020()
     assert not meter.is_connected()
-    assert calls == []
-    with pytest.raises(PM5020DependencyError, match="Thorlabs Optical Power Meter SDK"):
+    with pytest.raises(PM5020DependencyError, match="pm5020_wrapper_path and pm5020_dll_path"):
         meter.connect("USB0::0x1313::0x80BB::SERIAL::INSTR")
-    assert calls == ["TLPMX"]
+
+
+def test_configured_sdk_files_are_staged_together_and_cache_invalidates(tmp_path, monkeypatch):
+    import sys
+
+    from hardware.pm5020 import _load_thorlabs_factory
+
+    wrapper = tmp_path / "vendor" / "TLPMX.py"
+    dll = tmp_path / "bin" / "TLPMX_64.dll"
+    wrapper.parent.mkdir()
+    dll.parent.mkdir()
+    wrapper.write_text("class TLPMX:\n    pass\n", encoding="utf-8")
+    dll.write_bytes(b"native-sdk-v1")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "cache"))
+
+    factory, _handle = _load_thorlabs_factory(wrapper, dll)
+    module = sys.modules[factory.__module__]
+    staged_dir = __import__("pathlib").Path(module.__file__).parent
+    assert (staged_dir / "TLPMX.py").read_bytes() == wrapper.read_bytes()
+    assert (staged_dir / "TLPMX_64.dll").read_bytes() == dll.read_bytes()
+
+    dll.write_bytes(b"native-sdk-v2")
+    replacement_factory, _handle = _load_thorlabs_factory(wrapper, dll)
+    replacement_module = sys.modules[replacement_factory.__module__]
+    assert replacement_module.__file__ != module.__file__
+    assert (
+        __import__("pathlib").Path(replacement_module.__file__).parent / "TLPMX_64.dll"
+    ).read_bytes() == dll.read_bytes()
+
+
+@pytest.mark.parametrize("missing", ["wrapper", "dll"])
+def test_configured_sdk_loader_reports_missing_source_file(tmp_path, missing):
+    from hardware.pm5020 import _load_thorlabs_factory
+
+    wrapper = tmp_path / "TLPMX.py"
+    dll = tmp_path / "TLPMX_64.dll"
+    wrapper.write_text("class TLPMX:\n    pass\n", encoding="utf-8")
+    dll.write_bytes(b"test")
+    if missing == "wrapper":
+        wrapper.unlink()
+    else:
+        dll.unlink()
+    with pytest.raises(PM5020DependencyError, match="was not found"):
+        _load_thorlabs_factory(wrapper, dll)
 
 
 @pytest.mark.parametrize("resource", [None, "", "   ", "USB\0INSTR", "USB::µ"])

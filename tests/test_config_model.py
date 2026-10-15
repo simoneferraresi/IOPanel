@@ -34,9 +34,24 @@ def test_defaults_are_preserved_and_invalid_input_port_is_rejected():
     assert config.app_name == "IOPanel"
     assert config.scan_defaults.input_port == 1
     assert config.histogram_defaults.input_port == 1
+    assert config.instruments.pm5020_backend == "simulation"
+    assert config.instruments.pm5020_resource_name == ""
+    assert config.instruments.pm5020_wrapper_path == ""
+    assert config.instruments.pm5020_dll_path == ""
 
     with pytest.raises(ValidationError):
         AppConfig.from_ini_dict({"HistogramDefaults": {"input_port": "5"}})
+
+
+@pytest.mark.parametrize("backend", ["physical", "simulation"])
+def test_pm5020_backend_mode_is_validated_and_older_ini_defaults_to_simulation(backend):
+    legacy = AppConfig.from_ini_dict({"Instruments": {"ct400_backend": "simulation"}})
+    configured = AppConfig.from_ini_dict({"Instruments": {"pm5020_backend": backend}})
+    assert legacy.instruments.pm5020_backend == "simulation"
+    assert configured.instruments.pm5020_backend == backend
+
+    with pytest.raises(ValidationError):
+        AppConfig.from_ini_dict({"Instruments": {"pm5020_backend": "auto"}})
 
 
 def test_empty_parsed_config_is_rejected_but_explicit_defaults_remain_available():

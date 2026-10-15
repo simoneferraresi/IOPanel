@@ -165,10 +165,30 @@ def test_panel_does_not_start_or_connect_hardware_until_user_action(qtbot):
     qtbot.addWidget(panel)
     assert not panel.task.worker_thread.isRunning()
     assert panel._backend_state is PM5020State.DISCONNECTED
-    assert panel.mode.currentText() == "Simulator"
+    assert panel.mode_label.text() == "Simulation — readings are simulated"
+    assert not hasattr(panel, "connect_button")
+    assert not hasattr(panel, "disconnect_button")
     assert panel.start_button.isEnabled() is False
     assert math.isclose(panel.ch1.wavelength.value(), 1550)
     assert math.isclose(panel.ch2.wavelength.value(), 775)
+
+
+def test_invalid_physical_configuration_restores_menu_operation_state(qtbot):
+    from logic.pm5020_monitor import PM5020MonitorWorker
+
+    panel = PM5020Panel(
+        worker=PM5020MonitorWorker(),
+        backend_mode="physical",
+        resource_name="",
+    )
+    qtbot.addWidget(panel)
+    panel.request_connect()
+    qtbot.waitUntil(lambda: panel._activity == "Disconnected", timeout=2000)
+    assert panel._backend_state is PM5020State.DISCONNECTED
+    assert not panel._connection_request_pending
+    assert "resource identifier" in panel.error_label.text()
+    panel.request_shutdown()
+    qtbot.waitUntil(lambda: panel.shutdown_finished, timeout=2000)
 
 
 def test_configuration_is_pending_until_ack_and_invalidated_by_edits_and_disconnect(qtbot):
