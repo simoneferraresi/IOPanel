@@ -372,7 +372,7 @@ def test_display_units_match_initial_axes_and_rescale_existing_data(qtbot):
 
     panel.ch1.unit.setCurrentText("µW")
     assert panel.ch1.plot.getAxis("left").labelUnits == "µW"
-    assert panel.ch1.reading_label.text() == "2000"
+    assert panel.ch1.reading_label.text() == "2e+03"
     assert panel.ch1.curve.getData()[1][-1] == pytest.approx(2000)
     assert panel.ch2.plot.getAxis("left").labelUnits == "nW"
     assert panel.ch2.curve.getData()[1][-1] == pytest.approx(8)
