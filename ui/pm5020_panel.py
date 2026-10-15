@@ -103,7 +103,7 @@ class PM5020ChannelControls(QGroupBox):
         self.manual_range.setToolTip("Requested manual range. Physical SDK validates supported sensor ranges.")
         form.addWidget(self.manual_range, 1, 2)
         self.range_unit = QComboBox()
-        self.range_unit.addItems(POWER_RANGE_SCALES)
+        self.range_unit.addItems(list(POWER_RANGE_SCALES))
         self.range_unit.setCurrentText("mW")
         self._previous_range_unit = "mW"
         form.addWidget(self.range_unit, 1, 3)
