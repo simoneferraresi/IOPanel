@@ -258,12 +258,8 @@ def test_pm5020_status_formatter_maps_errors_and_physical_states():
     assert physical.text == "PM5020: Ready"
     assert "USB0::SERIAL::INSTR" in physical.tooltip
     assert physical.state == "ready"
-    error = format_pm5020_status(
-        PM5020State.ERROR, activity="Recovery required", simulated=False, resource=""
-    )
+    error = format_pm5020_status(PM5020State.ERROR, activity="Recovery required", simulated=False, resource="")
     assert error.state == "error"
     assert error.text == "PM5020: Error"
-    simulated = format_pm5020_status(
-        PM5020State.IDLE, activity="Monitoring", simulated=True, resource=""
-    )
+    simulated = format_pm5020_status(PM5020State.IDLE, activity="Monitoring", simulated=True, resource="")
     assert simulated.text == "PM5020: SIMULATED"
