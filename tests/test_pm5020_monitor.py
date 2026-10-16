@@ -347,17 +347,16 @@ def test_pm5020_layout_matches_control_column_and_plot_conventions(qtbot):
     panel.resize(1280, 720)
     panel.show()
     qtbot.wait(50)
-    assert panel.controls_scroll.objectName() == "pm5020ControlsScroll"
-    assert panel.controls_scroll.minimumWidth() == 320
-    assert panel.controls_scroll.maximumWidth() == 400
+    assert panel.controls_panel.objectName() == "pm5020ControlsContent"
+    assert panel.controls_panel.minimumWidth() == 320
+    assert panel.controls_panel.maximumWidth() == 400
     assert panel.plot_container.objectName() == "pm5020PlotsContainer"
-    settings = panel.controls_scroll.widget()
-    assert settings is not None
+    settings = panel.controls_panel
     assert settings.findChild(QGroupBox, "pm5020InstrumentStatusGroup") is None
     assert settings.findChild(QGroupBox, "pm5020OperationGroup") is not None
     assert settings.objectName() == "pm5020ControlsContent"
     assert settings.styleSheet() == ""
-    assert settings.palette().color(settings.backgroundRole()).name() == "#ffffff"
+    assert not settings.autoFillBackground()
     assert panel.error_label.parentWidget() is settings
     assert panel.ch1.parentWidget() is settings
     assert panel.ch2.parentWidget() is settings
@@ -404,10 +403,11 @@ def test_pm5020_layout_matches_control_column_and_plot_conventions(qtbot):
     panel.close()
 
 
-def test_pm5020_uses_native_group_surfaces_and_combo_popup_style(qtbot):
-    """Match CT400 Fusion controls without stylesheet propagation into popups."""
+def test_pm5020_groups_match_native_ct400_controls_and_combo_popup_style(qtbot):
+    """No scroll container or palette overrides: follow the CT400 Fusion widgets."""
     from PySide6.QtGui import QPalette
-    from PySide6.QtWidgets import QApplication, QComboBox, QGroupBox, QLabel
+    from PySide6.QtWidgets import QComboBox, QGroupBox, QLabel, QScrollArea
+    from ui.typography import style_group_box_title
 
     panel = PM5020Panel()
     qtbot.addWidget(panel)
@@ -415,29 +415,27 @@ def test_pm5020_uses_native_group_surfaces_and_combo_popup_style(qtbot):
     panel.show()
     qtbot.wait(20)
 
-    assert panel.controls_scroll.styleSheet() == ""
-    assert panel.controls_scroll.viewport().styleSheet() == ""
-    content = panel.controls_scroll.widget()
-    assert content is not None
+    content = panel.controls_panel
     assert content.styleSheet() == ""
-
-    native_palette = QApplication.palette()
+    assert not content.autoFillBackground()
+    assert not panel.findChildren(QScrollArea)
+    native_group = QGroupBox("Reference")
+    style_group_box_title(native_group)
+    qtbot.addWidget(native_group)
     for group in (
         panel.ch1,
         panel.ch2,
         content.findChild(QGroupBox, "pm5020OperationGroup"),
     ):
         assert group is not None
-        assert group.autoFillBackground()
-        assert group.palette().color(QPalette.ColorRole.Window) == native_palette.color(QPalette.ColorRole.Window)
+        assert group.styleSheet() == native_group.styleSheet()
+        assert group.autoFillBackground() == native_group.autoFillBackground()
+        assert group.palette().color(QPalette.ColorRole.Window) == native_group.palette().color(
+            QPalette.ColorRole.Window
+        )
         for label in group.findChildren(QLabel):
-            if label is panel.ch1.reading_label or label is panel.ch2.reading_label:
-                assert not label.autoFillBackground()
-                assert label.styleSheet() == ""
-                assert label.palette().color(QPalette.ColorRole.Window) == group.palette().color(
-                    QPalette.ColorRole.Window
-                )
-
+            assert not label.autoFillBackground()
+            assert label.styleSheet() == ""
     native_combo = QComboBox()
     qtbot.addWidget(native_combo)
     for selector in (
@@ -572,7 +570,10 @@ def test_control_column_fits_without_vertical_scrolling_at_typical_height(qtbot)
     panel.resize(1280, 720)
     panel.show()
     qtbot.wait(50)
-    assert panel.controls_scroll.verticalScrollBar().maximum() == 0
+    from PySide6.QtWidgets import QScrollArea
+
+    assert not panel.findChildren(QScrollArea)
+    assert panel.controls_panel.sizeHint().height() <= panel.controls_panel.height()
     panel.close()
 
 
