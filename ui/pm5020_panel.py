@@ -39,6 +39,7 @@ HISTORY_SECONDS = (10, 30, 60, 300, 600)
 MAX_HISTORY_POINTS = 2400
 POWER_RANGE_SCALES = {"W": 1.0, "mW": 1e-3, "µW": 1e-6, "nW": 1e-9}
 
+
 def _use_native_group_surface(group: QGroupBox) -> None:
     """Use the same native Fusion group surface as the CT400 controls.
 
