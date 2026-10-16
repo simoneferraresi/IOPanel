@@ -441,31 +441,32 @@ class MainWindow(QMainWindow):
             self._refresh_global_status()
 
     def _update_pm5020_action(self) -> None:
+        """Use the same state-dependent menu text, icon and checkmark as CT400."""
         action = getattr(self, "pm5020_connect_action", None)
         if action is None:
             return
         panel = getattr(self, "pm5020_panel", None)
         if panel is None:
-            action.setText("PM5020 Unavailable")
-            action.setEnabled(False)
-            return
-        state = panel._backend_state
-        activity = panel._activity
-        if panel._shutdown_requested or activity == "Shutting down":
-            action.setText("PM5020 Shutting Down…")
-            action.setEnabled(False)
-        elif activity in {"Connecting", "Disconnecting"} or panel._connection_request_pending:
-            action.setText("Disconnecting PM5020…" if activity == "Disconnecting" else "Connecting PM5020…")
-            action.setEnabled(False)
-        elif state is PM5020State.DISCONNECTED:
-            action.setText("Connect PM5020")
-            action.setEnabled(True)
-        elif state is PM5020State.ERROR:
-            action.setText("Disconnect PM5020 (Recovery)")
-            action.setEnabled(True)
+            text, icon, enabled, checked = "PM5020 Unavailable", ":/icons/connect.svg", False, False
         else:
-            action.setText("Disconnect PM5020")
-            action.setEnabled(True)
+            state = panel._backend_state
+            activity = panel._activity
+            checked = state is not PM5020State.DISCONNECTED
+            if panel._shutdown_requested or activity == "Shutting down":
+                text, icon, enabled = "PM5020 Shutting Down…", ":/icons/spinner.svg", False
+            elif activity in {"Connecting", "Disconnecting"} or panel._connection_request_pending:
+                text = "Disconnecting PM5020…" if activity == "Disconnecting" else "Connecting PM5020…"
+                icon, enabled = ":/icons/spinner.svg", False
+            elif state is PM5020State.DISCONNECTED:
+                text, icon, enabled = "Connect PM5020", ":/icons/connect.svg", True
+            elif state is PM5020State.ERROR:
+                text, icon, enabled = "Disconnect PM5020 (Recovery)", ":/icons/disconnect.svg", True
+            else:
+                text, icon, enabled = "Disconnect PM5020", ":/icons/disconnect.svg", True
+        action.setText(text)
+        action.setIcon(QIcon(icon))
+        action.setChecked(checked)
+        action.setEnabled(enabled)
 
     def _alignment_hardware_transition_blocked(self) -> bool:
         panel = getattr(self, "alignment_tab", None)
@@ -1430,6 +1431,7 @@ class MainWindow(QMainWindow):
 
         self.pm5020_connect_action = QAction("Connect PM5020", self)
         self.pm5020_connect_action.setObjectName("pm5020ConnectAction")
+        self.pm5020_connect_action.setCheckable(True)
         self.pm5020_connect_action.setStatusTip("Connect or disconnect the configured PM5020 backend")
         self.pm5020_connect_action.triggered.connect(self._handle_pm5020_connect_action_triggered)
         self.instrument_menu.addAction(self.pm5020_connect_action)
