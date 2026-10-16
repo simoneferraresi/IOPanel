@@ -130,9 +130,14 @@ settings while disconnected is local and does not access the meter. Invalid
 inputs are reported without sending them to the worker, and a rejected
 configuration remains unapplied until the operator corrects a setting. A
 terminal backend error requires deliberate disconnection and reconnection.
-Each channel has a compact Enabled checkbox (disabled channels are not read),
-a validated wavelength text field matching the CT400 input style, automatic
-or manual range on one row, and a manual-range W/mW/µW/nW selector. Changing
+Each channel combines its enable checkbox and large Geist Sans CH1/CH2 label
+with the Geist Mono measurement and display-unit selector on a single row
+(disabled channels are not read). The validated wavelength field displays
+whole-number defaults with one decimal place (1550.0 and 775.0 nm), while
+preserving explicitly entered finer wavelength precision rather than rounding
+instrument calibration settings. Like the CT400 panels, the instrument menu
+uses connect/disconnect/spinner icons and confirmed connection state.
+Automatic or manual range remains on one row, with a W/mW/µW/nW selector. Changing
 the manual-range display unit preserves the requested physical range in watts.
 Wavelengths are editable; 1550 nm and 775 nm are example defaults only. The GUI
 checks that wavelength and manual range are positive and finite, but sensor
