@@ -5,13 +5,27 @@ import threading
 import time
 
 import pytest
-from PySide6.QtCore import QThread
+from PySide6.QtCore import QSettings, QThread
 from PySide6.QtTest import QSignalSpy
 
+from app_settings import AppSettings
 from hardware.dummy_pm5020 import DummyPM5020
 from hardware.pm5020_types import PM5020State, PowerChannel
 from logic.pm5020_monitor import convert_power, format_power
 from ui.pm5020_panel import PM5020Panel
+
+
+@pytest.fixture
+def registered_pm5020_font_families(qapp):
+    from PySide6.QtGui import QFont
+
+    from ui.typography import install_application_fonts
+
+    original_font = QFont(qapp.font())
+    try:
+        yield install_application_fonts(qapp)
+    finally:
+        qapp.setFont(original_font)
 
 
 @pytest.mark.parametrize(
@@ -338,9 +352,10 @@ def test_configuration_failure_and_stop_preserve_recovery_state(qtbot):
     qtbot.waitUntil(lambda: panel.shutdown_finished, timeout=2000)
 
 
-def test_pm5020_layout_matches_control_column_and_plot_conventions(qtbot):
+def test_pm5020_layout_matches_control_column_and_plot_conventions(qtbot, registered_pm5020_font_families):
     from PySide6.QtWidgets import QGroupBox, QHBoxLayout, QLineEdit, QSizePolicy
 
+    sans_family, mono_family = registered_pm5020_font_families
     panel = PM5020Panel()
     qtbot.addWidget(panel)
     assert isinstance(panel.layout(), QHBoxLayout)
@@ -389,7 +404,10 @@ def test_pm5020_layout_matches_control_column_and_plot_conventions(qtbot):
     assert panel.ch2.reading_group.objectName() == "pm5020Ch2ReadingGroup"
     for channel in (panel.ch1, panel.ch2):
         assert channel.enabled.font().pointSize() == channel.reading_label.font().pointSize() == 20
-        assert channel.enabled.font().family() != channel.reading_label.font().family()
+        if sans_family is not None and mono_family is not None:
+            assert channel.enabled.font().family() == sans_family
+            assert channel.reading_label.font().family() == mono_family
+            assert channel.enabled.font().family() != channel.reading_label.font().family()
         assert channel.enabled.geometry().right() < channel.reading_group.geometry().left()
         assert abs(channel.enabled.geometry().center().y() - channel.reading_group.geometry().center().y()) <= 3
     assert panel.start_button.objectName() == "pm5020StartButton"
@@ -623,6 +641,118 @@ def test_connected_configuration_rejects_invalid_and_both_disabled_settings(qtbo
     assert not panel.start_button.isEnabled()
     panel.request_shutdown()
     qtbot.waitUntil(lambda: panel.shutdown_finished, timeout=2000)
+
+
+def test_saved_preferences_restore_without_connecting_or_acknowledging(qtbot, tmp_path):
+    path = tmp_path / "panel-prefs.ini"
+    settings = AppSettings(QSettings(str(path), QSettings.Format.IniFormat))
+    settings.set_pm5020_channel_preferences(
+        1,
+        {
+            "enabled": False,
+            "wavelength_nm": 1549.123456789,
+            "auto_range": False,
+            "power_range_w": 2.5e-6,
+            "range_unit": "µW",
+            "display_unit": "dBm",
+            "input_filter_enabled": True,
+        },
+    )
+    settings.set_pm5020_channel_preferences(2, {"enabled": True, "wavelength_nm": 777.456789012})
+    settings.set_pm5020_preferences(monitor_interval_ms=2500, interval_unit="ms", history_seconds=300)
+    settings.sync()
+
+    panel = PM5020Panel(settings=AppSettings(QSettings(str(path), QSettings.Format.IniFormat)))
+    qtbot.addWidget(panel)
+    assert panel.ch1.wavelength.text() == "1549.123456789"
+    assert panel.ch2.wavelength.text() == "777.456789012"
+    assert panel.ch1._manual_range_w() == pytest.approx(2.5e-6)
+    assert panel.ch1.range_unit.currentText() == "µW"
+    assert panel.ch1.unit.currentText() == "dBm"
+    assert panel.ch1.input_filter.isChecked()
+    assert not panel.ch1.enabled.isChecked()
+    assert panel.ch2.enabled.isChecked()
+    assert panel._requested_interval_ms == 2500
+    assert panel.interval_unit.currentText() == "ms"
+    assert panel.interval.text() == "2500"
+    assert panel.history.currentData() == 300
+    assert not panel._configuration_applied
+    assert panel._pending_configuration is None
+    assert not panel.task.worker_thread.isRunning()
+    assert not panel._thread_started
+    assert not panel.start_button.isEnabled()
+    panel.close()
+
+
+def test_panel_saves_manual_range_canonically_and_restores_interval_unit(qtbot, tmp_path):
+    path = tmp_path / "panel-save.ini"
+    settings = AppSettings(QSettings(str(path), QSettings.Format.IniFormat))
+    panel = PM5020Panel(settings=settings)
+    qtbot.addWidget(panel)
+    panel.ch1.auto_range.setChecked(False)
+    panel.ch1.range_unit.setCurrentText("µW")
+    panel.ch1.manual_range.setText("2.5")
+    panel.ch1.wavelength.setText("1550.123456789")
+    panel.interval_unit.setCurrentText("ms")
+    panel.interval.setText("2500")
+    panel.history.setCurrentIndex(panel.history.findData(600))
+    panel.save_preferences()
+    settings.sync()
+
+    reloaded = AppSettings(QSettings(str(path), QSettings.Format.IniFormat))
+    assert reloaded.pm5020_channel_preferences(1)["power_range_w"] == pytest.approx(2.5e-6)
+    assert reloaded.pm5020_channel_preferences(1)["range_unit"] == "µW"
+    assert reloaded.pm5020_channel_preferences(1)["wavelength_nm"] == pytest.approx(1550.123456789)
+    assert reloaded.pm5020_preferences() == {
+        "monitor_interval_ms": 2500,
+        "interval_unit": "ms",
+        "history_seconds": 600,
+    }
+    panel.close()
+
+
+def test_restored_no_enabled_channels_recovers_one_enabled_without_configuration(qtbot, tmp_path):
+    settings = AppSettings(QSettings(str(tmp_path / "disabled.ini"), QSettings.Format.IniFormat))
+    settings.set_pm5020_channel_preferences(1, {"enabled": False})
+    settings.set_pm5020_channel_preferences(2, {"enabled": False})
+    panel = PM5020Panel(settings=settings)
+    qtbot.addWidget(panel)
+    assert panel.ch1.enabled.isChecked()
+    assert not panel.ch2.enabled.isChecked()
+    assert not panel._configuration_applied
+    assert panel._pending_configuration is None
+    panel.close()
+
+
+@pytest.mark.parametrize("range_w", [1e-15, 1e3])
+def test_restored_manual_range_extremes_remain_valid_in_selected_unit(qtbot, tmp_path, range_w):
+    settings = AppSettings(QSettings(str(tmp_path / f"range-{range_w}.ini"), QSettings.Format.IniFormat))
+    settings.set_pm5020_channel_preferences(
+        1,
+        {"auto_range": False, "power_range_w": range_w, "range_unit": "W"},
+    )
+    panel = PM5020Panel(settings=settings)
+    qtbot.addWidget(panel)
+    assert panel.ch1.manual_range.hasAcceptableInput()
+    assert panel.ch1._manual_range_w() == pytest.approx(range_w)
+    panel.close()
+
+
+def test_invalid_interval_does_not_discard_valid_shared_preferences(qtbot, tmp_path):
+    path = tmp_path / "invalid-interval-save.ini"
+    settings = AppSettings(QSettings(str(path), QSettings.Format.IniFormat))
+    settings.set_pm5020_preferences(monitor_interval_ms=1000, interval_unit="s", history_seconds=10)
+    panel = PM5020Panel(settings=settings)
+    qtbot.addWidget(panel)
+    panel.interval_unit.setCurrentText("ms")
+    panel.interval.setText("")
+    panel.history.setCurrentIndex(panel.history.findData(600))
+    panel.save_preferences()
+    settings.sync()
+
+    saved = AppSettings(QSettings(str(path), QSettings.Format.IniFormat)).pm5020_preferences()
+    assert saved == {"monitor_interval_ms": 1000, "interval_unit": "ms", "history_seconds": 600}
+    panel.close()
 
 
 def test_edit_during_inflight_configuration_applies_newest_revision(qtbot):

@@ -57,11 +57,13 @@ def test_mainwindow_restores_and_saves_preferences_without_hardware_operations(t
 
     scan_detectors = (Detector.DE_1, Detector.DE_2, Detector.DE_3, Detector.DE_4)
     checkboxes = {detector: Checkbox() for detector in scan_detectors}
+    pm5020_save_calls = []
     tabs = Tabs()
     tabs.index = 0
     splitter = Splitter()
     window = SimpleNamespace(
         settings=settings,
+        pm5020_panel=SimpleNamespace(save_preferences=lambda target: pm5020_save_calls.append(target)),
         main_splitter=splitter,
         tab_widget=tabs,
         control_panel=SimpleNamespace(
@@ -91,6 +93,7 @@ def test_mainwindow_restores_and_saves_preferences_without_hardware_operations(t
     assert [checkboxes[detector].checked for detector in scan_detectors] == [True, False, True, True]
 
     main_window_module.MainWindow._save_ui_preferences(window)
+    assert pm5020_save_calls == [settings]
     assert settings.geometry() == QByteArray(b"new-geometry")
     assert settings.active_tab(3) == 2
     assert settings.splitter_sizes(2) == [600, 400]
