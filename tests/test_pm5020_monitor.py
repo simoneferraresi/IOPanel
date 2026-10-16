@@ -372,8 +372,8 @@ def test_pm5020_layout_matches_control_column_and_plot_conventions(qtbot):
     assert not hasattr(panel.ch1, "age_label")
     assert not hasattr(panel, "advanced_toggle")
     assert not hasattr(panel, "advanced_settings")
-    assert panel.ch1.enabled.text() == "CH1 — Optical Power"
-    assert panel.ch2.enabled.text() == "CH2 — Optical Power"
+    assert panel.ch1.enabled.text() == "CH1"
+    assert panel.ch2.enabled.text() == "CH2"
     assert panel.ch1.enabled.parentWidget() is panel.ch1
     assert panel.ch1.input_filter.parentWidget() is panel.ch1.plot_actions
     assert panel.ch1.input_filter.isCheckable()
@@ -388,7 +388,10 @@ def test_pm5020_layout_matches_control_column_and_plot_conventions(qtbot):
     assert panel.ch1.reading_group.objectName() == "pm5020Ch1ReadingGroup"
     assert panel.ch2.reading_group.objectName() == "pm5020Ch2ReadingGroup"
     for channel in (panel.ch1, panel.ch2):
-        assert abs(channel.reading_group.geometry().center().x() - channel._reading_row.geometry().center().x()) <= 3
+        assert channel.enabled.font().pointSize() == channel.reading_label.font().pointSize() == 20
+        assert channel.enabled.font().family() != channel.reading_label.font().family()
+        assert channel.enabled.geometry().right() < channel.reading_group.geometry().left()
+        assert abs(channel.enabled.geometry().center().y() - channel.reading_group.geometry().center().y()) <= 3
     assert panel.start_button.objectName() == "pm5020StartButton"
     assert panel.stop_button.objectName() == "pm5020StopButton"
     assert panel.start_button.minimumHeight() >= 35
@@ -400,6 +403,24 @@ def test_pm5020_layout_matches_control_column_and_plot_conventions(qtbot):
     assert not hasattr(panel, "disconnect_button")
     assert not hasattr(panel, "apply_button")
     assert not panel.task.worker_thread.isRunning()
+    panel.close()
+
+
+def test_pm5020_wavelength_fields_have_one_decimal_without_rounding_precision(qtbot):
+    panel = PM5020Panel()
+    qtbot.addWidget(panel)
+    assert panel.ch1.wavelength.text() == "1550.0"
+    assert panel.ch2.wavelength.text() == "775.0"
+
+    panel.ch1.wavelength.setText("1549")
+    panel.ch1.wavelength.editingFinished.emit()
+    assert panel.ch1.wavelength.text() == "1549.0"
+    assert panel.ch1.channel_config().wavelength_nm == pytest.approx(1549.0)
+
+    panel.ch2.wavelength.setText("775.125")
+    panel.ch2.wavelength.editingFinished.emit()
+    assert panel.ch2.wavelength.text() == "775.125"
+    assert panel.ch2.channel_config().wavelength_nm == pytest.approx(775.125)
     panel.close()
 
 
