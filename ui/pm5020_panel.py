@@ -58,15 +58,18 @@ class PM5020ChannelControls(QGroupBox):
         layout = QVBoxLayout(self)
         layout.setSpacing(5)
 
-        self.enabled = QCheckBox(f"CH{channel.value} — Optical Power")
+        self.enabled = QCheckBox(f"CH{channel.value}")
         self.enabled.setObjectName(f"pm5020Ch{channel.value}Enabled")
         self.enabled.setChecked(True)
-        self.enabled.setFont(make_font("sans", 10, QFont.Weight.Bold))
+        self.enabled.setFont(make_font("sans", 20, QFont.Weight.Bold))
         self.enabled.setToolTip("Include this sensor channel in configuration and monitoring")
-        layout.addWidget(self.enabled)
 
+        # A single compact row: [enabled CH1]  [reading] [unit].
+        # The channel name uses Geist Sans and the measurement Geist Mono.
         reading_row = QHBoxLayout()
         self._reading_row = reading_row
+        reading_row.setSpacing(6)
+        reading_row.addWidget(self.enabled, alignment=Qt.AlignmentFlag.AlignVCenter)
         reading_row.addStretch(1)
         self.reading_group = QWidget(self)
         self.reading_group.setObjectName(f"pm5020Ch{channel.value}ReadingGroup")
@@ -84,19 +87,19 @@ class PM5020ChannelControls(QGroupBox):
         self.unit.setCurrentText(default_unit)
         self.unit.setToolTip("Display only; also selects this channel's plot Y-axis units")
         reading_group_layout.addWidget(self.unit)
-        reading_row.addWidget(self.reading_group)
-        reading_row.addStretch(1)
+        reading_row.addWidget(self.reading_group, alignment=Qt.AlignmentFlag.AlignVCenter)
         layout.addLayout(reading_row)
 
         form = QGridLayout()
         form.setHorizontalSpacing(5)
         form.addWidget(QLabel("Wavelength (nm):"), 0, 0)
-        self.wavelength = QLineEdit(f"{default_wavelength_nm:g}")
+        self.wavelength = QLineEdit(f"{default_wavelength_nm:.1f}")
         self.wavelength.setObjectName(f"pm5020Ch{channel.value}Wavelength")
         wavelength_validator = QDoubleValidator(1.0, 100000.0, 3, self.wavelength)
         wavelength_validator.setLocale(QLocale.c())
         self.wavelength.setValidator(wavelength_validator)
         self.wavelength.setToolTip("Sensor-specific wavelength support is checked by the Thorlabs driver")
+        self.wavelength.editingFinished.connect(self._format_wavelength_display)
         form.addWidget(self.wavelength, 0, 1, 1, 3)
 
         form.addWidget(QLabel("Power range:"), 1, 0)
@@ -191,6 +194,17 @@ class PM5020ChannelControls(QGroupBox):
         if value <= 0:
             raise ValueError(f"CH{self.channel.value}: manual power range must be positive")
         return value * POWER_RANGE_SCALES[self.range_unit.currentText()]
+
+    @Slot()
+    def _format_wavelength_display(self) -> None:
+        """Show at least one decimal, without silently rounding sensor settings."""
+        if not self.wavelength.hasAcceptableInput():
+            return
+        value = float(self.wavelength.text())
+        if value == round(value, 1):
+            formatted = f"{value:.1f}"
+            if self.wavelength.text() != formatted:
+                self.wavelength.setText(formatted)
 
     def channel_config(self) -> ChannelConfig:
         if not self.wavelength.hasAcceptableInput():
