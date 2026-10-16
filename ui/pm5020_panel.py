@@ -9,19 +9,16 @@ from typing import override
 
 import pyqtgraph as pg
 from PySide6.QtCore import QLocale, QSignalBlocker, QSize, Qt, QTimer, Signal, Slot
-from PySide6.QtGui import QCloseEvent, QDoubleValidator, QFont, QIcon, QPalette
+from PySide6.QtGui import QCloseEvent, QDoubleValidator, QFont, QIcon
 from PySide6.QtWidgets import (
-    QApplication,
     QCheckBox,
     QComboBox,
-    QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
-    QScrollArea,
     QSizePolicy,
     QToolButton,
     QVBoxLayout,
@@ -40,17 +37,6 @@ MAX_HISTORY_POINTS = 2400
 POWER_RANGE_SCALES = {"W": 1.0, "mW": 1e-3, "µW": 1e-6, "nW": 1e-9}
 
 
-def _use_native_group_surface(group: QGroupBox) -> None:
-    """Use the same native Fusion group surface as the CT400 controls.
-
-    The outer PM5020 sidebar is deliberately white; its QGroupBoxes should not
-    inherit that white palette. Do not style child labels, checkboxes or combo
-    popup views: the working CT400 panels leave those to Qt's native style.
-    """
-    group.setPalette(QApplication.palette())
-    group.setAutoFillBackground(True)
-
-
 # Follow the existing CT400 monitor (blue) and Stop Alignment (red) controls.
 PM5020_ACTION_BUTTON_STYLE = """
 QPushButton#pm5020StartButton { background-color: #1976d2; color: white; }
@@ -67,7 +53,6 @@ class PM5020ChannelControls(QGroupBox):
         super().__init__(f"CH{channel.value} — Optical Power")
         style_group_box_title(self)
         self.setTitle("")
-        _use_native_group_surface(self)
         self.channel = channel
         self._rows: deque[tuple[float, float]] = deque(maxlen=MAX_HISTORY_POINTS)
         layout = QVBoxLayout(self)
@@ -339,28 +324,15 @@ class PM5020Panel(QWidget):
         root = QHBoxLayout(self)
         root.setContentsMargins(5, 5, 5, 5)
         root.setSpacing(10)
-        self.controls_scroll = QScrollArea()
-        self.controls_scroll.setObjectName("pm5020ControlsScroll")
-        self.controls_scroll.setWidgetResizable(True)
-        self.controls_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self.controls_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.controls_scroll.setMinimumWidth(320)
-        self.controls_scroll.setMaximumWidth(400)
-        # The CT400 panels do not style their scroll containers. A stylesheet
-        # here also changes the native popup and passive-widget painting of
-        # every descendant, so use a palette only for the white viewport.
-        viewport = self.controls_scroll.viewport()
-        viewport.setAutoFillBackground(True)
-        viewport_palette = viewport.palette()
-        viewport_palette.setColor(QPalette.ColorRole.Window, Qt.GlobalColor.white)
-        viewport.setPalette(viewport_palette)
-        content = QWidget()
-        content.setObjectName("pm5020ControlsContent")
-        content.setAutoFillBackground(True)
-        palette = content.palette()
-        palette.setColor(QPalette.ColorRole.Window, Qt.GlobalColor.white)
-        content.setPalette(palette)
-        layout = QVBoxLayout(content)
+        # Match CT400ControlPanel's plain QWidget + QVBoxLayout structure.
+        # No scroll container or custom background palette: Fusion draws the
+        # same native group surfaces and label backgrounds as Wavelength Scan.
+        self.controls_panel = QWidget(self)
+        self.controls_panel.setObjectName("pm5020ControlsContent")
+        self.controls_panel.setMinimumWidth(320)
+        self.controls_panel.setMaximumWidth(400)
+        layout = QVBoxLayout(self.controls_panel)
+        layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(10)
 
         # Connection ownership and backend mode live in the Instruments menu
@@ -384,7 +356,6 @@ class PM5020Panel(QWidget):
         controls = QGroupBox("Operation")
         controls.setObjectName("pm5020OperationGroup")
         style_group_box_title(controls)
-        _use_native_group_surface(controls)
         controls_layout = QGridLayout(controls)
         self.interval = QLineEdit("1")
         self.interval.setObjectName("pm5020UpdateInterval")
@@ -436,8 +407,7 @@ class PM5020Panel(QWidget):
         controls_layout.addLayout(actions_layout, 2, 0, 1, 2)
         layout.addWidget(controls)
         layout.addStretch(1)
-        self.controls_scroll.setWidget(content)
-        root.addWidget(self.controls_scroll, stretch=0)
+        root.addWidget(self.controls_panel, stretch=0)
 
         self.plot_container = QWidget()
         self.plot_container.setObjectName("pm5020PlotsContainer")
