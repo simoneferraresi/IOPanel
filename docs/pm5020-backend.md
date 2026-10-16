@@ -106,10 +106,13 @@ fake wrapper and do not establish compatibility with a physical meter.
 
 The **Instruments** menu owns PM5020 connection. It shows **Connect PM5020** or
 **Disconnect PM5020** from worker-confirmed state and disables the action while
-an operation is pending. The measurement tab follows the other IOPanel tabs with a scrollable
-left column for independent channel controls and operation buttons, plus an
+an operation is pending. The measurement tab follows the CT400 tabs with
+a plain, non-scrollable QWidget/QVBoxLayout control column, using native Fusion
+QGroupBox styling rather than forced colors or palette overrides, plus an
 expanding right column containing two vertically stacked live plots. The plots
-remain visible as settings scroll. Instrument state lives in the permanent
+remain visible beside the controls. At very short window heights, operators
+should expand the lower tab region to avoid clipping controls.
+Instrument state lives in the permanent
 bottom-right PM5020 status-bar indicator (with resource and backend details in
 its tooltip); connection errors stay visible in the controls and log. Simulation
 remains explicitly labeled so simulated readings are never mistaken for
