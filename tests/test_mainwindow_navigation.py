@@ -94,6 +94,13 @@ def test_application_close_resumes_after_pm5020_worker_thread_finishes(qtbot, mo
 
 
 def test_pm5020_menu_owns_simulator_connect_and_disconnect(qtbot, monkeypatch, tmp_path):
+    from PySide6.QtGui import QIcon
+
+    connect_icon = QIcon(":/icons/connect.svg").pixmap(18, 18).toImage()
+    disconnect_icon = QIcon(":/icons/disconnect.svg").pixmap(18, 18).toImage()
+    assert not connect_icon.isNull() and not disconnect_icon.isNull()
+    assert connect_icon != disconnect_icon
+
     window = _make_window(
         qtbot,
         monkeypatch,
@@ -103,6 +110,9 @@ def test_pm5020_menu_owns_simulator_connect_and_disconnect(qtbot, monkeypatch, t
     panel = window.pm5020_panel
     assert panel is not None
     assert action.text() == "Connect PM5020"
+    assert action.isCheckable()
+    assert not action.isChecked()
+    assert action.icon().pixmap(18, 18).toImage() == connect_icon
     assert panel.backend_mode == "simulation"
     assert panel.mode_label.text() == "Simulation — readings are simulated"
     assert not hasattr(panel, "connect_button") and not hasattr(panel, "disconnect_button")
@@ -112,6 +122,8 @@ def test_pm5020_menu_owns_simulator_connect_and_disconnect(qtbot, monkeypatch, t
     assert not action.isEnabled()
     qtbot.waitUntil(lambda: panel._backend_state is PM5020State.IDLE, timeout=2000)
     assert action.text() == "Disconnect PM5020"
+    assert action.isChecked()
+    assert action.icon().pixmap(18, 18).toImage() == disconnect_icon
     backend = panel.worker._backend
     assert isinstance(backend, DummyPM5020)
 
@@ -120,6 +132,8 @@ def test_pm5020_menu_owns_simulator_connect_and_disconnect(qtbot, monkeypatch, t
     assert not action.isEnabled()
     qtbot.waitUntil(lambda: panel._backend_state is PM5020State.DISCONNECTED, timeout=2000)
     assert action.text() == "Connect PM5020"
+    assert not action.isChecked()
+    assert action.icon().pixmap(18, 18).toImage() == connect_icon
     assert panel.worker._backend is backend
     window.close()
 
@@ -188,6 +202,8 @@ def test_pm5020_menu_shows_recovery_state_from_worker_backend(qtbot, monkeypatch
     panel._start()
     qtbot.waitUntil(lambda: panel._backend_state is PM5020State.ERROR, timeout=2000)
     assert action.text() == "Disconnect PM5020 (Recovery)"
+    assert action.isChecked()
+    assert not action.icon().isNull()
     assert action.isEnabled()
     action.trigger()
     qtbot.waitUntil(lambda: panel._backend_state is PM5020State.DISCONNECTED, timeout=2000)
