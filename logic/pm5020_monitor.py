@@ -65,6 +65,7 @@ class PM5020MonitorWorker(BaseWorker):
     shutdown_complete = Signal()
     configuration_result = Signal(int, int, int, bool, str)
     monitoring_started = Signal(int, int)
+    monitor_interval_result = Signal(int, int, int, bool, str)
 
     def __init__(
         self,
@@ -197,6 +198,29 @@ class PM5020MonitorWorker(BaseWorker):
         self._timer.start(max(250, min(5000, int(interval_ms))))
         self.activity_state.emit("Monitoring")
         self._poll()
+
+    @Slot(int, int, int, int)
+    def update_monitor_interval(self, generation: int, session_id: int, request_id: int, interval_ms: int) -> None:
+        """Update the active worker timer without restarting its monitoring session."""
+        if not 250 <= interval_ms <= 5000:
+            self.monitor_interval_result.emit(
+                generation, session_id, request_id, False, "Update interval must be between 250 and 5000 ms."
+            )
+            return
+        if (
+            generation != self._connection_generation
+            or session_id != self._monitor_session_id
+            or not self._monitoring
+            or self._paused
+            or self._timer is None
+            or self._ready_backend() is None
+        ):
+            self.monitor_interval_result.emit(
+                generation, session_id, request_id, False, "The monitoring session is no longer active."
+            )
+            return
+        self._timer.setInterval(interval_ms)
+        self.monitor_interval_result.emit(generation, session_id, request_id, True, "")
 
     @Slot()
     def stop_monitoring(self) -> None:

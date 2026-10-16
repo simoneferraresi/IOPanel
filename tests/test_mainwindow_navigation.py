@@ -94,6 +94,13 @@ def test_application_close_resumes_after_pm5020_worker_thread_finishes(qtbot, mo
 
 
 def test_pm5020_menu_owns_simulator_connect_and_disconnect(qtbot, monkeypatch, tmp_path):
+    from PySide6.QtGui import QIcon
+
+    connect_icon = QIcon(":/icons/connect.svg").pixmap(18, 18).toImage()
+    disconnect_icon = QIcon(":/icons/disconnect.svg").pixmap(18, 18).toImage()
+    assert not connect_icon.isNull() and not disconnect_icon.isNull()
+    assert connect_icon != disconnect_icon
+
     window = _make_window(
         qtbot,
         monkeypatch,
@@ -103,6 +110,9 @@ def test_pm5020_menu_owns_simulator_connect_and_disconnect(qtbot, monkeypatch, t
     panel = window.pm5020_panel
     assert panel is not None
     assert action.text() == "Connect PM5020"
+    assert action.isCheckable()
+    assert not action.isChecked()
+    assert action.icon().pixmap(18, 18).toImage() == connect_icon
     assert panel.backend_mode == "simulation"
     assert panel.mode_label.text() == "Simulation — readings are simulated"
     assert not hasattr(panel, "connect_button") and not hasattr(panel, "disconnect_button")
@@ -112,6 +122,8 @@ def test_pm5020_menu_owns_simulator_connect_and_disconnect(qtbot, monkeypatch, t
     assert not action.isEnabled()
     qtbot.waitUntil(lambda: panel._backend_state is PM5020State.IDLE, timeout=2000)
     assert action.text() == "Disconnect PM5020"
+    assert action.isChecked()
+    assert action.icon().pixmap(18, 18).toImage() == disconnect_icon
     backend = panel.worker._backend
     assert isinstance(backend, DummyPM5020)
 
@@ -120,6 +132,8 @@ def test_pm5020_menu_owns_simulator_connect_and_disconnect(qtbot, monkeypatch, t
     assert not action.isEnabled()
     qtbot.waitUntil(lambda: panel._backend_state is PM5020State.DISCONNECTED, timeout=2000)
     assert action.text() == "Connect PM5020"
+    assert not action.isChecked()
+    assert action.icon().pixmap(18, 18).toImage() == connect_icon
     assert panel.worker._backend is backend
     window.close()
 
@@ -184,11 +198,12 @@ def test_pm5020_menu_shows_recovery_state_from_worker_backend(qtbot, monkeypatch
     action.trigger()
     qtbot.waitUntil(lambda: panel._backend_state is PM5020State.IDLE, timeout=2000)
     backend = panel.worker._backend
-    panel._apply_configuration()
     qtbot.waitUntil(lambda: panel._configuration_applied, timeout=2000)
     panel._start()
     qtbot.waitUntil(lambda: panel._backend_state is PM5020State.ERROR, timeout=2000)
     assert action.text() == "Disconnect PM5020 (Recovery)"
+    assert action.isChecked()
+    assert not action.icon().isNull()
     assert action.isEnabled()
     action.trigger()
     qtbot.waitUntil(lambda: panel._backend_state is PM5020State.DISCONNECTED, timeout=2000)
@@ -224,3 +239,41 @@ def test_physical_pm5020_is_never_connected_automatically_or_replaced_by_simulat
     assert not isinstance(panel.worker._backend, DummyPM5020)
     assert window.pm5020_connect_action.text() == "Connect PM5020"
     window.close()
+
+
+def test_pm5020_status_bar_shows_simulation_and_worker_lifecycle(qtbot, monkeypatch, tmp_path):
+    settings = AppSettings(QSettings(str(tmp_path / "pm-global-status.ini"), QSettings.Format.IniFormat))
+    window = _make_window(qtbot, monkeypatch, settings)
+    indicator = window.pm5020_status_label
+    action = window.pm5020_connect_action
+    assert indicator.objectName() == "pm5020StatusLabel"
+    assert "Sim (Off)" in indicator.text()
+    assert "Simulator" in indicator.toolTip()
+
+    action.trigger()
+    qtbot.waitUntil(lambda: window.pm5020_panel._backend_state is PM5020State.IDLE, timeout=2000)
+    assert indicator.text() == "PM5020: SIMULATED"
+    qtbot.waitUntil(lambda: window.pm5020_panel._configuration_applied, timeout=2000)
+    window.pm5020_panel._start()
+    qtbot.waitUntil(lambda: window.pm5020_panel._monitor_session, timeout=2000)
+    assert "SIMULATED" in indicator.text()
+    action.trigger()
+    qtbot.waitUntil(lambda: window.pm5020_panel._backend_state is PM5020State.DISCONNECTED, timeout=2000)
+    assert "Sim (Off)" in indicator.text()
+    window.close()
+
+
+def test_pm5020_status_formatter_maps_errors_and_physical_states():
+    from ui.global_status import format_pm5020_status
+
+    physical = format_pm5020_status(
+        PM5020State.IDLE, activity="Connected / idle", simulated=False, resource="USB0::SERIAL::INSTR"
+    )
+    assert physical.text == "PM5020: Ready"
+    assert "USB0::SERIAL::INSTR" in physical.tooltip
+    assert physical.state == "ready"
+    error = format_pm5020_status(PM5020State.ERROR, activity="Recovery required", simulated=False, resource="")
+    assert error.state == "error"
+    assert error.text == "PM5020: Error"
+    simulated = format_pm5020_status(PM5020State.IDLE, activity="Monitoring", simulated=True, resource="")
+    assert simulated.text == "PM5020: SIMULATED"

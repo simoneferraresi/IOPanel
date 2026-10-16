@@ -6,6 +6,7 @@
     <file alias="refresh.svg">icons/refresh.svg</file>
     <file alias="record.svg">icons/record.svg</file>
     <file alias="eraser.svg">icons/eraser.svg</file>
+    <file alias="filter-lowpass.svg">icons/filter-lowpass.svg</file>
     <file alias="pause.svg">icons/pause.svg</file>
     <file alias="copy.svg">icons/copy.svg</file>
     <file alias="folder-open.svg">icons/folder-open.svg</file>

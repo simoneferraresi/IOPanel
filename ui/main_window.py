@@ -68,6 +68,7 @@ from ui.global_status import (
     format_cameras_status,
     format_ct400_status,
     format_matlab_status,
+    format_pm5020_status,
 )
 
 try:
@@ -436,33 +437,36 @@ class MainWindow(QMainWindow):
     @Slot(object, str)
     def _on_pm5020_connection_status_changed(self, _state: object, _activity: str) -> None:
         self._update_pm5020_action()
+        if hasattr(self, "pm5020_status_label"):
+            self._refresh_global_status()
 
     def _update_pm5020_action(self) -> None:
+        """Use the same state-dependent menu text, icon and checkmark as CT400."""
         action = getattr(self, "pm5020_connect_action", None)
         if action is None:
             return
         panel = getattr(self, "pm5020_panel", None)
         if panel is None:
-            action.setText("PM5020 Unavailable")
-            action.setEnabled(False)
-            return
-        state = panel._backend_state
-        activity = panel._activity
-        if panel._shutdown_requested or activity == "Shutting down":
-            action.setText("PM5020 Shutting Down…")
-            action.setEnabled(False)
-        elif activity in {"Connecting", "Disconnecting"} or panel._connection_request_pending:
-            action.setText("Disconnecting PM5020…" if activity == "Disconnecting" else "Connecting PM5020…")
-            action.setEnabled(False)
-        elif state is PM5020State.DISCONNECTED:
-            action.setText("Connect PM5020")
-            action.setEnabled(True)
-        elif state is PM5020State.ERROR:
-            action.setText("Disconnect PM5020 (Recovery)")
-            action.setEnabled(True)
+            text, icon, enabled, checked = "PM5020 Unavailable", ":/icons/connect.svg", False, False
         else:
-            action.setText("Disconnect PM5020")
-            action.setEnabled(True)
+            state = panel._backend_state
+            activity = panel._activity
+            checked = state is not PM5020State.DISCONNECTED
+            if panel._shutdown_requested or activity == "Shutting down":
+                text, icon, enabled = "PM5020 Shutting Down…", ":/icons/spinner.svg", False
+            elif activity in {"Connecting", "Disconnecting"} or panel._connection_request_pending:
+                text = "Disconnecting PM5020…" if activity == "Disconnecting" else "Connecting PM5020…"
+                icon, enabled = ":/icons/spinner.svg", False
+            elif state is PM5020State.DISCONNECTED:
+                text, icon, enabled = "Connect PM5020", ":/icons/connect.svg", True
+            elif state is PM5020State.ERROR:
+                text, icon, enabled = "Disconnect PM5020 (Recovery)", ":/icons/disconnect.svg", True
+            else:
+                text, icon, enabled = "Disconnect PM5020", ":/icons/disconnect.svg", True
+        action.setText(text)
+        action.setIcon(QIcon(icon))
+        action.setChecked(checked)
+        action.setEnabled(enabled)
 
     def _alignment_hardware_transition_blocked(self) -> bool:
         panel = getattr(self, "alignment_tab", None)
@@ -1096,10 +1100,12 @@ class MainWindow(QMainWindow):
         self.ct400_status_label.setObjectName(ID_CT400_STATUS_LABEL)
         self.statusBar().addPermanentWidget(self.ct400_status_label)
         self.cameras_status_label = QLabel("Cameras: Initializing")
+        self.pm5020_status_label = QLabel("PM5020: Disconnected")
         self.matlab_status_label = QLabel("MATLAB: Idle")
         self.activity_status_label = QLabel("Activity: Idle")
         for label, name in (
             (self.cameras_status_label, "camerasStatusLabel"),
+            (self.pm5020_status_label, "pm5020StatusLabel"),
             (self.matlab_status_label, "matlabStatusLabel"),
             (self.activity_status_label, "activityStatusLabel"),
         ):
@@ -1343,6 +1349,17 @@ class MainWindow(QMainWindow):
             else:
                 camera_states.append(CameraStatus.UNAVAILABLE)
         self._render_status_label(self.cameras_status_label, format_cameras_status(camera_states))
+        panel = getattr(self, "pm5020_panel", None)
+        if panel is not None:
+            self._render_status_label(
+                self.pm5020_status_label,
+                format_pm5020_status(
+                    panel._backend_state,
+                    activity=panel._activity,
+                    simulated=panel.backend_mode == "simulation",
+                    resource=panel.resource_name,
+                ),
+            )
         self._render_status_label(
             self.matlab_status_label, format_matlab_status(self.plot_widget.matlab_engine_manager.state)
         )
@@ -1414,6 +1431,7 @@ class MainWindow(QMainWindow):
 
         self.pm5020_connect_action = QAction("Connect PM5020", self)
         self.pm5020_connect_action.setObjectName("pm5020ConnectAction")
+        self.pm5020_connect_action.setCheckable(True)
         self.pm5020_connect_action.setStatusTip("Connect or disconnect the configured PM5020 backend")
         self.pm5020_connect_action.triggered.connect(self._handle_pm5020_connect_action_triggered)
         self.instrument_menu.addAction(self.pm5020_connect_action)
