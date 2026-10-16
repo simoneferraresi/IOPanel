@@ -37,6 +37,7 @@ logger = logging.getLogger("LabApp.pm5020_panel")
 
 HISTORY_SECONDS = (10, 30, 60, 300, 600)
 MAX_HISTORY_POINTS = 2400
+POWER_RANGE_SCALES = {"W": 1.0, "mW": 1e-3, "µW": 1e-6, "nW": 1e-9}
 
 # Keep passive text/header widgets visually on their native QGroupBox surface.
 # Editable inputs retain the same native Fusion appearance as the CT400 tabs.
@@ -65,7 +66,6 @@ def _use_native_combo_popup_contrast(combo: QComboBox) -> None:
     view.setPalette(QApplication.palette())
     view.setStyleSheet(PM5020_POPUP_SELECTION_STYLE)
 
-POWER_RANGE_SCALES = {"W": 1.0, "mW": 1e-3, "µW": 1e-6, "nW": 1e-9}
 
 # Follow the existing CT400 monitor (blue) and Stop Alignment (red) controls.
 PM5020_ACTION_BUTTON_STYLE = """
@@ -364,8 +364,7 @@ class PM5020Panel(QWidget):
         self.controls_scroll.setMinimumWidth(320)
         self.controls_scroll.setMaximumWidth(400)
         self.controls_scroll.setStyleSheet(
-            "QScrollArea#pm5020ControlsScroll { background-color: white; border: none; }\n"
-            + PM5020_PASSIVE_GROUP_STYLE
+            "QScrollArea#pm5020ControlsScroll { background-color: white; border: none; }\n" + PM5020_PASSIVE_GROUP_STYLE
         )
         self.controls_scroll.viewport().setStyleSheet("background-color: white;")
         content = QWidget()
