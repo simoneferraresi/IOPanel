@@ -407,6 +407,7 @@ def test_pm5020_groups_match_native_ct400_controls_and_combo_popup_style(qtbot):
     """No scroll container or palette overrides: follow the CT400 Fusion widgets."""
     from PySide6.QtGui import QPalette
     from PySide6.QtWidgets import QComboBox, QGroupBox, QLabel, QScrollArea
+
     from ui.typography import style_group_box_title
 
     panel = PM5020Panel()
