@@ -404,6 +404,39 @@ def test_pm5020_layout_matches_control_column_and_plot_conventions(qtbot):
     panel.close()
 
 
+def test_pm5020_passive_background_and_combo_popup_contrast(qtbot):
+    """The PM5020 palette overrides must not produce white-on-white popup rows."""
+    from PySide6.QtGui import QPalette
+    from PySide6.QtWidgets import QApplication
+
+    panel = PM5020Panel()
+    qtbot.addWidget(panel)
+    qtbot.wait(10)
+    style = panel.controls_scroll.styleSheet()
+    assert "QGroupBox QLabel, QGroupBox QCheckBox" in style
+    assert "background-color: transparent" in style
+    assert "pm5020Ch1ReadingGroup" in style
+    assert "pm5020Ch2ReadingGroup" in style
+
+    system_palette = QApplication.palette()
+    for selector in (
+        panel.ch1.unit,
+        panel.ch2.unit,
+        panel.ch1.range_unit,
+        panel.ch2.range_unit,
+        panel.interval_unit,
+        panel.history,
+    ):
+        view = selector.view()
+        popup_style = view.styleSheet()
+        assert "QAbstractItemView::item:hover" in popup_style
+        assert "background-color: palette(highlight)" in popup_style
+        assert "color: palette(highlighted-text)" in popup_style
+        for role in (QPalette.ColorRole.Highlight, QPalette.ColorRole.HighlightedText):
+            assert view.palette().color(role) == system_palette.color(role)
+    panel.close()
+
+
 def test_display_units_match_initial_axes_and_rescale_existing_data(qtbot):
     from hardware.pm5020_types import PowerReading
 
