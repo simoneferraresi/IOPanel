@@ -404,21 +404,40 @@ def test_pm5020_layout_matches_control_column_and_plot_conventions(qtbot):
     panel.close()
 
 
-def test_pm5020_passive_background_and_combo_popup_contrast(qtbot):
-    """The PM5020 palette overrides must not produce white-on-white popup rows."""
+def test_pm5020_uses_native_group_surfaces_and_combo_popup_style(qtbot):
+    """Match CT400 Fusion controls without stylesheet propagation into popups."""
     from PySide6.QtGui import QPalette
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication, QComboBox, QGroupBox, QLabel
 
     panel = PM5020Panel()
     qtbot.addWidget(panel)
-    qtbot.wait(10)
-    style = panel.controls_scroll.styleSheet()
-    assert "QGroupBox QLabel, QGroupBox QCheckBox" in style
-    assert "background-color: transparent" in style
-    assert "pm5020Ch1ReadingGroup" in style
-    assert "pm5020Ch2ReadingGroup" in style
+    panel.resize(1280, 720)
+    panel.show()
+    qtbot.wait(20)
 
-    system_palette = QApplication.palette()
+    assert panel.controls_scroll.styleSheet() == ""
+    assert panel.controls_scroll.viewport().styleSheet() == ""
+    assert panel.controls_scroll.widget().styleSheet() == ""
+
+    native_palette = QApplication.palette()
+    for group in (
+        panel.ch1,
+        panel.ch2,
+        panel.controls_scroll.widget().findChild(QGroupBox, "pm5020OperationGroup"),
+    ):
+        assert group is not None
+        assert group.autoFillBackground()
+        assert group.palette().color(QPalette.ColorRole.Window) == native_palette.color(QPalette.ColorRole.Window)
+        for label in group.findChildren(QLabel):
+            if label is panel.ch1.reading_label or label is panel.ch2.reading_label:
+                assert not label.autoFillBackground()
+                assert label.styleSheet() == ""
+                assert label.palette().color(QPalette.ColorRole.Window) == group.palette().color(
+                    QPalette.ColorRole.Window
+                )
+
+    native_combo = QComboBox()
+    qtbot.addWidget(native_combo)
     for selector in (
         panel.ch1.unit,
         panel.ch2.unit,
@@ -427,13 +446,9 @@ def test_pm5020_passive_background_and_combo_popup_contrast(qtbot):
         panel.interval_unit,
         panel.history,
     ):
-        view = selector.view()
-        popup_style = view.styleSheet()
-        assert "QAbstractItemView::item:hover" in popup_style
-        assert "background-color: palette(highlight)" in popup_style
-        assert "color: palette(highlighted-text)" in popup_style
+        assert selector.view().styleSheet() == native_combo.view().styleSheet() == ""
         for role in (QPalette.ColorRole.Highlight, QPalette.ColorRole.HighlightedText):
-            assert view.palette().color(role) == system_palette.color(role)
+            assert selector.view().palette().color(role) == native_combo.view().palette().color(role)
     panel.close()
 
 
