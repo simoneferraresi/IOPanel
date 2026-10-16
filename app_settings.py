@@ -4,6 +4,7 @@ Hardware configuration remains in ``config.ini``. Values in this module are
 limited to presentation preferences and paths used by file dialogs.
 """
 
+import math
 import os
 import sys
 import tempfile
@@ -23,6 +24,92 @@ class AppSettings:
     # the logical page restored from user preferences.
     ACTIVE_TAB_IDS = ("power_monitor", "wavelength_scan", "auto_alignment", "pm5020_monitor")
     LEGACY_TAB_IDS = ("wavelength_scan", "power_monitor", "auto_alignment")
+    PM5020_DISPLAY_UNITS = frozenset({"W", "mW", "µW", "nW", "dBm"})
+    PM5020_RANGE_UNITS = frozenset({"W", "mW", "µW", "nW"})
+    PM5020_HISTORY_SECONDS = (10, 30, 60, 300, 600)
+
+    @staticmethod
+    def _finite_number(value: Any, minimum: float, maximum: float) -> float | None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        try:
+            result = float(value)
+        except (OverflowError, ValueError):
+            return None
+        return result if math.isfinite(result) and minimum <= result <= maximum else None
+
+    def pm5020_channel_preferences(self, channel: int) -> dict[str, Any]:
+        """Return validated, presentation-only preferences for channel 1 or 2."""
+        if isinstance(channel, bool) or channel not in (1, 2):
+            raise ValueError("PM5020 channel must be 1 or 2")
+        prefix = f"PM5020/Channels/{channel}"
+        defaults = {
+            "enabled": True,
+            "wavelength_nm": 1550.0 if channel == 1 else 775.0,
+            "auto_range": True,
+            "power_range_w": 1e-3,
+            "range_unit": "mW",
+            "display_unit": "mW" if channel == 1 else "nW",
+            "input_filter_enabled": False,
+        }
+        bool_fields = ("enabled", "auto_range", "input_filter_enabled")
+        for field in bool_fields:
+            value = self._read(f"{prefix}/{field}", None)
+            if isinstance(value, bool):
+                defaults[field] = value
+        for field, limits in (("wavelength_nm", (1.0, 100000.0)), ("power_range_w", (1e-15, 1e3))):
+            value = self._finite_number(self._read(f"{prefix}/{field}", None), *limits)
+            if value is not None:
+                defaults[field] = value
+        for field, supported in (("range_unit", self.PM5020_RANGE_UNITS), ("display_unit", self.PM5020_DISPLAY_UNITS)):
+            value = self._read(f"{prefix}/{field}", None)
+            if isinstance(value, str) and value in supported:
+                defaults[field] = value
+        return defaults
+
+    def set_pm5020_channel_preferences(self, channel: int, values: dict[str, Any]) -> None:
+        """Store individually validated preferences; ignore invalid fields."""
+        if not self.supported:
+            return
+        if isinstance(channel, bool) or channel not in (1, 2):
+            raise ValueError("PM5020 channel must be 1 or 2")
+        prefix = f"PM5020/Channels/{channel}"
+        for field in ("enabled", "auto_range", "input_filter_enabled"):
+            value = values.get(field)
+            if isinstance(value, bool):
+                self._write(f"{prefix}/{field}", value)
+        for field, limits in (("wavelength_nm", (1.0, 100000.0)), ("power_range_w", (1e-15, 1e3))):
+            value = self._finite_number(values.get(field), *limits)
+            if value is not None:
+                self._write(f"{prefix}/{field}", value)
+        for field, supported in (("range_unit", self.PM5020_RANGE_UNITS), ("display_unit", self.PM5020_DISPLAY_UNITS)):
+            value = values.get(field)
+            if isinstance(value, str) and value in supported:
+                self._write(f"{prefix}/{field}", value)
+
+    def pm5020_preferences(self) -> dict[str, Any]:
+        interval = self._finite_number(self._read("PM5020/monitor_interval_ms", None), 250, 5000)
+        unit = self._read("PM5020/interval_unit", None)
+        history = self._as_int(self._read("PM5020/history_seconds", None))
+        return {
+            "monitor_interval_ms": int(interval) if interval is not None and interval.is_integer() else 1000,
+            "interval_unit": unit if isinstance(unit, str) and unit in {"ms", "s"} else "s",
+            "history_seconds": history if history in self.PM5020_HISTORY_SECONDS else 10,
+        }
+
+    def set_pm5020_preferences(
+        self, *, monitor_interval_ms: int | None, interval_unit: str, history_seconds: int
+    ) -> None:
+        if not self.supported:
+            return
+        interval = self._finite_number(monitor_interval_ms, 250, 5000) if monitor_interval_ms is not None else None
+        if interval is not None and interval.is_integer():
+            self._write("PM5020/monitor_interval_ms", int(interval))
+        if isinstance(interval_unit, str) and interval_unit in {"ms", "s"}:
+            self._write("PM5020/interval_unit", interval_unit)
+        history = self._as_int(history_seconds)
+        if history in self.PM5020_HISTORY_SECONDS:
+            self._write("PM5020/history_seconds", history)
 
     def __init__(self, backend: QSettings | None = None) -> None:
         self._settings = backend if backend is not None else QSettings()

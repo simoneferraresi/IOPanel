@@ -1088,6 +1088,7 @@ class MainWindow(QMainWindow):
             resource_name=self.config.instruments.pm5020_resource_name,
             wrapper_path=self.config.instruments.pm5020_wrapper_path,
             dll_path=self.config.instruments.pm5020_dll_path,
+            settings=self.settings,
         )
         self.pm5020_panel.connection_status_changed.connect(self._on_pm5020_connection_status_changed)
         self._update_pm5020_action()
@@ -2789,6 +2790,9 @@ class MainWindow(QMainWindow):
             self.settings.set_log_console_geometry(self.log_console_dock.saveGeometry())
         self.settings.set_log_console_level(self.log_console.level_filter.currentText())
         self.settings.set_scan_detectors([detector.value for detector in self.control_panel._selected_scan_detectors()])
+        pm5020_panel = getattr(self, "pm5020_panel", None)
+        if pm5020_panel is not None:
+            pm5020_panel.save_preferences(self.settings)
         for camera_id, panel in self.camera_panels.items():
             self.settings.set_camera_controls_visible(camera_id, panel.get_controls_visible())
         self.settings.sync()

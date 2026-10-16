@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app_settings import AppSettings
 from hardware.pm5020_types import ChannelConfig, PM5020State, PowerChannel, PowerReading
 from logic.pm5020_monitor import DISPLAY_UNITS, ConfigurationRequest, PM5020MonitorWorker, convert_power, format_power
 from logic.task_runner import TaskRunner
@@ -95,7 +96,7 @@ class PM5020ChannelControls(QGroupBox):
         form.addWidget(QLabel("Wavelength (nm):"), 0, 0)
         self.wavelength = QLineEdit(f"{default_wavelength_nm:.1f}")
         self.wavelength.setObjectName(f"pm5020Ch{channel.value}Wavelength")
-        wavelength_validator = QDoubleValidator(1.0, 100000.0, 3, self.wavelength)
+        wavelength_validator = QDoubleValidator(1.0, 100000.0, 17, self.wavelength)
         wavelength_validator.setLocale(QLocale.c())
         self.wavelength.setValidator(wavelength_validator)
         self.wavelength.setToolTip("Sensor-specific wavelength support is checked by the Thorlabs driver")
@@ -177,13 +178,13 @@ class PM5020ChannelControls(QGroupBox):
             else 1e-3
         )
         with QSignalBlocker(self.manual_range):
-            self.manual_range.setText(f"{watts / POWER_RANGE_SCALES[unit]:.12g}")
+            self.manual_range.setText(repr(watts / POWER_RANGE_SCALES[unit]))
         self._set_range_validator(unit)
         self._previous_range_unit = unit
 
     def _set_range_validator(self, unit: str) -> None:
         scale = POWER_RANGE_SCALES[unit]
-        validator = QDoubleValidator(1e-15 / scale, 1e3 / scale, 12, self.manual_range)
+        validator = QDoubleValidator(1e-15 / scale, 1e3 / scale, 17, self.manual_range)
         validator.setLocale(QLocale.c())
         self.manual_range.setValidator(validator)
 
@@ -278,11 +279,13 @@ class PM5020Panel(QWidget):
         resource_name: str = "",
         wrapper_path: str = "",
         dll_path: str = "",
+        settings: AppSettings | None = None,
     ):
         super().__init__(parent)
         if backend_mode not in {"physical", "simulation"}:
             raise ValueError(f"Unsupported PM5020 backend mode: {backend_mode!r}")
         self.backend_mode = backend_mode
+        self.settings = settings
         self.resource_name = resource_name
         self._connection_request_pending = False
         self._connection_operation_started = False
@@ -450,8 +453,110 @@ class PM5020Panel(QWidget):
             channel.enabled.toggled.connect(self._configuration_edited)
             channel.range_unit.currentTextChanged.connect(self._configuration_edited)
             channel.unit.currentTextChanged.connect(lambda _text: self._redraw())
+        if settings is not None:
+            self._restore_preferences(settings)
         self._redraw()
         self._update_controls()
+
+    def _restore_preferences(self, settings: AppSettings) -> None:
+        """Restore presentation controls without queuing hardware configuration."""
+        channels = [self.ch1, self.ch2]
+        values = [settings.pm5020_channel_preferences(1), settings.pm5020_channel_preferences(2)]
+        if not any(item["enabled"] for item in values):
+            # The application requires one selected channel before connection.
+            # Recover predictably from stale or manually corrupted preferences.
+            values[0]["enabled"] = True
+        for controls, prefs in zip(channels, values, strict=True):
+            blockers = [
+                QSignalBlocker(widget)
+                for widget in (
+                    controls.enabled,
+                    controls.wavelength,
+                    controls.auto_range,
+                    controls.manual_range,
+                    controls.range_unit,
+                    controls.unit,
+                    controls.input_filter,
+                )
+            ]
+            controls.enabled.setChecked(prefs["enabled"])
+            controls.wavelength.setText(repr(prefs["wavelength_nm"]))
+            controls.auto_range.setChecked(prefs["auto_range"])
+            range_unit = prefs["range_unit"]
+            controls.range_unit.setCurrentText(range_unit)
+            controls._previous_range_unit = range_unit
+            controls._set_range_validator(range_unit)
+            controls.manual_range.setText(repr(prefs["power_range_w"] / POWER_RANGE_SCALES[range_unit]))
+            controls.manual_range.setEnabled(not prefs["auto_range"])
+            controls.range_unit.setEnabled(not prefs["auto_range"])
+            controls.unit.setCurrentText(prefs["display_unit"])
+            controls.input_filter.setChecked(prefs["input_filter_enabled"])
+            del blockers
+
+        shared = settings.pm5020_preferences()
+        blocker = QSignalBlocker(self.interval_unit)
+        self.interval_unit.setCurrentText(shared["interval_unit"])
+        del blocker
+        self._previous_interval_unit = shared["interval_unit"]
+        if self._previous_interval_unit == "s":
+            validator = QDoubleValidator(0.25, 5.0, 3, self.interval)
+        else:
+            validator = QDoubleValidator(250, 5000, 0, self.interval)
+        validator.setLocale(QLocale.c())
+        self.interval.setValidator(validator)
+        factor = 1000 if self._previous_interval_unit == "s" else 1
+        self.interval.setText(f"{shared['monitor_interval_ms'] / factor:g}")
+        self._requested_interval_ms = shared["monitor_interval_ms"]
+        self.history.setCurrentIndex(self.history.findData(shared["history_seconds"]))
+
+    def save_preferences(self, settings: AppSettings | None = None) -> None:
+        """Capture valid UI preferences without recording live instrument state."""
+        target = settings or self.settings
+        if target is None:
+            return
+        for controls in (self.ch1, self.ch2):
+            try:
+                config = controls.channel_config()
+            except ValueError:
+                config = None
+            # Preserve independently valid controls when another field is being edited.
+            wavelength = None
+            if controls.wavelength.hasAcceptableInput():
+                try:
+                    candidate = float(controls.wavelength.text())
+                    if 1.0 <= candidate <= 100000.0:
+                        wavelength = candidate
+                except (ValueError, OverflowError):
+                    pass
+            manual_range_w = config.power_range_w if config is not None else None
+            if manual_range_w is None and controls.manual_range.hasAcceptableInput():
+                try:
+                    candidate = controls._manual_range_w()
+                    if 1e-15 <= candidate <= 1e3:
+                        manual_range_w = candidate
+                except (ValueError, OverflowError):
+                    pass
+            target.set_pm5020_channel_preferences(
+                controls.channel.value,
+                {
+                    "enabled": controls.enabled.isChecked(),
+                    "wavelength_nm": wavelength,
+                    "auto_range": controls.auto_range.isChecked(),
+                    "power_range_w": manual_range_w,
+                    "range_unit": controls.range_unit.currentText(),
+                    "display_unit": controls.unit.currentText(),
+                    "input_filter_enabled": controls.input_filter.isChecked(),
+                },
+            )
+        try:
+            interval_ms = self._interval_ms()
+        except ValueError:
+            interval_ms = None
+        target.set_pm5020_preferences(
+            monitor_interval_ms=interval_ms,
+            interval_unit=self.interval_unit.currentText(),
+            history_seconds=int(self.history.currentData()),
+        )
 
     @Slot(str)
     def _change_interval_unit(self, unit: str) -> None:

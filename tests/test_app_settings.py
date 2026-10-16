@@ -24,6 +24,11 @@ def test_missing_schema_initializes_v1_and_defaults(tmp_path):
     assert settings.power_monitor_export_directory() == Path.cwd()
     assert settings.power_monitor_export_formats() == (True, True)
     assert settings.application_icon() == "optical_burst"
+    assert settings.pm5020_preferences() == {
+        "monitor_interval_ms": 1000,
+        "interval_unit": "s",
+        "history_seconds": 10,
+    }
 
 
 def test_schema_v1_typed_values_round_trip(tmp_path):
@@ -92,6 +97,88 @@ def test_future_schema_is_left_untouched_and_uses_defaults(tmp_path):
     assert settings.power_monitor_export_formats() == (True, True)
     assert settings.application_icon() == "optical_burst"
     assert backend.value("Appearance/application_icon") == "prism_spectrum"
+
+
+def test_pm5020_preferences_round_trip_and_validate_each_value(tmp_path):
+    path = tmp_path / "pm5020.ini"
+    settings = make_settings(path)
+    assert settings.pm5020_channel_preferences(1) == {
+        "enabled": True,
+        "wavelength_nm": 1550.0,
+        "auto_range": True,
+        "power_range_w": 1e-3,
+        "range_unit": "mW",
+        "display_unit": "mW",
+        "input_filter_enabled": False,
+    }
+    settings.set_pm5020_channel_preferences(
+        1,
+        {
+            "enabled": False,
+            "wavelength_nm": 1550.123456789,
+            "auto_range": False,
+            "power_range_w": 2.5e-6,
+            "range_unit": "µW",
+            "display_unit": "dBm",
+            "input_filter_enabled": True,
+        },
+    )
+    settings.set_pm5020_channel_preferences(2, {"enabled": True, "wavelength_nm": 780.25})
+    settings.set_pm5020_preferences(monitor_interval_ms=2500, interval_unit="ms", history_seconds=300)
+    settings.sync()
+
+    reloaded = AppSettings(QSettings(str(path), QSettings.Format.IniFormat))
+    assert reloaded.pm5020_channel_preferences(1)["wavelength_nm"] == pytest.approx(1550.123456789)
+    assert reloaded.pm5020_channel_preferences(1)["power_range_w"] == pytest.approx(2.5e-6)
+    assert reloaded.pm5020_channel_preferences(1)["range_unit"] == "µW"
+    assert reloaded.pm5020_channel_preferences(1)["display_unit"] == "dBm"
+    assert reloaded.pm5020_channel_preferences(1)["input_filter_enabled"] is True
+    assert reloaded.pm5020_channel_preferences(1)["enabled"] is False
+    assert reloaded.pm5020_channel_preferences(2)["wavelength_nm"] == 780.25
+    assert reloaded.pm5020_channel_preferences(2)["enabled"] is True
+    assert reloaded.pm5020_preferences() == {
+        "monitor_interval_ms": 2500,
+        "interval_unit": "ms",
+        "history_seconds": 300,
+    }
+
+
+def test_pm5020_corrupt_values_fall_back_individually_and_future_schema_is_read_only(tmp_path):
+    settings = make_settings(tmp_path / "pm5020-invalid.ini")
+    backend = settings._settings
+    backend.setValue("PM5020/Channels/1/enabled", "false")
+    backend.setValue("PM5020/Channels/1/wavelength_nm", float("nan"))
+    backend.setValue("PM5020/Channels/1/auto_range", False)
+    backend.setValue("PM5020/Channels/1/power_range_w", float("inf"))
+    backend.setValue("PM5020/Channels/1/range_unit", "mW/s")
+    backend.setValue("PM5020/Channels/1/display_unit", "unsupported")
+    backend.setValue("PM5020/Channels/1/input_filter_enabled", 1)
+    backend.setValue("PM5020/monitor_interval_ms", 200)
+    backend.setValue("PM5020/interval_unit", "minutes")
+    backend.setValue("PM5020/history_seconds", 45)
+    channel = settings.pm5020_channel_preferences(1)
+    assert channel["enabled"] is True
+    assert channel["wavelength_nm"] == 1550.0
+    assert channel["auto_range"] is False
+    assert channel["power_range_w"] == 1e-3
+    assert channel["range_unit"] == "mW"
+    assert channel["display_unit"] == "mW"
+    assert channel["input_filter_enabled"] is False
+    assert settings.pm5020_preferences() == {
+        "monitor_interval_ms": 1000,
+        "interval_unit": "s",
+        "history_seconds": 10,
+    }
+    assert settings.pm5020_channel_preferences(2)["wavelength_nm"] == 775.0
+    assert AppSettings._finite_number(10**10000, 1.0, 100000.0) is None
+
+    backend.setValue("_meta/schema_version", 3)
+    future = AppSettings(backend)
+    future.set_pm5020_channel_preferences(1, {"wavelength_nm": 1700.0})
+    future.set_pm5020_preferences(monitor_interval_ms=2500, interval_unit="ms", history_seconds=300)
+    assert not future.supported
+    assert future.pm5020_channel_preferences(1)["wavelength_nm"] == 1550.0
+    assert future.pm5020_preferences()["monitor_interval_ms"] == 1000
 
 
 def test_application_icon_rejects_unknown_values_and_invalid_types(tmp_path):
