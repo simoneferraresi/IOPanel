@@ -39,32 +39,15 @@ HISTORY_SECONDS = (10, 30, 60, 300, 600)
 MAX_HISTORY_POINTS = 2400
 POWER_RANGE_SCALES = {"W": 1.0, "mW": 1e-3, "µW": 1e-6, "nW": 1e-9}
 
-# Keep passive text/header widgets visually on their native QGroupBox surface.
-# Editable inputs retain the same native Fusion appearance as the CT400 tabs.
-PM5020_PASSIVE_GROUP_STYLE = """
-QGroupBox QLabel, QGroupBox QCheckBox,
-QWidget#pm5020Ch1ReadingGroup, QWidget#pm5020Ch2ReadingGroup {
-    background-color: transparent;
-}
-"""
+def _use_native_group_surface(group: QGroupBox) -> None:
+    """Use the same native Fusion group surface as the CT400 controls.
 
-PM5020_POPUP_SELECTION_STYLE = """
-QAbstractItemView {
-    selection-background-color: palette(highlight);
-    selection-color: palette(highlighted-text);
-}
-QAbstractItemView::item:hover, QAbstractItemView::item:selected {
-    background-color: palette(highlight);
-    color: palette(highlighted-text);
-}
-"""
-
-
-def _use_native_combo_popup_contrast(combo: QComboBox) -> None:
-    """Match other tabs' Fusion selection palette in PM5020 unit popups."""
-    view = combo.view()
-    view.setPalette(QApplication.palette())
-    view.setStyleSheet(PM5020_POPUP_SELECTION_STYLE)
+    The outer PM5020 sidebar is deliberately white; its QGroupBoxes should not
+    inherit that white palette. Do not style child labels, checkboxes or combo
+    popup views: the working CT400 panels leave those to Qt's native style.
+    """
+    group.setPalette(QApplication.palette())
+    group.setAutoFillBackground(True)
 
 
 # Follow the existing CT400 monitor (blue) and Stop Alignment (red) controls.
@@ -83,6 +66,7 @@ class PM5020ChannelControls(QGroupBox):
         super().__init__(f"CH{channel.value} — Optical Power")
         style_group_box_title(self)
         self.setTitle("")
+        _use_native_group_surface(self)
         self.channel = channel
         self._rows: deque[tuple[float, float]] = deque(maxlen=MAX_HISTORY_POINTS)
         layout = QVBoxLayout(self)
@@ -111,7 +95,6 @@ class PM5020ChannelControls(QGroupBox):
         self.unit = QComboBox()
         self.unit.setObjectName(f"pm5020Ch{channel.value}DisplayUnit")
         self.unit.addItems(DISPLAY_UNITS)
-        _use_native_combo_popup_contrast(self.unit)
         self.unit.setCurrentText(default_unit)
         self.unit.setToolTip("Display only; also selects this channel's plot Y-axis units")
         reading_group_layout.addWidget(self.unit)
@@ -142,7 +125,6 @@ class PM5020ChannelControls(QGroupBox):
         form.addWidget(self.manual_range, 1, 2)
         self.range_unit = QComboBox()
         self.range_unit.addItems(list(POWER_RANGE_SCALES))
-        _use_native_combo_popup_contrast(self.range_unit)
         self.range_unit.setCurrentText("mW")
         self._previous_range_unit = "mW"
         form.addWidget(self.range_unit, 1, 3)
@@ -363,10 +345,14 @@ class PM5020Panel(QWidget):
         self.controls_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.controls_scroll.setMinimumWidth(320)
         self.controls_scroll.setMaximumWidth(400)
-        self.controls_scroll.setStyleSheet(
-            "QScrollArea#pm5020ControlsScroll { background-color: white; border: none; }\n" + PM5020_PASSIVE_GROUP_STYLE
-        )
-        self.controls_scroll.viewport().setStyleSheet("background-color: white;")
+        # The CT400 panels do not style their scroll containers. A stylesheet
+        # here also changes the native popup and passive-widget painting of
+        # every descendant, so use a palette only for the white viewport.
+        viewport = self.controls_scroll.viewport()
+        viewport.setAutoFillBackground(True)
+        viewport_palette = viewport.palette()
+        viewport_palette.setColor(QPalette.ColorRole.Window, Qt.GlobalColor.white)
+        viewport.setPalette(viewport_palette)
         content = QWidget()
         content.setObjectName("pm5020ControlsContent")
         content.setAutoFillBackground(True)
@@ -397,6 +383,7 @@ class PM5020Panel(QWidget):
         controls = QGroupBox("Operation")
         controls.setObjectName("pm5020OperationGroup")
         style_group_box_title(controls)
+        _use_native_group_surface(controls)
         controls_layout = QGridLayout(controls)
         self.interval = QLineEdit("1")
         self.interval.setObjectName("pm5020UpdateInterval")
@@ -409,14 +396,12 @@ class PM5020Panel(QWidget):
         )
         self.interval_unit = QComboBox()
         self.interval_unit.addItems(("ms", "s"))
-        _use_native_combo_popup_contrast(self.interval_unit)
         self.interval_unit.setCurrentText("s")
         self._previous_interval_unit = "s"
         self.interval_unit.setFixedWidth(58)
         self.interval_unit.currentTextChanged.connect(self._change_interval_unit)
         self.interval.editingFinished.connect(self._interval_edit_finished)
         self.history = QComboBox()
-        _use_native_combo_popup_contrast(self.history)
         for seconds in HISTORY_SECONDS:
             label = f"{seconds} s" if seconds < 60 else f"{seconds // 60} min"
             self.history.addItem(label, seconds)
