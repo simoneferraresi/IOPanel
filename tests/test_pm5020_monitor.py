@@ -56,12 +56,29 @@ def test_simulator_panel_reads_channels_and_plots_independent_units(qtbot):
     readings = QSignalSpy(worker.reading_ready)
     panel._connect()
     qtbot.waitUntil(lambda: panel._backend_state is PM5020State.IDLE, timeout=3000)
-    assert created_on and created_on[0] != threading.get_ident()
-    panel._apply_configuration()
     qtbot.waitUntil(lambda: panel._configuration_applied, timeout=2000)
+    assert created_on and created_on[0] != threading.get_ident()
     panel.interval.setText("0.25")
     panel._start()
     qtbot.waitUntil(lambda: readings.count() >= 2, timeout=3000)
+    session_id = panel._monitor_session_id
+    initial_history = len(panel.ch1._rows)
+    panel.interval.setText("0.5")
+    panel.interval.editingFinished.emit()
+    qtbot.waitUntil(lambda: panel._acknowledged_interval_ms == 500, timeout=2000)
+    assert panel._monitor_session_id == session_id
+    assert len(panel.ch1._rows) >= initial_history
+    assert panel.worker._timer is not None
+    assert panel.worker._timer.thread() == panel.task.worker_thread
+    latest_interval_request = panel._interval_request_id
+    panel.interval.setText("0.1")
+    panel.interval.editingFinished.emit()
+    panel.interval_unit.setCurrentText("ms")
+    assert panel._interval_request_id == latest_interval_request
+    assert panel._acknowledged_interval_ms == 500
+    panel.interval.setText("1500")
+    panel.interval.editingFinished.emit()
+    qtbot.waitUntil(lambda: panel._acknowledged_interval_ms == 1500, timeout=2000)
     assert panel.ch1.reading_label.text() == "10"
     assert panel.ch2.reading_label.text() == "800"
     assert panel.ch1.curve.getData()[1][-1] == pytest.approx(10)
@@ -73,8 +90,15 @@ def test_simulator_panel_reads_channels_and_plots_independent_units(qtbot):
     panel.pause_resume_button.click()
     qtbot.waitUntil(lambda: panel._paused, timeout=2000)
     assert panel.pause_resume_button.text() == "Resume"
+    interval_request_count = panel._interval_request_id
+    panel.interval.setText("2000")
+    panel.interval.editingFinished.emit()
+    assert panel._interval_request_id == interval_request_count
+    resume_requests = QSignalSpy(panel.resume_requested)
     panel.pause_resume_button.click()
     qtbot.waitUntil(lambda: not panel._paused and readings.count() >= 4, timeout=2000)
+    assert resume_requests.count() == 1
+    assert resume_requests.at(0)[0] == 2000
     assert panel.pause_resume_button.text() == "Pause"
     panel.stop_requested.emit()
     qtbot.waitUntil(lambda: not panel._monitor_session, timeout=2000)
@@ -111,7 +135,6 @@ def test_slow_simulated_reads_are_serialized_and_gui_remains_responsive(qtbot):
     qtbot.addWidget(panel)
     panel._connect()
     qtbot.waitUntil(lambda: panel._backend_state is PM5020State.IDLE, timeout=3000)
-    panel._apply_configuration()
     qtbot.waitUntil(lambda: panel._configuration_applied, timeout=2000)
     panel.interval.setText("0.25")
     panel._start()
@@ -145,7 +168,6 @@ def test_shutdown_waits_for_blocked_fake_vendor_read_without_blocking_gui(qtbot)
     qtbot.addWidget(panel)
     panel._connect()
     qtbot.waitUntil(lambda: panel._backend_state is PM5020State.IDLE, timeout=3000)
-    panel._apply_configuration()
     qtbot.waitUntil(lambda: panel._configuration_applied, timeout=2000)
     panel._start()
     gui_timer_ran: list[bool] = []
@@ -194,7 +216,7 @@ def test_invalid_physical_configuration_restores_menu_operation_state(qtbot):
     qtbot.waitUntil(lambda: panel.shutdown_finished, timeout=2000)
 
 
-def test_configuration_is_pending_until_ack_and_invalidated_by_edits_and_disconnect(qtbot):
+def test_configuration_is_automatic_and_latest_revision_is_acknowledged(qtbot):
     from logic.pm5020_monitor import PM5020MonitorWorker
 
     panel = PM5020Panel(worker=PM5020MonitorWorker())
@@ -202,35 +224,26 @@ def test_configuration_is_pending_until_ack_and_invalidated_by_edits_and_disconn
     panel._connect()
     qtbot.waitUntil(lambda: panel._backend_state is PM5020State.IDLE, timeout=2000)
     assert not panel.start_button.isEnabled()
-    panel._apply_configuration()
-    assert not panel._configuration_applied
-    assert panel._pending_configuration is not None
-    first_request = panel._pending_configuration
-    panel._apply_configuration()
-    assert panel._pending_configuration == first_request
-    panel.ch1.wavelength.setText("1549")
-    assert panel._pending_configuration is None
-    assert not panel._configuration_applied
-    panel._apply_configuration()
     qtbot.waitUntil(lambda: panel._configuration_applied, timeout=2000)
-    assert panel.apply_button.text() == "Settings Applied"
+    assert not hasattr(panel, "apply_button")
+    assert panel.start_button.isEnabled()
+    panel.ch1.wavelength.setText("1549")
+    panel.ch1.wavelength.editingFinished.emit()
+    assert not panel._configuration_applied
+    qtbot.waitUntil(lambda: panel._configuration_applied, timeout=2000)
     assert panel.start_button.isEnabled()
     panel.ch1.wavelength.setText("1548")
-    assert not panel._configuration_applied
+    panel.ch1.wavelength.editingFinished.emit()
     assert not panel.start_button.isEnabled()
-    panel._apply_configuration()
     qtbot.waitUntil(lambda: panel._configuration_applied, timeout=2000)
     panel.ch1.unit.setCurrentText("W")
     assert panel._configuration_applied
     panel._disconnect()
     qtbot.waitUntil(lambda: panel._backend_state is PM5020State.DISCONNECTED, timeout=2000)
     assert not panel._configuration_applied
-    panel._on_configuration_result(first_request[0], first_request[1], first_request[2], True, "")
-    assert not panel._configuration_applied
     panel._connect()
     qtbot.waitUntil(lambda: panel._backend_state is PM5020State.IDLE, timeout=2000)
     assert not panel.start_button.isEnabled()
-    panel._apply_configuration()
     qtbot.waitUntil(lambda: panel._configuration_applied, timeout=2000)
     panel.request_shutdown()
     qtbot.waitUntil(lambda: panel.shutdown_finished, timeout=2000)
@@ -243,7 +256,6 @@ def test_start_ack_clears_only_new_session_and_pause_resume_preserves_history(qt
     qtbot.addWidget(panel)
     panel._connect()
     qtbot.waitUntil(lambda: panel._backend_state is PM5020State.IDLE, timeout=2000)
-    panel._apply_configuration()
     qtbot.waitUntil(lambda: panel._configuration_applied, timeout=2000)
     panel._start()
     qtbot.waitUntil(lambda: panel._monitor_session and bool(panel.ch1._rows), timeout=2000)
@@ -310,7 +322,6 @@ def test_configuration_failure_and_stop_preserve_recovery_state(qtbot):
     qtbot.addWidget(panel)
     panel._connect()
     qtbot.waitUntil(lambda: panel._backend_state is PM5020State.IDLE, timeout=2000)
-    panel._apply_configuration()
     qtbot.waitUntil(lambda: panel._backend_state is PM5020State.ERROR, timeout=2000)
     qtbot.waitUntil(lambda: panel._pending_configuration is None, timeout=2000)
     assert not panel._configuration_applied
@@ -333,6 +344,9 @@ def test_pm5020_layout_matches_control_column_and_plot_conventions(qtbot):
     panel = PM5020Panel()
     qtbot.addWidget(panel)
     assert isinstance(panel.layout(), QHBoxLayout)
+    panel.resize(1280, 720)
+    panel.show()
+    qtbot.wait(50)
     assert panel.controls_scroll.objectName() == "pm5020ControlsScroll"
     assert panel.controls_scroll.minimumWidth() == 320
     assert panel.controls_scroll.maximumWidth() == 400
@@ -342,7 +356,8 @@ def test_pm5020_layout_matches_control_column_and_plot_conventions(qtbot):
     assert settings.findChild(QGroupBox, "pm5020InstrumentStatusGroup") is None
     assert settings.findChild(QGroupBox, "pm5020OperationGroup") is not None
     assert settings.objectName() == "pm5020ControlsContent"
-    assert settings.styleSheet() == "QWidget#pm5020ControlsContent { background-color: white; }"
+    assert settings.styleSheet() == ""
+    assert settings.palette().color(settings.backgroundRole()).name() == "#ffffff"
     assert panel.error_label.parentWidget() is settings
     assert panel.ch1.parentWidget() is settings
     assert panel.ch2.parentWidget() is settings
@@ -371,6 +386,10 @@ def test_pm5020_layout_matches_control_column_and_plot_conventions(qtbot):
     assert panel.interval.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Expanding
     assert panel.ch1.reading_label.font().pointSize() == 20
     assert panel.ch2.reading_label.font().pointSize() == 20
+    assert panel.ch1.reading_group.objectName() == "pm5020Ch1ReadingGroup"
+    assert panel.ch2.reading_group.objectName() == "pm5020Ch2ReadingGroup"
+    for channel in (panel.ch1, panel.ch2):
+        assert abs(channel.reading_group.geometry().center().x() - channel._reading_row.geometry().center().x()) <= 3
     assert panel.start_button.objectName() == "pm5020StartButton"
     assert panel.stop_button.objectName() == "pm5020StopButton"
     assert panel.start_button.minimumHeight() >= 35
@@ -380,6 +399,7 @@ def test_pm5020_layout_matches_control_column_and_plot_conventions(qtbot):
     assert panel.pause_resume_button.text() == "Pause"
     assert not hasattr(panel, "connect_button")
     assert not hasattr(panel, "disconnect_button")
+    assert not hasattr(panel, "apply_button")
     assert not panel.task.worker_thread.isRunning()
     panel.close()
 
@@ -504,3 +524,64 @@ def test_control_column_fits_without_vertical_scrolling_at_typical_height(qtbot)
     qtbot.wait(50)
     assert panel.controls_scroll.verticalScrollBar().maximum() == 0
     panel.close()
+
+
+def test_connected_configuration_rejects_invalid_and_both_disabled_settings(qtbot):
+    from logic.pm5020_monitor import PM5020MonitorWorker
+
+    meter = DummyPM5020()
+    panel = PM5020Panel(worker=PM5020MonitorWorker(simulator_factory=lambda: meter))
+    qtbot.addWidget(panel)
+    panel._connect()
+    qtbot.waitUntil(lambda: panel._configuration_applied, timeout=2000)
+    previous_configs = dict(meter._channel_configs)
+
+    panel.ch1.wavelength.setText("")
+    panel.ch1.wavelength.editingFinished.emit()
+    qtbot.waitUntil(lambda: "Invalid channel settings" in panel.error_label.text(), timeout=1000)
+    assert meter._channel_configs == previous_configs
+
+    panel.ch1.wavelength.setText("1550")
+    panel.ch1.wavelength.editingFinished.emit()
+    qtbot.waitUntil(lambda: panel._configuration_applied, timeout=2000)
+    panel.ch1.enabled.setChecked(False)
+    panel.ch2.enabled.setChecked(False)
+    qtbot.waitUntil(lambda: "Enable at least one channel" in panel.error_label.text(), timeout=2000)
+    assert not panel.start_button.isEnabled()
+    panel.request_shutdown()
+    qtbot.waitUntil(lambda: panel.shutdown_finished, timeout=2000)
+
+
+def test_edit_during_inflight_configuration_applies_newest_revision(qtbot):
+    entered = threading.Event()
+    release = threading.Event()
+
+    class BlockingConfigMeter(DummyPM5020):
+        blocked = False
+
+        def configure_channel(self, channel, config):
+            if not self.blocked:
+                self.blocked = True
+                entered.set()
+                assert release.wait(timeout=2)
+            return super().configure_channel(channel, config)
+
+    from logic.pm5020_monitor import PM5020MonitorWorker
+
+    meter = BlockingConfigMeter()
+    panel = PM5020Panel(worker=PM5020MonitorWorker(simulator_factory=lambda: meter))
+    qtbot.addWidget(panel)
+    panel._connect()
+    qtbot.waitUntil(entered.is_set, timeout=2000)
+    assert not panel.start_button.isEnabled()
+
+    panel.ch1.wavelength.setText("1547")
+    panel.ch1.wavelength.editingFinished.emit()
+    latest_revision = panel._settings_revision
+    release.set()
+    qtbot.waitUntil(lambda: panel._configuration_applied, timeout=3000)
+    assert panel._settings_revision == latest_revision
+    assert meter._channel_configs[PowerChannel.CH1].wavelength_nm == pytest.approx(1547)
+    assert panel.start_button.isEnabled()
+    panel.request_shutdown()
+    qtbot.waitUntil(lambda: panel.shutdown_finished, timeout=2000)

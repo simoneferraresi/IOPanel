@@ -118,7 +118,15 @@ selected by `pm5020_backend = simulation` or `physical` in `[Instruments]`;
 resource and SDK paths are configured there as well. No physical meter is
 connected until the operator chooses **Connect PM5020** from the menu.
 
-Configure CH1 and CH2 independently, then press **Apply Channel Settings**.
+Connect deliberately through the **Instruments** menu after configuring the
+physical or simulation backend and SDK paths in `config.ini`. On a confirmed
+connection, valid idle channel settings synchronize automatically through the
+worker. Start becomes available only after the worker acknowledges the latest
+configuration; monitoring still requires an explicit **Start** action. Editing
+settings while disconnected is local and does not access the meter. Invalid
+inputs are reported without sending them to the worker, and a rejected
+configuration remains unapplied until the operator corrects a setting. A
+terminal backend error requires deliberate disconnection and reconnection.
 Each channel has a compact Enabled checkbox (disabled channels are not read),
 a validated wavelength text field matching the CT400 input style, automatic
 or manual range on one row, and a manual-range W/mW/µW/nW selector. Changing
@@ -131,16 +139,26 @@ panel. Start remains disabled until the worker confirms all requested channel
 settings for the current connection. Editing wavelength, range, filter, or the
 enabled-channel selection invalidates that confirmation; display-unit changes
 do not. Input filtering and automatic or manual ranging use the shared backend
-configuration. A channel excluded from monitoring is not read.
+configuration. A channel excluded from monitoring is not read. The low-pass
+icons control the PM5020's native input filter; they do not filter samples in
+software after acquisition. The worker acknowledges the requested input-filter
+state along with the other channel settings.
 
 Start monitoring with an **Update every** value in milliseconds or seconds,
 representing the same 250–5000 ms requested interval. Changing the time unit
-preserves the requested duration. Reads run sequentially on one persistent
+preserves the requested duration. A valid interval change during acquisition
+updates the existing worker-owned timer without ending the session, clearing
+history, or triggering an immediate read. While paused, a valid interval is
+stored and used by the explicit Resume action; it does not resume acquisition.
+Hardware channel settings remain locked during monitoring and pause. Stop
+monitoring before changing wavelengths, ranges, enabled channels, or native
+input filters. Reads run sequentially on one persistent
 worker thread; CH1 and CH2 timestamps may differ. Actual sampling also
 depends on instrument latency. Each channel has an independent Y-axis and
 display-unit selector beside its numeric readout; the selected units apply
 immediately to the Y-axis and stored trace without altering the underlying
-watts data or channel settings. X-axis elapsed-time windows stay aligned.
+watts data or channel settings. Plot history changes are presentation-only and
+do not modify the meter. X-axis elapsed-time windows stay aligned.
 Zero and negative measurements have no dBm display. History is limited to
 the selected time window and a 2,400 point ring buffer per channel.
 

@@ -184,7 +184,6 @@ def test_pm5020_menu_shows_recovery_state_from_worker_backend(qtbot, monkeypatch
     action.trigger()
     qtbot.waitUntil(lambda: panel._backend_state is PM5020State.IDLE, timeout=2000)
     backend = panel.worker._backend
-    panel._apply_configuration()
     qtbot.waitUntil(lambda: panel._configuration_applied, timeout=2000)
     panel._start()
     qtbot.waitUntil(lambda: panel._backend_state is PM5020State.ERROR, timeout=2000)
@@ -238,7 +237,6 @@ def test_pm5020_status_bar_shows_simulation_and_worker_lifecycle(qtbot, monkeypa
     action.trigger()
     qtbot.waitUntil(lambda: window.pm5020_panel._backend_state is PM5020State.IDLE, timeout=2000)
     assert indicator.text() == "PM5020: SIMULATED"
-    window.pm5020_panel._apply_configuration()
     qtbot.waitUntil(lambda: window.pm5020_panel._configuration_applied, timeout=2000)
     window.pm5020_panel._start()
     qtbot.waitUntil(lambda: window.pm5020_panel._monitor_session, timeout=2000)

@@ -9,7 +9,7 @@ from typing import override
 
 import pyqtgraph as pg
 from PySide6.QtCore import QLocale, QSignalBlocker, QSize, Qt, QTimer, Signal, Slot
-from PySide6.QtGui import QCloseEvent, QDoubleValidator, QFont, QIcon
+from PySide6.QtGui import QCloseEvent, QDoubleValidator, QFont, QIcon, QPalette
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -67,17 +67,25 @@ class PM5020ChannelControls(QGroupBox):
         layout.addWidget(self.enabled)
 
         reading_row = QHBoxLayout()
+        self._reading_row = reading_row
+        reading_row.addStretch(1)
+        self.reading_group = QWidget(self)
+        self.reading_group.setObjectName(f"pm5020Ch{channel.value}ReadingGroup")
+        reading_group_layout = QHBoxLayout(self.reading_group)
+        reading_group_layout.setContentsMargins(0, 0, 0, 0)
+        reading_group_layout.setSpacing(6)
         self.reading_label = QLabel("—")
-        self.reading_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.reading_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.reading_label.setFont(make_font("mono", 20, QFont.Weight.Bold))
         self.reading_label.setMinimumHeight(44)
-        reading_row.addWidget(self.reading_label, stretch=1)
+        reading_group_layout.addWidget(self.reading_label)
         self.unit = QComboBox()
         self.unit.setObjectName(f"pm5020Ch{channel.value}DisplayUnit")
         self.unit.addItems(DISPLAY_UNITS)
         self.unit.setCurrentText(default_unit)
         self.unit.setToolTip("Display only; also selects this channel's plot Y-axis units")
-        reading_row.addWidget(self.unit)
+        reading_group_layout.addWidget(self.unit)
+        reading_row.addWidget(self.reading_group)
         reading_row.addStretch(1)
         layout.addLayout(reading_row)
 
@@ -241,6 +249,7 @@ class PM5020Panel(QWidget):
     start_requested = Signal(int)
     pause_requested = Signal()
     resume_requested = Signal(int)
+    interval_update_requested = Signal(int, int, int, int)
     stop_requested = Signal()
     disconnect_requested = Signal(int)
     shutdown_requested = Signal()
@@ -267,10 +276,17 @@ class PM5020Panel(QWidget):
         self._backend_state = PM5020State.DISCONNECTED
         self._activity = "Disconnected"
         self._configuration_applied = False
+        self._configuration_dirty = True
         self._settings_revision = 0
         self._connection_generation = 0
         self._configuration_request_id = 0
         self._pending_configuration: tuple[int, int, int] | None = None
+        self._monitor_session_id = 0
+        self._interval_request_id = 0
+        self._pending_interval_request: tuple[int, int, int] | None = None
+        self._requested_interval_ms = 1000
+        self._acknowledged_interval_ms = 1000
+        self._starting_interval_ms = 1000
         self._monitor_session = False
         self._paused = False
         self._last_elapsed = 0.0
@@ -281,6 +297,10 @@ class PM5020Panel(QWidget):
         self._shutdown_timer.setSingleShot(True)
         self._shutdown_timer.setInterval(5000)
         self._shutdown_timer.timeout.connect(self._on_shutdown_timeout)
+        self._configuration_timer = QTimer(self)
+        self._configuration_timer.setSingleShot(True)
+        self._configuration_timer.setInterval(120)
+        self._configuration_timer.timeout.connect(self._request_automatic_configuration)
 
         self.worker = (
             worker
@@ -297,6 +317,7 @@ class PM5020Panel(QWidget):
         self.task.worker_thread.finished.connect(self._on_thread_finished, Qt.ConnectionType.QueuedConnection)
         self.worker.configuration_result.connect(self._on_configuration_result)
         self.worker.monitoring_started.connect(self._on_monitoring_started)
+        self.worker.monitor_interval_result.connect(self._on_monitor_interval_result)
         self._set_request_connections()
 
         # Match the Wavelength Scan and Power Monitor tabs: settings on the left,
@@ -316,7 +337,9 @@ class PM5020Panel(QWidget):
         content = QWidget()
         content.setObjectName("pm5020ControlsContent")
         content.setAutoFillBackground(True)
-        content.setStyleSheet("QWidget#pm5020ControlsContent { background-color: white; }")
+        palette = content.palette()
+        palette.setColor(QPalette.ColorRole.Window, Qt.GlobalColor.white)
+        content.setPalette(palette)
         layout = QVBoxLayout(content)
         layout.setSpacing(10)
 
@@ -357,11 +380,11 @@ class PM5020Panel(QWidget):
         self._previous_interval_unit = "s"
         self.interval_unit.setFixedWidth(58)
         self.interval_unit.currentTextChanged.connect(self._change_interval_unit)
+        self.interval.editingFinished.connect(self._interval_edit_finished)
         self.history = QComboBox()
         for seconds in HISTORY_SECONDS:
             label = f"{seconds} s" if seconds < 60 else f"{seconds // 60} min"
             self.history.addItem(label, seconds)
-        self.apply_button = QPushButton("Apply Channel Settings")
         self.start_button = QPushButton("Start")
         self.start_button.setObjectName("pm5020StartButton")
         self.start_button.setStyleSheet(PM5020_ACTION_BUTTON_STYLE)
@@ -385,12 +408,11 @@ class PM5020Panel(QWidget):
         controls_layout.addLayout(update_row, 0, 1)
         controls_layout.addWidget(QLabel("Plot history:"), 1, 0)
         controls_layout.addWidget(self.history, 1, 1)
-        controls_layout.addWidget(self.apply_button, 2, 0, 1, 2)
         actions_layout = QHBoxLayout()
         actions_layout.addWidget(self.start_button, stretch=1)
         actions_layout.addWidget(self.pause_resume_button, stretch=1)
         actions_layout.addWidget(self.stop_button, stretch=1)
-        controls_layout.addLayout(actions_layout, 3, 0, 1, 2)
+        controls_layout.addLayout(actions_layout, 2, 0, 1, 2)
         layout.addWidget(controls)
         layout.addStretch(1)
         self.controls_scroll.setWidget(content)
@@ -405,21 +427,23 @@ class PM5020Panel(QWidget):
         plots.addWidget(self.ch2.plot_host, stretch=1)
         root.addWidget(self.plot_container, stretch=1)
 
-        self.apply_button.clicked.connect(self._apply_configuration)
         self.start_button.clicked.connect(self._start)
         self.pause_resume_button.clicked.connect(self._toggle_pause_resume)
         self.stop_button.clicked.connect(self.stop_requested)
         self.ch1.clear_button.clicked.connect(lambda: self._clear_channel(self.ch1))
         self.ch2.clear_button.clicked.connect(lambda: self._clear_channel(self.ch2))
         self.history.currentIndexChanged.connect(self._redraw)
-        self.interval.textChanged.connect(self._update_controls)
+        self.interval.textChanged.connect(self._interval_text_changed)
         self.interval_unit.currentTextChanged.connect(self._update_controls)
         for channel in (self.ch1, self.ch2):
-            channel.wavelength.textChanged.connect(self._configuration_edited)
+            channel.wavelength.textChanged.connect(self._configuration_input_changed)
+            channel.wavelength.editingFinished.connect(self._configuration_edited)
             channel.auto_range.toggled.connect(self._configuration_edited)
-            channel.manual_range.textChanged.connect(self._configuration_edited)
+            channel.manual_range.textChanged.connect(self._configuration_input_changed)
+            channel.manual_range.editingFinished.connect(self._configuration_edited)
             channel.input_filter.toggled.connect(self._configuration_edited)
             channel.enabled.toggled.connect(self._configuration_edited)
+            channel.range_unit.currentTextChanged.connect(self._configuration_edited)
             channel.unit.currentTextChanged.connect(lambda _text: self._redraw())
         self._redraw()
         self._update_controls()
@@ -427,29 +451,38 @@ class PM5020Panel(QWidget):
     @Slot(str)
     def _change_interval_unit(self, unit: str) -> None:
         """Keep the requested interval constant when the display unit changes."""
+        milliseconds: float | None = None
         if self.interval.hasAcceptableInput():
-            milliseconds = float(self.interval.text()) * (1000 if self._previous_interval_unit == "s" else 1)
-        else:
-            milliseconds = 1000.0
+            old_factor = 1000 if self._previous_interval_unit == "s" else 1
+            candidate = round(float(self.interval.text()) * old_factor)
+            if 250 <= candidate <= 5000:
+                milliseconds = float(candidate)
         with QSignalBlocker(self.interval):
             if unit == "s":
                 validator = QDoubleValidator(0.25, 5.0, 3, self.interval)
                 validator.setLocale(QLocale.c())
                 self.interval.setValidator(validator)
-                self.interval.setText(f"{milliseconds / 1000:g}")
             else:
                 validator = QDoubleValidator(250, 5000, 0, self.interval)
                 validator.setLocale(QLocale.c())
                 self.interval.setValidator(validator)
-                self.interval.setText(f"{milliseconds:g}")
+            if milliseconds is not None:
+                self.interval.setText(f"{milliseconds / 1000:g}" if unit == "s" else f"{milliseconds:g}")
         self._previous_interval_unit = unit
         self._update_controls()
+        if milliseconds is not None:
+            self._interval_edit_finished()
+        else:
+            self._show_error("Enter an update interval between 250 and 5000 ms.")
 
     def _interval_ms(self) -> int:
         factor = 1000 if self.interval_unit.currentText() == "s" else 1
         if not self.interval.hasAcceptableInput():
-            return 1000
-        return max(250, min(5000, round(float(self.interval.text()) * factor)))
+            raise ValueError("Enter an update interval between 250 and 5000 ms.")
+        milliseconds = round(float(self.interval.text()) * factor)
+        if not 250 <= milliseconds <= 5000:
+            raise ValueError("Enter an update interval between 250 and 5000 ms.")
+        return milliseconds
 
     def _set_request_connections(self) -> None:
         self.connect_requested.connect(self.worker.connect_instrument)
@@ -458,6 +491,7 @@ class PM5020Panel(QWidget):
         self.start_requested.connect(self.worker.start_monitoring)
         self.pause_requested.connect(self.worker.pause_monitoring)
         self.resume_requested.connect(self.worker.resume_monitoring)
+        self.interval_update_requested.connect(self.worker.update_monitor_interval)
         self.stop_requested.connect(self.worker.stop_monitoring)
         self.disconnect_requested.connect(self.worker.disconnect_instrument)
         self.shutdown_requested.connect(self.worker.shutdown)
@@ -499,6 +533,8 @@ class PM5020Panel(QWidget):
         if self._backend_state is PM5020State.DISCONNECTED or self._activity in {"Connecting", "Disconnecting"}:
             return
         self._connection_generation += 1
+        self._monitor_session_id = 0
+        self._pending_interval_request = None
         self._invalidate_configuration()
         self.disconnect_requested.emit(self._connection_generation)
         self._connection_request_pending = True
@@ -508,12 +544,19 @@ class PM5020Panel(QWidget):
         self.connection_status_changed.emit(self._backend_state, self._activity)
 
     @Slot()
-    def _apply_configuration(self) -> None:
-        if self._pending_configuration is not None or self._backend_state is not PM5020State.IDLE:
+    def _request_automatic_configuration(self) -> None:
+        if (
+            self._shutdown_requested
+            or not self._configuration_dirty
+            or self._pending_configuration is not None
+            or self._backend_state is not PM5020State.IDLE
+            or self._monitor_session
+            or self._paused
+        ):
             return
         channels = [channel for channel in (self.ch1, self.ch2) if channel.enabled.isChecked()]
         if not channels:
-            self._show_error("Enable at least one channel before applying settings.")
+            self._show_error("Enable at least one channel before starting monitoring.")
             return
         try:
             settings = [(channel.channel, channel.channel_config()) for channel in channels]
@@ -534,6 +577,56 @@ class PM5020Panel(QWidget):
         self._update_controls()
 
     @Slot()
+    def _interval_text_changed(self, *_args: object) -> None:
+        self._update_controls()
+
+    @Slot()
+    def _interval_edit_finished(self) -> None:
+        try:
+            value = self._interval_ms()
+        except ValueError as exc:
+            self._show_error(str(exc))
+            self._update_controls()
+            return
+        self._requested_interval_ms = value
+        self._update_controls()
+        if self._monitor_session and not self._paused and value != self._acknowledged_interval_ms:
+            self._send_interval_update()
+
+    def _send_interval_update(self) -> None:
+        if (
+            self._backend_state is not PM5020State.IDLE
+            or not self._monitor_session
+            or self._paused
+            or not self._monitor_session_id
+            or self._shutdown_requested
+        ):
+            return
+        self._interval_request_id += 1
+        request_id = self._interval_request_id
+        self._pending_interval_request = (self._connection_generation, self._monitor_session_id, request_id)
+        self.interval_update_requested.emit(
+            self._connection_generation, self._monitor_session_id, request_id, self._requested_interval_ms
+        )
+
+    @Slot(int, int, int, bool, str)
+    def _on_monitor_interval_result(
+        self, generation: int, session_id: int, request_id: int, success: bool, message: str
+    ) -> None:
+        key = (generation, session_id, request_id)
+        if self._pending_interval_request != key:
+            return
+        self._pending_interval_request = None
+        if success and generation == self._connection_generation and session_id == self._monitor_session_id:
+            self._acknowledged_interval_ms = self._requested_interval_ms
+            self.interval.setToolTip(
+                f"Active interval confirmed at {self._acknowledged_interval_ms} ms; "
+                "actual acquisition rate depends on USB/instrument latency"
+            )
+        elif message and self._monitor_session and not self._paused:
+            self._show_error(f"Could not update monitoring interval: {message}")
+
+    @Slot()
     def _start(self) -> None:
         if not self.start_button.isEnabled():
             return
@@ -541,28 +634,55 @@ class PM5020Panel(QWidget):
         if not enabled:
             self._show_error("Enable at least one channel before monitoring.")
             return
+        try:
+            interval_ms = self._interval_ms()
+        except ValueError as exc:
+            self._show_error(str(exc))
+            return
         self.channels_requested.emit(enabled)
-        self.start_requested.emit(self._interval_ms())
+        self._requested_interval_ms = interval_ms
+        self._starting_interval_ms = interval_ms
+        self.start_requested.emit(interval_ms)
 
     @Slot()
     def _toggle_pause_resume(self) -> None:
         if not self.pause_resume_button.isEnabled():
             return
         if self._paused:
-            self.resume_requested.emit(self._interval_ms())
+            self.resume_requested.emit(self._requested_interval_ms)
         else:
             self.pause_requested.emit()
+
+    @Slot()
+    def _configuration_input_changed(self, *_args: object) -> None:
+        self._settings_revision += 1
+        self._configuration_applied = False
+        self._configuration_dirty = True
+        self._pending_configuration = None
+        self._configuration_timer.stop()
+        self._update_controls()
 
     @Slot()
     def _configuration_edited(self, *_args: object) -> None:
         self._settings_revision += 1
         self._configuration_applied = False
+        self._configuration_dirty = True
         self._pending_configuration = None
+        self._configuration_timer.stop()
+        if self._backend_state is PM5020State.IDLE and not self._monitor_session and not self._paused:
+            self._configuration_timer.start()
+        for channel in (self.ch1, self.ch2):
+            selected = "enabled" if channel.input_filter.isChecked() else "disabled"
+            channel.input_filter.setToolTip(
+                f"PM5020 input filter requested {selected}; awaiting configuration acknowledgement"
+            )
         self._update_controls()
 
     def _invalidate_configuration(self) -> None:
         self._configuration_applied = False
+        self._configuration_dirty = True
         self._pending_configuration = None
+        self._configuration_timer.stop()
 
     @Slot(object)
     def _on_instrument_state(self, state: PM5020State) -> None:
@@ -586,6 +706,8 @@ class PM5020Panel(QWidget):
             self._paused = False
             self._show_error("Recovery required. Stop monitoring, disconnect, and reconnect deliberately.")
         self._update_controls()
+        if state is PM5020State.IDLE and self._configuration_dirty and self._pending_configuration is None:
+            self._configuration_timer.start()
         self.connection_status_changed.emit(self._backend_state, self._activity)
 
     @Slot(str)
@@ -603,12 +725,17 @@ class PM5020Panel(QWidget):
         if activity == "Paused":
             self._paused = True
         elif activity in {"Monitoring", "Busy with acquisition"}:
+            was_paused = self._paused
             self._monitor_session = True
             self._paused = False
+            if was_paused:
+                self._acknowledged_interval_ms = self._requested_interval_ms
         elif activity in {"Connected / idle", "Disconnected", "Recovery required"}:
             self._monitor_session = False
             self._paused = False
         self._update_controls()
+        if activity == "Connected / idle" and self._configuration_dirty and self._pending_configuration is None:
+            self._configuration_timer.start()
         if activity in {"Connected / idle", "Disconnected", "Recovery required"}:
             self._connection_request_pending = False
             self._connection_operation_started = False
@@ -651,23 +778,34 @@ class PM5020Panel(QWidget):
             and self._backend_state is PM5020State.IDLE
         )
         self._configuration_applied = valid
+        self._configuration_dirty = False
         if valid:
             self.error_label.clear()
             self.error_label.hide()
             self._activity = "Connected / idle"
         else:
             self._show_error(message or "Settings changed or the PM5020 state changed before confirmation.")
+        for channel in (self.ch1, self.ch2):
+            selected = "enabled" if channel.input_filter.isChecked() else "disabled"
+            channel.input_filter.setToolTip(
+                f"PM5020 input filter requested {selected}; "
+                f"{'configuration acknowledged' if valid else 'setting not confirmed' if not success else 'settings changed before acknowledgement'}."
+            )
         self._update_controls()
 
     @Slot(int, int)
-    def _on_monitoring_started(self, generation: int, _session_id: int) -> None:
+    def _on_monitoring_started(self, generation: int, session_id: int) -> None:
         if generation != self._connection_generation:
             return
         self._clear_history()
+        self._monitor_session_id = session_id
         self._monitor_session = True
         self._paused = False
+        self._acknowledged_interval_ms = self._starting_interval_ms
         self._activity = "Monitoring"
         self._update_controls()
+        if self._requested_interval_ms != self._acknowledged_interval_ms:
+            self._send_interval_update()
 
     def _redraw(self) -> None:
         window_s = int(self.history.currentData())
@@ -677,21 +815,13 @@ class PM5020Panel(QWidget):
     @Slot()
     def _update_controls(self, *_args: object) -> None:
         recovering = self._backend_state is PM5020State.ERROR
-        if self._pending_configuration is not None:
-            self.apply_button.setText("Applying…")
-        elif self._configuration_applied:
-            self.apply_button.setText("Settings Applied")
-        else:
-            self.apply_button.setText("Apply Channel Settings")
         ready = self._backend_state is PM5020State.IDLE
-        self.apply_button.setEnabled(
-            ready
-            and not recovering
-            and not self._monitor_session
-            and not self._paused
-            and self._pending_configuration is None
-        )
         interval_valid = self.interval.hasAcceptableInput()
+        if interval_valid:
+            try:
+                interval_valid = 250 <= self._interval_ms() <= 5000
+            except ValueError:
+                interval_valid = False
         can_start = (
             ready and self._configuration_applied and interval_valid and not recovering and not self._monitor_session
         )
@@ -737,6 +867,7 @@ class PM5020Panel(QWidget):
         if self._shutdown_requested:
             return
         self._shutdown_requested = True
+        self._configuration_timer.stop()
         self.connection_status_changed.emit(self._backend_state, "Shutting down")
         if self.task.worker_thread.isRunning():
             self._shutdown_timer.start()
