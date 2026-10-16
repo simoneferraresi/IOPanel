@@ -11,6 +11,7 @@ import pyqtgraph as pg
 from PySide6.QtCore import QLocale, QSignalBlocker, QSize, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QCloseEvent, QDoubleValidator, QFont, QIcon, QPalette
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QFrame,
@@ -36,6 +37,34 @@ logger = logging.getLogger("LabApp.pm5020_panel")
 
 HISTORY_SECONDS = (10, 30, 60, 300, 600)
 MAX_HISTORY_POINTS = 2400
+
+# Keep passive text/header widgets visually on their native QGroupBox surface.
+# Editable inputs retain the same native Fusion appearance as the CT400 tabs.
+PM5020_PASSIVE_GROUP_STYLE = """
+QGroupBox QLabel, QGroupBox QCheckBox,
+QWidget#pm5020Ch1ReadingGroup, QWidget#pm5020Ch2ReadingGroup {
+    background-color: transparent;
+}
+"""
+
+PM5020_POPUP_SELECTION_STYLE = """
+QAbstractItemView {
+    selection-background-color: palette(highlight);
+    selection-color: palette(highlighted-text);
+}
+QAbstractItemView::item:hover, QAbstractItemView::item:selected {
+    background-color: palette(highlight);
+    color: palette(highlighted-text);
+}
+"""
+
+
+def _use_native_combo_popup_contrast(combo: QComboBox) -> None:
+    """Match other tabs' Fusion selection palette in PM5020 unit popups."""
+    view = combo.view()
+    view.setPalette(QApplication.palette())
+    view.setStyleSheet(PM5020_POPUP_SELECTION_STYLE)
+
 POWER_RANGE_SCALES = {"W": 1.0, "mW": 1e-3, "µW": 1e-6, "nW": 1e-9}
 
 # Follow the existing CT400 monitor (blue) and Stop Alignment (red) controls.
@@ -82,6 +111,7 @@ class PM5020ChannelControls(QGroupBox):
         self.unit = QComboBox()
         self.unit.setObjectName(f"pm5020Ch{channel.value}DisplayUnit")
         self.unit.addItems(DISPLAY_UNITS)
+        _use_native_combo_popup_contrast(self.unit)
         self.unit.setCurrentText(default_unit)
         self.unit.setToolTip("Display only; also selects this channel's plot Y-axis units")
         reading_group_layout.addWidget(self.unit)
@@ -112,6 +142,7 @@ class PM5020ChannelControls(QGroupBox):
         form.addWidget(self.manual_range, 1, 2)
         self.range_unit = QComboBox()
         self.range_unit.addItems(list(POWER_RANGE_SCALES))
+        _use_native_combo_popup_contrast(self.range_unit)
         self.range_unit.setCurrentText("mW")
         self._previous_range_unit = "mW"
         form.addWidget(self.range_unit, 1, 3)
@@ -332,7 +363,10 @@ class PM5020Panel(QWidget):
         self.controls_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.controls_scroll.setMinimumWidth(320)
         self.controls_scroll.setMaximumWidth(400)
-        self.controls_scroll.setStyleSheet("QScrollArea { background-color: white; border: none; }")
+        self.controls_scroll.setStyleSheet(
+            "QScrollArea#pm5020ControlsScroll { background-color: white; border: none; }\n"
+            + PM5020_PASSIVE_GROUP_STYLE
+        )
         self.controls_scroll.viewport().setStyleSheet("background-color: white;")
         content = QWidget()
         content.setObjectName("pm5020ControlsContent")
@@ -376,12 +410,14 @@ class PM5020Panel(QWidget):
         )
         self.interval_unit = QComboBox()
         self.interval_unit.addItems(("ms", "s"))
+        _use_native_combo_popup_contrast(self.interval_unit)
         self.interval_unit.setCurrentText("s")
         self._previous_interval_unit = "s"
         self.interval_unit.setFixedWidth(58)
         self.interval_unit.currentTextChanged.connect(self._change_interval_unit)
         self.interval.editingFinished.connect(self._interval_edit_finished)
         self.history = QComboBox()
+        _use_native_combo_popup_contrast(self.history)
         for seconds in HISTORY_SECONDS:
             label = f"{seconds} s" if seconds < 60 else f"{seconds // 60} min"
             self.history.addItem(label, seconds)
