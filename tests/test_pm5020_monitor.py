@@ -417,13 +417,15 @@ def test_pm5020_uses_native_group_surfaces_and_combo_popup_style(qtbot):
 
     assert panel.controls_scroll.styleSheet() == ""
     assert panel.controls_scroll.viewport().styleSheet() == ""
-    assert panel.controls_scroll.widget().styleSheet() == ""
+    content = panel.controls_scroll.widget()
+    assert content is not None
+    assert content.styleSheet() == ""
 
     native_palette = QApplication.palette()
     for group in (
         panel.ch1,
         panel.ch2,
-        panel.controls_scroll.widget().findChild(QGroupBox, "pm5020OperationGroup"),
+        content.findChild(QGroupBox, "pm5020OperationGroup"),
     ):
         assert group is not None
         assert group.autoFillBackground()
