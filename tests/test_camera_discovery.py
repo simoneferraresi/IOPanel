@@ -182,7 +182,7 @@ def test_cancellation_during_poll_exits_before_next_discovery_query():
     event = threading.Event()
     waiting = threading.Event()
     system = SequenceSystem([[], []])
-    caught: list[Exception] = []
+    caught: list[CameraDiscoveryCancelled] = []
 
     class NotifyingCancellation:
         def is_set(self):
@@ -201,7 +201,7 @@ def test_cancellation_during_poll_exits_before_next_discovery_query():
                 poll_interval_s=1,
                 cancel_event=NotifyingCancellation(),
             )
-        except Exception as exc:
+        except CameraDiscoveryCancelled as exc:
             caught.append(exc)
 
     worker = threading.Thread(target=discover, daemon=True)
