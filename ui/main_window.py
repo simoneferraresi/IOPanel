@@ -737,9 +737,10 @@ class MainWindow(QMainWindow):
         self._lazy_init_started = True
         logger.info("Starting lazy initialization of hardware...")
 
-        # Enumerate configured piezo COM-port candidates asynchronously.
-        # This never opens a serial device; actual connections remain explicit.
-        self._init_piezos_lazy()
+        # Optional piezo discovery is passive and only starts when a port is
+        # configured. Hardware-free installations should launch without a task.
+        if self.config.instruments.piezo_left_serial or self.config.instruments.piezo_right_serial:
+            self._init_piezos_lazy()
 
         # CT400 initialization remains asynchronous.
         self._init_ct400_lazy()
