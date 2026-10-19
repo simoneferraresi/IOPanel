@@ -1,8 +1,8 @@
 """Shared hardware-independent CSV/MAT export and atomic file publication.
 
-The two CT400 export domains retain separate schemas, numerical formatting,
-GUI workers and outcomes. Only the staging, serialization and per-format
-failure-isolation mechanics are shared.
+The two CT400 export domains retain separate schemas, GUI workers and outcomes.
+Both CSV outputs preserve float64 values using a common archival formatting
+policy, independent of the physical instrument's measurement accuracy.
 """
 
 from __future__ import annotations
@@ -16,6 +16,9 @@ from pathlib import Path
 from typing import Protocol
 
 import numpy as np
+
+# Round-trip IEEE-754 binary64 values; not a statement of instrument accuracy.
+CSV_FLOAT_FORMAT = "%.17g"
 
 
 class CsvMatPayload(Protocol):
@@ -37,7 +40,6 @@ def write_staged_csv_mat(
     payload: CsvMatPayload,
     *,
     overwrite_confirmed: bool,
-    csv_format: str,
     temp_prefix: str,
     error_context: str,
 ) -> None:
@@ -59,7 +61,7 @@ def write_staged_csv_mat(
                         delimiter=",",
                         header=payload.csv_header,
                         comments="",
-                        fmt=csv_format,
+                        fmt=CSV_FLOAT_FORMAT,
                     )
                     stream.flush()
                     os.fsync(stream.buffer.fileno())
