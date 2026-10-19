@@ -2708,11 +2708,21 @@ class MainWindow(QMainWindow):
 
         self.statusBar().showMessage("Shutting down...", 0)
 
-        # Capture the final harmless UI snapshot before camera cleanup clears
-        # the panel registry used to read camera control visibility.
+        # UI preferences must be saved before camera panels are removed.
         self._save_ui_preferences()
+        self._cleanup_shutdown_panel_workers()
+        self._cleanup_cameras()
+        self._disconnect_piezos_for_shutdown()
+        self._release_ct400_for_shutdown()
+        self._cleanup_vimbasystem()
 
-        # Cleanup long-running panel workers
+        logger.info("Shutdown complete.")
+        self._finish_shutdown_ui()
+        event.accept()
+        logger.info("MainWindow.closeEvent cleanup returned after %.2f s.", time.perf_counter() - close_started_at)
+
+    def _cleanup_shutdown_panel_workers(self) -> None:
+        """Release panel worker resources before stopping cameras."""
         if hasattr(self, "alignment_tab") and self.alignment_tab:
             self.alignment_tab.cleanup()
 
@@ -2722,10 +2732,8 @@ class MainWindow(QMainWindow):
         if hasattr(self, "plot_widget") and self.plot_widget:
             self.plot_widget.cleanup()
 
-        # 2. Close all camera streams
-        self._cleanup_cameras()
-
-        # 3. Disconnect each piezo independently; one failure must not strand the other.
+    def _disconnect_piezos_for_shutdown(self) -> None:
+        """Best-effort piezo cleanup with independent failure boundaries."""
         for side, piezo in (("left", self.piezo_left), ("right", self.piezo_right)):
             try:
                 if piezo and piezo.is_connected():
@@ -2733,6 +2741,8 @@ class MainWindow(QMainWindow):
             except Exception:
                 logger.exception("Error disconnecting %s piezo hardware during shutdown", side)
 
+    def _release_ct400_for_shutdown(self) -> None:
+        """Retain the CT400 input safe-state and native handle close ordering."""
         # Stop monitoring above so its own selected input is handled before
         # releasing the CT400. A successful GUI disconnect already disabled
         # the configured input. Retain that knowledge separately from the UI
@@ -2758,10 +2768,8 @@ class MainWindow(QMainWindow):
             logger.info("MainWindow.closeEvent: Closing connected DummyCT400 simulation.")
             device.close()
 
-        # 4. Shut down the main Vimba system API
-        self._cleanup_vimbasystem()
-
-        logger.info("Shutdown complete.")
+    def _finish_shutdown_ui(self) -> None:
+        """Finalize UI resources only after hardware cleanup."""
         self._pending_init_close = False
         self._pending_camera_lifecycle_close = False
         self._pending_piezo_operation_close = False
@@ -2771,9 +2779,6 @@ class MainWindow(QMainWindow):
             pass
         self.log_console.stop_updates()
         self.log_console_dock.hide()
-        event.accept()
-        logger.info("MainWindow.closeEvent cleanup returned after %.2f s.", time.perf_counter() - close_started_at)
-
     def _save_ui_preferences(self) -> None:
         """Save only presentation state and the selected scan detector IDs."""
         if not self.isFullScreen():
