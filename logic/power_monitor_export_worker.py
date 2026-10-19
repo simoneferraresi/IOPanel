@@ -1,7 +1,7 @@
 """Hardware-free staged CSV/MAT serialization for completed Power Monitor recordings.
 
 The GUI confirms conflicts and snapshots metadata before creating this worker.
-The domain-specific 17-significant-digit CSV policy remains unchanged.
+The existing binary64 round-trip CSV policy is now shared with scan exports.
 """
 
 from __future__ import annotations
@@ -34,7 +34,6 @@ def _write_staged_power_monitor_format(
         destination,
         payload,
         overwrite_confirmed=overwrite_confirmed,
-        csv_format="%.17g",
         temp_prefix=".iopanel-monitor-",
         error_context="Power Monitor",
     )
