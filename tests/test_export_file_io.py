@@ -56,6 +56,25 @@ def test_shared_serializer_preserves_domain_specific_csv_bytes_and_cleanup(tmp_p
     assert not list(tmp_path.glob(temp_prefix + "*"))
 
 
+def test_scan_csv_round_trips_adjacent_float64_values(tmp_path):
+    payload = _payload()
+    payload.csv_data = np.array(
+        [
+            [np.nextafter(1550.0, np.inf), np.nextafter(-12.5, -np.inf)],
+            [1550.1234567890123, -0.0000009],
+        ],
+        dtype=np.float64,
+    )
+    destination = tmp_path / "scan.csv"
+
+    _write_staged_format("CSV", destination, payload, overwrite_confirmed=False)
+
+    np.testing.assert_array_equal(
+        np.loadtxt(destination, delimiter=",", comments="#"),
+        payload.csv_data,
+    )
+
+
 def test_power_monitor_csv_round_trips_double_precision_elapsed_times(tmp_path):
     payload = _payload()
     payload.csv_data = np.array(
