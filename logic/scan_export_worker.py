@@ -1,7 +1,7 @@
 """One-shot, hardware-independent schema-v2 scan CSV/MAT export worker.
 
-The domain-specific worker retains the established six-decimal CSV format and
-scan-specific outcome while using common atomic file publication.
+The scan-specific schema and outcome use common atomic file publication.
+CSV numeric values are archived at binary64 round-trip precision.
 """
 
 from __future__ import annotations
@@ -34,7 +34,6 @@ def _write_staged_format(
         destination,
         payload,
         overwrite_confirmed=overwrite_confirmed,
-        csv_format="%.6f",
         temp_prefix=".iopanel-scan-",
         error_context="scan",
     )
