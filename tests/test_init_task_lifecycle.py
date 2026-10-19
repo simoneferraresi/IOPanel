@@ -332,6 +332,9 @@ def _make_main_window(qtbot, monkeypatch):
 def test_mainwindow_starts_passive_piezo_discovery_once_with_deferred_hardware(qtbot, monkeypatch):
     original_begin_lazy = main_window_module.MainWindow._begin_lazy_init
     window = _make_main_window(qtbot, monkeypatch)
+    window.config = window.config.model_copy(
+        update={"instruments": window.config.instruments.model_copy(update={"piezo_left_serial": "COM3"})}
+    )
     calls = []
     monkeypatch.setattr(window, "_init_piezos_lazy", lambda: calls.append("piezo"))
     monkeypatch.setattr(window, "_init_ct400_lazy", lambda: calls.append("ct400"))
@@ -344,6 +347,21 @@ def test_mainwindow_starts_passive_piezo_discovery_once_with_deferred_hardware(q
     assert calls.count("piezo") == 1
     assert calls.count("ct400") == 1
     assert calls.count("camera") == 1
+
+
+def test_mainwindow_offline_startup_skips_unconfigured_piezo_discovery(qtbot, monkeypatch):
+    original_begin_lazy = main_window_module.MainWindow._begin_lazy_init
+    window = _make_main_window(qtbot, monkeypatch)
+    calls = []
+    monkeypatch.setattr(window, "_init_piezos_lazy", lambda: calls.append("piezo"))
+    monkeypatch.setattr(window, "_init_ct400_lazy", lambda: None)
+    monkeypatch.setattr(window, "_init_cameras_lazy", lambda: None)
+    monkeypatch.setattr(window, "_start_vimbasystem", lambda: None)
+
+    original_begin_lazy(window)
+
+    assert calls == []
+    assert window.piezo_task is None
 
 
 def test_mainwindow_clears_finished_ct400_task_and_refresh_restarts(qtbot, monkeypatch):
