@@ -1,21 +1,18 @@
 """One-shot, hardware-independent schema-v2 scan CSV/MAT export worker.
 
-Stages each format beside its final path. A successfully written stage is
-published atomically; absent destinations are published with an exclusive hard
-link to avoid an unintended overwrite after the GUI's existence check.
+The domain-specific worker retains the established six-decimal CSV format and
+scan-specific outcome while using common atomic file publication.
 """
 
 from __future__ import annotations
 
 import logging
-import os
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-import numpy as np
 from PySide6.QtCore import Signal, Slot
 
+from logic.export_file_io import export_selected_formats, write_staged_csv_mat
 from logic.scan_export import ScanExportPayload
 from logic.task_runner import BaseWorker
 
@@ -31,47 +28,16 @@ class ScanExportOutcome:
 def _write_staged_format(
     name: str, destination: Path, payload: ScanExportPayload, *, overwrite_confirmed: bool
 ) -> None:
-    """Write only a complete file and never overwrite without authorization.
-
-    A successful link is exclusive for an originally absent destination,
-    including if some other process creates the destination during staging.
-    The stage is on the same filesystem as the target for atomic publication.
-    """
-    fd, staged_name = tempfile.mkstemp(prefix=".iopanel-scan-", suffix=".tmp", dir=destination.parent)
-    stage = Path(staged_name)
-    try:
-        with os.fdopen(fd, "wb") as raw:
-            if name == "CSV":
-                import io
-
-                with io.TextIOWrapper(raw, encoding="utf-8", newline="", write_through=True) as stream:
-                    np.savetxt(
-                        stream,
-                        payload.csv_data,
-                        delimiter=",",
-                        header=payload.csv_header,
-                        comments="",
-                        fmt="%.6f",
-                    )
-                    stream.flush()
-                    os.fsync(stream.buffer.fileno())
-                # TextIOWrapper closes the underlying descriptor.
-            elif name == "MAT":
-                # Only load SciPy when a MAT export is actually requested.
-                from scipy.io import savemat
-
-                savemat(raw, payload.mat_data, do_compression=True)
-                raw.flush()
-                os.fsync(raw.fileno())
-            else:
-                raise ValueError(f"Unsupported scan export format: {name}")
-        if overwrite_confirmed:
-            os.replace(stage, destination)
-        else:
-            # os.link fails with FileExistsError rather than replacing a target.
-            os.link(stage, destination)
-    finally:
-        stage.unlink(missing_ok=True)
+    """Keep the scan worker entry point and its existing file-format policy."""
+    write_staged_csv_mat(
+        name,
+        destination,
+        payload,
+        overwrite_confirmed=overwrite_confirmed,
+        csv_format="%.6f",
+        temp_prefix=".iopanel-scan-",
+        error_context="scan",
+    )
 
 
 class ScanExportWorker(BaseWorker):
@@ -92,18 +58,17 @@ class ScanExportWorker(BaseWorker):
 
     @Slot()
     def run(self) -> None:
-        saved: list[Path] = []
-        errors: list[str] = []
         try:
-            for name, path in self._targets.items():
-                try:
-                    _write_staged_format(
-                        name, path, self._payload, overwrite_confirmed=path in self._confirmed_overwrites
-                    )
-                    saved.append(path)
-                except Exception as exc:
-                    logger.exception("%s scan export failed: %s", name, path)
-                    errors.append(f"{name}: {exc}")
-            self.outcome.emit(ScanExportOutcome(tuple(saved), tuple(errors)))
+            def write_format(name: str, path: Path, overwrite_confirmed: bool) -> None:
+                _write_staged_format(name, path, self._payload, overwrite_confirmed=overwrite_confirmed)
+
+            saved, errors = export_selected_formats(
+                self._targets,
+                self._confirmed_overwrites,
+                write_format,
+                logger=logger,
+                error_log_template="%s scan export failed: %s",
+            )
+            self.outcome.emit(ScanExportOutcome(saved, errors))
         finally:
             self.finished.emit()
