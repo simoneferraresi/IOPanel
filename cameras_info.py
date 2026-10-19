@@ -27,7 +27,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         list_cameras()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — surface arbitrary vendor SDK/runtime failures to operators.
         # Discovery can fail at VmbPy import or at runtime when a native
         # transport layer is absent. Never silently fall back to simulation.
         print(f"Camera inventory unavailable: {exc}", file=sys.stderr)
