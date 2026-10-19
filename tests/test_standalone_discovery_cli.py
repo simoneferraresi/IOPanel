@@ -103,7 +103,7 @@ def test_missing_piezo_dll_returns_error_without_loading_library(tmp_path, monke
         (b"", 0, 0, "No Piezo devices were found"),
         (b"unknown,invalid,", 2, 1, "Could not parse"),
         (b"", -5, 1, "error code: -5"),
-        (b"\\xff", 1, 1, "undecodable"),
+        (bytes([0xFF]), 1, 1, "undecodable"),
     ],
 )
 def test_piezo_inventory_only_calls_vendor_list(tmp_path, monkeypatch, capsys, raw_output, result_code, exit_code, message):
