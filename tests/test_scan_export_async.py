@@ -69,9 +69,9 @@ def test_staged_worker_preserves_schema_and_no_temp_files(tmp_path):
         scan = load_scan(path)
         assert scan.detectors == (Detector.DE_3, Detector.DE_1)
         assert scan.comment == "row one\nrow two"
-        np.testing.assert_allclose(
-            scan.detector_data, _synthetic_scan(20, (Detector.DE_3, Detector.DE_1)).detector_data, atol=1e-6
-        )
+        expected = _synthetic_scan(20, (Detector.DE_3, Detector.DE_1))
+        np.testing.assert_array_equal(scan.wavelengths_nm, expected.wavelengths_nm)
+        np.testing.assert_array_equal(scan.detector_data, expected.detector_data)
     assert set(tmp_path.iterdir()) == set(destinations.values())
 
 
