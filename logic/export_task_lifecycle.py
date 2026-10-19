@@ -9,16 +9,11 @@ strongly referenced until QObject.destroyed arrives.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Generic, TypeVar
-
 from PySide6.QtCore import QObject, Qt
 
 from logic.task_runner import BaseWorker, TaskRunner
 
-_Outcome = TypeVar("_Outcome")
-
-
-class ExportTaskLifecycle(Generic[_Outcome]):
+class ExportTaskLifecycle[_Outcome]:
     """Track a single active export and the native lifetime of all owned threads."""
 
     def __init__(self, owner: QObject) -> None:
