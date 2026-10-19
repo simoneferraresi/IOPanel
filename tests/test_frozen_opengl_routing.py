@@ -38,7 +38,7 @@ def test_extracted_diagnostic_import_does_not_create_opengl_context(monkeypatch)
             raise AssertionError("Importing the diagnostic created an OpenGL context")
 
     monkeypatch.setattr(QtGui, "QOpenGLContext", UnexpectedContext)
-    module = importlib.import_module("tools.frozen_opengl_viewer")
+    module = importlib.reload(importlib.import_module("tools.frozen_opengl_viewer"))
     assert callable(module.run_frozen_opengl_smoke)
 
 
@@ -70,11 +70,11 @@ def test_extracted_smoke_reports_unavailable_surface_without_mainwindow(qapp, mo
 
     from tools.frozen_opengl_viewer import run_frozen_opengl_smoke
 
-    with caplog.at_level(logging.INFO, logger="LabApp.opengl_probe_test"):
+    with caplog.at_level(logging.INFO, logger="opengl_smoke_diagnostic_test"):
         result = run_frozen_opengl_smoke(
             qapp,
             Path(tmp_path) / "gl.log",
-            logging.getLogger("LabApp.opengl_probe_test"),
+            logging.getLogger("opengl_smoke_diagnostic_test"),
         )
 
     assert result == 0
