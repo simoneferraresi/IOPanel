@@ -69,14 +69,14 @@ def test_staged_worker_preserves_schema_and_no_temp_files(tmp_path):
         scan = load_scan(path)
         assert scan.detectors == (Detector.DE_3, Detector.DE_1)
         assert scan.comment == "row one\nrow two"
-        np.testing.assert_allclose(
-            scan.detector_data, _synthetic_scan(20, (Detector.DE_3, Detector.DE_1)).detector_data, atol=1e-6
-        )
+        expected = _synthetic_scan(20, (Detector.DE_3, Detector.DE_1))
+        np.testing.assert_array_equal(scan.wavelengths_nm, expected.wavelengths_nm)
+        np.testing.assert_array_equal(scan.detector_data, expected.detector_data)
     assert set(tmp_path.iterdir()) == set(destinations.values())
 
 
 def test_staging_failure_retains_previous_files_and_cleans_up(monkeypatch, tmp_path):
-    import logic.scan_export_worker as export_worker
+    import logic.export_file_io as export_io
 
     existing = tmp_path / "scan.csv"
     existing.write_bytes(b"original-content")
@@ -84,7 +84,7 @@ def test_staging_failure_retains_previous_files_and_cleans_up(monkeypatch, tmp_p
     def fail(*_args, **_kwargs):
         raise OSError("disk full")
 
-    monkeypatch.setattr(export_worker.np, "savetxt", fail)
+    monkeypatch.setattr(export_io.np, "savetxt", fail)
     with pytest.raises(OSError, match="disk full"):
         _write_staged_format("CSV", existing, _payload(), overwrite_confirmed=True)
     assert existing.read_bytes() == b"original-content"
@@ -92,16 +92,16 @@ def test_staging_failure_retains_previous_files_and_cleans_up(monkeypatch, tmp_p
 
 
 def test_new_target_appearing_during_save_is_never_overwritten(monkeypatch, tmp_path):
-    import logic.scan_export_worker as export_worker
+    import logic.export_file_io as export_io
 
     target = tmp_path / "scan.csv"
-    original = export_worker.np.savetxt
+    original = export_io.np.savetxt
 
     def racing_save(*args, **kwargs):
         target.write_bytes(b"racer-created")
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(export_worker.np, "savetxt", racing_save)
+    monkeypatch.setattr(export_io.np, "savetxt", racing_save)
     with pytest.raises(FileExistsError):
         _write_staged_format("CSV", target, _payload(), overwrite_confirmed=False)
     assert target.read_bytes() == b"racer-created"
