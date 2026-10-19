@@ -32,6 +32,7 @@ def test_frozen_opengl_wrapper_delegates_arguments_and_exit_code(monkeypatch, tm
 
 def test_extracted_diagnostic_import_does_not_create_opengl_context(monkeypatch):
     """The diagnostic module must be safe to import without running a GL probe."""
+
     class UnexpectedContext:
         def __init__(self):
             raise AssertionError("Importing the diagnostic created an OpenGL context")
@@ -43,6 +44,7 @@ def test_extracted_diagnostic_import_does_not_create_opengl_context(monkeypatch)
 
 def test_extracted_smoke_reports_unavailable_surface_without_mainwindow(qapp, monkeypatch, caplog, tmp_path):
     """An unavailable GL platform remains a non-error capability result."""
+
     class InvalidSurface:
         destroyed = False
 
