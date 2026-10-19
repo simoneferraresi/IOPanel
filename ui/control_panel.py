@@ -445,9 +445,7 @@ class ScanWorker(QtCore.QObject):
         logger.info(
             f"ScanWorker: Setting up scan from {self.start_wl}nm to {self.end_wl}nm, Res: {self.resolution}pm, Power: {self.laser_power}mW"
         )
-        self._timed_call(
-            "set_scan_seconds", lambda: self.ct400.set_scan(self.laser_power, self.start_wl, self.end_wl)
-        )
+        self._timed_call("set_scan_seconds", lambda: self.ct400.set_scan(self.laser_power, self.start_wl, self.end_wl))
         if self._is_cancel_requested():
             self._report_cancelled()
             return True
