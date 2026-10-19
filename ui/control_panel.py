@@ -48,6 +48,7 @@ from hardware.ct400_types import (
     LaserInput,
     LaserSource,
     PowerData,
+    ScanWaitResult,
 )
 from hardware.dummy_ct400 import DummyCT400
 from hardware.interfaces import AbstractCT400
@@ -383,159 +384,13 @@ class ScanWorker(QtCore.QObject):
 
     @Slot()
     def do_scan(self):
+        """Coordinate the CT400 scan phases, always attempting final laser disable."""
         worker_started_at = time.perf_counter()
         try:
-            if not self._is_cancel_requested():
-                logger.info(
-                    f"ScanWorker: Ensuring laser is disabled on input {self.input_port.name} before starting scan operations."
-                )
-                self._timed_call(
-                    "initial_laser_disable_seconds",
-                    lambda: self.ct400.cmd_laser(
-                        laser_input=self.input_port,
-                        enable=Enable.DISABLE,
-                        wavelength=float(self.disable_wl),
-                        power=float(self.disable_power),
-                    ),
-                )
-                logger.info(f"ScanWorker: Defensive laser disable command sent for input {self.input_port.name}.")
-                self._timed_call(
-                    "stabilization_delay_observed_seconds", lambda: QThread.msleep(self._LASER_COMMAND_DELAY_MS)
-                )
-            else:
-                logger.info("ScanWorker: Cancelled before scan setup.")
-                self._report_cancelled()
+            if self._prepare_scan():
                 return
-
-            if self._is_cancel_requested():
-                self._report_cancelled()
-                return
-            logger.info(
-                f"ScanWorker: Setting up scan from {self.start_wl}nm to {self.end_wl}nm, Res: {self.resolution}pm, Power: {self.laser_power}mW"
-            )
-            self._timed_call(
-                "set_scan_seconds", lambda: self.ct400.set_scan(self.laser_power, self.start_wl, self.end_wl)
-            )
-            if self._is_cancel_requested():
-                self._report_cancelled()
-                return
-            self._timed_call("set_sampling_res_seconds", lambda: self.ct400.set_sampling_res(self.resolution))
-            if self._is_cancel_requested():
-                self._report_cancelled()
-                return
-
-            # CT400_PG_1.4v1.5: DE1 is always enabled; SetDetectorArray controls
-            # DE2–DE4 and the external BNC-C source represented by DE5.
-            detector_set = frozenset(self.acquisition_settings.detectors)
-            self._timed_call(
-                "set_detector_array_seconds",
-                lambda: self.ct400.set_detector_array(
-                    Enable.ENABLE if Detector.DE_2 in detector_set else Enable.DISABLE,
-                    Enable.ENABLE if Detector.DE_3 in detector_set else Enable.DISABLE,
-                    Enable.ENABLE if Detector.DE_4 in detector_set else Enable.DISABLE,
-                    Enable.ENABLE if Detector.DE_5 in detector_set else Enable.DISABLE,
-                ),
-            )
-            if self._is_cancel_requested():
-                self._report_cancelled()
-                return
-
-            with self._state_lock:
-                self._scan_start_in_progress = True
-            scan_start_entered_at = time.perf_counter()
-            scan_start_returned = False
-            logger.info("ScanWorker: CT400_ScanStart entry (scan_id=%s).", self.scan_id)
-            try:
-                self._timed_call("start_scan_seconds", self.ct400.start_scan)
-                scan_start_returned = True
-                with self._state_lock:
-                    self._started = True
-            finally:
-                with self._state_lock:
-                    self._scan_start_in_progress = False
-                logger.info(
-                    "ScanWorker: CT400_ScanStart exit (scan_id=%s, returned=%s, elapsed_seconds=%.6f).",
-                    self.scan_id,
-                    scan_start_returned,
-                    max(0.0, time.perf_counter() - scan_start_entered_at),
-                )
-            logger.info("ScanWorker: CT400 scan started.")
-            if self._is_cancel_requested():
-                self._issue_stop_once()
-
-            result = self._timed_call("scan_wait_end_seconds", self.ct400.scan_wait_end)
-            raw_code = int(result.raw_code)
-            error_msg = result.error_message
-            kind = result.kind
-            self._scan_result_raw_code = raw_code
-            self._scan_result_message = error_msg
-            self._set_final_kind(kind)
-
-            if kind == CT400ScanResultKind.USER_CANCELLED:
-                logger.info("ScanWorker: CT400 confirmed user cancellation (code 1).")
-                self._report_cancelled(raw_code, error_msg or "Scan was cancelled by the user.")
-                return
-            if kind == CT400ScanResultKind.FATAL_ERROR:
-                self._timing_outcome = "error"
-                self.error_signal.emit(
-                    InstrumentError(
-                        code=raw_code,
-                        message=error_msg or f"CT400 scan failed with documented error code {raw_code}.",
-                        source=self.__class__.__name__,
-                        kind=kind,
-                    )
-                )
-                return
-            if kind == CT400ScanResultKind.UNEXPECTED:
-                self._timing_outcome = "error"
-                self.error_signal.emit(
-                    InstrumentError(
-                        code=raw_code,
-                        message=error_msg or f"Unexpected CT400_ScanWaitEnd return code {raw_code}.",
-                        source=self.__class__.__name__,
-                        kind=kind,
-                    )
-                )
-                return
-
-            if kind == CT400ScanResultKind.WARNING:
-                self.warning_signal.emit(raw_code, error_msg)
-            else:
-                logger.info("ScanWorker: Scan completed successfully.")
-            logger.info("ScanWorker: Retrieving data points...")
-            detectors_to_get = self.acquisition_settings.detectors
-            wavelengths, powers_scan_data = self._timed_call(
-                "get_data_points_seconds", lambda: self.ct400.get_data_points(list(detectors_to_get))
-            )
-            self._returned_sample_count = len(wavelengths)
-            logger.info(
-                "ScanWorker: Retrieved data for detectors=%s; wavelengths=%d; matrix_shape=%s",
-                [detector.name for detector in detectors_to_get],
-                len(wavelengths),
-                powers_scan_data.shape,
-            )
-            final_pout = None
-            try:
-                final_power_reading = self._timed_call("get_all_powers_seconds", self.ct400.get_all_powers)
-                final_pout = getattr(final_power_reading, "pout", None)
-            except Exception as e:  # noqa: BLE001  # Preserve CT400 worker recovery and cleanup behavior.
-                logger.warning(f"ScanWorker: Could not get final Pout: {e}")
-            measurement = ScanMeasurement(
-                settings=self.acquisition_settings,
-                wavelengths_nm=wavelengths,
-                detector_data=powers_scan_data,
-                detectors=self.acquisition_settings.detectors,
-                final_pout=final_pout,
-                result_kind=kind,
-                raw_result_code=raw_code,
-                result_message=error_msg,
-                backend=f"{type(self.ct400).__module__}.{type(self.ct400).__qualname__}",
-                simulated=isinstance(self.ct400, DummyCT400),
-                completed_at_utc=datetime.now(UTC),
-                scan_id=self.scan_id,
-            )
-            self.measurement_ready.emit(measurement)
-            self._timing_outcome = "warning" if kind == CT400ScanResultKind.WARNING else "success"
+            result = self._start_scan_and_wait()
+            self._process_scan_result(result)
         except CT400Error as e:
             self._timing_outcome = "error"
             if self._failure_type is None:
@@ -558,41 +413,204 @@ class ScanWorker(QtCore.QObject):
             )
             self.error_signal.emit(err)
         finally:
-            try:
-                self._timed_call(
-                    "final_laser_disable_seconds",
-                    lambda: self.ct400.cmd_laser(
-                        laser_input=self.input_port,
-                        enable=Enable.DISABLE,
-                        wavelength=float(self.disable_wl),
-                        power=float(self.disable_power),
-                    ),
-                )
-            except Exception as e:  # Preserve CT400 worker recovery and cleanup behavior.
-                self._timing_cleanup_failed = True
-                logger.exception(
-                    "ScanWorker: Laser cleanup failed at stage final_laser_disable_seconds (%s).", type(e).__name__
-                )
-            self.recovery_required = bool(
-                self._timing_cleanup_failed
-                or self._stop_failed
-                or self._failed_stages
-                or self.final_kind
-                not in (
-                    CT400ScanResultKind.SUCCESS,
-                    CT400ScanResultKind.USER_CANCELLED,
-                    CT400ScanResultKind.WARNING,
+            self._finalize_scan(worker_started_at)
+
+    def _prepare_scan(self) -> bool:
+        """Keep setup commands and cancellation gates in their original order."""
+        if not self._is_cancel_requested():
+            logger.info(
+                f"ScanWorker: Ensuring laser is disabled on input {self.input_port.name} before starting scan operations."
+            )
+            self._timed_call(
+                "initial_laser_disable_seconds",
+                lambda: self.ct400.cmd_laser(
+                    laser_input=self.input_port,
+                    enable=Enable.DISABLE,
+                    wavelength=float(self.disable_wl),
+                    power=float(self.disable_power),
+                ),
+            )
+            logger.info(f"ScanWorker: Defensive laser disable command sent for input {self.input_port.name}.")
+            self._timed_call(
+                "stabilization_delay_observed_seconds", lambda: QThread.msleep(self._LASER_COMMAND_DELAY_MS)
+            )
+        else:
+            logger.info("ScanWorker: Cancelled before scan setup.")
+            self._report_cancelled()
+            return True
+
+        if self._is_cancel_requested():
+            self._report_cancelled()
+            return True
+        logger.info(
+            f"ScanWorker: Setting up scan from {self.start_wl}nm to {self.end_wl}nm, Res: {self.resolution}pm, Power: {self.laser_power}mW"
+        )
+        self._timed_call("set_scan_seconds", lambda: self.ct400.set_scan(self.laser_power, self.start_wl, self.end_wl))
+        if self._is_cancel_requested():
+            self._report_cancelled()
+            return True
+        self._timed_call("set_sampling_res_seconds", lambda: self.ct400.set_sampling_res(self.resolution))
+        if self._is_cancel_requested():
+            self._report_cancelled()
+            return True
+
+        # CT400_PG_1.4v1.5: DE1 is always enabled; SetDetectorArray controls
+        # DE2–DE4 and the external BNC-C source represented by DE5.
+        detector_set = frozenset(self.acquisition_settings.detectors)
+        self._timed_call(
+            "set_detector_array_seconds",
+            lambda: self.ct400.set_detector_array(
+                Enable.ENABLE if Detector.DE_2 in detector_set else Enable.DISABLE,
+                Enable.ENABLE if Detector.DE_3 in detector_set else Enable.DISABLE,
+                Enable.ENABLE if Detector.DE_4 in detector_set else Enable.DISABLE,
+                Enable.ENABLE if Detector.DE_5 in detector_set else Enable.DISABLE,
+            ),
+        )
+        if self._is_cancel_requested():
+            self._report_cancelled()
+            return True
+        return False
+
+    def _start_scan_and_wait(self) -> ScanWaitResult:
+        """Preserve ScanStart/Stop synchronization and the single blocking wait."""
+        with self._state_lock:
+            self._scan_start_in_progress = True
+        scan_start_entered_at = time.perf_counter()
+        scan_start_returned = False
+        logger.info("ScanWorker: CT400_ScanStart entry (scan_id=%s).", self.scan_id)
+        try:
+            self._timed_call("start_scan_seconds", self.ct400.start_scan)
+            scan_start_returned = True
+            with self._state_lock:
+                self._started = True
+        finally:
+            with self._state_lock:
+                self._scan_start_in_progress = False
+            logger.info(
+                "ScanWorker: CT400_ScanStart exit (scan_id=%s, returned=%s, elapsed_seconds=%.6f).",
+                self.scan_id,
+                scan_start_returned,
+                max(0.0, time.perf_counter() - scan_start_entered_at),
+            )
+        logger.info("ScanWorker: CT400 scan started.")
+        if self._is_cancel_requested():
+            self._issue_stop_once()
+
+        result = self._timed_call("scan_wait_end_seconds", self.ct400.scan_wait_end)
+        return result
+
+    def _process_scan_result(self, result: ScanWaitResult) -> None:
+        """Classify the vendor result and emit the same signals and measurement."""
+        raw_code = int(result.raw_code)
+        error_msg = result.error_message
+        kind = result.kind
+        self._scan_result_raw_code = raw_code
+        self._scan_result_message = error_msg
+        self._set_final_kind(kind)
+
+        if kind == CT400ScanResultKind.USER_CANCELLED:
+            logger.info("ScanWorker: CT400 confirmed user cancellation (code 1).")
+            self._report_cancelled(raw_code, error_msg or "Scan was cancelled by the user.")
+            return
+        if kind == CT400ScanResultKind.FATAL_ERROR:
+            self._timing_outcome = "error"
+            self.error_signal.emit(
+                InstrumentError(
+                    code=raw_code,
+                    message=error_msg or f"CT400 scan failed with documented error code {raw_code}.",
+                    source=self.__class__.__name__,
+                    kind=kind,
                 )
             )
-            worker_duration = round(max(0.0, time.perf_counter() - worker_started_at), 6)
-            timing_summary = self._timing_summary(worker_duration)
-            self.final_timing_summary = timing_summary.copy()
-            logger.info("Scan timing summary: %s", json.dumps(timing_summary, separators=(",", ":"), sort_keys=True))
-            self.finished_emitted_at = time.perf_counter()
-            with self._state_lock:
-                self._finished = True
-            logger.info("ScanWorker: Finished.")
-            self.finished.emit()
+            return
+        if kind == CT400ScanResultKind.UNEXPECTED:
+            self._timing_outcome = "error"
+            self.error_signal.emit(
+                InstrumentError(
+                    code=raw_code,
+                    message=error_msg or f"Unexpected CT400_ScanWaitEnd return code {raw_code}.",
+                    source=self.__class__.__name__,
+                    kind=kind,
+                )
+            )
+            return
+
+        if kind == CT400ScanResultKind.WARNING:
+            self.warning_signal.emit(raw_code, error_msg)
+        else:
+            logger.info("ScanWorker: Scan completed successfully.")
+        logger.info("ScanWorker: Retrieving data points...")
+        detectors_to_get = self.acquisition_settings.detectors
+        wavelengths, powers_scan_data = self._timed_call(
+            "get_data_points_seconds", lambda: self.ct400.get_data_points(list(detectors_to_get))
+        )
+        self._returned_sample_count = len(wavelengths)
+        logger.info(
+            "ScanWorker: Retrieved data for detectors=%s; wavelengths=%d; matrix_shape=%s",
+            [detector.name for detector in detectors_to_get],
+            len(wavelengths),
+            powers_scan_data.shape,
+        )
+        final_pout = None
+        try:
+            final_power_reading = self._timed_call("get_all_powers_seconds", self.ct400.get_all_powers)
+            final_pout = getattr(final_power_reading, "pout", None)
+        except Exception as e:  # noqa: BLE001  # Preserve CT400 worker recovery and cleanup behavior.
+            logger.warning(f"ScanWorker: Could not get final Pout: {e}")
+        measurement = ScanMeasurement(
+            settings=self.acquisition_settings,
+            wavelengths_nm=wavelengths,
+            detector_data=powers_scan_data,
+            detectors=self.acquisition_settings.detectors,
+            final_pout=final_pout,
+            result_kind=kind,
+            raw_result_code=raw_code,
+            result_message=error_msg,
+            backend=f"{type(self.ct400).__module__}.{type(self.ct400).__qualname__}",
+            simulated=isinstance(self.ct400, DummyCT400),
+            completed_at_utc=datetime.now(UTC),
+            scan_id=self.scan_id,
+        )
+        self.measurement_ready.emit(measurement)
+        self._timing_outcome = "warning" if kind == CT400ScanResultKind.WARNING else "success"
+
+    def _finalize_scan(self, worker_started_at: float) -> None:
+        """Attempt the selected-input safe state, record timings, and emit finished."""
+        try:
+            self._timed_call(
+                "final_laser_disable_seconds",
+                lambda: self.ct400.cmd_laser(
+                    laser_input=self.input_port,
+                    enable=Enable.DISABLE,
+                    wavelength=float(self.disable_wl),
+                    power=float(self.disable_power),
+                ),
+            )
+        except Exception as e:  # Preserve CT400 worker recovery and cleanup behavior.
+            self._timing_cleanup_failed = True
+            logger.exception(
+                "ScanWorker: Laser cleanup failed at stage final_laser_disable_seconds (%s).", type(e).__name__
+            )
+        self.recovery_required = bool(
+            self._timing_cleanup_failed
+            or self._stop_failed
+            or self._failed_stages
+            or self.final_kind
+            not in (
+                CT400ScanResultKind.SUCCESS,
+                CT400ScanResultKind.USER_CANCELLED,
+                CT400ScanResultKind.WARNING,
+            )
+        )
+        worker_duration = round(max(0.0, time.perf_counter() - worker_started_at), 6)
+        timing_summary = self._timing_summary(worker_duration)
+        self.final_timing_summary = timing_summary.copy()
+        logger.info("Scan timing summary: %s", json.dumps(timing_summary, separators=(",", ":"), sort_keys=True))
+        self.finished_emitted_at = time.perf_counter()
+        with self._state_lock:
+            self._finished = True
+        logger.info("ScanWorker: Finished.")
+        self.finished.emit()
 
     def stop(self):
         """Issue at most one documented Stop request for an active scan.
