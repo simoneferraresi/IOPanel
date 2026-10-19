@@ -60,7 +60,7 @@ def find_connected_piezos(dll_path: Path | None = None) -> int:
     print("\nScanning for devices...")
     try:
         result_code = cmd_list(device_list_buffer, buffer_size)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — vendor DLL may raise arbitrary call/adapter exceptions.
         print(f"ERROR: The DLL List call failed: {exc}")
         return 1
 
