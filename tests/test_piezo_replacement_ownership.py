@@ -1,13 +1,101 @@
 """Hardware independent regression coverage for R08 piezo ownership."""
 
+from pathlib import Path
+
 import pytest
 from PySide6.QtGui import QCloseEvent, QIcon
 
 from config_model import AppConfig
 from hardware.dummy_ct400 import DummyCT400
+from hardware.piezo import PiezoConnectionError, PiezoController
 from ui import main_window as main_window_module
 from ui.alignment_panel import AlignmentPanel
 from ui.main_window import CT400OperationState
+
+
+def test_explicit_piezo_connect_primes_dll_once_without_probing_other_ports(monkeypatch):
+    calls = []
+
+    class FakeDLL:
+        def List(self, _buffer, size):
+            calls.append(("List", size))
+            return 2
+
+        def Open(self, port, baud, timeout):
+            calls.append(("Open", port, baud, timeout))
+            return 0 if port == b"COM3" else 1
+
+        def Close(self, handle):
+            calls.append(("Close", handle))
+            return 0
+
+    dll = FakeDLL()
+    monkeypatch.setattr(PiezoController, "_dll", dll)
+    monkeypatch.setattr(PiezoController, "_primed_dll", None)
+    left = PiezoController(Path("unused-test-only.dll"))
+    right = PiezoController(Path("unused-test-only.dll"))
+
+    # Creating the wrappers is passive. Only operator-requested Connect
+    # performs native List/Open. Handle zero is valid, not disconnected.
+    assert calls == []
+    left.connect("COM3")
+    right.connect("COM4")
+    assert left.is_connected() and left.hdl == 0
+    assert right.is_connected() and right.hdl == 1
+    assert calls == [
+        ("List", 10240),
+        ("Open", b"COM3", 115200, 3),
+        ("Open", b"COM4", 115200, 3),
+    ]
+    left.disconnect()
+    right.disconnect()
+    assert calls[-2:] == [("Close", 0), ("Close", 1)]
+    assert not left.is_connected() and not right.is_connected()
+
+
+def test_native_piezo_list_failure_blocks_open_and_leaves_device_disconnected(monkeypatch):
+    calls = []
+
+    class FakeDLL:
+        def List(self, _buffer, _size):
+            calls.append("List")
+            return -5
+
+        def Open(self, *_args):
+            raise AssertionError("Open must not follow failed List")
+
+    monkeypatch.setattr(PiezoController, "_dll", FakeDLL())
+    monkeypatch.setattr(PiezoController, "_primed_dll", None)
+    piezo = PiezoController(Path("unused-test-only.dll"))
+
+    with pytest.raises(PiezoConnectionError, match="List failed before Connect with error code: -5"):
+        piezo.connect("COM3")
+    assert calls == ["List"]
+    assert not piezo.is_connected()
+    assert piezo.port is None
+
+
+def test_native_piezo_open_failure_after_list_preserves_fail_closed_state(monkeypatch):
+    calls = []
+
+    class FakeDLL:
+        def List(self, _buffer, _size):
+            calls.append("List")
+            return 2
+
+        def Open(self, port, baud, timeout):
+            calls.append(("Open", port, baud, timeout))
+            return -1
+
+    monkeypatch.setattr(PiezoController, "_dll", FakeDLL())
+    monkeypatch.setattr(PiezoController, "_primed_dll", None)
+    piezo = PiezoController(Path("unused-test-only.dll"))
+
+    with pytest.raises(PiezoConnectionError, match="DLL error code: -1"):
+        piezo.connect("COM3")
+    assert calls == ["List", ("Open", b"COM3", 115200, 3)]
+    assert not piezo.is_connected()
+    assert piezo.port is None
 
 
 class FakePiezo:
