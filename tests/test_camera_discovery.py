@@ -180,21 +180,43 @@ def test_cancelled_discovery_returns_promptly_without_polling():
 
 def test_cancellation_during_poll_exits_before_next_discovery_query():
     event = threading.Event()
+    waiting = threading.Event()
     system = SequenceSystem([[], []])
-    timer = threading.Timer(0.01, event.set)
-    timer.start()
+    caught: list[CameraDiscoveryCancelled] = []
 
-    with pytest.raises(CameraDiscoveryCancelled):
-        wait_for_camera_by_id(
-            system,
-            "DEV_000F315B9CE1",
-            timeout_s=10,
-            poll_interval_s=1,
-            cancel_event=event,
-        )
-    timer.join()
+    class NotifyingCancellation:
+        def is_set(self):
+            return event.is_set()
 
-    assert system.polls == 1
+        def wait(self, timeout):
+            waiting.set()
+            return event.wait(timeout)
+
+    def discover():
+        try:
+            wait_for_camera_by_id(
+                system,
+                "DEV_000F315B9CE1",
+                timeout_s=10,
+                poll_interval_s=1,
+                cancel_event=NotifyingCancellation(),
+            )
+        except CameraDiscoveryCancelled as exc:
+            caught.append(exc)
+
+    worker = threading.Thread(target=discover, daemon=True)
+    worker.start()
+    try:
+        assert waiting.wait(timeout=5), "Discovery never reached the interruptible wait"
+        event.set()
+        worker.join(timeout=5)
+        assert not worker.is_alive(), "Discovery did not exit promptly after cancellation"
+        assert len(caught) == 1
+        assert isinstance(caught[0], CameraDiscoveryCancelled)
+        assert system.polls == 1
+    finally:
+        event.set()
+        worker.join(timeout=5)
 
 
 def test_manual_list_poll_publishes_devices_as_they_arrive():
