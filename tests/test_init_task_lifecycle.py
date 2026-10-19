@@ -330,6 +330,7 @@ def _make_main_window(qtbot, monkeypatch):
 
 
 def test_mainwindow_starts_passive_piezo_discovery_once_with_deferred_hardware(qtbot, monkeypatch):
+    original_begin_lazy = main_window_module.MainWindow._begin_lazy_init
     window = _make_main_window(qtbot, monkeypatch)
     calls = []
     monkeypatch.setattr(window, "_init_piezos_lazy", lambda: calls.append("piezo"))
@@ -337,8 +338,8 @@ def test_mainwindow_starts_passive_piezo_discovery_once_with_deferred_hardware(q
     monkeypatch.setattr(window, "_init_cameras_lazy", lambda: calls.append("camera"))
     monkeypatch.setattr(window, "_start_vimbasystem", lambda: calls.append("vimba"))
 
-    window._begin_lazy_init()
-    window._begin_lazy_init()
+    original_begin_lazy(window)
+    original_begin_lazy(window)
 
     assert calls.count("piezo") == 1
     assert calls.count("ct400") == 1
