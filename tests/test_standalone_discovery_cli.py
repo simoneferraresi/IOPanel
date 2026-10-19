@@ -106,7 +106,9 @@ def test_missing_piezo_dll_returns_error_without_loading_library(tmp_path, monke
         (bytes([0xFF]), 1, 1, "undecodable"),
     ],
 )
-def test_piezo_inventory_only_calls_vendor_list(tmp_path, monkeypatch, capsys, raw_output, result_code, exit_code, message):
+def test_piezo_inventory_only_calls_vendor_list(
+    tmp_path, monkeypatch, capsys, raw_output, result_code, exit_code, message
+):
     dll_path = tmp_path / "vendor.dll"
     dll_path.write_bytes(b"test-only stand-in")
     calls = []
