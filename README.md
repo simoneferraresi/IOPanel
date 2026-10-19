@@ -153,6 +153,17 @@ for that. For example, a missing VmbPy package is expected in a driver-free
 development environment, while a missing configured CT400 DLL is actionable
 when the physical CT400 backend is selected.
 
+### Operator-only device inventory scripts
+
+The standalone `cameras_info.py` and `find_piezos.py` scripts are retained
+for independent camera and piezo discovery on an authorized laboratory PC.
+Their `--help` options are safe in driver-free environments; actually
+running discovery enters the vendor SDK or loads a native DLL, so **do not
+invoke either during a live experiment**. The piezo tool accepts
+`--dll path\\to\\MDT_COMMAND_LIB_x64.dll` instead of requiring a source edit.
+See [standalone device discovery](docs/standalone-device-discovery.md) for
+usage, limitations, tests, and why these unreferenced scripts were preserved.
+
 ### In-app Log Console
 
 Open **View → Log Console** or press **F12** to show the floating Log Console.
