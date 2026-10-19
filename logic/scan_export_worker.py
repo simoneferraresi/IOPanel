@@ -28,7 +28,7 @@ class ScanExportOutcome:
 def _write_staged_format(
     name: str, destination: Path, payload: ScanExportPayload, *, overwrite_confirmed: bool
 ) -> None:
-    """Keep the scan worker entry point and its existing file-format policy."""
+    """Keep the scan worker entry point while using shared archival CSV precision."""
     write_staged_csv_mat(
         name,
         destination,
