@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from PySide6.QtTest import QSignalSpy
 
 from config_model import AppConfig, CameraConfig
@@ -135,6 +137,7 @@ def test_piezo_normal_discovery_emits_result_and_finished_once(monkeypatch, tmp_
             "FakePiezo", (), {"find_devices": staticmethod(lambda _path: ["L"]), "__init__": lambda self, _path: None}
         ),
     )
+    monkeypatch.setattr(piezo_init_worker.list_ports, "comports", lambda: [SimpleNamespace(device="L")])
     worker = piezo_init_worker.PiezoInitWorker(config)
     results = QSignalSpy(worker.piezos_initialized)
     finished = QSignalSpy(worker.finished)
@@ -152,9 +155,9 @@ def test_piezo_unexpected_discovery_failure_emits_failure_and_finished_once(monk
     dll_path.touch()
     config = _config().instruments.model_copy(update={"piezo_dll_path": str(dll_path)})
     monkeypatch.setattr(
-        piezo_init_worker.PiezoController,
-        "find_devices",
-        lambda _path: (_ for _ in ()).throw(RuntimeError("fake")),
+        piezo_init_worker.list_ports,
+        "comports",
+        lambda: (_ for _ in ()).throw(RuntimeError("fake")),
     )
     worker = piezo_init_worker.PiezoInitWorker(config)
     failures = QSignalSpy(worker.initialization_failed)
@@ -194,6 +197,11 @@ def test_piezo_right_constructor_failure_cleans_up_left_controller(monkeypatch, 
             self.connected = False
 
     monkeypatch.setattr(piezo_init_worker, "PiezoController", FakePiezo)
+    monkeypatch.setattr(
+        piezo_init_worker.list_ports,
+        "comports",
+        lambda: [SimpleNamespace(device="L"), SimpleNamespace(device="R")],
+    )
     worker = piezo_init_worker.PiezoInitWorker(config)
     results = QSignalSpy(worker.piezos_initialized)
     failures = QSignalSpy(worker.initialization_failed)
@@ -234,6 +242,11 @@ def test_piezo_cleanup_failure_preserves_initialization_failure(monkeypatch, tmp
             raise RuntimeError("left controller disconnect failed")
 
     monkeypatch.setattr(piezo_init_worker, "PiezoController", FakePiezo)
+    monkeypatch.setattr(
+        piezo_init_worker.list_ports,
+        "comports",
+        lambda: [SimpleNamespace(device="L"), SimpleNamespace(device="R")],
+    )
     worker = piezo_init_worker.PiezoInitWorker(config)
     failures = QSignalSpy(worker.initialization_failed)
     finished = QSignalSpy(worker.finished)
@@ -258,11 +271,43 @@ def test_piezo_missing_library_emits_failure_and_finished_once():
     assert finished.count() == 1
 
 
+def test_piezo_candidate_detection_does_not_probe_any_serial_device(monkeypatch, tmp_path):
+    dll_path = tmp_path / "fake.dll"
+    dll_path.touch()
+    config = _config().instruments.model_copy(
+        update={"piezo_dll_path": str(dll_path), "piezo_left_serial": "COM3", "piezo_right_serial": "COM5"}
+    )
+    seen = []
+
+    class FakePiezo:
+        @staticmethod
+        def find_devices(_path):
+            raise AssertionError("Active DLL/COM-port probing is forbidden during discovery")
+
+        def __init__(self, _path):
+            seen.append("constructed")
+
+    monkeypatch.setattr(piezo_init_worker, "PiezoController", FakePiezo)
+    monkeypatch.setattr(
+        piezo_init_worker.list_ports,
+        "comports",
+        lambda: [SimpleNamespace(device="com3"), SimpleNamespace(device="COM8")],
+    )
+    worker = piezo_init_worker.PiezoInitWorker(config)
+    results = QSignalSpy(worker.piezos_initialized)
+    worker.run()
+
+    assert results.count() == 1
+    assert results.at(0)[0] is not None
+    assert results.at(0)[1] is None
+    assert seen == ["constructed"]
+
+
 def test_piezo_stopped_before_run_emits_finished_without_discovery(monkeypatch):
     monkeypatch.setattr(
-        piezo_init_worker.PiezoController,
-        "find_devices",
-        lambda _path: (_ for _ in ()).throw(AssertionError("discovery called")),
+        piezo_init_worker.list_ports,
+        "comports",
+        lambda: (_ for _ in ()).throw(AssertionError("discovery called")),
     )
     worker = piezo_init_worker.PiezoInitWorker(_config().instruments)
     results = QSignalSpy(worker.piezos_initialized)
@@ -282,6 +327,22 @@ def _make_main_window(qtbot, monkeypatch):
     window = main_window_module.MainWindow(_config("simulation"))
     qtbot.addWidget(window)
     return window
+
+
+def test_mainwindow_starts_passive_piezo_discovery_once_with_deferred_hardware(qtbot, monkeypatch):
+    window = _make_main_window(qtbot, monkeypatch)
+    calls = []
+    monkeypatch.setattr(window, "_init_piezos_lazy", lambda: calls.append("piezo"))
+    monkeypatch.setattr(window, "_init_ct400_lazy", lambda: calls.append("ct400"))
+    monkeypatch.setattr(window, "_init_cameras_lazy", lambda: calls.append("camera"))
+    monkeypatch.setattr(window, "_start_vimbasystem", lambda: calls.append("vimba"))
+
+    window._begin_lazy_init()
+    window._begin_lazy_init()
+
+    assert calls.count("piezo") == 1
+    assert calls.count("ct400") == 1
+    assert calls.count("camera") == 1
 
 
 def test_mainwindow_clears_finished_ct400_task_and_refresh_restarts(qtbot, monkeypatch):
