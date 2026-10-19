@@ -461,7 +461,11 @@ class AlignmentPanel(QWidget):
             and self._active_mode is None
             and self._is_start_authorized()
         )
-        self.laser_group.setEnabled(idle_ready)
+        # Keep local laser/input settings editable when a different port is
+        # selected: authorization must block *starts*, not trap the port picker
+        # inside its disabled parent group (making re-selection impossible).
+        settings_editable = self._hardware_ready and self._ct400_operation_state == "IDLE" and self._active_mode is None
+        self.laser_group.setEnabled(settings_editable)
         self.align_group.setEnabled(idle_ready)
         self.map_group.setEnabled(idle_ready)
         self.power_group.setEnabled(self._hardware_ready and self._is_start_authorized())
