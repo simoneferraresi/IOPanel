@@ -2610,13 +2610,33 @@ class MainWindow(QMainWindow):
 
         close_started_at = time.perf_counter()
         logger.info("Application close requested. Initiating shutdown sequence...")
+        if self._defer_close_for_active_work(event):
+            return
+
+        self.statusBar().showMessage("Shutting down...", 0)
+
+        # UI preferences must be saved before camera panels are removed.
+        self._save_ui_preferences()
+        self._cleanup_shutdown_panel_workers()
+        self._cleanup_cameras()
+        self._disconnect_piezos_for_shutdown()
+        self._release_ct400_for_shutdown()
+        self._cleanup_vimbasystem()
+
+        logger.info("Shutdown complete.")
+        self._finish_shutdown_ui()
+        event.accept()
+        logger.info("MainWindow.closeEvent cleanup returned after %.2f s.", time.perf_counter() - close_started_at)
+
+    def _defer_close_for_active_work(self, event: QtGui.QCloseEvent) -> bool:
+        """Defer native cleanup until owners and active tasks finish, in original priority."""
         pm5020_panel = getattr(self, "pm5020_panel", None)
         if pm5020_panel is not None and not pm5020_panel.shutdown_finished:
             event.ignore()
             self._pending_pm5020_close = True
             self.statusBar().showMessage("Closing PM5020 safely before application shutdown…", 0)
             pm5020_panel.request_shutdown()
-            return
+            return True
         scan_panel = getattr(self, "control_panel", None)
         scan_thread = getattr(scan_panel, "scan_thread", None)
         try:
@@ -2634,21 +2654,21 @@ class MainWindow(QMainWindow):
             scan_panel._stop_scan(cancelled=True)
             if not scan_thread.isRunning():
                 self._resume_close_after_scan()
-            return
+            return True
 
         if self._scan_import_task is not None:
             event.ignore()
             self._pending_scan_import_close = True
             self._update_scan_import_actions()
             self.statusBar().showMessage("Waiting for the scan file reader to finish before closing…", 0)
-            return
+            return True
 
         if self.plot_widget.scan_export_busy:
             event.ignore()
             self._pending_scan_export_close = True
             self.plot_widget.request_scan_export_close()
             self.statusBar().showMessage("Waiting for scan data file writing to complete before closing…", 0)
-            return
+            return True
 
         trace = self.power_monitor_trace_widget
         if trace is not None and trace.power_monitor_export_busy:
@@ -2656,28 +2676,28 @@ class MainWindow(QMainWindow):
             self._pending_power_monitor_export_close = True
             trace.request_power_monitor_export_close()
             self.statusBar().showMessage("Waiting for Power Monitor file writing to finish…", 0)
-            return
+            return True
 
         if self._camera_lifecycle_busy():
             event.ignore()
             self._pending_camera_lifecycle_close = True
             self.statusBar().showMessage("Waiting for camera operation to finish…", 0)
             logger.info("Deferring application close until camera recovery/auto operations finish.")
-            return
+            return True
 
         if self._ct400_operation_state in (CT400OperationState.CONNECTING, CT400OperationState.DISCONNECTING):
             event.ignore()
             self._pending_ct400_operation_close = True
             self.statusBar().showMessage("Waiting for CT400 connection operation to finish…", 0)
             logger.info("Deferring application close until the CT400 Connect/Disconnect operation finishes.")
-            return
+            return True
 
         if self._ct400_operation_state is CT400OperationState.MONITORING:
             event.ignore()
             self._pending_ct400_operation_close = True
             self.statusBar().showMessage("Stopping power monitoring before CT400 shutdown…", 0)
             self.histogram_control._stop_monitoring()
-            return
+            return True
 
         if self._ct400_operation_state is CT400OperationState.ALIGNMENT:
             event.ignore()
@@ -2685,7 +2705,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Stopping/waiting for alignment CT400 cleanup…", 0)
             logger.info("Deferring application close until alignment laser cleanup completes.")
             self.alignment_tab.request_stop()
-            return
+            return True
 
         if self._init_tasks:
             event.ignore()
@@ -2696,7 +2716,7 @@ class MainWindow(QMainWindow):
                 cancel = getattr(task.worker, "cancel", None)
                 if callable(cancel):
                     cancel()
-            return
+            return True
 
         if self._piezo_operations_in_flight:
             event.ignore()
@@ -2704,15 +2724,12 @@ class MainWindow(QMainWindow):
             active_sides = ", ".join(sorted(self._piezo_operations_in_flight))
             self.statusBar().showMessage("Waiting for piezo operation to finish…", 0)
             logger.info("Deferring application close while piezo operation(s) remain active: %s", active_sides)
-            return
+            return True
 
-        self.statusBar().showMessage("Shutting down...", 0)
+        return False
 
-        # Capture the final harmless UI snapshot before camera cleanup clears
-        # the panel registry used to read camera control visibility.
-        self._save_ui_preferences()
-
-        # Cleanup long-running panel workers
+    def _cleanup_shutdown_panel_workers(self) -> None:
+        """Release panel worker resources before stopping cameras."""
         if hasattr(self, "alignment_tab") and self.alignment_tab:
             self.alignment_tab.cleanup()
 
@@ -2722,19 +2739,17 @@ class MainWindow(QMainWindow):
         if hasattr(self, "plot_widget") and self.plot_widget:
             self.plot_widget.cleanup()
 
-        # 2. Close all camera streams
-        self._cleanup_cameras()
+    def _disconnect_piezos_for_shutdown(self) -> None:
+        """Best-effort piezo cleanup with independent failure boundaries."""
+        for side, piezo in (("left", self.piezo_left), ("right", self.piezo_right)):
+            try:
+                if piezo and piezo.is_connected():
+                    piezo.disconnect()
+            except Exception:
+                logger.exception("Error disconnecting %s piezo hardware during shutdown", side)
 
-        # 3. Disconnect from physical hardware
-        try:
-            if self.piezo_left and self.piezo_left.is_connected():
-                self.piezo_left.disconnect()
-            if self.piezo_right and self.piezo_right.is_connected():
-                self.piezo_right.disconnect()
-
-        except Exception as e:  # noqa: BLE001  # Preserve best-effort platform and hardware cleanup.
-            logger.error(f"Error disconnecting piezo hardware: {e}")
-
+    def _release_ct400_for_shutdown(self) -> None:
+        """Retain the CT400 input safe-state and native handle close ordering."""
         # Stop monitoring above so its own selected input is handled before
         # releasing the CT400. A successful GUI disconnect already disabled
         # the configured input. Retain that knowledge separately from the UI
@@ -2760,10 +2775,8 @@ class MainWindow(QMainWindow):
             logger.info("MainWindow.closeEvent: Closing connected DummyCT400 simulation.")
             device.close()
 
-        # 4. Shut down the main Vimba system API
-        self._cleanup_vimbasystem()
-
-        logger.info("Shutdown complete.")
+    def _finish_shutdown_ui(self) -> None:
+        """Finalize UI resources only after hardware cleanup."""
         self._pending_init_close = False
         self._pending_camera_lifecycle_close = False
         self._pending_piezo_operation_close = False
@@ -2773,8 +2786,6 @@ class MainWindow(QMainWindow):
             pass
         self.log_console.stop_updates()
         self.log_console_dock.hide()
-        event.accept()
-        logger.info("MainWindow.closeEvent cleanup returned after %.2f s.", time.perf_counter() - close_started_at)
 
     def _save_ui_preferences(self) -> None:
         """Save only presentation state and the selected scan detector IDs."""

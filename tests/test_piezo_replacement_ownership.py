@@ -534,3 +534,109 @@ def test_piezo_terminal_during_pending_close_does_not_rebuild_alignment(qtbot, m
         assert len(scheduled) == 1
     finally:
         window.alignment_tab.cleanup()
+
+
+@pytest.mark.parametrize("failing_side", ["left", "right"])
+@pytest.mark.parametrize("failure_stage", ["is_connected", "disconnect"])
+def test_shutdown_disconnects_other_piezo_after_failure(
+    qtbot, monkeypatch, request, caplog, failing_side, failure_stage
+):
+    """One controller's status/disconnect error must not strand the other or CT400."""
+    window = _window(qtbot, monkeypatch)
+    thread = _ensure_histogram_worker_stops(window, request, monkeypatch)
+    monkeypatch.setattr(main_window_module, "CT400", FakeNativeCT400)
+    native = FakeNativeCT400()
+    window.ct400_device = native
+    left, right = FakePiezo(connected=True), FakePiezo(connected=True)
+    window.piezo_left, window.piezo_right = left, right
+    failing = left if failing_side == "left" else right
+    cleanup = []
+    _capture_final_cleanup(window, monkeypatch, cleanup)
+
+    if failure_stage == "is_connected":
+
+        def fail_status():
+            raise RuntimeError("simulated status failure")
+
+        monkeypatch.setattr(failing, "is_connected", fail_status)
+    else:
+
+        def fail_disconnect():
+            failing.disconnect_calls += 1
+            raise RuntimeError("simulated disconnect failure")
+
+        monkeypatch.setattr(failing, "disconnect", fail_disconnect)
+
+    window.show()
+    window.close()
+
+    assert not window.isVisible()
+    assert (left if failing_side == "right" else right).disconnect_calls == 1
+    assert failing.disconnect_calls == (0 if failure_stage == "is_connected" else 1)
+    assert native.close_calls == 1
+    assert cleanup == ["alignment", "histogram", "cameras", "vimba"]
+    assert f"Error disconnecting {failing_side} piezo hardware during shutdown" in caplog.text
+    assert _qt_thread_stopped(thread)
+
+
+def test_shutdown_phases_preserve_ui_workers_camera_piezos_ct400_vimba_order(qtbot, monkeypatch, request):
+    """Native cleanup must remain after UI snapshot and the owner-thread gates."""
+    window = _window(qtbot, monkeypatch)
+    thread = _ensure_histogram_worker_stops(window, request, monkeypatch)
+    monkeypatch.setattr(main_window_module, "CT400", FakeNativeCT400)
+    events = []
+    native = FakeNativeCT400()
+    original_native_close = native.close
+
+    def close_native():
+        events.append("ct400")
+        original_native_close()
+
+    monkeypatch.setattr(native, "close", close_native)
+    window.ct400_device = native
+
+    class OrderedPiezo(FakePiezo):
+        def __init__(self, side):
+            super().__init__(connected=True)
+            self.side = side
+
+        def disconnect(self):
+            events.append(self.side)
+            super().disconnect()
+
+    window.piezo_left = OrderedPiezo("left")
+    window.piezo_right = OrderedPiezo("right")
+    monkeypatch.setattr(window, "_save_ui_preferences", lambda: events.append("preferences"))
+    real_panel_cleanup = window._cleanup_shutdown_panel_workers
+
+    def cleanup_panels():
+        events.append("workers")
+        real_panel_cleanup()
+
+    monkeypatch.setattr(window, "_cleanup_shutdown_panel_workers", cleanup_panels)
+    monkeypatch.setattr(window, "_cleanup_cameras", lambda: events.append("cameras"))
+    monkeypatch.setattr(window, "_cleanup_vimbasystem", lambda: events.append("vimba"))
+    real_ui_finish = window._finish_shutdown_ui
+
+    def finish_ui():
+        events.append("ui-finished")
+        real_ui_finish()
+
+    monkeypatch.setattr(window, "_finish_shutdown_ui", finish_ui)
+
+    window.show()
+    window.close()
+
+    assert events == [
+        "preferences",
+        "workers",
+        "cameras",
+        "left",
+        "right",
+        "ct400",
+        "vimba",
+        "ui-finished",
+    ]
+    assert not window.isVisible()
+    assert native.close_calls == 1
+    assert _qt_thread_stopped(thread)
