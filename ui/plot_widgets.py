@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
 
 from app_settings import AppSettings
 from hardware.ct400_types import Detector
+from logic.export_task_lifecycle import ExportTaskLifecycle
 from logic.matlab_engine_manager import MatlabEngineManager, MatlabEngineState
 from logic.power_monitor_display import DEFAULT_DISPLAY_POINT_LIMIT, PowerMonitorDisplayHistory
 from logic.power_monitor_export import (
@@ -326,13 +327,9 @@ class PowerMonitorTraceWidget(QWidget):
         self.current_recording: PowerMonitorRecording | None = None
         self.recording_active = False
         self._user_hidden = False
-        self._power_monitor_export_task: TaskRunner | None = None
-        self._owned_power_monitor_export_tasks: dict[int, TaskRunner] = {}
-        self._power_monitor_export_result: PowerMonitorExportOutcome | None = None
-        self._power_monitor_export_thread_stopped = False
+        self._power_monitor_export_lifecycle = ExportTaskLifecycle[PowerMonitorExportOutcome](self)
         self._pending_power_monitor_export_close = False
         self._closing_for_power_monitor_export = False
-        self._power_monitor_export_idle_notified = True
         self.elapsed_values: list[float] = []
         self.detector_values: dict[Detector, list[float]] = {}
         self.display_history: PowerMonitorDisplayHistory | None = None
@@ -570,32 +567,27 @@ class PowerMonitorTraceWidget(QWidget):
             return
 
         worker = PowerMonitorExportWorker(payload, targets, frozenset(conflicts))
-        task = TaskRunner(worker)
-        # Qt owns the native QThread until deferred deletion. Keep its
-        # TaskRunner alive as well until QObject.destroyed is delivered.
-        task.worker_thread.setParent(self)
-        task_id = id(task)
-        self._owned_power_monitor_export_tasks[task_id] = task
-        task.worker_thread.destroyed.connect(
-            lambda _obj=None, key=task_id: self._on_power_monitor_export_task_destroyed(key)
-        )
-        self._power_monitor_export_task = task
-        self._power_monitor_export_idle_notified = False
         self._closing_for_power_monitor_export = False
-        self._power_monitor_export_result = None
-        self._power_monitor_export_thread_stopped = False
         self.save_recording_button.setEnabled(False)
         self._set_status("Saving Power Monitor recording…")
-        worker.outcome.connect(self._on_power_monitor_export_outcome, Qt.ConnectionType.QueuedConnection)
-        task.worker_thread.finished.connect(
-            self._on_power_monitor_export_thread_finished, Qt.ConnectionType.QueuedConnection
+        self._power_monitor_export_lifecycle.start(
+            worker,
+            on_outcome=self._on_power_monitor_export_outcome,
+            on_thread_finished=self._on_power_monitor_export_thread_finished,
+            on_destroyed=self._on_power_monitor_export_task_destroyed,
         )
-        task.start()
+
+    @property
+    def _power_monitor_export_task(self) -> TaskRunner | None:
+        return self._power_monitor_export_lifecycle.active_task
+
+    @property
+    def _owned_power_monitor_export_tasks(self) -> dict[int, TaskRunner]:
+        return self._power_monitor_export_lifecycle.owned_tasks
 
     @property
     def power_monitor_export_busy(self) -> bool:
-        # Deletion is part of the native Qt lifecycle; not just thread stop.
-        return self._power_monitor_export_task is not None or bool(self._owned_power_monitor_export_tasks)
+        return self._power_monitor_export_lifecycle.busy
 
     def request_power_monitor_export_close(self) -> None:
         """Suppress completion dialogs while MainWindow defers shutdown."""
@@ -603,24 +595,18 @@ class PowerMonitorTraceWidget(QWidget):
 
     @Slot(object)
     def _on_power_monitor_export_outcome(self, result: PowerMonitorExportOutcome) -> None:
-        self._power_monitor_export_result = result
+        self._power_monitor_export_lifecycle.set_outcome(result)
         self._finish_power_monitor_export_if_ready()
 
     @Slot()
     def _on_power_monitor_export_thread_finished(self) -> None:
-        self._power_monitor_export_thread_stopped = True
+        self._power_monitor_export_lifecycle.set_thread_finished()
         self._finish_power_monitor_export_if_ready()
 
     def _finish_power_monitor_export_if_ready(self) -> None:
-        # Both queued signals can be delivered in either order.
-        if self._power_monitor_export_task is None or not self._power_monitor_export_thread_stopped:
-            return
-        result = self._power_monitor_export_result
+        result = self._power_monitor_export_lifecycle.take_ready_result()
         if result is None:
             return
-        self._power_monitor_export_task = None
-        self._power_monitor_export_result = None
-        self._power_monitor_export_thread_stopped = False
         self._notify_power_monitor_export_idle_if_ready()
         if self._closing_for_power_monitor_export:
             return
@@ -639,15 +625,12 @@ class PowerMonitorTraceWidget(QWidget):
             )
 
     def _on_power_monitor_export_task_destroyed(self, task_id: int) -> None:
-        self._owned_power_monitor_export_tasks.pop(task_id, None)
+        self._power_monitor_export_lifecycle.release_destroyed(task_id)
         self._notify_power_monitor_export_idle_if_ready()
 
     def _notify_power_monitor_export_idle_if_ready(self) -> None:
-        # QObject.destroyed may precede the separately queued outcome/finished
-        # signals. Notify exactly once only after *both* sides are complete.
-        if self.power_monitor_export_busy or self._power_monitor_export_idle_notified:
+        if not self._power_monitor_export_lifecycle.take_idle_notification():
             return
-        self._power_monitor_export_idle_notified = True
         self.save_recording_button.setEnabled(
             self.current_recording is not None
             and bool(len(self.current_recording.elapsed_s))
@@ -1284,10 +1267,7 @@ class PlotWidget(QWidget):
         self._saved_measurement_ref: ReferenceType[ScanMeasurement] | None = None
         self._export_measurement: ScanMeasurement | None = None
         self.pending_saves = 0
-        self._scan_export_task: TaskRunner | None = None
-        self._owned_scan_export_tasks: dict[int, TaskRunner] = {}
-        self._scan_export_result: ScanExportOutcome | None = None
-        self._scan_export_thread_stopped = False
+        self._scan_export_lifecycle = ExportTaskLifecycle[ScanExportOutcome](self)
         self._pending_export_widget_close = False
         self._closing_for_export = False
 
@@ -2161,7 +2141,9 @@ class PlotWidget(QWidget):
         else:
             self.set_plot_title("Wavelength Scan")
 
-        self.save_btn.setEnabled(isinstance(measurement, ScanMeasurement) and self.pending_saves == 0)
+        self.save_btn.setEnabled(
+            isinstance(measurement, ScanMeasurement) and self.pending_saves == 0 and not self.scan_export_busy
+        )
         self.freeze_btn.setEnabled(bool(measurement.detectors))
         return True
 
@@ -2175,7 +2157,11 @@ class PlotWidget(QWidget):
         self._saved_measurement_ref = ref(measurement)
 
     def _update_save_button_state(self) -> None:
-        self.save_btn.setEnabled(isinstance(self.current_measurement, ScanMeasurement) and self.pending_saves == 0)
+        self.save_btn.setEnabled(
+            isinstance(self.current_measurement, ScanMeasurement)
+            and self.pending_saves == 0
+            and not self.scan_export_busy
+        )
 
     def set_imported_scan(self, scan: ImportedScan) -> bool:
         """Display an offline scan through the shared detector plotting path."""
@@ -2271,7 +2257,7 @@ class PlotWidget(QWidget):
     @Slot()
     def save_scan_data(self):
         measurement = self.current_measurement
-        if self.pending_saves:
+        if self.pending_saves or self.scan_export_busy:
             return
         if isinstance(measurement, ImportedScan):
             QMessageBox.information(
@@ -2366,25 +2352,13 @@ class PlotWidget(QWidget):
             # belong entirely to the worker thread.
             data_targets = {name: path for name, path in targets.items() if name in ("CSV", "MAT")}
             worker = ScanExportWorker(export_payload, data_targets, frozenset(conflicts))
-            task = TaskRunner(worker)
-            # Qt owns the QThread lifetime until deferred deletion; releasing
-            # the TaskRunner after finished must not finalize the native thread
-            # while Qt still has pending object-destruction events.
-            task.worker_thread.setParent(self)
-            task_id = id(task)
-            self._owned_scan_export_tasks[task_id] = task
-            task.worker_thread.destroyed.connect(
-                lambda _obj=None, key=task_id: self._owned_scan_export_tasks.pop(key, None)
-            )
-            self._scan_export_result = None
-            self._scan_export_thread_stopped = False
-            self._scan_export_task = task
             self.pending_saves += 1
-            worker.outcome.connect(self._on_scan_export_outcome, Qt.ConnectionType.QueuedConnection)
-            task.worker_thread.finished.connect(
-                self._on_scan_export_thread_finished, Qt.ConnectionType.QueuedConnection
+            self._scan_export_lifecycle.start(
+                worker,
+                on_outcome=self._on_scan_export_outcome,
+                on_thread_finished=self._on_scan_export_thread_finished,
+                on_destroyed=self._on_scan_export_task_destroyed,
             )
-            task.start()
 
         if request.fig:
             fig_path = targets["FIG"]
@@ -2405,8 +2379,16 @@ class PlotWidget(QWidget):
             self._check_all_saves_done()
 
     @property
+    def _scan_export_task(self) -> TaskRunner | None:
+        return self._scan_export_lifecycle.active_task
+
+    @property
+    def _owned_scan_export_tasks(self) -> dict[int, TaskRunner]:
+        return self._scan_export_lifecycle.owned_tasks
+
+    @property
     def scan_export_busy(self) -> bool:
-        return self._scan_export_task is not None
+        return self._scan_export_lifecycle.busy
 
     def request_scan_export_close(self) -> None:
         """Suppress completion dialogs while MainWindow defers its own close."""
@@ -2414,30 +2396,34 @@ class PlotWidget(QWidget):
 
     @Slot(object)
     def _on_scan_export_outcome(self, outcome: ScanExportOutcome) -> None:
-        self._scan_export_result = outcome
+        self._scan_export_lifecycle.set_outcome(outcome)
         self._finish_scan_export_if_ready()
 
     @Slot()
     def _on_scan_export_thread_finished(self) -> None:
-        self._scan_export_thread_stopped = True
+        self._scan_export_lifecycle.set_thread_finished()
         self._finish_scan_export_if_ready()
 
     def _finish_scan_export_if_ready(self) -> None:
-        # Queued outcome/finished notifications can arrive in either order.
-        if self._scan_export_task is None or not self._scan_export_thread_stopped:
-            return
-        outcome = self._scan_export_result
+        outcome = self._scan_export_lifecycle.take_ready_result()
         if outcome is None:
             return
-        self._scan_export_task = None
-        self._scan_export_result = None
-        self._scan_export_thread_stopped = False
         self.saved_files_list.extend(outcome.saved)
         self.error_list.extend(outcome.errors)
         if outcome.saved and self._export_measurement is not None:
             self._mark_measurement_saved(self._export_measurement)
         self.pending_saves -= 1
         self._check_all_saves_done()
+        self._notify_scan_export_idle_if_ready()
+
+    def _on_scan_export_task_destroyed(self, task_id: int) -> None:
+        self._scan_export_lifecycle.release_destroyed(task_id)
+        self._notify_scan_export_idle_if_ready()
+
+    def _notify_scan_export_idle_if_ready(self) -> None:
+        if not self._scan_export_lifecycle.take_idle_notification():
+            return
+        self._update_save_button_state()
         self.scan_export_idle.emit()
         if self._pending_export_widget_close:
             self._pending_export_widget_close = False
