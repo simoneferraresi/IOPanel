@@ -9,18 +9,20 @@ strongly referenced until QObject.destroyed arrives.
 from __future__ import annotations
 
 from collections.abc import Callable
+
 from PySide6.QtCore import QObject, Qt
 
 from logic.task_runner import BaseWorker, TaskRunner
 
-class ExportTaskLifecycle[_Outcome]:
+
+class ExportTaskLifecycle[Outcome]:
     """Track a single active export and the native lifetime of all owned threads."""
 
     def __init__(self, owner: QObject) -> None:
         self._owner = owner
         self.active_task: TaskRunner | None = None
         self.owned_tasks: dict[int, TaskRunner] = {}
-        self.result: _Outcome | None = None
+        self.result: Outcome | None = None
         self.thread_stopped = False
         self._idle_notified = True
 
@@ -33,7 +35,7 @@ class ExportTaskLifecycle[_Outcome]:
         self,
         worker: BaseWorker,
         *,
-        on_outcome: Callable[[_Outcome], None],
+        on_outcome: Callable[[Outcome], None],
         on_thread_finished: Callable[[], None],
         on_destroyed: Callable[[int], None],
     ) -> None:
@@ -55,13 +57,13 @@ class ExportTaskLifecycle[_Outcome]:
         task.worker_thread.finished.connect(on_thread_finished, Qt.ConnectionType.QueuedConnection)
         task.start()
 
-    def set_outcome(self, result: _Outcome) -> None:
+    def set_outcome(self, result: Outcome) -> None:
         self.result = result
 
     def set_thread_finished(self) -> None:
         self.thread_stopped = True
 
-    def take_ready_result(self) -> _Outcome | None:
+    def take_ready_result(self) -> Outcome | None:
         """Return exactly once, only after both queued notifications have arrived."""
         if self.active_task is None or not self.thread_stopped or self.result is None:
             return None
