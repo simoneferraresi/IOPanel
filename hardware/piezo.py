@@ -3,6 +3,7 @@
 import logging
 from ctypes import POINTER, WinDLL, byref, c_char_p, c_double, c_int, create_string_buffer
 from pathlib import Path
+from threading import Lock
 
 # Note: We don't actually need pyserial for this attempt, but it's good to have.
 import serial.tools.list_ports
@@ -19,6 +20,8 @@ class PiezoConnectionError(PiezoError): ...
 
 class PiezoController:
     _dll = None
+    _dll_io_lock = Lock()
+    _primed_dll = None
     VOLTS_PER_NM = 0.0037
 
     def __init__(self, dll_path: Path):
@@ -150,20 +153,33 @@ class PiezoController:
     def connect(self, port: str, baud_rate: int = 115200, timeout: int = 3) -> None:
         if self.is_connected():
             self.disconnect()
+
+        # Physical qualification on COM3: the vendor DLL's first Open returned
+        # -1 without List, but List -> Open returned handle 0 (success). Keep
+        # startup discovery passive and prime *only* on explicit Connect.
+        # Both GUI piezo actions may run on separate QThreadPool workers;
+        # serialize DLL initialization and handle acquisition across them.
+        with PiezoController._dll_io_lock:
+            if PiezoController._primed_dll is not self._dll:
+                buffer = create_string_buffer(10240)
+                count = self._dll.List(buffer, len(buffer))
+                if count < 0:
+                    raise PiezoConnectionError(f"Piezo DLL List failed before Connect with error code: {count}.")
+                PiezoController._primed_dll = self._dll
+                logger.info("Piezo DLL initialized by explicit Connect; List reported %d device(s).", count)
+            handle = self._dll.Open(port.encode("utf-8"), baud_rate, timeout)
+
+        if handle < 0:
+            raise PiezoConnectionError(f"Failed to connect to Piezo on {port}. DLL error code: {handle}.")
         self.port = port
-        self.hdl = self._dll.Open(port.encode("utf-8"), baud_rate, timeout)
-        if self.hdl < 0:
-            error_code = self.hdl
-            self.hdl = None
-            self.port = None
-            msg = f"Failed to connect to Piezo on {port}. DLL error code: {error_code}."
-            raise PiezoConnectionError(msg)
-        logger.info(f"Successfully connected to Piezo on {port} with handle {self.hdl}")
+        self.hdl = handle
+        logger.info("Successfully connected to Piezo on %s with handle %d", port, handle)
 
     def disconnect(self) -> None:
         if self.hdl is not None:
-            logger.info(f"Disconnecting from Piezo on port {self.port}...")
-            self._dll.Close(self.hdl)
+            logger.info("Disconnecting from Piezo on port %s...", self.port)
+            with PiezoController._dll_io_lock:
+                self._dll.Close(self.hdl)
         self.hdl = None
         self.port = None
 
