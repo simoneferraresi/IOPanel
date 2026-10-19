@@ -30,13 +30,13 @@ def _payload():
 
 
 @pytest.mark.parametrize(
-    ("writer", "csv_format", "temp_prefix"),
+    ("writer", "temp_prefix"),
     [
-        (_write_staged_format, "%.17g", ".iopanel-scan-"),
-        (_write_staged_power_monitor_format, "%.17g", ".iopanel-monitor-"),
+        (_write_staged_format, ".iopanel-scan-"),
+        (_write_staged_power_monitor_format, ".iopanel-monitor-"),
     ],
 )
-def test_shared_serializer_preserves_domain_specific_csv_bytes_and_cleanup(tmp_path, writer, csv_format, temp_prefix):
+def test_shared_serializer_preserves_archival_csv_bytes_and_cleanup(tmp_path, writer, temp_prefix):
     payload = _payload()
     destination = tmp_path / "record.csv"
     expected = io.StringIO(newline="")
@@ -46,7 +46,7 @@ def test_shared_serializer_preserves_domain_specific_csv_bytes_and_cleanup(tmp_p
         delimiter=",",
         header=payload.csv_header,
         comments="",
-        fmt=csv_format,
+        fmt="%.17g",
     )
 
     writer("CSV", destination, payload, overwrite_confirmed=False)
