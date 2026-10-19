@@ -291,7 +291,8 @@ def test_start_ack_clears_only_new_session_and_pause_resume_preserves_history(qt
     qtbot.waitUntil(lambda: panel.shutdown_finished, timeout=2000)
 
 
-def test_thread_finished_callback_runs_on_gui_thread_and_is_idempotent(qtbot):
+@pytest.mark.parametrize("_cycle", range(12))
+def test_thread_finished_callback_runs_on_gui_thread_and_is_idempotent(qtbot, _cycle):
     class TrackingPanel(PM5020Panel):
         callback_threads: list[QThread]
 
@@ -308,10 +309,25 @@ def test_thread_finished_callback_runs_on_gui_thread_and_is_idempotent(qtbot):
     panel._connect()
     qtbot.waitUntil(lambda: panel._backend_state is PM5020State.IDLE, timeout=2000)
     panel._shutdown_timer.start(2000)
+    worker_shutdown = QSignalSpy(panel.worker.shutdown_complete)
+    thread_finished = QSignalSpy(panel.task.worker_thread.finished)
     completed = QSignalSpy(panel.shutdown_complete)
+    started_at = time.perf_counter()
     panel.request_shutdown()
     panel.request_shutdown()
-    qtbot.waitUntil(lambda: panel.shutdown_finished, timeout=2000)
+    try:
+        qtbot.waitUntil(lambda: panel.shutdown_finished, timeout=2000)
+    except Exception as exc:
+        # Preserve the original timeout and assertions, but identify which
+        # asynchronous shutdown milestone was last observed on a CI failure.
+        elapsed_ms = (time.perf_counter() - started_at) * 1000
+        raise AssertionError(
+            f"PM5020 shutdown callback not observed after {elapsed_ms:.1f} ms "
+            f"(cycle {_cycle}): worker_shutdown={worker_shutdown.count()}, "
+            f"qthread_finished={thread_finished.count()}, "
+            f"gui_callbacks={len(panel.callback_threads)}, "
+            f"panel_shutdown_complete={completed.count()}"
+        ) from exc
     assert len(panel.callback_threads) == 1
     assert panel.callback_threads[0] == QThread.currentThread()
     assert not panel._shutdown_timer.isActive()
