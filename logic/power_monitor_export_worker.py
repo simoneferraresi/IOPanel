@@ -1,21 +1,18 @@
 """Hardware-free staged CSV/MAT serialization for completed Power Monitor recordings.
 
 The GUI confirms conflicts and snapshots metadata before creating this worker.
-The worker never touches a QWidget, instrument, or mutable recording.
+The domain-specific 17-significant-digit CSV policy remains unchanged.
 """
 
 from __future__ import annotations
 
-import io
 import logging
-import os
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-import numpy as np
 from PySide6.QtCore import Signal, Slot
 
+from logic.export_file_io import export_selected_formats, write_staged_csv_mat
 from logic.power_monitor_export import PowerMonitorExportPayload
 from logic.task_runner import BaseWorker
 
@@ -31,40 +28,16 @@ class PowerMonitorExportOutcome:
 def _write_staged_power_monitor_format(
     name: str, destination: Path, payload: PowerMonitorExportPayload, *, overwrite_confirmed: bool
 ) -> None:
-    """Commit complete files only; never replace a target without approval."""
-    fd, temporary_name = tempfile.mkstemp(prefix=".iopanel-monitor-", suffix=".tmp", dir=destination.parent)
-    temporary = Path(temporary_name)
-    try:
-        with os.fdopen(fd, "wb") as raw:
-            if name == "CSV":
-                with io.TextIOWrapper(raw, encoding="utf-8", newline="", write_through=True) as output:
-                    np.savetxt(
-                        output,
-                        payload.csv_data,
-                        delimiter=",",
-                        header=payload.csv_header,
-                        comments="",
-                        fmt="%.17g",
-                    )
-                    output.flush()
-                    os.fsync(output.buffer.fileno())
-            elif name == "MAT":
-                # The CSV path needs no SciPy: defer its first import to MAT export.
-                from scipy.io import savemat
-
-                savemat(raw, payload.mat_data, do_compression=True)
-                raw.flush()
-                os.fsync(raw.fileno())
-            else:
-                raise ValueError(f"Unsupported Power Monitor export format: {name}")
-
-        if overwrite_confirmed:
-            os.replace(temporary, destination)
-        else:
-            # Atomic create-if-absent, including if another process raced us.
-            os.link(temporary, destination)
-    finally:
-        temporary.unlink(missing_ok=True)
+    """Keep the monitor worker entry point and its existing file-format policy."""
+    write_staged_csv_mat(
+        name,
+        destination,
+        payload,
+        overwrite_confirmed=overwrite_confirmed,
+        csv_format="%.17g",
+        temp_prefix=".iopanel-monitor-",
+        error_context="Power Monitor",
+    )
 
 
 class PowerMonitorExportWorker(BaseWorker):
@@ -85,21 +58,19 @@ class PowerMonitorExportWorker(BaseWorker):
 
     @Slot()
     def run(self) -> None:
-        saved: list[Path] = []
-        errors: list[str] = []
         try:
-            for name, destination in self._targets.items():
-                try:
-                    _write_staged_power_monitor_format(
-                        name,
-                        destination,
-                        self._payload,
-                        overwrite_confirmed=destination in self._confirmed_overwrites,
-                    )
-                    saved.append(destination)
-                except Exception as error:
-                    logger.exception("Power Monitor %s export failed: %s", name, destination)
-                    errors.append(f"{name}: {error}")
-            self.outcome.emit(PowerMonitorExportOutcome(tuple(saved), tuple(errors)))
+            def write_format(name: str, destination: Path, overwrite_confirmed: bool) -> None:
+                _write_staged_power_monitor_format(
+                    name, destination, self._payload, overwrite_confirmed=overwrite_confirmed
+                )
+
+            saved, errors = export_selected_formats(
+                self._targets,
+                self._confirmed_overwrites,
+                write_format,
+                logger=logger,
+                error_log_template="Power Monitor %s export failed: %s",
+            )
+            self.outcome.emit(PowerMonitorExportOutcome(saved, errors))
         finally:
             self.finished.emit()
