@@ -2786,6 +2786,7 @@ class MainWindow(QMainWindow):
             pass
         self.log_console.stop_updates()
         self.log_console_dock.hide()
+
     def _save_ui_preferences(self) -> None:
         """Save only presentation state and the selected scan detector IDs."""
         if not self.isFullScreen():
