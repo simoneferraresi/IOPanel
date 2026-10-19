@@ -2725,15 +2725,13 @@ class MainWindow(QMainWindow):
         # 2. Close all camera streams
         self._cleanup_cameras()
 
-        # 3. Disconnect from physical hardware
-        try:
-            if self.piezo_left and self.piezo_left.is_connected():
-                self.piezo_left.disconnect()
-            if self.piezo_right and self.piezo_right.is_connected():
-                self.piezo_right.disconnect()
-
-        except Exception as e:  # noqa: BLE001  # Preserve best-effort platform and hardware cleanup.
-            logger.error(f"Error disconnecting piezo hardware: {e}")
+        # 3. Disconnect each piezo independently; one failure must not strand the other.
+        for side, piezo in (("left", self.piezo_left), ("right", self.piezo_right)):
+            try:
+                if piezo and piezo.is_connected():
+                    piezo.disconnect()
+            except Exception:
+                logger.exception("Error disconnecting %s piezo hardware during shutdown", side)
 
         # Stop monitoring above so its own selected input is handled before
         # releasing the CT400. A successful GUI disconnect already disabled
