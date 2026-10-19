@@ -1,7 +1,7 @@
 """Hardware independent regression coverage for R08 piezo ownership."""
 
 import pytest
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtGui import QCloseEvent, QIcon
 
 from config_model import AppConfig
 from hardware.dummy_ct400 import DummyCT400
@@ -134,6 +134,53 @@ def test_missing_piezo_menu_actions_start_truthfully_disabled(qtbot, monkeypatch
     assert not window.piezo_connect_left_action.isEnabled()
     assert window.piezo_connect_right_action.text() == "Right Piezo (Not Found)"
     assert not window.piezo_connect_right_action.isEnabled()
+
+
+def test_piezo_menu_icons_and_checkmarks_track_independent_real_connection_state(qtbot, monkeypatch):
+    window = _window(qtbot, monkeypatch)
+    left = window.piezo_connect_left_action
+    right = window.piezo_connect_right_action
+    connect_icon = QIcon(":/icons/connect.svg").pixmap(18, 18).toImage()
+    disconnect_icon = QIcon(":/icons/disconnect.svg").pixmap(18, 18).toImage()
+    spinner_icon = QIcon(":/icons/spinner.svg").pixmap(18, 18).toImage()
+    assert connect_icon != disconnect_icon
+    assert left.isCheckable() and right.isCheckable()
+    assert left.objectName() == "connectLeftPiezoAction"
+    assert right.objectName() == "connectRightPiezoAction"
+    assert not left.isChecked() and not right.isChecked()
+
+    window._piezo_discovery_pending = True
+    window._update_piezo_action("left")
+    window._update_piezo_action("right")
+    assert left.text() == "Finding Left Piezo..."
+    assert right.text() == "Finding Right Piezo..."
+    assert left.icon().pixmap(18, 18).toImage() == spinner_icon
+    assert not left.isEnabled() and not right.isEnabled()
+
+    window._on_piezos_initialized(FakePiezo(), FakePiezo())
+    assert left.text() == "Connect Left Piezo"
+    assert right.text() == "Connect Right Piezo"
+    assert left.icon().pixmap(18, 18).toImage() == connect_icon
+    assert right.icon().pixmap(18, 18).toImage() == connect_icon
+    assert left.isEnabled() and right.isEnabled()
+
+    window.piezo_left.connected = True
+    window._update_piezo_action("left")
+    assert left.text() == "Disconnect Left Piezo"
+    assert left.isChecked() and not right.isChecked()
+    assert left.icon().pixmap(18, 18).toImage() == disconnect_icon
+
+    window._piezo_operations_in_flight.add("left")
+    window._update_piezo_action("left")
+    assert left.text() == "Disconnecting Left..."
+    assert not left.isEnabled()
+    assert left.isChecked()
+    assert left.icon().pixmap(18, 18).toImage() == spinner_icon
+    window._piezo_operations_in_flight.clear()
+    window.piezo_left.connected = False
+    window._update_piezo_action("left")
+    assert left.text() == "Connect Left Piezo"
+    assert not left.isChecked()
 
 
 def test_connected_left_controller_is_retained_during_discovery(qtbot, monkeypatch):

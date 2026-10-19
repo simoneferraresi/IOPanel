@@ -241,6 +241,7 @@ class MainWindow(QMainWindow):
 
         # --- Piezo Worker ---
         self.piezo_task: TaskRunner | None = None
+        self._piezo_discovery_pending = False
 
         self.shared_scan_settings = ScanSettings()
         self.vmb_instance: VmbSystem | None = None
@@ -409,20 +410,32 @@ class MainWindow(QMainWindow):
         QThreadPool.globalInstance().start(worker)
 
     def _update_piezo_action(self, side: str):
-        """Render the action from the current controller and operation state."""
+        """Render truthful connection state with the CT400/PM5020 menu icon convention."""
         action = self.piezo_connect_left_action if side == "left" else self.piezo_connect_right_action
         piezo = self.piezo_left if side == "left" else self.piezo_right
         title = side.capitalize()
+        connected = piezo is not None and piezo.is_connected()
         if side in self._piezo_operations_in_flight:
-            action.setText(f"{'Disconnecting' if piezo and piezo.is_connected() else 'Connecting'} {title}...")
-            action.setEnabled(False)
+            text = f"{'Disconnecting' if connected else 'Connecting'} {title}..."
+            icon, enabled = ":/icons/spinner.svg", False
+        elif self._piezo_discovery_pending:
+            text, icon, enabled = f"Finding {title} Piezo...", ":/icons/spinner.svg", False
         elif piezo is None:
-            action.setText(f"{title} Piezo (Not Found)")
-            action.setEnabled(False)
+            text, icon, enabled = f"{title} Piezo (Not Found)", ":/icons/connect.svg", False
         else:
-            connected = piezo.is_connected()
-            action.setText(f"{'Disconnect' if connected else 'Connect'} {title} Piezo")
-            action.setEnabled(True)
+            text = f"{'Disconnect' if connected else 'Connect'} {title} Piezo"
+            icon, enabled = (":/icons/disconnect.svg" if connected else ":/icons/connect.svg"), True
+        action.setText(text)
+        action.setIcon(QIcon(icon))
+        action.setChecked(connected)
+        action.setEnabled(enabled and not self._pending_piezo_operation_close)
+        action.setStatusTip(
+            "Connected to the configured controller."
+            if connected
+            else "Configured serial port detected; identity is verified only by an explicit Connect."
+            if piezo is not None
+            else "Configured serial port not detected; use Refresh Instruments after connecting hardware."
+        )
 
     @Slot()
     def _handle_pm5020_connect_action_triggered(self) -> None:
@@ -724,10 +737,12 @@ class MainWindow(QMainWindow):
         self._lazy_init_started = True
         logger.info("Starting lazy initialization of hardware...")
 
-        # 1. Start Piezo discovery (already asynchronous, good)
-        # self._init_piezos_lazy()
+        # Optional piezo discovery is passive and only starts when a port is
+        # configured. Hardware-free installations should launch without a task.
+        if self.config.instruments.piezo_left_serial or self.config.instruments.piezo_right_serial:
+            self._init_piezos_lazy()
 
-        # 2. Start CT400 initialization (NOW asynchronous)
+        # CT400 initialization remains asynchronous.
         self._init_ct400_lazy()
 
         # Start the proprietary Vimba system only when a physical camera is
@@ -892,7 +907,13 @@ class MainWindow(QMainWindow):
         if self._alignment_hardware_transition_blocked():
             logger.info("Skipping piezo discovery while alignment owns the hardware.")
             return
-        logger.info("Starting lazy initialization of Piezo controllers...")
+        if self.piezo_task is not None and self.piezo_task.worker_thread.isRunning():
+            logger.info("Skipping duplicate piezo discovery while another task is running.")
+            return
+        logger.info("Starting passive discovery of configured Piezo serial ports...")
+        self._piezo_discovery_pending = True
+        self._update_piezo_action("left")
+        self._update_piezo_action("right")
 
         worker = PiezoInitWorker(config=self.config.instruments)
 
@@ -1170,7 +1191,8 @@ class MainWindow(QMainWindow):
 
     @Slot(object, object)
     def _on_piezos_initialized(self, piezo_left: PiezoController | None, piezo_right: PiezoController | None):
-        logger.info("MainWindow: Piezo discovery finished.")
+        self._piezo_discovery_pending = False
+        logger.info("MainWindow: passive Piezo serial discovery finished.")
         if self._alignment_hardware_transition_blocked():
             logger.warning("Ignoring piezo discovery results while alignment owns the current hardware.")
             return
@@ -1210,12 +1232,11 @@ class MainWindow(QMainWindow):
 
     @Slot(str)
     def _on_piezo_init_failed(self, error_message: str):
-        logger.error(f"Piezo initialization failed: {error_message}")
-        QMessageBox.critical(
-            self,
-            "Piezo Error",
-            f"Could not initialize Piezo controllers:\n{error_message}\n\nAlignment tab will be unavailable.",
-        )
+        self._piezo_discovery_pending = False
+        logger.error("Piezo discovery unavailable: %s", error_message)
+        # Piezo hardware is optional. Avoid a modal error on ordinary startup;
+        # details remain in the log console, with explicit Refresh available.
+        self.statusBar().showMessage("Piezo discovery unavailable; see Log Console or Refresh Instruments.", 5000)
         self._update_piezo_action("left")
         self._update_piezo_action("right")
         self._sync_alignment_hardware()
@@ -1444,10 +1465,14 @@ class MainWindow(QMainWindow):
         self.cameras_menu.addAction(discover_action)
 
         self.piezo_connect_left_action = QAction("Connect Left Piezo", self)
+        self.piezo_connect_left_action.setObjectName("connectLeftPiezoAction")
+        self.piezo_connect_left_action.setCheckable(True)
         self.piezo_connect_left_action.triggered.connect(lambda: self.connect_piezo("left"))
         self.instrument_menu.addAction(self.piezo_connect_left_action)
 
         self.piezo_connect_right_action = QAction("Connect Right Piezo", self)
+        self.piezo_connect_right_action.setObjectName("connectRightPiezoAction")
+        self.piezo_connect_right_action.setCheckable(True)
         self.piezo_connect_right_action.triggered.connect(lambda: self.connect_piezo("right"))
         self.instrument_menu.addAction(self.piezo_connect_right_action)
         self._update_piezo_action("left")
