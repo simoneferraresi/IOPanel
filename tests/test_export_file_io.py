@@ -36,9 +36,7 @@ def _payload():
         (_write_staged_power_monitor_format, "%.17g", ".iopanel-monitor-"),
     ],
 )
-def test_shared_serializer_preserves_domain_specific_csv_bytes_and_cleanup(
-    tmp_path, writer, csv_format, temp_prefix
-):
+def test_shared_serializer_preserves_domain_specific_csv_bytes_and_cleanup(tmp_path, writer, csv_format, temp_prefix):
     payload = _payload()
     destination = tmp_path / "record.csv"
     expected = io.StringIO(newline="")
