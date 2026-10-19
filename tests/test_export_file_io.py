@@ -32,7 +32,7 @@ def _payload():
 @pytest.mark.parametrize(
     ("writer", "csv_format", "temp_prefix"),
     [
-        (_write_staged_format, "%.6f", ".iopanel-scan-"),
+        (_write_staged_format, "%.17g", ".iopanel-scan-"),
         (_write_staged_power_monitor_format, "%.17g", ".iopanel-monitor-"),
     ],
 )
