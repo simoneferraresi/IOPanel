@@ -59,6 +59,7 @@ class ScanExportWorker(BaseWorker):
     @Slot()
     def run(self) -> None:
         try:
+
             def write_format(name: str, path: Path, overwrite_confirmed: bool) -> None:
                 _write_staged_format(name, path, self._payload, overwrite_confirmed=overwrite_confirmed)
 
