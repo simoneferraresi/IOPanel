@@ -101,7 +101,7 @@ def test_power_monitor_staged_export_preserves_format_and_cleans_files(tmp_path)
 
 
 def test_failed_power_monitor_staging_keeps_old_bytes(monkeypatch, tmp_path):
-    import logic.power_monitor_export_worker as worker_module
+    import logic.export_file_io as export_io
 
     target = tmp_path / "saved.csv"
     target.write_bytes(b"old-data")
@@ -109,7 +109,7 @@ def test_failed_power_monitor_staging_keeps_old_bytes(monkeypatch, tmp_path):
     def fail(*_args, **_kwargs):
         raise OSError("disk full")
 
-    monkeypatch.setattr(worker_module.np, "savetxt", fail)
+    monkeypatch.setattr(export_io.np, "savetxt", fail)
     with pytest.raises(OSError, match="disk full"):
         _write_staged_power_monitor_format("CSV", target, _payload(), overwrite_confirmed=True)
     assert target.read_bytes() == b"old-data"
@@ -117,16 +117,16 @@ def test_failed_power_monitor_staging_keeps_old_bytes(monkeypatch, tmp_path):
 
 
 def test_new_power_monitor_target_race_does_not_overwrite(monkeypatch, tmp_path):
-    import logic.power_monitor_export_worker as worker_module
+    import logic.export_file_io as export_io
 
     target = tmp_path / "saved.csv"
-    savetxt = worker_module.np.savetxt
+    savetxt = export_io.np.savetxt
 
     def racing(*args, **kwargs):
         target.write_bytes(b"created-after-confirmation")
         return savetxt(*args, **kwargs)
 
-    monkeypatch.setattr(worker_module.np, "savetxt", racing)
+    monkeypatch.setattr(export_io.np, "savetxt", racing)
     with pytest.raises(FileExistsError):
         _write_staged_power_monitor_format("CSV", target, _payload(), overwrite_confirmed=False)
     assert target.read_bytes() == b"created-after-confirmation"
