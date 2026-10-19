@@ -59,6 +59,7 @@ class PowerMonitorExportWorker(BaseWorker):
     @Slot()
     def run(self) -> None:
         try:
+
             def write_format(name: str, destination: Path, overwrite_confirmed: bool) -> None:
                 _write_staged_power_monitor_format(
                     name, destination, self._payload, overwrite_confirmed=overwrite_confirmed
