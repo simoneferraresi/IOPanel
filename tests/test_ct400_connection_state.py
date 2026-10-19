@@ -758,6 +758,53 @@ def test_alignment_modes_fail_closed_during_scan_recovery_even_if_controls_are_r
         window.close()
 
 
+def test_alignment_input_picker_remains_usable_when_selected_port_is_not_connected(qtbot, monkeypatch, tmp_path):
+    window = _window(qtbot, monkeypatch, tmp_path)
+    device = _physical_device()
+    panel = window.alignment_tab
+    window._on_ct400_initialized(device)
+    _install_mock_alignment_hardware(panel, device)
+    try:
+        # Ready piezos and an initialized native object alone do not authorize
+        # any alignment motion, but local input selection must remain possible.
+        assert panel.input_port_combo.isEnabled()
+        assert not panel.align_button.isEnabled()
+        assert not panel.spiral_align_button.isEnabled()
+        assert not panel.map_button.isEnabled()
+
+        panel.input_port_combo.setCurrentIndex(panel.input_port_combo.findData(1))
+        window._handle_ct400_connection_success("Connected", LaserInput.LI_1)
+        assert panel.align_button.isEnabled()
+        assert panel.spiral_align_button.isEnabled()
+        assert panel.map_button.isEnabled()
+
+        # Changing the selection must revoke every start without disabling
+        # the combo box needed to recover the previously authorized input.
+        panel.input_port_combo.setCurrentIndex(panel.input_port_combo.findData(2))
+        assert panel.input_port_combo.isEnabled()
+        assert not panel.align_button.isEnabled()
+        assert not panel.spiral_align_button.isEnabled()
+        assert not panel.map_button.isEnabled()
+
+        panel.input_port_combo.setCurrentIndex(panel.input_port_combo.findData(1))
+        assert panel.align_button.isEnabled()
+        assert panel.spiral_align_button.isEnabled()
+        assert panel.map_button.isEnabled()
+
+        window._handle_ct400_disconnection_success("Disconnected")
+        assert panel.input_port_combo.isEnabled()
+        assert not panel.align_button.isEnabled()
+        assert not panel.spiral_align_button.isEnabled()
+        assert not panel.map_button.isEnabled()
+
+        # An in-progress CT400 operation must still lock editable settings.
+        window._set_ct400_operation_state(CT400OperationState.SCANNING)
+        assert not panel.input_port_combo.isEnabled()
+        window._set_ct400_operation_state(CT400OperationState.IDLE)
+    finally:
+        window.close()
+
+
 def test_physical_alignment_requires_explicit_connect_and_matching_input(qtbot, monkeypatch, tmp_path):
     window = _window(qtbot, monkeypatch, tmp_path)
     device = _physical_device()
