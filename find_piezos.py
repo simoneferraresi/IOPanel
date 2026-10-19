@@ -103,7 +103,9 @@ def find_connected_piezos(dll_path: Path | None = None) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="List Thorlabs MDT piezo identifiers using the vendor DLL.")
-    parser.add_argument("--dll", type=Path, default=DLL_PATH, help="Vendor DLL path (defaults to the original lab SDK).")
+    parser.add_argument(
+        "--dll", type=Path, default=DLL_PATH, help="Vendor DLL path (defaults to the original lab SDK)."
+    )
     args = parser.parse_args(argv)
     return find_connected_piezos(args.dll)
 
