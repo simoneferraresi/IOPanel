@@ -22,8 +22,8 @@ jobs:
         with:
           version: "0.12.21"
       - run: uv sync --locked --no-default-groups --extra lint
-      - run: uv run --no-sync ruff check --fix .
-      - run: uv run --no-sync ruff format .
+      - run: uv run --no-sync ruff check --fix config_model.py tools/edfa_readonly_probe.py hardware/ipg_ead2kc.py tests/test_edfa_gpib_transport.py tests/test_edfa_readonly_probe.py tests/test_config_model.py
+      - run: uv run --no-sync ruff format config_model.py tools/edfa_readonly_probe.py hardware/ipg_ead2kc.py tests/test_edfa_gpib_transport.py tests/test_edfa_readonly_probe.py tests/test_config_model.py
       - run: git diff --check
       - name: Commit formatter-only code adjustments
         run: |
