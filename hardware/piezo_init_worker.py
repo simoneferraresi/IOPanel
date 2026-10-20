@@ -3,10 +3,10 @@ from pathlib import Path
 from typing import override
 
 from PySide6.QtCore import Signal, Slot
-from serial.tools import list_ports
 
 from config_model import InstrumentsConfig
 from hardware.piezo import PiezoController, PiezoError
+from hardware.piezo_ports import enumerate_piezo_ports, resolve_piezo_port
 from logic.task_runner import BaseWorker
 
 logger = logging.getLogger("LabApp.PiezoInit")
@@ -42,24 +42,39 @@ class PiezoInitWorker(BaseWorker):
 
             # The legacy find_devices() actively Open/Close-probed every COM port.
             # Startup/Refresh must not talk to unrelated serial instruments.
-            found_ports = {port.device.upper() for port in list_ports.comports()}
-            logger.info("Piezo candidate serial ports enumerated (no device opens): %s", sorted(found_ports))
+            ports = enumerate_piezo_ports()
+            logger.info("Piezo candidate serial ports enumerated (no device opens): %s", [p.device for p in ports])
+            left_port = resolve_piezo_port(
+                ports,
+                configured_port=self.config.piezo_left_serial,
+                usb_serial=self.config.piezo_left_usb_serial,
+            )
+            right_port = resolve_piezo_port(
+                ports,
+                configured_port=self.config.piezo_right_serial,
+                usb_serial=self.config.piezo_right_usb_serial,
+            )
 
-            left_port = self.config.piezo_left_serial
-            right_port = self.config.piezo_right_serial
+            # Do not permit Left and Right to claim the same physical interface.
+            if left_port is not None and left_port.casefold() == (right_port or "").casefold():
+                logger.error(
+                    "Left and Right piezo configurations resolve to the same port %s; refusing both.", left_port
+                )
+                left_port = right_port = None
 
-            # --- New logic: Create if found, otherwise it stays None ---
-            if left_port and left_port.upper() in found_ports:
+            if left_port is not None:
                 piezo_left = PiezoController(dll_path)
-                logger.info("Left Piezo configured port %s is present (device not connected or verified).", left_port)
+                piezo_left.discovered_port = left_port
+                logger.info("Left piezo candidate resolved to %s (not connected).", left_port)
             else:
-                logger.info("Left Piezo configured port %s is not available.", left_port or "(unset)")
+                logger.warning("Left piezo identity/port unavailable or ambiguous; not connecting.")
 
-            if right_port and right_port.upper() in found_ports:
+            if right_port is not None:
                 piezo_right = PiezoController(dll_path)
-                logger.info("Right Piezo configured port %s is present (device not connected or verified).", right_port)
+                piezo_right.discovered_port = right_port
+                logger.info("Right piezo candidate resolved to %s (not connected).", right_port)
             else:
-                logger.info("Right Piezo configured port %s is not available.", right_port or "(unset)")
+                logger.warning("Right piezo identity/port unavailable or ambiguous; not connecting.")
 
             # Always emit success, even if objects are None
             self.piezos_initialized.emit(piezo_left, piezo_right)

@@ -137,7 +137,7 @@ def test_piezo_normal_discovery_emits_result_and_finished_once(monkeypatch, tmp_
             "FakePiezo", (), {"find_devices": staticmethod(lambda _path: ["L"]), "__init__": lambda self, _path: None}
         ),
     )
-    monkeypatch.setattr(piezo_init_worker.list_ports, "comports", lambda: [SimpleNamespace(device="L")])
+    monkeypatch.setattr(piezo_init_worker, "enumerate_piezo_ports", lambda: [SimpleNamespace(device="L")])
     worker = piezo_init_worker.PiezoInitWorker(config)
     results = QSignalSpy(worker.piezos_initialized)
     finished = QSignalSpy(worker.finished)
@@ -155,8 +155,8 @@ def test_piezo_unexpected_discovery_failure_emits_failure_and_finished_once(monk
     dll_path.touch()
     config = _config().instruments.model_copy(update={"piezo_dll_path": str(dll_path)})
     monkeypatch.setattr(
-        piezo_init_worker.list_ports,
-        "comports",
+        piezo_init_worker,
+        "enumerate_piezo_ports",
         lambda: (_ for _ in ()).throw(RuntimeError("fake")),
     )
     worker = piezo_init_worker.PiezoInitWorker(config)
@@ -198,8 +198,8 @@ def test_piezo_right_constructor_failure_cleans_up_left_controller(monkeypatch, 
 
     monkeypatch.setattr(piezo_init_worker, "PiezoController", FakePiezo)
     monkeypatch.setattr(
-        piezo_init_worker.list_ports,
-        "comports",
+        piezo_init_worker,
+        "enumerate_piezo_ports",
         lambda: [SimpleNamespace(device="L"), SimpleNamespace(device="R")],
     )
     worker = piezo_init_worker.PiezoInitWorker(config)
@@ -243,8 +243,8 @@ def test_piezo_cleanup_failure_preserves_initialization_failure(monkeypatch, tmp
 
     monkeypatch.setattr(piezo_init_worker, "PiezoController", FakePiezo)
     monkeypatch.setattr(
-        piezo_init_worker.list_ports,
-        "comports",
+        piezo_init_worker,
+        "enumerate_piezo_ports",
         lambda: [SimpleNamespace(device="L"), SimpleNamespace(device="R")],
     )
     worker = piezo_init_worker.PiezoInitWorker(config)
@@ -289,8 +289,8 @@ def test_piezo_candidate_detection_does_not_probe_any_serial_device(monkeypatch,
 
     monkeypatch.setattr(piezo_init_worker, "PiezoController", FakePiezo)
     monkeypatch.setattr(
-        piezo_init_worker.list_ports,
-        "comports",
+        piezo_init_worker,
+        "enumerate_piezo_ports",
         lambda: [SimpleNamespace(device="com3"), SimpleNamespace(device="COM8")],
     )
     worker = piezo_init_worker.PiezoInitWorker(config)
@@ -305,8 +305,8 @@ def test_piezo_candidate_detection_does_not_probe_any_serial_device(monkeypatch,
 
 def test_piezo_stopped_before_run_emits_finished_without_discovery(monkeypatch):
     monkeypatch.setattr(
-        piezo_init_worker.list_ports,
-        "comports",
+        piezo_init_worker,
+        "enumerate_piezo_ports",
         lambda: (_ for _ in ()).throw(AssertionError("discovery called")),
     )
     worker = piezo_init_worker.PiezoInitWorker(_config().instruments)
