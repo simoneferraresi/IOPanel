@@ -283,7 +283,6 @@ def test_pm5020_status_formatter_maps_errors_and_physical_states():
     assert simulated.text == "PM5020: SIMULATED"
 
 
-
 def test_edfa_menu_owns_connection_icons_and_status_bar(qtbot, monkeypatch, tmp_path):
     from PySide6.QtGui import QIcon
 
