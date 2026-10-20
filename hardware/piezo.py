@@ -37,6 +37,8 @@ class PiezoController:
 
         self.hdl: int | None = None
         self.port: str | None = None
+        # Passive identity resolution selects this port without opening it.
+        self.discovered_port: str | None = None
 
     def _configure_func_signatures(self):
         if not hasattr(PiezoController._dll, "signatures_configured"):
