@@ -77,9 +77,7 @@ def test_worker_resolves_ports_without_native_open_and_prevents_duplicate_claim(
 
     # Accidentally assigning one physical USB identity to both sides must
     # fail closed rather than sharing a native controller across worker roles.
-    worker = piezo_init_worker.PiezoInitWorker(
-        config.model_copy(update={"piezo_right_usb_serial": "LEFT"})
-    )
+    worker = piezo_init_worker.PiezoInitWorker(config.model_copy(update={"piezo_right_usb_serial": "LEFT"}))
     observed.clear()
     worker.piezos_initialized.connect(lambda left, right: observed.append((left, right)))
     worker.run()
