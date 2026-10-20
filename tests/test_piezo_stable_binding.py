@@ -3,8 +3,8 @@
 from PySide6.QtWidgets import QApplication
 
 from config_model import InstrumentsConfig
-from hardware.piezo_ports import PiezoPortInfo, resolve_piezo_port, unique_usb_serials
 from hardware import piezo_init_worker
+from hardware.piezo_ports import PiezoPortInfo, resolve_piezo_port, unique_usb_serials
 from ui.piezo_configuration_dialog import PiezoConfigurationDialog
 
 
