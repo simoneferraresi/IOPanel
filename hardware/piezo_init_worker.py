@@ -57,7 +57,9 @@ class PiezoInitWorker(BaseWorker):
 
             # Do not permit Left and Right to claim the same physical interface.
             if left_port is not None and left_port.casefold() == (right_port or "").casefold():
-                logger.error("Left and Right piezo configurations resolve to the same port %s; refusing both.", left_port)
+                logger.error(
+                    "Left and Right piezo configurations resolve to the same port %s; refusing both.", left_port
+                )
                 left_port = right_port = None
 
             if left_port is not None:
