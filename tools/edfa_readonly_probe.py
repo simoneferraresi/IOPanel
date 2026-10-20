@@ -39,6 +39,7 @@ def summarize_telemetry(report: EDFATelemetry) -> dict[str, object]:
         "emission_starting": report.status.emission_starting,
         "three_second_startup": report.status.three_second_startup,
         "output_power": _power(report.output_power),
+        "output_power_non_numeric_reply": report.output_power_non_numeric_reply,
         "input_power": _power(report.input_power),
         "minimum_input_power": _power(report.minimum_input_power),
         "power_setpoint": _power(report.power_setpoint),

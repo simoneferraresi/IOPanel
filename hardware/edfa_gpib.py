@@ -63,6 +63,18 @@ def parse_number(response: str) -> float:
     return value
 
 
+def parse_output_power(response: str, unit: PowerUnit) -> tuple[EDFAOpticalPower | None, str | None]:
+    """Decode the observed 'Off' output reply without converting it to 0 W.
+
+    Only SOUR:POW? is known to return this token. Other telemetry fields
+    retain strict numeric parsing until separately qualified on hardware.
+    """
+    cleaned = _text(response)
+    if cleaned.casefold() == "off":
+        return None, "Off"
+    return EDFAOpticalPower(parse_number(cleaned), unit), None
+
+
 def parse_status(response: str) -> EDFAStatus:
     """Manual p. 32 refers status representation to the RS-232 page 29.
 
@@ -99,7 +111,7 @@ class GPIBReadOnlyReader:
         input_unit = PowerUnit.DBM if status.logarithmic_power_units else PowerUnit.MW
 
         # Sequential reads are NOT a coherent time-synchronized sample.
-        output = EDFAOpticalPower(parse_number(self._query("SOUR:POW?")), power_unit)
+        output, output_non_numeric_reply = parse_output_power(self._query("SOUR:POW?"), power_unit)
         setpoint = EDFAOpticalPower(parse_number(self._query("SOUR:POW:SPO?")), power_unit)
         current = parse_number(self._query("SOUR:CURR?"))
         temperature = parse_number(self._query("SOUR:TEMP:LEV?"))
@@ -115,6 +127,7 @@ class GPIBReadOnlyReader:
         return EDFATelemetry(
             status=status,
             output_power=output,
+            output_power_non_numeric_reply=output_non_numeric_reply,
             diode_current_a=current,
             case_temperature_c=temperature,
             acquired_at_utc=datetime.now(UTC),

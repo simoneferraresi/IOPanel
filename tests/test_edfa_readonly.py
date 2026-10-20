@@ -196,3 +196,51 @@ def test_model_validation_rejects_invalid_telemetry() -> None:
     assert parse_identity("IPG,EAD-2K-C,FA160101\r\n") == "IPG,EAD-2K-C,FA160101"
     with pytest.raises(EDFAProtocolError):
         parse_identity("\x00")
+
+
+@pytest.mark.parametrize("raw", ["Off", "off", "OFF", " Off\\r\\n "])
+def test_output_power_off_is_missing_observation_not_zero(raw: str) -> None:
+    from hardware.edfa_gpib import parse_output_power
+
+    power, reply = parse_output_power(raw, PowerUnit.W)
+    assert power is None
+    assert reply == "Off"
+
+
+@pytest.mark.parametrize("raw", ["Off!", "Output Off", "Error", "Disabled", "", "nan", "inf"])
+def test_output_power_unknown_non_numeric_still_rejected(raw: str) -> None:
+    from hardware.edfa_gpib import parse_output_power
+
+    with pytest.raises(EDFAProtocolError):
+        parse_output_power(raw, PowerUnit.W)
+
+
+def test_output_power_numeric_zero_remains_distinct_from_off() -> None:
+    from hardware.edfa_gpib import parse_output_power
+
+    power, reply = parse_output_power("0.0", PowerUnit.W)
+    assert power == EDFAOpticalPower(0.0, PowerUnit.W)
+    assert reply is None
+
+
+def test_telemetry_preserves_non_numeric_output_and_other_measurements() -> None:
+    session = FakeGPIB(_replies())
+    session.replies["SOUR:POW?"] = "Off"
+    report = GPIBReadOnlyReader(session).read_telemetry()
+    assert report.output_power is None
+    assert report.output_power_non_numeric_reply == "Off"
+    assert report.diode_current_a == 0.0
+    assert report.case_temperature_c == 28.9
+    assert report.power_setpoint == EDFAOpticalPower(1.2, PowerUnit.W)
+    assert all(command.endswith("?") for command in session.commands)
+
+
+def test_telemetry_rejects_ambiguous_output_value_and_off_marker() -> None:
+    now = datetime.now(UTC)
+    with pytest.raises(ValueError, match="requires"):
+        EDFATelemetry(EDFAStatus(0), None, 0.0, 25.0, now)
+    with pytest.raises(ValueError, match="cannot also"):
+        EDFATelemetry(
+            EDFAStatus(0), EDFAOpticalPower(0.0, PowerUnit.W), 0.0, 25.0, now,
+            output_power_non_numeric_reply="Off",
+        )

@@ -97,3 +97,18 @@ def test_telemetry_summary_never_claims_emission_safe() -> None:
     result = summarize_telemetry(telemetry)
     assert result["interlock_open"] and result["input_power_low"]
     assert "safe" in str(result["note"]).lower()
+
+
+def test_probe_json_keeps_off_reply_and_null_output() -> None:
+    report = EDFATelemetry(
+        status=EDFAStatus(0),
+        output_power=None,
+        diode_current_a=0.0,
+        case_temperature_c=25.0,
+        acquired_at_utc=datetime.now(UTC),
+        output_power_non_numeric_reply="Off",
+    )
+    summary = summarize_telemetry(report)
+    assert summary["output_power"] is None
+    assert summary["output_power_non_numeric_reply"] == "Off"
+    assert "emission_state" not in summary

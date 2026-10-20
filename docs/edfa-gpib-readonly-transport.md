@@ -48,6 +48,30 @@ resource and amplifier's physical GPIB address without triggering instrument
 writes or generic bus probing. No unit serial or manufacturer identification
 is inferred from a configured resource alone.
 
+## First physical read-only observation: nonnumeric output power
+
+During the initial operator-supervised GPIB test of the IPG EAD-2K-C
+on Windows 10, with NI VISA, GPIB primary address **12**, the device
+identified successfully and returned a parseable decimal status. The
+`SOUR:POW?` query returned the literal text `Off` while optical
+emission was disabled. The original numeric-only parser therefore
+rejected the response. This is physical evidence of that **single
+query's reply**, not proof of the state or behavior of other queries.
+
+The read-only codec now recognizes exactly `Off` (case-insensitively)
+**only for `SOUR:POW?`**, stores
+`output_power=None` and
+`output_power_non_numeric_reply="Off"`, and still rejects unexpected
+nonnumeric responses elsewhere. A reported `Off` is **not 0 W** and
+does not prove optical safety or a verified safe emission state. The
+commissioning JSON reports both the missing numerical power and the
+literal instrument reply.
+
+The complete telemetry round trip is **still pending physical
+qualification**; a later query may legitimately have an undocumented
+nonnumeric response and should be captured and handled individually.
+Do not enable emission simply to obtain a numeric reply.
+
 ## Query consistency and limitations
 
 Before telemetry the driver checks `*IDN?` for the expected model token.

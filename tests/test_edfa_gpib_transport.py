@@ -294,3 +294,19 @@ def test_explicit_gpib_terminations_applied_before_identity_query(
 def test_termination_configuration_is_allowlisted(bad: str) -> None:
     with pytest.raises(ValueError, match="termination"):
         IPGEAD2KCGPIB(RESOURCE, write_termination=bad)
+
+
+def test_physical_reply_off_preserves_status_and_rechecks_it() -> None:
+    session = FakeSession()
+    session.response_overrides["SOUR:POW?"] = "Off"
+    manager = FakeManager(session)
+    edfa = IPGEAD2KCGPIB(RESOURCE, manager_factory=lambda: manager)
+    edfa.connect()
+    report = edfa.read_telemetry()
+    assert edfa.state is EDFAState.IDLE
+    assert report.output_power is None
+    assert report.output_power_non_numeric_reply == "Off"
+    assert report.power_setpoint is not None and report.power_setpoint.value == 1.0
+    assert session.calls.count("SOUR:POW:STAT?") == 2
+    edfa.close()
+    assert manager.closed and session.closed
