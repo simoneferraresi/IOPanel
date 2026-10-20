@@ -248,3 +248,38 @@ def test_telemetry_rejects_ambiguous_output_value_and_off_marker() -> None:
             now,
             output_power_non_numeric_reply="Off",
         )
+
+
+def test_observed_edfa_2026_10_20_readonly_snapshot_without_seed_safety_inference() -> None:
+    """Real reply fixture: status bit 4 remained clear below the input threshold."""
+    session = FakeGPIB(_replies(status=3145729))
+    session.replies.update(
+        {
+            "*IDN?": "IPG EAD-2K-C, Rev 1.1.175",
+            "SOUR:POW?": "Off",
+            "SOUR:POW:SPO?": "0.2",
+            "SOUR:CURR?": "0.021",
+            "SOUR:TEMP:LEV?": "25.8",
+            "INP?": "0.06",
+            "INP:LIM:LOW?": "0.23",
+        }
+    )
+    reader = GPIBReadOnlyReader(session)
+    assert reader.identify() == "IPG EAD-2K-C, Rev 1.1.175"
+    snapshot = reader.read_telemetry()
+    assert snapshot.status.raw_word == 3145729
+    assert snapshot.status.control_mode is EDFAControlMode.APC
+    assert snapshot.status.agc_available
+    assert snapshot.status.input_monitor_available
+    assert not snapshot.status.back_reflection_monitor_available
+    assert not snapshot.status.input_power_low
+    assert snapshot.output_power is None
+    assert snapshot.output_power_non_numeric_reply == "Off"
+    assert snapshot.input_power == EDFAOpticalPower(0.06, PowerUnit.MW)
+    assert snapshot.minimum_input_power == EDFAOpticalPower(0.23, PowerUnit.MW)
+    assert snapshot.power_setpoint == EDFAOpticalPower(0.2, PowerUnit.W)
+    assert snapshot.diode_current_a == 0.021
+    assert snapshot.case_temperature_c == 25.8
+    assert snapshot.back_reflection_percent_of_max is None
+    assert snapshot.input_power.value < snapshot.minimum_input_power.value
+    assert all(command.endswith("?") for command in session.commands)

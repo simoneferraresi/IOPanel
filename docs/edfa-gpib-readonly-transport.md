@@ -1,4 +1,4 @@
-# M2: read-only GPIB/VISA transport (offline code; physical qualification pending)
+# M2: read-only GPIB/VISA transport (first physical telemetry verified; broader qualification pending)
 
 ## Boundaries and intended deployment
 
@@ -11,9 +11,9 @@ to other instruments is allowed.
 `IPGEAD2KCGPIB` does not connect in its constructor. The explicit
 `connect()` lazily obtains a PyVISA ResourceManager, opens exactly the configured
 resource, sets a finite VISA timeout, then sends only `*IDN?`. Identity must
-contain `EAD-2K-C` before telemetry queries can proceed. The real `*IDN?`
-response format is not yet known; if the unit reports a different form,
-connection is rejected and must be documented/qualified rather than bypassed.
+contain `EAD-2K-C` before telemetry queries can proceed. One real amplifier
+responded `IPG EAD-2K-C, Rev 1.1.175` on 2026-10-20; unexpected future
+identity responses must be investigated rather than bypassing this guard.
 
 The backend itself never sends emission commands, resets, setpoints, mode
 changes, clears, error resets, or changes to power-reporting units. It does
@@ -67,9 +67,48 @@ does not prove optical safety or a verified safe emission state. The
 commissioning JSON reports both the missing numerical power and the
 literal instrument reply.
 
-The complete telemetry round trip is **still pending physical
-qualification**; a later query may legitimately have an undocumented
-nonnumeric response and should be captured and handled individually.
+### First completed full read-only round trip — 2026-10-20
+
+On Windows 10 with CPython 3.12.8, PyVISA 1.15.0 and the detected NI VISA
+provider, an operator-supervised probe completed at `GPIB0::12::INSTR`
+with all queries and connection cleanup returning without an exception.
+The amplifier identified as `IPG EAD-2K-C, Rev 1.1.175`.
+
+Captured read-only snapshot at `2026-10-20T13:45:50.794199+00:00`:
+
+| Field | Observed value | Interpretation |
+| --- | --- | --- |
+| Raw status | `3145729` (`0x00300001`) | Bits 0, 20 and 21 set |
+| Mode | APC | Active mode bit 0 |
+| AGC available | Yes | Capability bit 20, not active AGC mode |
+| Input monitor available | Yes | Capability bit 21 |
+| Back-reflection monitor | Not advertised | Bit 22 clear, so value absent |
+| Output-power response | `Off` | No numeric output reading; **not** 0 W |
+| Input power | 0.06 mW | Indicative built-in optical monitor |
+| Minimum input-power threshold | 0.23 mW | Device-reported threshold |
+| Power setpoint | 0.20 W | Configured setting, **not measured output** |
+| Diode current | 0.021 A | Read-only current observation |
+| Case temperature | 25.8 °C | Read-only temperature observation |
+| Interlock/overtemperature/low-input/reflection alarm bits | All clear | Must not be equated with optical safety |
+
+**Important discrepancy:** the input monitor reads 0.06 mW, below the
+device-reported 0.23 mW threshold, despite status bit 4 ('input power
+low') being clear. Its meaning may be conditional on an emission state,
+but this has **not** been established on hardware. Do not use the
+absence of this flag to authorize emission or override the documented
+input operating range (-6 to +10 dBm). **Keep emission OFF** and obtain
+an independently verified adequate seed and approved optical setup before
+a separately authorized active-emission milestone.
+
+An earlier physical attempt terminated with a generic
+`EDFACommunicationError`; its underlying cause was not captured.
+A subsequent read-only probe returned normally. Consequently, this
+documents **one successful complete session**, not proven long-run
+communications reliability. Controller-specific EOI/termination behavior
+beyond the observed success, GPIB remote/local effects, repeatability
+and fault recovery still require qualification. No emission or setpoint
+commands were sent.
+
 Do not enable emission simply to obtain a numeric reply.
 
 ## Query consistency and limitations
@@ -85,10 +124,12 @@ reading was acquired simultaneously or that the status could not have
 transiently changed and reverted. No emission state or safe optical
 condition can be inferred from connection success.
 
-GPIB EOI/read termination, VISA timeouts, query return framing, actual
-status-number syntax, physical identity and remote/local behavior must be
-measured in a separately authorized read-only bench gate before enabling
-IOPanel physical use. No physical instrument has been operated for M2.
+A single physical read-only run established the observed identity, decimal
+status syntax and responses under the configured transport. It did **not**
+verify remote/local effects, robustness over repeated sessions, or fault
+recovery. GPIB EOI/read termination behavior and any future changes to
+firmware/response framing must remain visible qualification requirements.
+The separate GUI integration and any emission control are out of scope.
 
 RS-232 remains a later interface; no code is added for it here.
 
