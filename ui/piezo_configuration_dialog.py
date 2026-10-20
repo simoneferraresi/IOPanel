@@ -41,6 +41,8 @@ class PiezoConfigurationDialog(QDialog):
 
         self.left_combo = QComboBox(self)
         self.right_combo = QComboBox(self)
+        self.left_combo.currentIndexChanged.connect(lambda _index: self._update_copy_enabled())
+        self.right_combo.currentIndexChanged.connect(lambda _index: self._update_copy_enabled())
         self.verified = QCheckBox(
             "I have independently verified which physical controller drives Left and Right.", self
         )
@@ -126,6 +128,6 @@ class PiezoConfigurationDialog(QDialog):
         if left and right and left.casefold() == right.casefold():
             QMessageBox.warning(self, "Duplicate identity", "Left and Right cannot use the same USB serial.")
             return
-        lines = f"piezo_left_usb_serial = {left}\\npiezo_right_usb_serial = {right}"
+        lines = f"piezo_left_usb_serial = {left}\npiezo_right_usb_serial = {right}"
         QApplication.clipboard().setText(lines)
         self.copy_button.setText("Copied to clipboard")
