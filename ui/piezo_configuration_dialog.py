@@ -112,7 +112,7 @@ class PiezoConfigurationDialog(QDialog):
                 if port.usb_serial.casefold() in unique:
                     combo.addItem(f"{port.device} — USB serial {port.usb_serial}", port.usb_serial)
             position = combo.findData(current) if current else 0
-            combo.setCurrentIndex(position if position >= 0 else 0)
+            combo.setCurrentIndex(max(position, 0))
         self.verified.setChecked(False)
         self._update_copy_enabled()
 
