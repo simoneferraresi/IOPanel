@@ -143,3 +143,26 @@ def test_mainwindow_close_waits_for_edfa_thread(qtbot, monkeypatch, tmp_path):
     window.close()
     qtbot.waitUntil(lambda: panel.shutdown_finished, timeout=4000)
     qtbot.waitUntil(lambda: not window.isVisible(), timeout=4000)
+
+
+def test_edfa_layout_matches_pm5020_columns_without_scroll_area(qtbot):
+    from PySide6.QtWidgets import QGroupBox, QHBoxLayout, QScrollArea
+
+    panel = EDFAReadOnlyPanel()
+    qtbot.addWidget(panel)
+    assert isinstance(panel.layout(), QHBoxLayout)
+    assert panel.layout().count() == 2
+    assert panel.findChildren(QScrollArea) == []
+    assert panel.controls_panel.minimumWidth() == 320
+    assert panel.controls_panel.maximumWidth() == 400
+    assert panel.layout().itemAt(0).widget() is panel.controls_panel
+    assert panel.layout().itemAt(1).widget() is panel.dashboard_panel
+    assert panel.findChild(QGroupBox, "edfaConnectionGroup") is not None
+    assert panel.findChild(QGroupBox, "edfaOperationGroup") is not None
+    assert panel.findChild(QGroupBox, "edfaOpticalGroup") is not None
+    assert panel.findChild(QGroupBox, "edfaHealthGroup") is not None
+    assert panel.findChild(QGroupBox, "edfaObservationsGroup") is not None
+    assert panel.read_button.parentWidget() is panel.findChild(QGroupBox, "edfaOperationGroup")
+    assert panel.reading_labels["edfaOutputLabel"].text() == "—"
+    assert panel.reading_labels["edfaRawStatusLabel"].text() == "—"
+    panel.request_shutdown()
