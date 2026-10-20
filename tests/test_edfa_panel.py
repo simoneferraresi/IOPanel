@@ -95,3 +95,51 @@ def test_failed_simulated_telemetry_stops_monitoring_without_blocking_gui(qtbot)
     qtbot.waitUntil(lambda: panel._backend_state is EDFAState.DISCONNECTED, timeout=3000)
     panel.request_shutdown()
     qtbot.waitUntil(lambda: panel.shutdown_finished, timeout=3000)
+
+
+def test_mainwindow_edfa_tab_does_not_autoconnect_even_if_configured_physical(qtbot, monkeypatch, tmp_path):
+    from PySide6.QtCore import QSettings
+
+    from app_settings import AppSettings
+    from config_model import AppConfig
+    from ui.main_window import MainWindow
+
+    monkeypatch.setattr(MainWindow, "_begin_lazy_init", lambda _self: None)
+    config = AppConfig(
+        instruments={
+            "ct400_backend": "simulation",
+            "edfa_backend": "physical",
+            "edfa_gpib_resource_name": "GPIB0::12::INSTR",
+        }
+    )
+    settings = AppSettings(QSettings(str(tmp_path / "prefs.ini"), QSettings.Format.IniFormat))
+    window = MainWindow(config, settings=settings)
+    qtbot.addWidget(window)
+    assert window.tab_widget.widget(4) is window.edfa_panel
+    assert window.tab_widget.tabText(4) == "IPG EDFA"
+    assert "PHYSICAL" in window.edfa_panel.mode_label.text()
+    assert not window.edfa_panel.task.worker_thread.isRunning()
+    assert window.edfa_panel._backend_state is EDFAState.DISCONNECTED
+    window.close()
+
+
+def test_mainwindow_close_waits_for_edfa_thread(qtbot, monkeypatch, tmp_path):
+    from PySide6.QtCore import QSettings
+
+    from app_settings import AppSettings
+    from config_model import AppConfig
+    from ui.main_window import MainWindow
+
+    monkeypatch.setattr(MainWindow, "_begin_lazy_init", lambda _self: None)
+    config = AppConfig(instruments={"ct400_backend": "simulation", "edfa_backend": "simulation"})
+    settings = AppSettings(QSettings(str(tmp_path / "close.ini"), QSettings.Format.IniFormat))
+    window = MainWindow(config, settings=settings)
+    qtbot.addWidget(window)
+    window.show()
+    panel = window.edfa_panel
+    panel.connect_button.click()
+    qtbot.waitUntil(lambda: panel._backend_state is EDFAState.IDLE, timeout=3000)
+    assert panel.task.worker_thread.isRunning()
+    window.close()
+    qtbot.waitUntil(lambda: panel.shutdown_finished, timeout=4000)
+    qtbot.waitUntil(lambda: not window.isVisible(), timeout=4000)
