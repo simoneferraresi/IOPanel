@@ -6,16 +6,16 @@ import logging
 from typing import override
 
 from PySide6.QtCore import Qt, QTimer, Signal, Slot
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtGui import QCloseEvent, QFont, QIcon
 from PySide6.QtWidgets import (
     QComboBox,
-    QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QMessageBox,
     QPushButton,
-    QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 from hardware.edfa_types import EDFAOpticalPower, EDFAState, EDFATelemetry
 from logic.edfa_monitor import EDFAMonitorWorker
 from logic.task_runner import TaskRunner
-from ui.typography import style_group_box_title
+from ui.typography import make_font, style_group_box_title
 
 logger = logging.getLogger("LabApp.edfa_panel")
 
@@ -95,17 +95,18 @@ class EDFAReadOnlyPanel(QWidget):
         self._shutdown_timer.setInterval(5000)
         self._shutdown_timer.timeout.connect(self._on_shutdown_timeout)
 
-        root = QVBoxLayout(self)
+        # Follow the PM5020 tab: a compact fixed-width control column and
+        # a flexible readout area, both native QWidget layouts. No QScrollArea.
+        root = QHBoxLayout(self)
         root.setContentsMargins(5, 5, 5, 5)
-        scroll = QScrollArea(self)
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        content = QWidget()
-        scroll.setWidget(content)
-        root.addWidget(scroll)
-        layout = QVBoxLayout(content)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(10)
+        root.setSpacing(10)
+        self.controls_panel = QWidget(self)
+        self.controls_panel.setObjectName("edfaControlsContent")
+        self.controls_panel.setMinimumWidth(320)
+        self.controls_panel.setMaximumWidth(400)
+        controls_layout = QVBoxLayout(self.controls_panel)
+        controls_layout.setContentsMargins(10, 10, 10, 10)
+        controls_layout.setSpacing(10)
 
         self.mode_label = QLabel(
             "SIMULATION — synthetic telemetry, no physical EDFA"
@@ -113,88 +114,157 @@ class EDFAReadOnlyPanel(QWidget):
             else f"PHYSICAL / READ ONLY — {resource_name or 'no GPIB address configured'}"
         )
         self.mode_label.setObjectName("edfaModeLabel")
-        layout.addWidget(self.mode_label)
+        self.mode_label.setFont(make_font("sans", 10, QFont.Weight.Medium))
+        self.mode_label.setWordWrap(True)
+        controls_layout.addWidget(self.mode_label)
 
         connection = QGroupBox("Connection")
+        connection.setObjectName("edfaConnectionGroup")
         style_group_box_title(connection)
         connection_layout = QVBoxLayout(connection)
+        connection_layout.setSpacing(7)
         buttons = QHBoxLayout()
+        buttons.setSpacing(6)
         self.connect_button = QPushButton("Connect")
         self.connect_button.setObjectName("edfaConnectButton")
         self.disconnect_button = QPushButton("Disconnect")
         self.disconnect_button.setObjectName("edfaDisconnectButton")
-        self.read_button = QPushButton("Read once")
-        self.read_button.setObjectName("edfaReadButton")
-        for button in (self.connect_button, self.disconnect_button, self.read_button):
-            buttons.addWidget(button)
-        buttons.addStretch()
+        for button in (self.connect_button, self.disconnect_button):
+            button.setMinimumHeight(35)
+            buttons.addWidget(button, stretch=1)
         connection_layout.addLayout(buttons)
         self.status_label = QLabel("Disconnected")
         self.status_label.setObjectName("edfaStatusLabel")
+        self.status_label.setFont(make_font("sans", 11, QFont.Weight.DemiBold))
         self.identity_label = QLabel("Identity: —")
         self.identity_label.setObjectName("edfaIdentityLabel")
+        self.identity_label.setWordWrap(True)
+        self.identity_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         connection_layout.addWidget(self.status_label)
         connection_layout.addWidget(self.identity_label)
-        layout.addWidget(connection)
+        controls_layout.addWidget(connection)
 
-        telemetry = QGroupBox("Telemetry — observational only")
-        style_group_box_title(telemetry)
-        telemetry_layout = QVBoxLayout(telemetry)
-        monitor_buttons = QHBoxLayout()
-        self.start_button = QPushButton("Start monitoring")
-        self.start_button.setObjectName("edfaStartButton")
-        self.stop_button = QPushButton("Stop monitoring")
-        self.stop_button.setObjectName("edfaStopButton")
+        operation = QGroupBox("Read-only acquisition")
+        operation.setObjectName("edfaOperationGroup")
+        style_group_box_title(operation)
+        operation_layout = QVBoxLayout(operation)
+        operation_layout.setSpacing(7)
+        self.read_button = QPushButton("Read once")
+        self.read_button.setObjectName("edfaReadButton")
+        self.read_button.setMinimumHeight(35)
+        operation_layout.addWidget(self.read_button)
+        interval_row = QHBoxLayout()
+        interval_row.addWidget(QLabel("Update every:"))
         self.interval_combo = QComboBox()
         self.interval_combo.setObjectName("edfaIntervalCombo")
         for seconds in (2, 5, 10):
             self.interval_combo.addItem(f"{seconds} s", seconds * 1000)
-        monitor_buttons.addWidget(self.start_button)
-        monitor_buttons.addWidget(self.stop_button)
-        monitor_buttons.addWidget(QLabel("Update interval:"))
-        monitor_buttons.addWidget(self.interval_combo)
-        monitor_buttons.addStretch()
-        telemetry_layout.addLayout(monitor_buttons)
-        self.reading_labels: dict[str, QLabel] = {}
-        form = QFormLayout()
-        readings = (
-            ("edfaOutputLabel", "Output optical power"),
-            ("edfaInputLabel", "Input power (indicative)"),
-            ("edfaInputThresholdLabel", "Reported minimum input"),
-            ("edfaSetpointLabel", "Output setpoint (not measured)"),
-            ("edfaCurrentLabel", "Pump diode current"),
-            ("edfaTemperatureLabel", "Case temperature"),
-            ("edfaReflectionLabel", "Back-reflection (% of max.)"),
-            ("edfaControlModeLabel", "Control mode"),
-            ("edfaRawStatusLabel", "Raw status"),
-            ("edfaUpdatedLabel", "Sampled at (UTC)"),
+        interval_row.addWidget(self.interval_combo, stretch=1)
+        operation_layout.addLayout(interval_row)
+        actions = QHBoxLayout()
+        actions.setSpacing(6)
+        self.start_button = QPushButton("Start")
+        self.start_button.setObjectName("edfaStartButton")
+        self.start_button.setIcon(QIcon(":/icons/play.svg"))
+        self.stop_button = QPushButton("Stop")
+        self.stop_button.setObjectName("edfaStopButton")
+        self.stop_button.setIcon(QIcon(":/icons/stop.svg"))
+        self.start_button.setStyleSheet(
+            "QPushButton#edfaStartButton { background-color: #1976d2; color: white; }"
+            "QPushButton#edfaStartButton:disabled { background-color: #e0e0e0; color: #888888; }"
         )
-        for object_name, caption in readings:
-            label = QLabel("—")
-            label.setObjectName(object_name)
-            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            self.reading_labels[object_name] = label
-            form.addRow(caption + ":", label)
-        telemetry_layout.addLayout(form)
-        self.alarm_label = QLabel("Disconnected; alarm bits unavailable.")
-        self.alarm_label.setObjectName("edfaAlarmLabel")
-        self.alarm_label.setWordWrap(True)
-        telemetry_layout.addWidget(self.alarm_label)
-        layout.addWidget(telemetry)
+        self.stop_button.setStyleSheet(
+            "QPushButton#edfaStopButton { background-color: #c62828; color: white; }"
+            "QPushButton#edfaStopButton:disabled { background-color: #e0e0e0; color: #888888; }"
+        )
+        for button in (self.start_button, self.stop_button):
+            button.setMinimumHeight(35)
+            actions.addWidget(button, stretch=1)
+        operation_layout.addLayout(actions)
+        controls_layout.addWidget(operation)
 
         self.error_label = QLabel("")
         self.error_label.setObjectName("edfaErrorLabel")
         self.error_label.setWordWrap(True)
         self.error_label.setStyleSheet("color: #b71c1c;")
-        layout.addWidget(self.error_label)
+        self.error_label.hide()
+        controls_layout.addWidget(self.error_label)
         self.safety_label = QLabel(
             "Read-only observations cannot certify safe optical conditions. "
             "This tab provides no emission, gain, diode-current, or optical-power controls."
         )
         self.safety_label.setObjectName("edfaSafetyLabel")
         self.safety_label.setWordWrap(True)
-        layout.addWidget(self.safety_label)
-        layout.addStretch(1)
+        controls_layout.addWidget(self.safety_label)
+        controls_layout.addStretch(1)
+        root.addWidget(self.controls_panel, stretch=0)
+
+        self.dashboard_panel = QWidget(self)
+        self.dashboard_panel.setObjectName("edfaTelemetryContent")
+        self.dashboard_panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        dashboard_layout = QVBoxLayout(self.dashboard_panel)
+        dashboard_layout.setContentsMargins(0, 0, 0, 0)
+        dashboard_layout.setSpacing(10)
+        self.reading_labels: dict[str, QLabel] = {}
+
+        def metric(grid: QGridLayout, object_name: str, caption: str, row: int, column: int, *, size: int = 15) -> None:
+            """Make a compact selectable readout using the app's Geist typography."""
+            cell = QWidget()
+            stack = QVBoxLayout(cell)
+            stack.setContentsMargins(6, 5, 6, 5)
+            stack.setSpacing(3)
+            heading = QLabel(caption)
+            heading.setFont(make_font("sans", 10))
+            value = QLabel("—")
+            value.setObjectName(object_name)
+            value.setFont(make_font("mono", size, QFont.Weight.DemiBold))
+            value.setWordWrap(True)
+            value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            self.reading_labels[object_name] = value
+            stack.addWidget(heading)
+            stack.addWidget(value)
+            grid.addWidget(cell, row, column)
+
+        optical = QGroupBox("Optical monitoring")
+        optical.setObjectName("edfaOpticalGroup")
+        style_group_box_title(optical)
+        optical_grid = QGridLayout(optical)
+        optical_grid.setContentsMargins(10, 14, 10, 8)
+        optical_grid.setSpacing(8)
+        optical_grid.setColumnStretch(0, 1)
+        optical_grid.setColumnStretch(1, 1)
+        metric(optical_grid, "edfaOutputLabel", "Output optical power", 0, 0, size=18)
+        metric(optical_grid, "edfaInputLabel", "Input optical power (indicative)", 0, 1, size=18)
+        metric(optical_grid, "edfaInputThresholdLabel", "Reported minimum input", 1, 0)
+        metric(optical_grid, "edfaSetpointLabel", "Output setpoint (not measured)", 1, 1)
+        dashboard_layout.addWidget(optical, stretch=1)
+
+        health = QGroupBox("Amplifier status")
+        health.setObjectName("edfaHealthGroup")
+        style_group_box_title(health)
+        health_grid = QGridLayout(health)
+        health_grid.setContentsMargins(10, 14, 10, 8)
+        health_grid.setSpacing(6)
+        for column in range(3):
+            health_grid.setColumnStretch(column, 1)
+        metric(health_grid, "edfaCurrentLabel", "Pump diode current", 0, 0, size=13)
+        metric(health_grid, "edfaTemperatureLabel", "Case temperature", 0, 1, size=13)
+        metric(health_grid, "edfaControlModeLabel", "Control mode", 0, 2, size=13)
+        metric(health_grid, "edfaReflectionLabel", "Back-reflection (% of max.)", 1, 0, size=12)
+        metric(health_grid, "edfaRawStatusLabel", "Raw status word", 1, 1, size=12)
+        metric(health_grid, "edfaUpdatedLabel", "Sampled at (UTC)", 1, 2, size=12)
+        dashboard_layout.addWidget(health, stretch=1)
+
+        observations = QGroupBox("Status observations")
+        observations.setObjectName("edfaObservationsGroup")
+        style_group_box_title(observations)
+        observations_layout = QVBoxLayout(observations)
+        self.alarm_label = QLabel("Disconnected; alarm bits unavailable.")
+        self.alarm_label.setObjectName("edfaAlarmLabel")
+        self.alarm_label.setWordWrap(True)
+        observations_layout.addWidget(self.alarm_label)
+        dashboard_layout.addWidget(observations)
+        root.addWidget(self.dashboard_panel, stretch=1)
 
         self.connect_button.clicked.connect(self.request_connect)
         self.disconnect_button.clicked.connect(self.request_disconnect)
@@ -234,6 +304,7 @@ class EDFAReadOnlyPanel(QWidget):
         self._connect_started = False
         self._activity = "Connecting"
         self.error_label.clear()
+        self.error_label.hide()
         self._update_controls()
         self._ensure_worker_started()
         self.connect_requested.emit(
@@ -334,10 +405,12 @@ class EDFAReadOnlyPanel(QWidget):
             else "No alarm bits asserted; this does not certify safe optical conditions."
         )
         self.error_label.clear()
+        self.error_label.hide()
 
     @Slot(str)
     def _on_error(self, message: str) -> None:
         self.error_label.setText(message)
+        self.error_label.setVisible(bool(message))
 
     def _clear_telemetry(self) -> None:
         for label in self.reading_labels.values():
