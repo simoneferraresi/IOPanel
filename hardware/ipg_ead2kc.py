@@ -29,10 +29,13 @@ logger = logging.getLogger("LabApp.IPGEAD2KC")
 _GPIB_RESOURCE = re.compile(r"GPIB(?:0|[1-9][0-9]*)::(?:[1-9]|[12][0-9]|30)::INSTR", re.IGNORECASE)
 _REQUIRED_IDENTITY_TOKEN = "EAD-2K-C"
 _CONSISTENCY_BITS = (1 << 18) | (1 << 21) | (1 << 22)
+_TERMINATIONS = {"none": None, "lf": "\\n", "cr": "\\r", "crlf": "\\r\\n"}
 
 
 class VisaSession(GPIBQuerySession, Protocol):
     timeout: int
+    write_termination: str | None
+    read_termination: str | None
 
     def close(self) -> None: ...
 
@@ -71,14 +74,20 @@ class IPGEAD2KCGPIB(AbstractEDFA):
         resource_name: str,
         *,
         timeout_ms: int = 3000,
+        write_termination: str = "none",
+        read_termination: str = "none",
         manager_factory: Callable[[], VisaResourceManager] | None = None,
     ) -> None:
         if not isinstance(resource_name, str) or _GPIB_RESOURCE.fullmatch(resource_name) is None:
             raise ValueError("Use one explicit GPIB primary address, for example GPIB0::10::INSTR (not autodiscovery)")
         if type(timeout_ms) is not int or not 100 <= timeout_ms <= 60_000:
             raise ValueError("timeout_ms must be an integer between 100 and 60000")
+        if write_termination not in _TERMINATIONS or read_termination not in _TERMINATIONS:
+            raise ValueError("GPIB termination must be one of: none, lf, cr, crlf")
         self.resource_name = resource_name
         self.timeout_ms = timeout_ms
+        self.write_termination = write_termination
+        self.read_termination = read_termination
         self._manager_factory = manager_factory or _default_manager_factory
         self._manager: VisaResourceManager | None = None
         self._session: VisaSession | None = None
@@ -106,6 +115,8 @@ class IPGEAD2KCGPIB(AbstractEDFA):
                 self._manager = self._manager_factory()
                 self._session = self._manager.open_resource(self.resource_name)
                 self._session.timeout = self.timeout_ms
+                self._session.write_termination = _TERMINATIONS[self.write_termination]
+                self._session.read_termination = _TERMINATIONS[self.read_termination]
                 identity = GPIBReadOnlyReader(self._session).identify()
                 if _REQUIRED_IDENTITY_TOKEN.casefold() not in identity.casefold():
                     raise EDFAProtocolError(
@@ -185,7 +196,9 @@ class IPGEAD2KCGPIB(AbstractEDFA):
                 problems.append(("session", exc))
             else:
                 self._session = None
-        if self._manager is not None:
+        # Preserve the manager while a session remains unclosed. Retrying a
+        # session close through an already-disposed manager is not reliable.
+        if self._manager is not None and self._session is None:
             try:
                 self._manager.close()
             except Exception as exc:

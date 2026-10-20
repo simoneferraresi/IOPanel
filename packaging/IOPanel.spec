@@ -4,7 +4,7 @@ from pathlib import Path
 from PyInstaller.building.datastruct import TOC
 
 repo_root = Path(SPECPATH).parent
-hiddenimports = ["resources.resources_rc"]
+hiddenimports = ["resources.resources_rc", "pyvisa"]  # Lazy physical GPIB import must survive freezing.
 
 a = Analysis(
     [str(repo_root / "app.py")],

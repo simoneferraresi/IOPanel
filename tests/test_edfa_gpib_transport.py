@@ -14,6 +14,8 @@ GOOD_STATUS = (1 << 0) | (1 << 21) | (1 << 22)
 class FakeSession:
     def __init__(self, *, identity: str = "IPG PHOTONICS,EAD-2K-C,FA160101", status: int = GOOD_STATUS) -> None:
         self.timeout = 0
+        self.write_termination = "sentinel"
+        self.read_termination = "sentinel"
         self.calls: list[str] = []
         self.identity = identity
         self.status = status
@@ -108,6 +110,8 @@ def test_construction_has_no_side_effects_and_connect_queries_only_identity() ->
     assert manager.opened == [RESOURCE]
     assert manager.session.calls == ["*IDN?"]
     assert manager.session.timeout == 2500
+    assert manager.session.write_termination is None
+    assert manager.session.read_termination is None
     assert edfa.identify() == "IPG PHOTONICS,EAD-2K-C,FA160101"
     assert edfa.is_connected()
     with pytest.raises(EDFAStateError):
@@ -190,6 +194,7 @@ def test_failed_resource_close_is_reported_and_can_be_retried() -> None:
         edfa.close()
     assert edfa.state is EDFAState.ERROR
     assert not session.closed
+    assert not manager.closed
     session.fail_close = False
     edfa.close()
     assert edfa.state is EDFAState.DISCONNECTED
@@ -263,3 +268,29 @@ def test_manager_close_failure_is_not_mistaken_for_disconnection() -> None:
     manager.fail_close = False
     edfa.close()
     assert edfa.state is EDFAState.DISCONNECTED
+
+
+@pytest.mark.parametrize(
+    ("write_mode", "read_mode", "expected_write", "expected_read"),
+    [("none", "none", None, None), ("lf", "cr", "\\n", "\\r"), ("crlf", "lf", "\\r\\n", "\\n")],
+)
+def test_explicit_gpib_terminations_applied_before_identity_query(
+    write_mode: str, read_mode: str, expected_write: str | None, expected_read: str | None
+) -> None:
+    session = FakeSession()
+    edfa = IPGEAD2KCGPIB(
+        RESOURCE,
+        write_termination=write_mode,
+        read_termination=read_mode,
+        manager_factory=lambda: FakeManager(session),
+    )
+    edfa.connect()
+    assert session.write_termination == expected_write
+    assert session.read_termination == expected_read
+    edfa.close()
+
+
+@pytest.mark.parametrize("bad", ["LF", "\\n", "eoi", " ", "", "none\\n"])
+def test_termination_configuration_is_allowlisted(bad: str) -> None:
+    with pytest.raises(ValueError, match="termination"):
+        IPGEAD2KCGPIB(RESOURCE, write_termination=bad)

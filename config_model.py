@@ -15,7 +15,10 @@ includes a class method `from_ini_dict` to adapt the structure read by
 Python's `configparser` into a format Pydantic can validate.
 """
 
+import re
 from typing import Literal
+
+from pydantic import field_validator
 
 from pydantic import BaseModel, Field
 
@@ -51,6 +54,22 @@ class InstrumentsConfig(BaseModel):
     )
     pm5020_wrapper_path: str = Field(default="", description="Optional path to the Thorlabs TLPMX.py wrapper.")
     pm5020_dll_path: str = Field(default="", description="Optional path to the matching native Thorlabs TLPMX DLL.")
+    edfa_backend: Literal["simulation", "physical"] = Field(
+        default="simulation", description="EDFA communication profile; never automatically connects."
+    )
+    edfa_gpib_resource_name: str = Field(
+        default="", description="Explicit EDFA GPIB address, e.g. GPIB0::12::INSTR (no bus discovery)."
+    )
+    edfa_gpib_timeout_ms: int = Field(default=3000, ge=100, le=60000)
+    edfa_gpib_write_termination: Literal["none", "lf", "cr", "crlf"] = Field(default="none")
+    edfa_gpib_read_termination: Literal["none", "lf", "cr", "crlf"] = Field(default="none")
+
+    @field_validator("edfa_gpib_resource_name")
+    @classmethod
+    def validate_edfa_resource(cls, resource: str) -> str:
+        if resource and re.fullmatch(r"GPIB(?:0|[1-9][0-9]*)::(?:[1-9]|[12][0-9]|30)::INSTR", resource) is None:
+            raise ValueError("Expected an explicit EDFA GPIB primary address, e.g. GPIB0::12::INSTR")
+        return resource
     tunics_gpib_address: int = Field(
         default=10, ge=0, le=30, description="The GPIB address of the Tunics laser source (0-30)."
     )
