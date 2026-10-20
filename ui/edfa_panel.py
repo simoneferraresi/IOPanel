@@ -72,6 +72,7 @@ class EDFAReadOnlyPanel(QWidget):
         self._shutdown_requested = False
         self._shutdown_complete = False
         self._thread_started = False
+        self._connect_started = False
 
         self.worker = worker if worker is not None else EDFAMonitorWorker()
         self.task = TaskRunner(self.worker, auto_start_run=False)
@@ -230,13 +231,13 @@ class EDFAReadOnlyPanel(QWidget):
             if result != QMessageBox.StandardButton.Yes:
                 return
         self._operation_pending = True
+        self._connect_started = False
         self._activity = "Connecting"
         self.error_label.clear()
         self._update_controls()
         self._ensure_worker_started()
         self.connect_requested.emit(
-            self.backend_mode, self.resource_name, self.timeout_ms,
-            self.write_termination, self.read_termination
+            self.backend_mode, self.resource_name, self.timeout_ms, self.write_termination, self.read_termination
         )
 
     def request_disconnect(self) -> None:
@@ -267,6 +268,12 @@ class EDFAReadOnlyPanel(QWidget):
     def _on_state(self, state: EDFAState, activity: str) -> None:
         if self._shutdown_requested:
             return
+        # The worker announces initial Disconnected when its thread starts.
+        # Do not treat that as the result of our still-queued Connect request.
+        if activity == "Disconnected" and self._operation_pending and not self._connect_started:
+            return
+        if activity == "Connecting":
+            self._connect_started = True
         self._backend_state = state
         self._activity = activity
         self._operation_pending = activity in {"Connecting", "Disconnecting"}
@@ -323,7 +330,8 @@ class EDFAReadOnlyPanel(QWidget):
             alarms.append("Input reading below device threshold (even if the input-low flag is clear)")
         self.alarm_label.setText(
             "Observations: " + "; ".join(alarms)
-            if alarms else "No alarm bits asserted; this does not certify safe optical conditions."
+            if alarms
+            else "No alarm bits asserted; this does not certify safe optical conditions."
         )
         self.error_label.clear()
 

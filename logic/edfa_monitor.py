@@ -60,8 +60,10 @@ class EDFAMonitorWorker(BaseWorker):
                     self._physical_factory(resource, timeout_ms, write_termination, read_termination)
                     if self._physical_factory is not None
                     else IPGEAD2KCGPIB(
-                        resource, timeout_ms=timeout_ms,
-                        write_termination=write_termination, read_termination=read_termination
+                        resource,
+                        timeout_ms=timeout_ms,
+                        write_termination=write_termination,
+                        read_termination=read_termination,
                     )
                 )
             else:
