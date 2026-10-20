@@ -15,7 +15,16 @@ instrument operation.
 
 Physical mode requires operator selection in the ordinary, validated
 [Instruments] INI settings, a unique configured GPIB resource, and an
-explicit Yes confirmation before *every* physical connection. Connecting may
+explicit Yes confirmation before *every* physical connection. The separate
+site-local configuration established for M2 can be used when deliberately
+starting the GUI with:
+
+```powershell
+uv run --locked python app.py --config config.lab.ini
+```
+
+Never change the shared `config.ini` merely to test a physical amplifier,
+and never commit the local lab configuration. Connecting may
 switch GPIB remote/local mode. The operator must ensure emission is off,
 the setup is approved and no other program owns the GPIB controller.
 No automatic fallback from physical failure to simulation occurs. The tab
