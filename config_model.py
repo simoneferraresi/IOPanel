@@ -18,9 +18,7 @@ Python's `configparser` into a format Pydantic can validate.
 import re
 from typing import Literal
 
-from pydantic import field_validator
-
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ConfigSemanticError(ValueError):

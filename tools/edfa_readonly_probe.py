@@ -95,7 +95,7 @@ def main() -> int:
             connect_readonly=arguments.connect_readonly,
             operator_confirmed=arguments.operator_confirmed,
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - CLI must report errors while still closing VISA resources.
         parser.exit(2, f"EDFA read-only probe failed: {type(exc).__name__}: {exc}\n")
     print(json.dumps(result, indent=2))
     return 0
