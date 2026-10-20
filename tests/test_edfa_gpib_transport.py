@@ -272,7 +272,7 @@ def test_manager_close_failure_is_not_mistaken_for_disconnection() -> None:
 
 @pytest.mark.parametrize(
     ("write_mode", "read_mode", "expected_write", "expected_read"),
-    [("none", "none", None, None), ("lf", "cr", "\\n", "\\r"), ("crlf", "lf", "\\r\\n", "\\n")],
+    [("none", "none", None, None), ("lf", "cr", "\n", "\r"), ("crlf", "lf", "\r\n", "\n")],
 )
 def test_explicit_gpib_terminations_applied_before_identity_query(
     write_mode: str, read_mode: str, expected_write: str | None, expected_read: str | None

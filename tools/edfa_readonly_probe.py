@@ -96,7 +96,7 @@ def main() -> int:
             operator_confirmed=arguments.operator_confirmed,
         )
     except Exception as exc:
-        parser.exit(2, f"EDFA read-only probe failed: {type(exc).__name__}: {exc}\\n")
+        parser.exit(2, f"EDFA read-only probe failed: {type(exc).__name__}: {exc}\n")
     print(json.dumps(result, indent=2))
     return 0
 

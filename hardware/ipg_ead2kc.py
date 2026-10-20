@@ -29,7 +29,7 @@ logger = logging.getLogger("LabApp.IPGEAD2KC")
 _GPIB_RESOURCE = re.compile(r"GPIB(?:0|[1-9][0-9]*)::(?:[1-9]|[12][0-9]|30)::INSTR", re.IGNORECASE)
 _REQUIRED_IDENTITY_TOKEN = "EAD-2K-C"
 _CONSISTENCY_BITS = (1 << 18) | (1 << 21) | (1 << 22)
-_TERMINATIONS = {"none": None, "lf": "\\n", "cr": "\\r", "crlf": "\\r\\n"}
+_TERMINATIONS = {"none": None, "lf": "\n", "cr": "\r", "crlf": "\r\n"}
 
 
 class VisaSession(GPIBQuerySession, Protocol):
