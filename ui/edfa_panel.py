@@ -45,6 +45,8 @@ class EDFAReadOnlyPanel(QWidget):
     shutdown_requested = Signal()
     shutdown_complete = Signal()
     shutdown_timeout = Signal(str)
+    connection_status_changed = Signal(object, str)
+    observations_changed = Signal(str)
 
     def __init__(
         self,
@@ -123,16 +125,7 @@ class EDFAReadOnlyPanel(QWidget):
         style_group_box_title(connection)
         connection_layout = QVBoxLayout(connection)
         connection_layout.setSpacing(7)
-        buttons = QHBoxLayout()
-        buttons.setSpacing(6)
-        self.connect_button = QPushButton("Connect")
-        self.connect_button.setObjectName("edfaConnectButton")
-        self.disconnect_button = QPushButton("Disconnect")
-        self.disconnect_button.setObjectName("edfaDisconnectButton")
-        for button in (self.connect_button, self.disconnect_button):
-            button.setMinimumHeight(35)
-            buttons.addWidget(button, stretch=1)
-        connection_layout.addLayout(buttons)
+        # The Instruments menu owns Connect/Disconnect, just as for PM5020.
         self.status_label = QLabel("Disconnected")
         self.status_label.setObjectName("edfaStatusLabel")
         self.status_label.setFont(make_font("sans", 11, QFont.Weight.DemiBold))
@@ -202,7 +195,7 @@ class EDFAReadOnlyPanel(QWidget):
         self.dashboard_panel = QWidget(self)
         self.dashboard_panel.setObjectName("edfaTelemetryContent")
         self.dashboard_panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        dashboard_layout = QVBoxLayout(self.dashboard_panel)
+        dashboard_layout = QHBoxLayout(self.dashboard_panel)
         dashboard_layout.setContentsMargins(0, 0, 0, 0)
         dashboard_layout.setSpacing(10)
         self.reading_labels: dict[str, QLabel] = {}
@@ -245,29 +238,18 @@ class EDFAReadOnlyPanel(QWidget):
         health_grid = QGridLayout(health)
         health_grid.setContentsMargins(10, 14, 10, 8)
         health_grid.setSpacing(6)
-        for column in range(3):
+        # Two columns keep long status words and UTC timestamps readable.
+        for column in range(2):
             health_grid.setColumnStretch(column, 1)
         metric(health_grid, "edfaCurrentLabel", "Pump diode current", 0, 0, size=13)
         metric(health_grid, "edfaTemperatureLabel", "Case temperature", 0, 1, size=13)
-        metric(health_grid, "edfaControlModeLabel", "Control mode", 0, 2, size=13)
-        metric(health_grid, "edfaReflectionLabel", "Back-reflection (% of max.)", 1, 0, size=12)
-        metric(health_grid, "edfaRawStatusLabel", "Raw status word", 1, 1, size=12)
-        metric(health_grid, "edfaUpdatedLabel", "Sampled at (UTC)", 1, 2, size=12)
+        metric(health_grid, "edfaControlModeLabel", "Control mode", 1, 0, size=13)
+        metric(health_grid, "edfaReflectionLabel", "Back-reflection (% of max.)", 1, 1, size=12)
+        metric(health_grid, "edfaRawStatusLabel", "Raw status word", 2, 0, size=12)
+        metric(health_grid, "edfaUpdatedLabel", "Sampled at (UTC)", 2, 1, size=12)
         dashboard_layout.addWidget(health, stretch=1)
-
-        observations = QGroupBox("Status observations")
-        observations.setObjectName("edfaObservationsGroup")
-        style_group_box_title(observations)
-        observations_layout = QVBoxLayout(observations)
-        self.alarm_label = QLabel("Disconnected; alarm bits unavailable.")
-        self.alarm_label.setObjectName("edfaAlarmLabel")
-        self.alarm_label.setWordWrap(True)
-        observations_layout.addWidget(self.alarm_label)
-        dashboard_layout.addWidget(observations)
         root.addWidget(self.dashboard_panel, stretch=1)
 
-        self.connect_button.clicked.connect(self.request_connect)
-        self.disconnect_button.clicked.connect(self.request_disconnect)
         self.read_button.clicked.connect(self.request_read)
         self.start_button.clicked.connect(self.request_monitoring)
         self.stop_button.clicked.connect(self.request_stop)
@@ -306,6 +288,7 @@ class EDFAReadOnlyPanel(QWidget):
         self.error_label.clear()
         self.error_label.hide()
         self._update_controls()
+        self.connection_status_changed.emit(self._backend_state, self._activity)
         self._ensure_worker_started()
         self.connect_requested.emit(
             self.backend_mode, self.resource_name, self.timeout_ms, self.write_termination, self.read_termination
@@ -318,6 +301,7 @@ class EDFAReadOnlyPanel(QWidget):
         self._monitoring = False
         self._activity = "Disconnecting"
         self._update_controls()
+        self.connection_status_changed.emit(self._backend_state, self._activity)
         self.disconnect_requested.emit()
 
     def request_read(self) -> None:
@@ -352,6 +336,7 @@ class EDFAReadOnlyPanel(QWidget):
         if state is EDFAState.DISCONNECTED:
             self._clear_telemetry()
         self._update_controls()
+        self.connection_status_changed.emit(state, activity)
 
     @Slot(str)
     def _set_identity(self, identity: str) -> None:
@@ -399,10 +384,10 @@ class EDFAReadOnlyPanel(QWidget):
             and report.input_power.value < report.minimum_input_power.value
         ):
             alarms.append("Input reading below device threshold (even if the input-low flag is clear)")
-        self.alarm_label.setText(
-            "Observations: " + "; ".join(alarms)
+        self.observations_changed.emit(
+            "EDFA: " + "; ".join(alarms)
             if alarms
-            else "No alarm bits asserted; this does not certify safe optical conditions."
+            else "EDFA: No alarm bits asserted (not a safety check)"
         )
         self.error_label.clear()
         self.error_label.hide()
@@ -415,13 +400,11 @@ class EDFAReadOnlyPanel(QWidget):
     def _clear_telemetry(self) -> None:
         for label in self.reading_labels.values():
             label.setText("—")
-        self.alarm_label.setText("Disconnected; alarm bits unavailable.")
+        self.observations_changed.emit("EDFA: Disconnected — no observations")
 
     def _update_controls(self) -> None:
         ready = self._backend_state is EDFAState.IDLE
         blocked = self._operation_pending or self._shutdown_requested
-        self.connect_button.setEnabled(not blocked and self._backend_state is EDFAState.DISCONNECTED)
-        self.disconnect_button.setEnabled(not blocked and self._backend_state is not EDFAState.DISCONNECTED)
         self.read_button.setEnabled(not blocked and ready)
         self.start_button.setEnabled(not blocked and ready and not self._monitoring)
         self.stop_button.setEnabled(not self._shutdown_requested and self._monitoring)

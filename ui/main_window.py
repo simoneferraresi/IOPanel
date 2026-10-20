@@ -50,6 +50,7 @@ from app_settings import AppSettings
 from config_model import AppConfig, CameraConfig
 from hardware.ct400_init_worker import CT400InitOutcome, CT400InitWorker
 from hardware.dummy_ct400 import DummyCT400
+from hardware.edfa_types import EDFAState
 from hardware.piezo import PiezoController
 from hardware.piezo_init_worker import PiezoInitWorker
 from hardware.pm5020_types import PM5020State
@@ -494,6 +495,58 @@ class MainWindow(QMainWindow):
                 text, icon, enabled = "Disconnect PM5020 (Recovery)", ":/icons/disconnect.svg", True
             else:
                 text, icon, enabled = "Disconnect PM5020", ":/icons/disconnect.svg", True
+        action.setText(text)
+        action.setIcon(QIcon(icon))
+        action.setChecked(checked)
+        action.setEnabled(enabled)
+
+    @Slot()
+    def _handle_edfa_connect_action_triggered(self) -> None:
+        """Use the Instruments menu as the sole EDFA connection entry point."""
+        panel = self.edfa_panel
+        if panel is None:
+            return
+        if panel._backend_state is EDFAState.DISCONNECTED:
+            panel.request_connect()
+        else:
+            panel.request_disconnect()
+        # A denied physical confirmation must restore the menu checkmark.
+        self._update_edfa_action()
+
+    @Slot(object, str)
+    def _on_edfa_connection_status_changed(self, _state: object, _activity: str) -> None:
+        self._update_edfa_action()
+
+    @Slot(str)
+    def _on_edfa_observations_changed(self, observation: str) -> None:
+        """Independent, persistent left-hand status widget; do not steal showMessage."""
+        label = self.edfa_observations_status_label
+        label.setText(observation)
+        label.setToolTip(observation)
+
+    def _update_edfa_action(self) -> None:
+        """Match the PM5020 checkmark, icon, spinner and recovery conventions."""
+        action = getattr(self, "edfa_connect_action", None)
+        if action is None:
+            return
+        panel = self.edfa_panel
+        if panel is None:
+            text, icon, enabled, checked = "EDFA Unavailable", ":/icons/connect.svg", False, False
+        else:
+            state = panel._backend_state
+            activity = panel._activity
+            checked = state is not EDFAState.DISCONNECTED
+            if panel._shutdown_requested:
+                text, icon, enabled = "EDFA Shutting Down…", ":/icons/spinner.svg", False
+            elif panel._operation_pending or activity in {"Connecting", "Disconnecting"}:
+                text = "Disconnecting EDFA…" if activity == "Disconnecting" else "Connecting EDFA…"
+                icon, enabled = ":/icons/spinner.svg", False
+            elif state is EDFAState.DISCONNECTED:
+                text, icon, enabled = "Connect EDFA", ":/icons/connect.svg", True
+            elif state is EDFAState.ERROR:
+                text, icon, enabled = "Disconnect EDFA (Recovery)", ":/icons/disconnect.svg", True
+            else:
+                text, icon, enabled = "Disconnect EDFA", ":/icons/disconnect.svg", True
         action.setText(text)
         action.setIcon(QIcon(icon))
         action.setChecked(checked)
@@ -1153,9 +1206,21 @@ class MainWindow(QMainWindow):
         )
         self.edfa_panel.shutdown_complete.connect(self._resume_close_after_edfa)
         self.edfa_panel.shutdown_timeout.connect(lambda message: self.statusBar().showMessage(message, 0))
+        self.edfa_panel.connection_status_changed.connect(self._on_edfa_connection_status_changed)
+        self.edfa_panel.observations_changed.connect(self._on_edfa_observations_changed)
         self.tab_widget.addTab(self.edfa_panel, "IPG EDFA")
 
         self.setStatusBar(QStatusBar())
+        self.edfa_observations_status_label = QLabel("EDFA: Disconnected — no observations")
+        self.edfa_observations_status_label.setObjectName("edfaObservationsStatusLabel")
+        self.edfa_observations_status_label.setToolTip(self.edfa_observations_status_label.text())
+        self.edfa_observations_status_label.setMinimumWidth(0)
+        self.edfa_observations_status_label.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+        )
+        # First, expanding permanent widget sits to the left of instrument indicators,
+        # and stays visible when other operations use temporary status messages.
+        self.statusBar().addPermanentWidget(self.edfa_observations_status_label, 1)
         self.ct400_status_label = QLabel("CT400: Initializing...")
         self.ct400_status_label.setObjectName(ID_CT400_STATUS_LABEL)
         self.statusBar().addPermanentWidget(self.ct400_status_label)
@@ -1172,7 +1237,7 @@ class MainWindow(QMainWindow):
             label.setObjectName(name)
             label.setMargin(4)
             self.statusBar().addPermanentWidget(label)
-        self.statusBar().showMessage("Ready.")
+        self.statusBar().showMessage("Ready.", 3000)
 
         self._create_menus()
 
@@ -1496,6 +1561,13 @@ class MainWindow(QMainWindow):
         self.pm5020_connect_action.triggered.connect(self._handle_pm5020_connect_action_triggered)
         self.instrument_menu.addAction(self.pm5020_connect_action)
 
+        self.edfa_connect_action = QAction("Connect EDFA", self)
+        self.edfa_connect_action.setObjectName("edfaConnectAction")
+        self.edfa_connect_action.setCheckable(True)
+        self.edfa_connect_action.setStatusTip("Connect or disconnect the read-only IPG EDFA backend")
+        self.edfa_connect_action.triggered.connect(self._handle_edfa_connect_action_triggered)
+        self.instrument_menu.addAction(self.edfa_connect_action)
+
         self.cameras_menu = menu_bar.addMenu("&Cameras")
         discover_action = QAction("Discover Cameras...", self)
         discover_action.setStatusTip("List all available Vimba cameras and their IDs")
@@ -1533,6 +1605,7 @@ class MainWindow(QMainWindow):
         self.instrument_menu.addAction(supervised_calibration_action)
         self._update_scan_import_actions()
         self._update_pm5020_action()
+        self._update_edfa_action()
 
         help_menu = self.help_menu = menu_bar.addMenu("&Help")
         about_action = QAction("&About", self)
