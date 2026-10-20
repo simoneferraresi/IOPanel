@@ -68,6 +68,7 @@ class InstrumentsConfig(BaseModel):
         if resource and re.fullmatch(r"GPIB(?:0|[1-9][0-9]*)::(?:[1-9]|[12][0-9]|30)::INSTR", resource) is None:
             raise ValueError("Expected an explicit EDFA GPIB primary address, e.g. GPIB0::12::INSTR")
         return resource
+
     tunics_gpib_address: int = Field(
         default=10, ge=0, le=30, description="The GPIB address of the Tunics laser source (0-30)."
     )

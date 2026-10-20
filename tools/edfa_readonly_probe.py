@@ -77,8 +77,12 @@ def run(
         device.connect()
         identity = device.identify()
         report = device.read_telemetry()
-        return {"mode": "physical-readonly", "resource": profile.edfa_gpib_resource_name, "identity": identity,
-                "telemetry": summarize_telemetry(report)}
+        return {
+            "mode": "physical-readonly",
+            "resource": profile.edfa_gpib_resource_name,
+            "identity": identity,
+            "telemetry": summarize_telemetry(report),
+        }
     finally:
         device.close()
 
@@ -87,7 +91,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="IPG EAD-2K-C read-only GPIB validation (default: dry run)")
     parser.add_argument("--config", type=Path, default=Path("config.ini"))
     parser.add_argument("--connect-readonly", action="store_true", help="Explicitly open the configured GPIB device")
-    parser.add_argument("--operator-confirmed", action="store_true", help="Confirm supervised physical setup and approval")
+    parser.add_argument(
+        "--operator-confirmed", action="store_true", help="Confirm supervised physical setup and approval"
+    )
     arguments = parser.parse_args()
     try:
         result = run(

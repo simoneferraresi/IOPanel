@@ -13,22 +13,28 @@ from tools.edfa_readonly_probe import run, summarize_telemetry
 
 def _config(physical: bool) -> AppConfig:
     return AppConfig.from_ini_dict(
-        {"Instruments": {
-            "edfa_backend": "physical" if physical else "simulation",
-            "edfa_gpib_resource_name": "GPIB0::12::INSTR",
-        }}
+        {
+            "Instruments": {
+                "edfa_backend": "physical" if physical else "simulation",
+                "edfa_gpib_resource_name": "GPIB0::12::INSTR",
+            }
+        }
     )
 
 
 def test_dry_run_does_not_construct_backend() -> None:
     def fail(*args, **kwargs):
         raise AssertionError("should not construct any device")
-    assert run(_config(True), connect_readonly=False, operator_confirmed=False, backend_factory=fail)["mode"] == "dry-run"
+
+    assert (
+        run(_config(True), connect_readonly=False, operator_confirmed=False, backend_factory=fail)["mode"] == "dry-run"
+    )
 
 
 def test_physical_probe_requires_operator_and_physical_profile() -> None:
     def fail(*args, **kwargs):
         raise AssertionError("should not construct any device")
+
     with pytest.raises(ValueError, match="operator-confirmed"):
         run(_config(True), connect_readonly=True, operator_confirmed=False, backend_factory=fail)
     with pytest.raises(ValueError, match="physical"):
