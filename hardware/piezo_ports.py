@@ -55,7 +55,11 @@ def resolve_piezo_port(
     which physical stage would be controlled.
     """
     if usb_serial.strip():
-        matches = [port.device for port in ports if port.usb_serial and port.usb_serial.casefold() == usb_serial.strip().casefold()]
+        matches = [
+            port.device
+            for port in ports
+            if port.usb_serial and port.usb_serial.casefold() == usb_serial.strip().casefold()
+        ]
     elif configured_port.strip():
         matches = [port.device for port in ports if port.device.casefold() == configured_port.strip().casefold()]
     else:
