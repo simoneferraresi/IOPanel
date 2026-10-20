@@ -126,18 +126,28 @@ class PiezoConnectionSignals(QObject):
 class PiezoConnectionWorker(QRunnable):
     """A QRunnable to handle connecting/disconnecting a Piezo in the thread pool."""
 
-    def __init__(self, piezo: PiezoController, side: str, port: str, connect: bool):
+    def __init__(self, piezo: PiezoController, side: str, port: str, connect: bool, usb_serial: str = ""):
         super().__init__()
         self.piezo = piezo
         self.side = side
         self.port = port
         self.do_connect = connect
+        self.usb_serial = usb_serial
         self.signals = PiezoConnectionSignals()
 
     @Slot()
     def run(self):
         try:
             if self.do_connect:
+                if self.usb_serial:
+                    from hardware.piezo_ports import enumerate_piezo_ports, resolve_piezo_port
+
+                    resolved = resolve_piezo_port(enumerate_piezo_ports(), usb_serial=self.usb_serial)
+                    if resolved is None or resolved.casefold() != self.port.casefold():
+                        raise RuntimeError(
+                            f"{self.side.capitalize()} piezo USB identity changed since discovery. "
+                            "Refresh Instruments before connecting."
+                        )
                 self.piezo.connect(self.port)
                 self.signals.connection_succeeded.emit(self.side)
             else:
@@ -394,7 +404,12 @@ class MainWindow(QMainWindow):
 
         do_connect = not piezo.is_connected()
 
-        worker = PiezoConnectionWorker(piezo, side, port, do_connect)
+        usb_serial = (
+            self.config.instruments.piezo_left_usb_serial
+            if side == "left"
+            else self.config.instruments.piezo_right_usb_serial
+        )
+        worker = PiezoConnectionWorker(piezo, side, port, do_connect, usb_serial=usb_serial)
 
         # Connect signals to the main thread's *slots*
         worker.signals.connection_succeeded.connect(self.piezo_connection_succeeded)
