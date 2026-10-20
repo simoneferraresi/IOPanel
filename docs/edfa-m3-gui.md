@@ -3,16 +3,22 @@
 IOPanel now contains a fifth tab, **IPG EDFA**, after **Thorlabs PM5020**.
 It uses the same broad composition as the PM5020 tab: a **compact 320–400 px
 control column on the left** and an expanding **telemetry dashboard on the
-right**. The dashboard groups optical power, amplifier status and observed
-alarms. Values use the application's existing Geist typography, and the
-page contains **no scroll area or scrollbars**; available space is shared
-by the native Qt layouts.
+right**. The right-hand dashboard places **Optical monitoring** and **Amplifier
+status** side by side. Observations appear in a persistent, left-anchored
+**EDFA status-bar label** (full observation text is also in its tooltip),
+not in a separate group or the shared transient status-message API.
+Values use the application's existing Geist typography, and the
+page contains **no scroll area or scrollbars**; native Qt layouts
+share the available space.
 The default backend is **simulation**. Constructing the tab never opens a
 VISA resource, imports the native VISA provider, scans GPIB addresses,
 starts the EDFA worker, or sends commands. No GUI controls can enable
 emission or change gain, diode current, optical power or mode.
 
-The tab provides explicit Connect/Disconnect, Read once, and Start/Stop
+Like CT400 and PM5020, an **Instruments → Connect EDFA / Disconnect EDFA**
+checkable action owns the entire EDFA connection lifecycle, with matching
+connect/disconnect/spinner icons and recovery indication. The tab has no
+redundant Connect/Disconnect buttons. It provides Read once and Start/Stop
 monitoring (2/5/10-second choices). All I/O is serialized in a dedicated Qt
 worker thread, which owns the amplifier backend and its timer. Changing tabs
 does not start monitoring. Application shutdown asks this worker to close its

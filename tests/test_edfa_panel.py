@@ -18,9 +18,9 @@ def test_tab_starts_inert_and_offline(qtbot):
     assert panel.backend_mode == "simulation"
     assert panel._backend_state is EDFAState.DISCONNECTED
     assert not panel.task.worker_thread.isRunning()
-    assert panel.connect_button.isEnabled()
+    assert not hasattr(panel, "connect_button")
+    assert not hasattr(panel, "disconnect_button")
     assert not panel.read_button.isEnabled()
-    assert not panel.disconnect_button.isEnabled()
     assert not hasattr(panel, "emission_button")
     assert "no emission" in panel.safety_label.text().lower()
     panel.request_shutdown()
@@ -37,7 +37,7 @@ def test_simulation_worker_thread_connect_read_monitor_disconnect_and_shutdown(q
     panel = EDFAReadOnlyPanel(worker=EDFAMonitorWorker(simulator_factory=make_simulator))
     qtbot.addWidget(panel)
     gui_thread_id = threading.get_ident()
-    panel.connect_button.click()
+    panel.request_connect()
     qtbot.waitUntil(lambda: panel._backend_state is EDFAState.IDLE, timeout=3000)
     assert worker_thread_ids and worker_thread_ids[0] != gui_thread_id
     assert "SIMULATION" in panel.mode_label.text()
@@ -48,7 +48,7 @@ def test_simulation_worker_thread_connect_read_monitor_disconnect_and_shutdown(q
     qtbot.waitUntil(lambda: panel._monitoring, timeout=3000)
     panel.stop_button.click()
     qtbot.waitUntil(lambda: not panel._monitoring, timeout=3000)
-    panel.disconnect_button.click()
+    panel.request_disconnect()
     qtbot.waitUntil(lambda: panel._backend_state is EDFAState.DISCONNECTED, timeout=3000)
     panel.request_shutdown()
     qtbot.waitUntil(lambda: panel.shutdown_finished, timeout=3000)
@@ -58,7 +58,7 @@ def test_reject_physical_connection_without_operator_confirmation(qtbot, monkeyp
     panel = EDFAReadOnlyPanel(backend_mode="physical", resource_name="GPIB0::12::INSTR")
     qtbot.addWidget(panel)
     monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.No)
-    panel.connect_button.click()
+    panel.request_connect()
     assert panel._backend_state is EDFAState.DISCONNECTED
     assert not panel.task.worker_thread.isRunning()
     panel.request_shutdown()
@@ -67,7 +67,7 @@ def test_reject_physical_connection_without_operator_confirmation(qtbot, monkeyp
 def test_missing_physical_resource_never_creates_worker_thread(qtbot):
     panel = EDFAReadOnlyPanel(backend_mode="physical", resource_name="")
     qtbot.addWidget(panel)
-    panel.connect_button.click()
+    panel.request_connect()
     assert "resource" in panel.error_label.text()
     assert not panel.task.worker_thread.isRunning()
     panel.request_shutdown()
@@ -86,12 +86,12 @@ def test_failed_simulated_telemetry_stops_monitoring_without_blocking_gui(qtbot)
 
     panel = EDFAReadOnlyPanel(worker=EDFAMonitorWorker(simulator_factory=FailingEDFA))
     qtbot.addWidget(panel)
-    panel.connect_button.click()
+    panel.request_connect()
     qtbot.waitUntil(lambda: panel._backend_state is EDFAState.IDLE, timeout=3000)
     panel.start_button.click()
     qtbot.waitUntil(lambda: "telemetry failed" in panel.error_label.text().lower(), timeout=3000)
     assert not panel._monitoring
-    panel.disconnect_button.click()
+    panel.request_disconnect()
     qtbot.waitUntil(lambda: panel._backend_state is EDFAState.DISCONNECTED, timeout=3000)
     panel.request_shutdown()
     qtbot.waitUntil(lambda: panel.shutdown_finished, timeout=3000)
@@ -137,7 +137,7 @@ def test_mainwindow_close_waits_for_edfa_thread(qtbot, monkeypatch, tmp_path):
     qtbot.addWidget(window)
     window.show()
     panel = window.edfa_panel
-    panel.connect_button.click()
+    panel.request_connect()
     qtbot.waitUntil(lambda: panel._backend_state is EDFAState.IDLE, timeout=3000)
     assert panel.task.worker_thread.isRunning()
     window.close()
@@ -161,7 +161,9 @@ def test_edfa_layout_matches_pm5020_columns_without_scroll_area(qtbot):
     assert panel.findChild(QGroupBox, "edfaOperationGroup") is not None
     assert panel.findChild(QGroupBox, "edfaOpticalGroup") is not None
     assert panel.findChild(QGroupBox, "edfaHealthGroup") is not None
-    assert panel.findChild(QGroupBox, "edfaObservationsGroup") is not None
+    assert panel.findChild(QGroupBox, "edfaObservationsGroup") is None
+    assert isinstance(panel.dashboard_panel.layout(), QHBoxLayout)
+    assert panel.dashboard_panel.layout().count() == 2
     assert panel.read_button.parentWidget() is panel.findChild(QGroupBox, "edfaOperationGroup")
     assert panel.reading_labels["edfaOutputLabel"].text() == "—"
     assert panel.reading_labels["edfaRawStatusLabel"].text() == "—"
