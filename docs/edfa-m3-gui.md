@@ -1,6 +1,12 @@
 # M3: IPG EDFA read-only GUI
 
 IOPanel now contains a fifth tab, **IPG EDFA**, after **Thorlabs PM5020**.
+It uses the same broad composition as the PM5020 tab: a **compact 320–400 px
+control column on the left** and an expanding **telemetry dashboard on the
+right**. The dashboard groups optical power, amplifier status and observed
+alarms. Values use the application's existing Geist typography, and the
+page contains **no scroll area or scrollbars**; available space is shared
+by the native Qt layouts.
 The default backend is **simulation**. Constructing the tab never opens a
 VISA resource, imports the native VISA provider, scans GPIB addresses,
 starts the EDFA worker, or sends commands. No GUI controls can enable
