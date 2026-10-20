@@ -138,7 +138,7 @@ class EDFATelemetry:
     """Read-only snapshot. Sequential queries are not atomic."""
 
     status: EDFAStatus
-    output_power: EDFAOpticalPower
+    output_power: EDFAOpticalPower | None
     diode_current_a: float
     case_temperature_c: float
     acquired_at_utc: datetime
@@ -146,8 +146,17 @@ class EDFATelemetry:
     minimum_input_power: EDFAOpticalPower | None = None
     power_setpoint: EDFAOpticalPower | None = None
     back_reflection_percent_of_max: float | None = None
+    output_power_non_numeric_reply: str | None = None
 
     def __post_init__(self) -> None:
+        # The real EAD-2K-C returned 'Off' to SOUR:POW? during its
+        # first read-only, emission-disabled GPIB qualification. Do not
+        # fabricate a measured zero or infer optical safety from this token.
+        if self.output_power is None:
+            if self.output_power_non_numeric_reply != "Off":
+                raise ValueError("Missing output power requires the explicit instrument 'Off' reply")
+        elif self.output_power_non_numeric_reply is not None:
+            raise ValueError("A numeric output-power reading cannot also report 'Off'")
         if self.acquired_at_utc.tzinfo is None or self.acquired_at_utc.utcoffset() is None:
             raise ValueError("acquired_at_utc must be timezone-aware")
         for name in ("diode_current_a", "case_temperature_c", "back_reflection_percent_of_max"):

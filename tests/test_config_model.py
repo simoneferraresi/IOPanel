@@ -119,3 +119,35 @@ def test_unknown_keys_inside_recognized_sections_remain_tolerated():
 def test_camera_typed_validation_remains_pydantic_validation_error():
     with pytest.raises(ValidationError):
         AppConfig.from_ini_dict({"Camera:Top": {"identifier": "top-id"}})
+
+
+def test_edfa_config_defaults_are_inert_and_legacy_ini_still_parses():
+    old = AppConfig.from_ini_dict({"Instruments": {"ct400_backend": "simulation"}})
+    assert old.instruments.edfa_backend == "simulation"
+    assert old.instruments.edfa_gpib_resource_name == ""
+    assert old.instruments.edfa_gpib_timeout_ms == 3000
+    assert old.instruments.edfa_gpib_write_termination == "none"
+
+
+def test_edfa_readonly_gpib_config_is_explicit_and_validated():
+    valid = AppConfig.from_ini_dict(
+        {
+            "Instruments": {
+                "edfa_backend": "physical",
+                "edfa_gpib_resource_name": "GPIB0::12::INSTR",
+                "edfa_gpib_timeout_ms": "5000",
+                "edfa_gpib_write_termination": "lf",
+                "edfa_gpib_read_termination": "crlf",
+            }
+        }
+    )
+    assert valid.instruments.edfa_gpib_resource_name == "GPIB0::12::INSTR"
+    assert valid.instruments.edfa_gpib_timeout_ms == 5000
+    assert valid.instruments.edfa_gpib_write_termination == "lf"
+    for bad in ["GPIB0::31::INSTR", "ASRL1::INSTR", "GPIB0::12::INSTR;SOUR:POW:STAT 1"]:
+        with pytest.raises(ValidationError):
+            AppConfig.from_ini_dict({"Instruments": {"edfa_gpib_resource_name": bad}})
+    with pytest.raises(ValidationError):
+        AppConfig.from_ini_dict({"Instruments": {"edfa_gpib_timeout_ms": "0"}})
+    with pytest.raises(ValidationError):
+        AppConfig.from_ini_dict({"Instruments": {"edfa_gpib_read_termination": "anything"}})

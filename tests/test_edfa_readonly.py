@@ -196,3 +196,90 @@ def test_model_validation_rejects_invalid_telemetry() -> None:
     assert parse_identity("IPG,EAD-2K-C,FA160101\r\n") == "IPG,EAD-2K-C,FA160101"
     with pytest.raises(EDFAProtocolError):
         parse_identity("\x00")
+
+
+@pytest.mark.parametrize("raw", ["Off", "off", "OFF", " Off\r\n "])
+def test_output_power_off_is_missing_observation_not_zero(raw: str) -> None:
+    from hardware.edfa_gpib import parse_output_power
+
+    power, reply = parse_output_power(raw, PowerUnit.W)
+    assert power is None
+    assert reply == "Off"
+
+
+@pytest.mark.parametrize("raw", ["Off!", "Output Off", "Error", "Disabled", "", "nan", "inf"])
+def test_output_power_unknown_non_numeric_still_rejected(raw: str) -> None:
+    from hardware.edfa_gpib import parse_output_power
+
+    with pytest.raises(EDFAProtocolError):
+        parse_output_power(raw, PowerUnit.W)
+
+
+def test_output_power_numeric_zero_remains_distinct_from_off() -> None:
+    from hardware.edfa_gpib import parse_output_power
+
+    power, reply = parse_output_power("0.0", PowerUnit.W)
+    assert power == EDFAOpticalPower(0.0, PowerUnit.W)
+    assert reply is None
+
+
+def test_telemetry_preserves_non_numeric_output_and_other_measurements() -> None:
+    session = FakeGPIB(_replies())
+    session.replies["SOUR:POW?"] = "Off"
+    report = GPIBReadOnlyReader(session).read_telemetry()
+    assert report.output_power is None
+    assert report.output_power_non_numeric_reply == "Off"
+    assert report.diode_current_a == 0.0
+    assert report.case_temperature_c == 28.9
+    assert report.power_setpoint == EDFAOpticalPower(1.2, PowerUnit.W)
+    assert all(command.endswith("?") for command in session.commands)
+
+
+def test_telemetry_rejects_ambiguous_output_value_and_off_marker() -> None:
+    now = datetime.now(UTC)
+    with pytest.raises(ValueError, match="requires"):
+        EDFATelemetry(EDFAStatus(0), None, 0.0, 25.0, now)
+    with pytest.raises(ValueError, match="cannot also"):
+        EDFATelemetry(
+            EDFAStatus(0),
+            EDFAOpticalPower(0.0, PowerUnit.W),
+            0.0,
+            25.0,
+            now,
+            output_power_non_numeric_reply="Off",
+        )
+
+
+def test_observed_edfa_2026_10_20_readonly_snapshot_without_seed_safety_inference() -> None:
+    """Real reply fixture: status bit 4 remained clear below the input threshold."""
+    session = FakeGPIB(_replies(status=3145729))
+    session.replies.update(
+        {
+            "*IDN?": "IPG EAD-2K-C, Rev 1.1.175",
+            "SOUR:POW?": "Off",
+            "SOUR:POW:SPO?": "0.2",
+            "SOUR:CURR?": "0.021",
+            "SOUR:TEMP:LEV?": "25.8",
+            "INP?": "0.06",
+            "INP:LIM:LOW?": "0.23",
+        }
+    )
+    reader = GPIBReadOnlyReader(session)
+    assert reader.identify() == "IPG EAD-2K-C, Rev 1.1.175"
+    snapshot = reader.read_telemetry()
+    assert snapshot.status.raw_word == 3145729
+    assert snapshot.status.control_mode is EDFAControlMode.APC
+    assert snapshot.status.agc_available
+    assert snapshot.status.input_monitor_available
+    assert not snapshot.status.back_reflection_monitor_available
+    assert not snapshot.status.input_power_low
+    assert snapshot.output_power is None
+    assert snapshot.output_power_non_numeric_reply == "Off"
+    assert snapshot.input_power == EDFAOpticalPower(0.06, PowerUnit.MW)
+    assert snapshot.minimum_input_power == EDFAOpticalPower(0.23, PowerUnit.MW)
+    assert snapshot.power_setpoint == EDFAOpticalPower(0.2, PowerUnit.W)
+    assert snapshot.diode_current_a == 0.021
+    assert snapshot.case_temperature_c == 25.8
+    assert snapshot.back_reflection_percent_of_max is None
+    assert snapshot.input_power.value < snapshot.minimum_input_power.value
+    assert all(command.endswith("?") for command in session.commands)
