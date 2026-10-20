@@ -104,18 +104,14 @@ class GPIBReadOnlyReader:
         current = parse_number(self._query("SOUR:CURR?"))
         temperature = parse_number(self._query("SOUR:TEMP:LEV?"))
         input_power = (
-            EDFAOpticalPower(parse_number(self._query("INP?")), input_unit)
-            if status.input_monitor_available
-            else None
+            EDFAOpticalPower(parse_number(self._query("INP?")), input_unit) if status.input_monitor_available else None
         )
         threshold = (
             EDFAOpticalPower(parse_number(self._query("INP:LIM:LOW?")), input_unit)
             if status.input_monitor_available
             else None
         )
-        reflection = (
-            parse_number(self._query("SOUR:POW:BACK?")) if status.back_reflection_monitor_available else None
-        )
+        reflection = parse_number(self._query("SOUR:POW:BACK?")) if status.back_reflection_monitor_available else None
         return EDFATelemetry(
             status=status,
             output_power=output,

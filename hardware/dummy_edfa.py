@@ -83,7 +83,8 @@ class DummyEDFA(AbstractEDFA):
                 input_power=EDFAOpticalPower(0.0, input_unit) if status.input_monitor_available else None,
                 minimum_input_power=(
                     EDFAOpticalPower(-3.0 if input_unit is PowerUnit.DBM else 0.5, input_unit)
-                    if status.input_monitor_available else None
+                    if status.input_monitor_available
+                    else None
                 ),
                 power_setpoint=EDFAOpticalPower(30.0 if unit is PowerUnit.DBM else 1.0, unit),
                 back_reflection_percent_of_max=0.0 if status.back_reflection_monitor_available else None,

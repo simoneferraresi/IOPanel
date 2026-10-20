@@ -100,8 +100,15 @@ def test_read_only_reader_uses_exact_allowlist_and_preserves_units() -> None:
     assert report.case_temperature_c == 28.9
     assert report.acquired_at_utc.utcoffset() is not None
     assert session.commands == [
-        "*IDN?", "SOUR:POW:STAT?", "SOUR:POW?", "SOUR:POW:SPO?",
-        "SOUR:CURR?", "SOUR:TEMP:LEV?", "INP?", "INP:LIM:LOW?", "SOUR:POW:BACK?",
+        "*IDN?",
+        "SOUR:POW:STAT?",
+        "SOUR:POW?",
+        "SOUR:POW:SPO?",
+        "SOUR:CURR?",
+        "SOUR:TEMP:LEV?",
+        "INP?",
+        "INP:LIM:LOW?",
+        "SOUR:POW:BACK?",
     ]
     assert all(command.endswith("?") for command in session.commands)
 

@@ -133,7 +133,6 @@ class AbstractPM5020(ABC):
     def close(self) -> None: ...
 
 
-
 class AbstractEDFA(ABC):
     """Read-only amplifier contract. Connecting does not authorize emission."""
 
