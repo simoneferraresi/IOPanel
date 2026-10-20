@@ -1,9 +1,5 @@
 """Safe regression coverage for identity-bound passive piezo discovery."""
 
-from pathlib import Path
-from types import SimpleNamespace
-
-import pytest
 from PySide6.QtWidgets import QApplication
 
 from config_model import InstrumentsConfig
