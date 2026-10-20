@@ -1,10 +1,12 @@
 """Safe regression coverage for identity-bound passive piezo discovery."""
 
+from PySide6.QtTest import QSignalSpy
 from PySide6.QtWidgets import QApplication
 
 from config_model import InstrumentsConfig
 from hardware import piezo_init_worker
 from hardware.piezo_ports import PiezoPortInfo, resolve_piezo_port, unique_usb_serials
+from ui.main_window import PiezoConnectionWorker
 from ui.piezo_configuration_dialog import PiezoConfigurationDialog
 
 
@@ -82,6 +84,47 @@ def test_worker_resolves_ports_without_native_open_and_prevents_duplicate_claim(
     worker.piezos_initialized.connect(lambda left, right: observed.append((left, right)))
     worker.run()
     assert observed == [(None, None)]
+
+
+def test_connect_rechecks_usb_identity_before_any_native_open(monkeypatch):
+    calls = []
+
+    class FakePiezo:
+        def connect(self, selected):
+            calls.append(selected)
+
+    monkeypatch.setattr(
+        "hardware.piezo_ports.enumerate_piezo_ports",
+        lambda: (port("COM9", "LEFT"), port("COM3", "OTHER")),
+    )
+    worker = PiezoConnectionWorker(FakePiezo(), "left", "COM3", True, usb_serial="LEFT")
+    failures = QSignalSpy(worker.signals.connection_failed)
+    successes = QSignalSpy(worker.signals.connection_succeeded)
+    worker.run()
+    assert calls == []
+    assert failures.count() == 1
+    assert "identity changed" in failures.at(0)[1]
+    assert successes.count() == 0
+
+
+def test_connect_with_still_matching_usb_identity_proceeds_once(monkeypatch):
+    calls = []
+
+    class FakePiezo:
+        def connect(self, selected):
+            calls.append(selected)
+
+    monkeypatch.setattr(
+        "hardware.piezo_ports.enumerate_piezo_ports",
+        lambda: (port("COM3", "LEFT"),),
+    )
+    worker = PiezoConnectionWorker(FakePiezo(), "left", "COM3", True, usb_serial="LEFT")
+    failures = QSignalSpy(worker.signals.connection_failed)
+    successes = QSignalSpy(worker.signals.connection_succeeded)
+    worker.run()
+    assert calls == ["COM3"]
+    assert successes.count() == 1
+    assert failures.count() == 0
 
 
 def test_passive_configuration_dialog_refuses_duplicate_or_unverified_bindings(qtbot, monkeypatch):
