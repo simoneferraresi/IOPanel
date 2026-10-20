@@ -198,7 +198,7 @@ def test_model_validation_rejects_invalid_telemetry() -> None:
         parse_identity("\x00")
 
 
-@pytest.mark.parametrize("raw", ["Off", "off", "OFF", " Off\\r\\n "])
+@pytest.mark.parametrize("raw", ["Off", "off", "OFF", " Off\r\n "])
 def test_output_power_off_is_missing_observation_not_zero(raw: str) -> None:
     from hardware.edfa_gpib import parse_output_power
 
@@ -241,6 +241,10 @@ def test_telemetry_rejects_ambiguous_output_value_and_off_marker() -> None:
         EDFATelemetry(EDFAStatus(0), None, 0.0, 25.0, now)
     with pytest.raises(ValueError, match="cannot also"):
         EDFATelemetry(
-            EDFAStatus(0), EDFAOpticalPower(0.0, PowerUnit.W), 0.0, 25.0, now,
+            EDFAStatus(0),
+            EDFAOpticalPower(0.0, PowerUnit.W),
+            0.0,
+            25.0,
+            now,
             output_power_non_numeric_reply="Off",
         )
