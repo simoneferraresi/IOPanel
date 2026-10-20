@@ -196,8 +196,9 @@ class IPGEAD2KCGPIB(AbstractEDFA):
         return problems
 
     def __enter__(self) -> Self:
-        self._require_idle()
-        return self
+        with self._lock:
+            self._require_idle()
+            return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
         self.close()

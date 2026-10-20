@@ -231,3 +231,35 @@ def test_default_factory_reports_missing_pyvisa(monkeypatch: pytest.MonkeyPatch)
     with pytest.raises(EDFACommunicationError, match="PyVISA"):
         edfa.connect()
     assert edfa.state is EDFAState.DISCONNECTED
+
+
+def test_telemetry_status_unit_change_is_rejected() -> None:
+    class ChangingStatusSession(FakeSession):
+        def query(self, message: str) -> str:
+            if message == "SOUR:POW:STAT?" and message in self.calls:
+                self.status |= 1 << 18
+            return super().query(message)
+
+    session = ChangingStatusSession()
+    edfa = IPGEAD2KCGPIB(RESOURCE, manager_factory=lambda: FakeManager(session))
+    edfa.connect()
+    with pytest.raises(EDFAProtocolError, match="status changed"):
+        edfa.read_telemetry()
+    assert edfa.state is EDFAState.ERROR
+    assert session.calls.count("SOUR:POW:STAT?") == 2
+    edfa.close()
+    assert edfa.state is EDFAState.DISCONNECTED
+
+
+def test_manager_close_failure_is_not_mistaken_for_disconnection() -> None:
+    manager = FakeManager()
+    manager.fail_close = True
+    edfa = IPGEAD2KCGPIB(RESOURCE, manager_factory=lambda: manager)
+    edfa.connect()
+    with pytest.raises(EDFACommunicationError, match="release"):
+        edfa.close()
+    assert manager.session.closed
+    assert edfa.state is EDFAState.ERROR
+    manager.fail_close = False
+    edfa.close()
+    assert edfa.state is EDFAState.DISCONNECTED
