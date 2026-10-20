@@ -385,9 +385,7 @@ class EDFAReadOnlyPanel(QWidget):
         ):
             alarms.append("Input reading below device threshold (even if the input-low flag is clear)")
         self.observations_changed.emit(
-            "EDFA: " + "; ".join(alarms)
-            if alarms
-            else "EDFA: No alarm bits asserted (not a safety check)"
+            "EDFA: " + "; ".join(alarms) if alarms else "EDFA: No alarm bits asserted (not a safety check)"
         )
         self.error_label.clear()
         self.error_label.hide()

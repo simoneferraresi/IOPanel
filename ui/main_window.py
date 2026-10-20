@@ -1215,9 +1215,7 @@ class MainWindow(QMainWindow):
         self.edfa_observations_status_label.setObjectName("edfaObservationsStatusLabel")
         self.edfa_observations_status_label.setToolTip(self.edfa_observations_status_label.text())
         self.edfa_observations_status_label.setMinimumWidth(0)
-        self.edfa_observations_status_label.setSizePolicy(
-            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
-        )
+        self.edfa_observations_status_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         # First, expanding permanent widget sits to the left of instrument indicators,
         # and stays visible when other operations use temporary status messages.
         self.statusBar().addPermanentWidget(self.edfa_observations_status_label, 1)

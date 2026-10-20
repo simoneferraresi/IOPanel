@@ -290,7 +290,8 @@ def test_edfa_menu_owns_connection_icons_and_status_bar(qtbot, monkeypatch, tmp_
     from hardware.edfa_types import EDFAState
 
     window = _make_window(
-        qtbot, monkeypatch,
+        qtbot,
+        monkeypatch,
         AppSettings(QSettings(str(tmp_path / "edfa-menu.ini"), QSettings.Format.IniFormat)),
     )
     action = window.edfa_connect_action
@@ -332,11 +333,13 @@ def test_edfa_menu_cancelled_physical_confirmation_restores_icon(qtbot, monkeypa
     from PySide6.QtWidgets import QMessageBox
 
     monkeypatch.setattr(MainWindow, "_begin_lazy_init", lambda _self: None)
-    config = AppConfig(instruments={
-        "ct400_backend": "simulation",
-        "edfa_backend": "physical",
-        "edfa_gpib_resource_name": "GPIB0::12::INSTR",
-    })
+    config = AppConfig(
+        instruments={
+            "ct400_backend": "simulation",
+            "edfa_backend": "physical",
+            "edfa_gpib_resource_name": "GPIB0::12::INSTR",
+        }
+    )
     settings = AppSettings(QSettings(str(tmp_path / "edfa-decline.ini"), QSettings.Format.IniFormat))
     window = MainWindow(config, settings=settings)
     qtbot.addWidget(window)
