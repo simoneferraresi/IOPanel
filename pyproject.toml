@@ -93,6 +93,7 @@ include = [
     "hardware/interfaces.py",
     "hardware/edfa_types.py",
     "hardware/edfa_gpib.py",
+    "hardware/ipg_ead2kc.py",
     "hardware/dummy_edfa.py",
     "hardware/pm5020.py",
     "hardware/pm5020_types.py",
