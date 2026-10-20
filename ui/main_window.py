@@ -62,6 +62,7 @@ from ui.application_icons import application_icon
 from ui.ct400_calibration_campaign import CT400SupervisedCampaignDialog
 from ui.ct400_calibration_dialog import CT400CalibrationDialog
 from ui.discovery_dialog import CameraDiscoveryDialog
+from ui.edfa_panel import EDFAReadOnlyPanel
 from ui.global_status import (
     CameraStatus,
     format_activity_status,
@@ -277,6 +278,8 @@ class MainWindow(QMainWindow):
         self.power_monitor_trace_widget: PowerMonitorTraceWidget | None = None
         self.pm5020_panel: PM5020Panel | None = None
         self._pending_pm5020_close = False
+        self.edfa_panel: EDFAReadOnlyPanel | None = None
+        self._pending_edfa_close = False
         self._ct400_error_reset_timer = QTimer(self)
         self._ct400_error_reset_timer.setSingleShot(True)
         self._ct400_error_reset_timer.timeout.connect(self._reset_ct400_error_visuals)
@@ -1138,6 +1141,19 @@ class MainWindow(QMainWindow):
         self.pm5020_panel.shutdown_complete.connect(self._resume_close_after_pm5020)
         self.pm5020_panel.shutdown_timeout.connect(lambda message: self.statusBar().showMessage(message, 0))
         self.tab_widget.addTab(self.pm5020_panel, "Thorlabs PM5020")
+
+        edfa_options = self.config.instruments
+        self.edfa_panel = EDFAReadOnlyPanel(
+            self,
+            backend_mode=edfa_options.edfa_backend,
+            resource_name=edfa_options.edfa_gpib_resource_name,
+            timeout_ms=edfa_options.edfa_gpib_timeout_ms,
+            write_termination=edfa_options.edfa_gpib_write_termination,
+            read_termination=edfa_options.edfa_gpib_read_termination,
+        )
+        self.edfa_panel.shutdown_complete.connect(self._resume_close_after_edfa)
+        self.edfa_panel.shutdown_timeout.connect(lambda message: self.statusBar().showMessage(message, 0))
+        self.tab_widget.addTab(self.edfa_panel, "IPG EDFA")
 
         self.setStatusBar(QStatusBar())
         self.ct400_status_label = QLabel("CT400: Initializing...")
@@ -2690,6 +2706,13 @@ class MainWindow(QMainWindow):
 
     def _defer_close_for_active_work(self, event: QtGui.QCloseEvent) -> bool:
         """Defer native cleanup until owners and active tasks finish, in original priority."""
+        edfa_panel = getattr(self, "edfa_panel", None)
+        if edfa_panel is not None and not edfa_panel.shutdown_finished:
+            event.ignore()
+            self._pending_edfa_close = True
+            self.statusBar().showMessage("Releasing EDFA session before application shutdown…", 0)
+            edfa_panel.request_shutdown()
+            return True
         pm5020_panel = getattr(self, "pm5020_panel", None)
         if pm5020_panel is not None and not pm5020_panel.shutdown_finished:
             event.ignore()
@@ -2878,6 +2901,12 @@ class MainWindow(QMainWindow):
     def _resume_close_after_power_monitor_export(self) -> None:
         if self._pending_power_monitor_export_close:
             self._pending_power_monitor_export_close = False
+            QTimer.singleShot(0, self.close)
+
+    @Slot()
+    def _resume_close_after_edfa(self) -> None:
+        if self._pending_edfa_close:
+            self._pending_edfa_close = False
             QTimer.singleShot(0, self.close)
 
     @Slot()
