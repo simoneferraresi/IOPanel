@@ -12,6 +12,7 @@ from .ct400_types import (
     PowerData,
     ScanWaitResult,
 )
+from .edfa_types import EDFAState, EDFATelemetry
 from .pm5020_types import (
     BurstAcquisitionConfig,
     BurstPowerData,
@@ -127,6 +128,29 @@ class AbstractPM5020(ABC):
         max_samples: int | None = None,
         cancel_event: Event | None = None,
     ) -> BurstPowerData: ...
+
+    @abstractmethod
+    def close(self) -> None: ...
+
+
+class AbstractEDFA(ABC):
+    """Read-only amplifier contract. Connecting does not authorize emission."""
+
+    @property
+    @abstractmethod
+    def state(self) -> EDFAState: ...
+
+    @abstractmethod
+    def is_connected(self) -> bool: ...
+
+    @abstractmethod
+    def connect(self) -> None: ...
+
+    @abstractmethod
+    def identify(self) -> str: ...
+
+    @abstractmethod
+    def read_telemetry(self) -> EDFATelemetry: ...
 
     @abstractmethod
     def close(self) -> None: ...
