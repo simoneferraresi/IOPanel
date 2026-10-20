@@ -59,8 +59,14 @@ class InstrumentsConfig(BaseModel):
         description="The model type of the Tunics laser, corresponding to a LaserSource enum member.",
     )
     piezo_dll_path: str = Field(default="", description="Path to the Thorlabs MDT_COMMAND_LIB.dll file.")
-    piezo_left_serial: str = Field(default="", description="Serial number of the left piezo controller.")
-    piezo_right_serial: str = Field(default="", description="Serial number of the right piezo controller.")
+    piezo_left_serial: str = Field(default="", description="Legacy COM port / vendor identifier for left piezo.")
+    piezo_right_serial: str = Field(default="", description="Legacy COM port / vendor identifier for right piezo.")
+    piezo_left_usb_serial: str = Field(
+        default="", description="Optional unique USB-interface serial for port-independent left piezo selection."
+    )
+    piezo_right_usb_serial: str = Field(
+        default="", description="Optional unique USB-interface serial for port-independent right piezo selection."
+    )
 
 
 class CameraConfig(BaseModel):
