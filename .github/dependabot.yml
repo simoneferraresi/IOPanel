@@ -1,0 +1,59 @@
+# Scheduled dependency PRs are intentionally reviewed and tested, never auto-merged.
+# Keep lab drivers and the Qt stack separate from routine tooling updates.
+version: 2
+updates:
+  # pyproject.toml + uv.lock (the application and its CI/test extras).
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "07:00"
+      timezone: "Europe/Rome"
+    open-pull-requests-limit: 5
+    groups:
+      python-development-tools:
+        patterns:
+          - "ruff"
+          - "pyright"
+          - "pytest"
+          - "pytest-cov"
+          - "pytest-qt"
+          - "pre-commit"
+        update-types:
+          - "minor"
+          - "patch"
+    # Native GUI and lab API transitions should receive their own PRs.
+    ignore:
+      - dependency-name: "pyside6"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "pyqtgraph"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "vmbpy"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "matlabengine"
+        update-types: ["version-update:semver-major"]
+
+  # Pin updates to actions referenced by the repository's workflow files.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "07:00"
+      timezone: "Europe/Rome"
+    open-pull-requests-limit: 5
+    groups:
+      actions-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # Separate pip requirements for offline, developer-only Windows icon builds.
+  - package-ecosystem: "pip"
+    directory: "/tools/icons"
+    schedule:
+      interval: "weekly"
+      day: "wednesday"
+      time: "07:00"
+      timezone: "Europe/Rome"
+    open-pull-requests-limit: 5
