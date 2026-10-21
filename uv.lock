@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 
 [[package]]
@@ -177,6 +177,7 @@ wheels = [
 name = "iopanel"
 version = "0.3.0"
 source = { virtual = "." }
+default-groups = ["lab"]
 dependencies = [
     { name = "numpy" },
     { name = "opencv-python-headless" },
@@ -211,6 +212,9 @@ lab = [
     { name = "matlabengine", marker = "python_full_version < '3.13' and platform_machine == 'AMD64' and sys_platform == 'win32'" },
     { name = "vmbpy", marker = "python_full_version < '3.13' and platform_machine == 'AMD64' and sys_platform == 'win32'" },
 ]
+
+[package.group-requires-python]
+lab = ">=3.12,<3.13"
 
 [package.metadata]
 requires-dist = [
