@@ -20,7 +20,7 @@ jobs:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@v10.2.0
         with:
-          version: "0.12.21"
+          version: "0.13.4"
       - run: uv sync --locked --no-default-groups --extra test --extra typecheck --extra lint
       - run: uv run --no-sync ruff check .
       - run: uv run --no-sync ruff format --check .
@@ -46,7 +46,7 @@ jobs:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@v10.2.0
         with:
-          version: "0.12.21"
+          version: "0.13.4"
       - run: uv sync --locked --no-default-groups --extra test
       # Each matrix cell has a separate Windows runner and pytest/Qt process.
       # Native Qt freezes remain bounded; no group may fail silently or skip CI.
