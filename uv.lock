@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 
 [[package]]
@@ -177,6 +177,7 @@ wheels = [
 name = "iopanel"
 version = "0.3.0"
 source = { virtual = "." }
+default-groups = ["lab"]
 dependencies = [
     { name = "numpy" },
     { name = "opencv-python-headless" },
@@ -212,6 +213,9 @@ lab = [
     { name = "vmbpy", marker = "python_full_version < '3.13' and platform_machine == 'AMD64' and sys_platform == 'win32'" },
 ]
 
+[package.group-requires-python]
+lab = ">=3.12,<3.13"
+
 [package.metadata]
 requires-dist = [
     { name = "numpy", specifier = ">=1.23.0" },
@@ -227,7 +231,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.0.0" },
     { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=4.0.0" },
     { name = "pytest-qt", marker = "extra == 'test'", specifier = ">=4.0.0" },
-    { name = "pyvisa", specifier = "==1.15.0" },
+    { name = "pyvisa", specifier = "==1.16.2" },
     { name = "ruff", marker = "extra == 'lint'", specifier = "==0.17.1" },
     { name = "scipy", specifier = ">=1.9.0" },
 ]
@@ -719,14 +723,14 @@ wheels = [
 
 [[package]]
 name = "pyvisa"
-version = "1.15.0"
+version = "1.16.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/52/04/1833acfa4ddefc5cdcfd76607f1bf494e7b7b658d890626e23026655d599/pyvisa-1.15.0.tar.gz", hash = "sha256:cec3cb91703a2849f6faa42b1ecd7689a0175baabff8ca33fce9f45934ce45e6", size = 236289, upload-time = "2025-04-01T15:52:25.377Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/13/72/a50adff945e66f2161a44b243970f809de19152a2e7da0473ae8ff96d642/pyvisa-1.16.2.tar.gz", hash = "sha256:75beb93eeafe20a50be5726fa4e3a645948c93d86819f9c1f8c542efa4085a38", size = 238729, upload-time = "2026-02-27T12:14:08.54Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a1/12/4979772f36acceb57664bde282fc7bd3e67f8d0ce85f2a521a05e90baaa5/pyvisa-1.15.0-py3-none-any.whl", hash = "sha256:e3ac8d9e863fbdbbe7e6d4d91401bceb7914d1c4a558a89b2cc755789f1e8309", size = 179199, upload-time = "2025-04-01T15:52:23.631Z" },
+    { url = "https://files.pythonhosted.org/packages/e4/a9/776da4f397003cca093659524c3526590522f81b642936838428c11274e6/pyvisa-1.16.2-py3-none-any.whl", hash = "sha256:54f034adafd3e8d1858d57cdafec64e920444f4b84b31c9fd17487fbad0a197a", size = 181413, upload-time = "2026-02-27T12:14:07.301Z" },
 ]
 
 [[package]]
