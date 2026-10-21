@@ -177,7 +177,7 @@ def supervise(output: Path, timeout_s: int, cycles: int, procdump_path: str | No
         "cycles": cycles,
         "mode": "suite" if suite else "stress",
         "qt_qpa_platform": env["QT_QPA_PLATFORM"],
-        "stack_tool": procdump_path,
+        "stack_tool": procdump_path or os.environ.get("PROCDUMP_PATH"),
     }
     capture: dict[str, Any] = {"status": "not_needed"}
     stdout_offset = stderr_offset = 0
