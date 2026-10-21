@@ -71,7 +71,7 @@ jobs:
           --timeout-seconds 300 --output pytest-ci-diagnostics
       - name: Upload pytest diagnostics
         if: always()
-        uses: actions/upload-artifact@v7.0.0
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: pytest-${{ matrix.group }}-${{ github.run_id }}-${{ github.run_attempt }}
           # Process memory dumps contain in-memory data and are NOT uploaded.
