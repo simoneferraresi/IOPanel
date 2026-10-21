@@ -127,20 +127,36 @@ def _capture_stack(pid: int, identity: dict[str, Any], output: Path) -> dict[str
         return {"status": "tool_error", "error": repr(exc)}
 
 
-def _pytest_command(suite: bool) -> list[str]:
+def _pytest_command(suite: bool, *, suite_group: str | None = None) -> list[str]:
     command = [sys.executable, "-u", "-m", "pytest", "-vv", "--tb=short", "-o", "faulthandler_timeout=30"]
     if suite:
+        if suite_group is not None:
+            from tools.ci_pytest_partition import paths_for_group
+
+            return [*command, *paths_for_group(suite_group)]
         return [*command, "tests"]
+    if suite_group is not None:
+        raise ValueError("A pytest partition requires --suite")
     return [*command, "-s", "tests/test_qt_stall_stress.py"]
 
 
-def supervise(output: Path, timeout_s: int, cycles: int, procdump_path: str | None, *, suite: bool = False) -> int:
+def supervise(
+    output: Path,
+    timeout_s: int,
+    cycles: int,
+    procdump_path: str | None,
+    *,
+    suite: bool = False,
+    suite_group: str | None = None,
+) -> int:
     if not 1 <= timeout_s <= 360:
         raise ValueError("timeout_s must be between 1 and 360 seconds")
     if not 1 <= cycles <= 1000:
         raise ValueError("cycles must be between 1 and 1000")
     if suite and cycles != 1:
         raise ValueError("suite mode must use exactly one run (cycles=1)")
+    if suite_group is not None and not suite:
+        raise ValueError("A pytest partition requires --suite")
     output.mkdir(parents=True, exist_ok=True)
     config_path = output / "simulation.ini"
     config_path.write_text(
@@ -166,7 +182,7 @@ def supervise(output: Path, timeout_s: int, cycles: int, procdump_path: str | No
         env.pop("IOPANEL_QT_STRESS_CYCLES", None)
     if procdump_path:
         env["PROCDUMP_PATH"] = procdump_path
-    command = _pytest_command(suite)
+    command = _pytest_command(suite, suite_group=suite_group)
     manifest: dict[str, Any] = {
         "started_utc": dt.datetime.now(dt.UTC).isoformat(),
         "command": command,
@@ -176,6 +192,7 @@ def supervise(output: Path, timeout_s: int, cycles: int, procdump_path: str | No
         "timeout_seconds": timeout_s,
         "cycles": cycles,
         "mode": "suite" if suite else "stress",
+        "suite_group": suite_group,
         "qt_qpa_platform": env["QT_QPA_PLATFORM"],
         "stack_tool": procdump_path or os.environ.get("PROCDUMP_PATH"),
     }
@@ -280,9 +297,17 @@ def main() -> int:
     parser.add_argument(
         "--suite", action="store_true", help="supervise the normal pytest suite rather than opt-in stress"
     )
+    parser.add_argument("--suite-group", choices=("core", "camera", "plot"))
     parser.add_argument("--procdump", type=str)
     args = parser.parse_args()
-    return supervise(args.output, args.timeout_seconds, args.cycles, args.procdump, suite=args.suite)
+    return supervise(
+        args.output,
+        args.timeout_seconds,
+        args.cycles,
+        args.procdump,
+        suite=args.suite,
+        suite_group=args.suite_group,
+    )
 
 
 if __name__ == "__main__":
