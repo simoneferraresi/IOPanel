@@ -33,12 +33,12 @@ limit fails retrieval and moves the backend to `ERROR`.
 
 ## Verified burst behavior
 
-The authoritative laboratory notebook's third-to-last code cell sets CW mode,
-disables autorange and the input filter, configures power measurement on both
-channels, and sets trigger source 3, delay 0, one sample per trigger, and one
-average. It calls `startBurstArrayMeasurement`, gets the recorded count through
-`getBurstArraySamplesCount(byref(c_uint32))`, and retrieves timestamp (`c_uint32`)
-and CH1/CH2 power (`c_float`) buffers with ONE full-buffer
+The reference laboratory notebook sets CW mode, disables autorange and the
+input filter, configures power measurement on both channels, and sets trigger
+source 3, delay 0, one sample per trigger, and one average. It arms burst
+acquisition, queries the sample count, and historically read the buffer in
+100-sample chunks. IOPanel now retrieves timestamp (`c_uint32`) and CH1/CH2
+power (`c_float`) arrays using one full-buffer
 `getBurstArraySamples(0, sample_count, ...)` call. The configured safety
 capacity is 15,000 samples. The adapter validates the sample count before
 allocating all three buffers and rejects repeated or non-increasing raw
@@ -79,7 +79,7 @@ handles remain active through native driver shutdown and are released afterward,
 including failed connection and close paths. The wrapper is imported lazily
 and is never added to `PYTHONPATH`.
 
-## M4: verified Thorlabs burst DLL (October 2026)
+## M4: verified Thorlabs physical PM5020 DLL (October 2026)
 
 In Thorlabs support case CAS-778044-M8W8F1, the lab reported that more than
 100 externally triggered samples were counted but retrieval beyond about
@@ -97,10 +97,13 @@ original installed `TLPMX.py` wrapper was used alongside the replacement
 native DLL via IOPanel's hash-staged SDK loader. The x86 DLL has not undergone
 this same physical validation.
 
-For physical burst acquisition only, the adapter now requires that specific
-verified x64 DLL hash before sending burst configuration commands. Other
-unqualified DLL versions are rejected deliberately, including the known-bad
-binary; normal PM5020 monitoring and simulator tests remain available.
+For **every physical PM5020 operation**, IOPanel now requires that specific
+verified x64 DLL SHA-256 **before opening a device connection**. This includes
+channel configuration, power monitoring, and synchronized bursts. Other
+unqualified DLL versions (including the known-bad binary) are rejected before
+the native SDK is loaded or a VISA session is opened. Physical mode requires
+both explicitly configured SDK paths; implicit system wrapper imports are
+disabled. Simulation and injected fake-driver tests remain SDK-independent.
 Newer Thorlabs releases should be evaluated and added to the verified set only
 after an explicit hardware qualification; a different hash is not evidence of
 a defect on its own.
@@ -119,17 +122,19 @@ written permission before committing vendor DLLs to a public repository or
 shipping them in installers. Git already ignores `*.dll`.
 
  IOPanel selects `TLPMX_64.dll` or `TLPMX_32.dll` according to the
-Python process bitness. Install the matching Thorlabs VISA runtime and use
-matching wrapper/DLL architectures. Missing source files, staging failures,
-architecture problems, and missing native dependencies produce actionable
-connection errors. The application-managed copy does not validate vendor
-signatures or qualify SDK compatibility; it is a file staging mechanism only.
+Python process bitness, but the **current physically verified profile is x64
+only**. Use 64-bit CPython and the matching Thorlabs VISA runtime. Missing
+source files, staging failures, architecture problems, and missing native
+dependencies produce actionable connection errors. The application-managed
+copy provides hash-based file identity, not a vendor signature or a guarantee
+of complete SDK compatibility. The validated hash currently has evidence for
+normal native integration and full 330-sample burst retrieval at this lab.
 
 Portable code defaults use simulation and empty resource, wrapper, and DLL
-paths. In physical mode, leaving **both** SDK paths empty preserves the legacy
-lazy `import TLPMX` behavior, provided the vendor wrapper is importable and
-its native DLL can be loaded by that wrapper. Supplying exactly one SDK path
-is rejected; configure both when the files are in separate directories.
+paths. Physical mode **requires both** `pm5020_wrapper_path` and
+`pm5020_dll_path` to be configured explicitly, including when the files are
+in separate directories. It never silently falls back to a system-installed
+native DLL.
 The checked-in `config.ini` contains this site's configured resource
 and SDK paths; adjust them for other installations.
 Example laboratory settings:
@@ -139,7 +144,7 @@ Example laboratory settings:
 pm5020_backend = simulation
 pm5020_resource_name = USB0::0x1313::0x80BB::M01213392::INSTR
 pm5020_wrapper_path = C:/Program Files (x86)/IVI Foundation/VISA/WinNT/TLPMX/Examples/Python/TLPMX.py
-pm5020_dll_path = C:/Program Files/IVI Foundation/VISA/Win64/Bin/TLPMX_64.dll
+pm5020_dll_path = C:/Users/<LAB_WINDOWS_USER>/AppData/Local/IOPanel/vendor/thorlabs-2025-11-14/TLPMX_64.dll
 ```
 
 The simulator and all backend imports work without that SDK. Unit tests use a
