@@ -42,8 +42,6 @@ jobs:
             throw "ProcDump signature verification failed: $($signature.Status); $($signature.SignerCertificate.Subject)"
           }
           "PROCDUMP_PATH=$tool" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-      - name: Temporary focused regression failure diagnosis
-        run: uv run --no-sync pytest -vv -x --tb=long -s tests/test_mainwindow_concurrent_simulated_acquisition.py::test_scan_owns_ct400_and_blocks_monitor_and_detector_writes
       - name: Supervise full hardware-independent pytest suite
         shell: pwsh
         run: >-
