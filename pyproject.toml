@@ -84,7 +84,7 @@ exclude = [
 ]
 
 [tool.uv]
-required-version = "==0.12.21"
+required-version = "==0.13.4"
 # 'uv sync --locked' on the lab PC installs VmbPy and MATLAB Engine automatically.
 # CI and driver-free users explicitly pass --no-default-groups.
 default-groups = ["lab"]

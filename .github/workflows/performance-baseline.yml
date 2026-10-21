@@ -35,7 +35,7 @@ jobs:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@v10.2.0
         with:
-          version: "0.12.21"
+          version: "0.13.4"
       - name: Install locked driver-free application dependencies
         run: uv sync --locked --no-default-groups --extra test
       - name: Capture synthetic Qt offscreen scan-overlay profile
@@ -67,7 +67,7 @@ jobs:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@v10.2.0
         with:
-          version: "0.12.21"
+          version: "0.13.4"
       - name: Install locked driver-free application dependencies
         run: uv sync --locked --no-default-groups --extra test
       - name: Capture synthetic scan CSV/MAT I/O and Qt pending-callback latency
@@ -98,7 +98,7 @@ jobs:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@v10.2.0
         with:
-          version: "0.12.21"
+          version: "0.13.4"
       - name: Install locked driver-free application dependencies
         run: uv sync --locked --no-default-groups --extra test
       - name: Capture MainWindow/PlotWidget synchronous scan I/O callbacks
@@ -129,7 +129,7 @@ jobs:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@v10.2.0
         with:
-          version: "0.12.21"
+          version: "0.13.4"
       - name: Install locked driver-free application dependencies
         run: uv sync --locked --no-default-groups --extra test
       - name: Capture first-responsive MainWindow startup without device initialization
