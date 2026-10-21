@@ -90,3 +90,28 @@ No oscilloscope evidence, physical-trigger capture, or calibration
 constants have been obtained for M4-A. A future M4-B should record
 physical timing evidence and only then approve a narrowly scoped,
 operator-supervised orchestration path.
+
+## Auditing the next raw capture (M4-A)
+
+Once the notebook's safety/review gate and vendor trigger configuration are
+physically qualified, a completed run's raw archive can be audited **offline**:
+
+```powershell
+uv run --locked python -m tools.audit_pm5020_sync_run "output/burst_runs/RUN_ID"
+```
+
+The audit verifies the archived raw PM CSV and CT400 sync file against the
+metadata SHA-256 hashes; checks sample-buffer indices and native uint32 tick
+fields; compares the PM sample count reported in the metadata; and reports
+**both** explicit zero/one-based CT400 pulse-index mapping hypotheses.
+Even if both candidates pass, the result remains `timing_qualified=False`.
+A successful file integrity check must not be interpreted as agreement on
+the trigger index origin or synchronization latency.
+
+The original notebook's `PersistentLaserCT400.close()` override was
+intentional: it preserved optical seeding to prevent the EDFA's low-input
+shutdown between SHG scans. Current IOPanel `CT400.close()` also releases
+the driver handle **without explicitly sending a laser-disable command**,
+so duplicating that subclass is unnecessary in IOPanel. This is a code-level
+comparison, not a physical verification of emission persistence on shutdown.
+For the present M4 timing campaign, keep the EDFA out of the optical path.
