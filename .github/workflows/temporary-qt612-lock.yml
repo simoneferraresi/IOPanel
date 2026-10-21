@@ -1,0 +1,25 @@
+name: Temporary Qt 6.12 uv.lock generator
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  build-lock:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          version: "0.13.4"
+      - run: uv lock --upgrade-package pyside6 --upgrade-package pyside6-addons --upgrade-package pyside6-essentials --upgrade-package shiboken6
+      - run: uv lock --check
+      - uses: actions/upload-artifact@v7.0.0
+        with:
+          name: qtpyside612-generated-lock
+          path: uv.lock
+          if-no-files-found: error
