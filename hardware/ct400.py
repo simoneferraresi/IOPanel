@@ -192,18 +192,21 @@ class CT400(AbstractCT400):
                 c_int32,
                 [c_uint64, POINTER(c_char)],
             ),
+            ("CT400_SetExternalSynchronization", c_int32, [c_uint64, c_int32]),
         ]
         for name, restype, argtypes in func_defs:
-            func = getattr(self.dll, name)
+            try:
+                func = getattr(self.dll, name)
+            except AttributeError as exc:
+                if name == "CT400_SetExternalSynchronization":
+                    raise CT400InitializationError(
+                        "CT400_lib.dll is incompatible: required entry point "
+                        "CT400_SetExternalSynchronization is missing. "
+                        "Use the laboratory-verified CT400 DLL."
+                    ) from exc
+                raise
             func.restype = restype
             func.argtypes = argtypes
-
-        # Some older CT400_lib.dll builds may not expose this optional export.
-        # Do not block unrelated scanning/monitoring at connection time.
-        external_sync = getattr(self.dll, "CT400_SetExternalSynchronization", None)
-        if external_sync is not None:
-            external_sync.restype = c_int32
-            external_sync.argtypes = [c_uint64, c_int32]
 
     def _check_rc(self, return_code: int, error_message: str):
         """
@@ -518,14 +521,8 @@ class CT400(AbstractCT400):
             raise CT400CommunicationError(
                 "Cannot configure CT400 external synchronization without an initialized CT400 handle."
             )
-        external_sync = getattr(self.dll, "CT400_SetExternalSynchronization", None)
-        if external_sync is None:
-            raise CT400CommunicationError(
-                "This CT400_lib.dll does not export CT400_SetExternalSynchronization. "
-                "Check the installed vendor DLL version before synchronized acquisition."
-            )
         logger.info("Setting CT400 external synchronization to %s.", enable.name)
-        result = external_sync(self.handle, enable.value)
+        result = self.dll.CT400_SetExternalSynchronization(self.handle, enable.value)
         if result != 0:
             raise CT400CommunicationError(
                 f"CT400_SetExternalSynchronization({enable.name}) failed (raw return code: {result})."

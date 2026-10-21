@@ -72,15 +72,19 @@ Before permitting coordinated CT400/PM5020 scans in IOPanel:
 4. Confirm sequence guarantees: PM5020 armed **before** CT400 scan start,
    scan-end behavior, PM buffer overflow and missing TTL, cancellation,
    disconnect and recovery, and safe cleanup of BOTH instruments.
-5. Implement and review CT400's external synchronization API in the
-   current driver before any live coordinator. It appears in the notebook
-   but not yet in the supported `hardware.ct400.CT400` methods.
+5. Review and qualify the new CT400 external synchronization API against
+   the laboratory DLL before any live coordinator. The entry point is now
+   declared in `hardware.ct400.CT400`, but its physical trigger behavior
+   remains unverified.
 6. Keep CT400 and PM5020 ownership independent until a single acquisition
    coordinator can serialize all device calls without deadlocking the
    existing QThreads or leaving armed bursts active.
-7. Do not port the notebook's `PersistentLaserCT400.close()` override,
-   which intentionally skips laser-disable cleanup. Its behavior is not an
-   acceptable shutdown foundation.
+7. Preserve the original notebook's intentional continuous-seed requirement
+   for future EDFA experiments, but do not port its legacy `close()` override
+   wholesale: the legacy base class explicitly issues `cmd_laser(DISABLE)`,
+   whereas current IOPanel `CT400.close()` releases its handle without a
+   laser emission command. Document and physically qualify shutdown behavior
+   independently of synchronization.
 8. The notebook's 1530–1565 nm example starts **below the EAD-2K-C
    amplifier's 1535 nm nominal operating range**. Do not connect the EDFA
    to the workflow or enable optical amplification in this milestone.
@@ -126,11 +130,19 @@ the small method into both the abstract and concrete IOPanel CT400
 interfaces, and records the simulated state in `DummyCT400`.
 
 The IOPanel implementation explicitly passes `Enable.value`, checks for a
-live native handle, and requires a zero return code. The DLL export is
-registered **only when present**, so old installations missing the function
-continue to support ordinary connection, monitoring, and scanning. Calling
-the new method on such a DLL fails with a clear diagnostic instead of
-breaking initialization.
+live native handle, and requires a zero return code. The lab PC's actual
+`CT400_lib.dll` was checked on 2026-10-21: it exists, loads with
+`ctypes.WinDLL`, and **exports `CT400_SetExternalSynchronization`**.
+That was an export-only inspection: no CT400 initialization, scan, trigger
+configuration or laser command was executed.
+
+The function is now a **required** native entry point during CT400 DLL
+signature initialization. If a different DLL lacks it, CT400 initialization
+fails with an actionable `CT400InitializationError` rather than silently
+operating without the requested capability. This intentionally changes the
+compatibility floor for physical CT400 installations. Presence of an exported
+symbol does **not** yet validate its ABI, accepted flags, output pulse
+properties, timing or interaction with the PM5020.
 
 The method must be called deliberately by a future supervised workflow:
 no GUI action invokes it, there is **no automatic trigger enable** on

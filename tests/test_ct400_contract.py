@@ -3,7 +3,7 @@ from ctypes import c_int32, c_uint64
 
 import pytest
 
-from hardware.ct400 import CT400, CT400CommunicationError
+from hardware.ct400 import CT400, CT400CommunicationError, CT400InitializationError
 from hardware.ct400_types import Enable, LaserInput, LaserSource
 from hardware.dummy_ct400 import DummyCT400
 from hardware.interfaces import AbstractCT400
@@ -106,11 +106,13 @@ def test_external_sync_declares_vendor_signature_and_only_changes_trigger_output
     assert device.dll.functions["CT400_ScanStart"].calls == []
 
 
-def test_optional_dll_export_absence_does_not_block_initialization_or_legacy_calls():
-    device = _mocked_ct400(has_sync=False)
+def test_external_sync_export_required_at_dll_signature_initialization():
+    device = CT400.__new__(CT400)
+    device.dll = _FakeCT400DLL(has_sync=False)
+    with pytest.raises(CT400InitializationError, match="required entry point CT400_SetExternalSynchronization"):
+        device._configure_function_signatures()
     assert device.dll.functions["CT400_SetScan"].argtypes is not None
-    with pytest.raises(CT400CommunicationError, match="does not export"):
-        device.set_external_synchronization(Enable.ENABLE)
+    assert device.dll.functions["CT400_Init"].calls == []
 
 
 @pytest.mark.parametrize("argument", [0, 1, False, True, "ENABLE", None])
