@@ -205,11 +205,17 @@ def supervise(
     try:
         with stdout_path.open("wb") as stdout, stderr_path.open("wb") as stderr:
             process = subprocess.Popen(command, cwd=Path.cwd(), env=env, stdout=stdout, stderr=stderr)
-            identity = _process_identity(process.pid)
+            # CIM/PowerShell can stall independently of the supervised pytest
+            # process. Do not kill healthy tests because optional identity
+            # inspection timed out; fail closed for native dump capture instead.
+            try:
+                identity = _process_identity(process.pid)
+            except subprocess.TimeoutExpired as exc:
+                identity = None
+                manifest["child_identity_probe_error"] = f"timeout after {exc.timeout}s"
             manifest["child_identity"] = identity
-            if (
-                identity is None
-                or identity.get("ExecutablePath", "").casefold() != sys.executable.casefold()
+            if identity is not None and (
+                identity.get("ExecutablePath", "").casefold() != sys.executable.casefold()
                 or "pytest" not in str(identity.get("CommandLine", "")).casefold()
             ):
                 raise RuntimeError(f"pytest process identity did not match launched pytest: {identity!r}")
@@ -241,7 +247,16 @@ def supervise(
                                     pass
                 if process.poll() is None and time.monotonic() >= deadline:
                     timed_out = True
-                    capture = _capture_stack(process.pid, identity, output)
+                    if identity is None:
+                        capture = {
+                            "status": "identity_unverified",
+                            "reason": "native capture skipped because child process identity could not be verified",
+                        }
+                    else:
+                        try:
+                            capture = _capture_stack(process.pid, identity, output)
+                        except subprocess.TimeoutExpired as exc:
+                            capture = {"status": "identity_probe_timeout", "error": repr(exc)}
                     break
             if timed_out and process.poll() is None:
                 process.terminate()
