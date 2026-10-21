@@ -52,7 +52,7 @@ jobs:
           --timeout-seconds ${{ inputs.timeout_seconds }}
       - name: Upload diagnostic evidence
         if: always()
-        uses: actions/upload-artifact@v6.0.0
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: qt-stall-${{ github.run_id }}-${{ github.run_attempt }}
           path: qt-stall-artifacts/

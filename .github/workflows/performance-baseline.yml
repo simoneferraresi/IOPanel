@@ -50,7 +50,7 @@ jobs:
           --output benchmark-results/scan-overlays-offscreen.json
       - name: Upload informational baseline JSON
         if: always()
-        uses: actions/upload-artifact@v7.0.0
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: scan-overlays-offscreen-${{ github.sha }}
           path: benchmark-results/scan-overlays-offscreen.json
@@ -81,7 +81,7 @@ jobs:
           --output benchmark-results/scan-io-offscreen.json
       - name: Upload informational scan-I/O JSON
         if: always()
-        uses: actions/upload-artifact@v7.0.0
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: scan-io-offscreen-${{ github.sha }}
           path: benchmark-results/scan-io-offscreen.json
@@ -112,7 +112,7 @@ jobs:
           --output benchmark-results/scan-gui-offscreen.json
       - name: Upload informational scan GUI handler JSON
         if: always()
-        uses: actions/upload-artifact@v7.0.0
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: scan-gui-offscreen-${{ github.sha }}
           path: benchmark-results/scan-gui-offscreen.json
@@ -141,7 +141,7 @@ jobs:
           --output benchmark-results/startup-offscreen.json
       - name: Upload informational startup baseline JSON
         if: always()
-        uses: actions/upload-artifact@v7.0.0
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: startup-offscreen-${{ github.sha }}
           path: benchmark-results/startup-offscreen.json

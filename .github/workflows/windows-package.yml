@@ -31,14 +31,14 @@ jobs:
           uv run --no-sync python tools/smoke_frozen_opengl.py
           dist/IOPanel/IOPanel.exe --platform windows --timeout 30
           --evidence-dir opengl-smoke-evidence
-      - uses: actions/upload-artifact@v7.0.0
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: IOPanel-packaged-opengl-smoke
           path: opengl-smoke-evidence/
           if-no-files-found: ignore
           retention-days: 7
-      - uses: actions/upload-artifact@v7.0.0
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: IOPanel-windows-x64-simulation
           path: dist/IOPanel/
