@@ -26,8 +26,8 @@ jobs:
           from pathlib import Path
           data = Path("uv.lock").read_text(encoding="utf-8")
           for name in ("pyside6", "pyside6-addons", "pyside6-essentials", "pyside6-pdf", "pyside6-webengine", "shiboken6"):
-              start = data.index('[[package]]\\nname = "' + name + '"')
-              end = data.find("\\n[[package]]", start + 4)
+              start = data.index('[[package]]' + chr(10) + 'name = "' + name + '"')
+              end = data.find(chr(10) + '[[package]]', start + 4)
               if end == -1:
                   end = len(data)
               print("LOCK_PKG_" + name.upper().replace("-", "_") + "=" + json.dumps(data[start:end]))
