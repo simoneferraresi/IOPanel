@@ -528,8 +528,7 @@ class CT400(AbstractCT400):
         result = external_sync(self.handle, enable.value)
         if result != 0:
             raise CT400CommunicationError(
-                f"CT400_SetExternalSynchronization({enable.name}) failed "
-                f"(raw return code: {result})."
+                f"CT400_SetExternalSynchronization({enable.name}) failed (raw return code: {result})."
             )
 
     @override

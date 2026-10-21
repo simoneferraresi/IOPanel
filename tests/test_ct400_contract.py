@@ -54,7 +54,6 @@ def test_ct400_sync_file_rejects_an_uninitialized_handle():
         device.save_scan_wavelength_sync_file("unused.txt")
 
 
-
 class _FakeNativeFunction:
     def __init__(self, result=0):
         self.result = result
