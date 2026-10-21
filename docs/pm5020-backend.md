@@ -38,16 +38,21 @@ disables autorange and the input filter, configures power measurement on both
 channels, and sets trigger source 3, delay 0, one sample per trigger, and one
 average. It calls `startBurstArrayMeasurement`, gets the recorded count through
 `getBurstArraySamplesCount(byref(c_uint32))`, and retrieves timestamp (`c_uint32`)
-and CH1/CH2 power (`c_float`) buffers with `getBurstArraySamples` in 100-sample
-chunks. The configured safety capacity is 15,000 samples; the adapter validates
-the count and allocates each chunk to its requested length, including a partial
-last chunk.
+and CH1/CH2 power (`c_float`) buffers with ONE full-buffer
+`getBurstArraySamples(0, sample_count, ...)` call. The configured safety
+capacity is 15,000 samples. The adapter validates the sample count before
+allocating all three buffers and rejects repeated or non-increasing raw
+timestamps rather than accepting a truncated or corrupted burst. The former
+`BurstAcquisitionConfig.chunk_size` setting remains temporarily for
+backward compatibility (and simulation) but is unused by physical retrieval.
 
-The notebook comment says `getBurstArraySamples()` aborts the measurement, but
-the comment alone does not establish that as a documented wrapper guarantee.
-This backend does not depend on the abort as its completion signal. Physical
-behavior, timestamps, trigger edges, chunk retrieval, and recovery still need
-validation with the laboratory instrument before experimental use.
+The vendor-supplied `PyTLPMX.py` documentation states that
+`getBurstArraySamples()` aborts the active burst and disarms the trigger,
+and that repeated calls with distinct start indices are supported. IOPanel now
+uses one full-buffer call because that path was physically validated with the
+patched native DLL. The driver does not interpret timestamp ticks as seconds.
+Trigger-edge timing, wavelength index origin, and CT400 warning 101 remain to
+be qualified independently.
 
 Single-channel optical power reads use the official Thorlabs Python example's
 `measPower(byref(c_double), channel)` signature. The official PM5020 example
@@ -74,8 +79,46 @@ handles remain active through native driver shutdown and are released afterward,
 including failed connection and close paths. The wrapper is imported lazily
 and is never added to `PYTHONPATH`.
 
+## M4: verified Thorlabs burst DLL (October 2026)
+
+In Thorlabs support case CAS-778044-M8W8F1, the lab reported that more than
+100 externally triggered samples were counted but retrieval beyond about
+100 samples failed. Thorlabs supplied replacement files in November 2025,
+which the laboratory had confirmed fixed the issue in January 2026.
+
+On October 21, 2026 the installed x64 DLL with SHA-256
+`fbbe8cc3ebea45a5a42b437413adf862e9becbdf0d4bb132e2b768eafa2a4fef`
+reproduced the original fault using both chunked and single-call reads.
+The supplied replacement `TLPMX_64.dll` with SHA-256
+`0e340f2abab40b15ad692d3b7621d5738ae40a571404fcaa986ae7860d4a08b8`
+returned all **330** PM5020 samples with strictly increasing raw timestamps
+in a physical dark-noise experiment (single-call native retrieval). The
+original installed `TLPMX.py` wrapper was used alongside the replacement
+native DLL via IOPanel's hash-staged SDK loader. The x86 DLL has not undergone
+this same physical validation.
+
+For physical burst acquisition only, the adapter now requires that specific
+verified x64 DLL hash before sending burst configuration commands. Other
+unqualified DLL versions are rejected deliberately, including the known-bad
+binary; normal PM5020 monitoring and simulator tests remain available.
+Newer Thorlabs releases should be evaluated and added to the verified set only
+after an explicit hardware qualification; a different hash is not evidence of
+a defect on its own.
+
+For persistent use, store the vendor-provided DLL in a private, stable folder,
+for example `%LOCALAPPDATA%/IOPanel/vendor/thorlabs-2025-11-14/TLPMX_64.dll`,
+then set `pm5020_dll_path` to its **expanded absolute filesystem path**
+in the lab configuration. Keep `pm5020_wrapper_path` pointing to the
+already working installed wrapper. IOPanel will stage the pair in its existing
+per-user cache; there is no need to change `C:/Program Files` or the
+system-installed DLL. Archive the SHA-256 alongside each experimental run.
+
 The Thorlabs wrapper and DLL are proprietary SDK files and are not bundled or
-committed. IOPanel selects `TLPMX_64.dll` or `TLPMX_32.dll` according to the
+committed. Redistribution rights have not been established; ask Thorlabs for
+written permission before committing vendor DLLs to a public repository or
+shipping them in installers. Git already ignores `*.dll`.
+
+ IOPanel selects `TLPMX_64.dll` or `TLPMX_32.dll` according to the
 Python process bitness. Install the matching Thorlabs VISA runtime and use
 matching wrapper/DLL architectures. Missing source files, staging failures,
 architecture problems, and missing native dependencies produce actionable
