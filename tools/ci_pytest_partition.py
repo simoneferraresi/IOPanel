@@ -59,7 +59,7 @@ def parse_nodeids(output: str) -> list[str]:
     nodes = []
     for raw in output.splitlines():
         line = raw.strip().replace("\\", "/")
-        if line.startswith("tests/") and "::" in line and " " not in line:
+        if line.startswith("tests/") and "::" in line:
             nodes.append(line)
     return nodes
 
