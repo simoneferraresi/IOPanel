@@ -66,7 +66,7 @@ jobs:
       - name: Supervise pytest partition
         shell: pwsh
         run: >-
-          uv run --no-sync python tools/qt_stall_stress_supervisor.py
+          uv run --no-sync python -m tools.qt_stall_stress_supervisor
           --suite --suite-group ${{ matrix.group }} --cycles 1
           --timeout-seconds 300 --output pytest-ci-diagnostics
       - name: Upload pytest diagnostics
