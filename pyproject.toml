@@ -47,7 +47,7 @@ typecheck = [
     "pyright[nodejs]==1.1.414",
 ]
 lint = [
-    "ruff==0.17.1",
+    "ruff==0.17.1", # Temporary lock regeneration trigger
 ]
 
 # Install these integrations by default with 'uv sync' on the supported
