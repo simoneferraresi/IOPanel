@@ -60,6 +60,10 @@ class AbstractCT400(ABC):
     def set_detector_array(self, det2: Enable, det3: Enable, det4: Enable, ext: Enable) -> None: ...
 
     @abstractmethod
+    def set_external_synchronization(self, enable: Enable) -> None:
+        """Configure the CT400 trigger output; not an optical emission control."""
+
+    @abstractmethod
     def set_scan(self, laser_power: float, min_wavelength: float, max_wavelength: float) -> None: ...
 
     @abstractmethod

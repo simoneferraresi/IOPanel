@@ -198,6 +198,13 @@ class CT400(AbstractCT400):
             func.restype = restype
             func.argtypes = argtypes
 
+        # Some older CT400_lib.dll builds may not expose this optional export.
+        # Do not block unrelated scanning/monitoring at connection time.
+        external_sync = getattr(self.dll, "CT400_SetExternalSynchronization", None)
+        if external_sync is not None:
+            external_sync.restype = c_int32
+            external_sync.argtypes = [c_uint64, c_int32]
+
     def _check_rc(self, return_code: int, error_message: str):
         """
         Private helper to check the return code of a DLL function.
@@ -493,6 +500,37 @@ class CT400(AbstractCT400):
         logger.debug(f"Scan wavelength sync file saved at {saved_path}")
 
         return Path(saved_path)
+
+    @override
+    def set_external_synchronization(self, enable: Enable) -> None:
+        """Configure the CT400 DLL's external synchronization output.
+
+        The uploaded legacy CT400 driver declares the vendor ABI as
+        (uint64 handle, int32 Enable) -> int32. This controls the CT400
+        synchronization output, NOT the laser or PM5020 input.
+
+        Merely exposing this method does not enable any output. Trigger
+        electrical/edge semantics still require a separate lab check.
+        """
+        if not isinstance(enable, Enable):
+            raise TypeError("enable must be Enable.ENABLE or Enable.DISABLE")
+        if self.handle is None:
+            raise CT400CommunicationError(
+                "Cannot configure CT400 external synchronization without an initialized CT400 handle."
+            )
+        external_sync = getattr(self.dll, "CT400_SetExternalSynchronization", None)
+        if external_sync is None:
+            raise CT400CommunicationError(
+                "This CT400_lib.dll does not export CT400_SetExternalSynchronization. "
+                "Check the installed vendor DLL version before synchronized acquisition."
+            )
+        logger.info("Setting CT400 external synchronization to %s.", enable.name)
+        result = external_sync(self.handle, enable.value)
+        if result != 0:
+            raise CT400CommunicationError(
+                f"CT400_SetExternalSynchronization({enable.name}) failed "
+                f"(raw return code: {result})."
+            )
 
     @override
     def close(self) -> None:

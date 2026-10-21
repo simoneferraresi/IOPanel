@@ -115,3 +115,31 @@ the driver handle **without explicitly sending a laser-disable command**,
 so duplicating that subclass is unnecessary in IOPanel. This is a code-level
 comparison, not a physical verification of emission persistence on shutdown.
 For the present M4 timing campaign, keep the EDFA out of the optical path.
+
+
+## CT400 external synchronization driver support
+
+The original laboratory `ct400.py` supplied with the notebook declares
+`CT400_SetExternalSynchronization(uint64 handle, int32 enable) -> int32`
+and calls it via `set_external_synchronization(Enable.ENABLE)`. M4 ports
+the small method into both the abstract and concrete IOPanel CT400
+interfaces, and records the simulated state in `DummyCT400`.
+
+The IOPanel implementation explicitly passes `Enable.value`, checks for a
+live native handle, and requires a zero return code. The DLL export is
+registered **only when present**, so old installations missing the function
+continue to support ordinary connection, monitoring, and scanning. Calling
+the new method on such a DLL fails with a clear diagnostic instead of
+breaking initialization.
+
+The method must be called deliberately by a future supervised workflow:
+no GUI action invokes it, there is **no automatic trigger enable** on
+connection or scan start, and it does not change optical emission or
+PM5020 burst configuration. The DLL export and its argument types come
+from the operator-provided legacy code; exact CT400 DLL/firmware
+compatibility, trigger electrical specifications and sample correspondence
+must still be measured in the lab before coordinated scans.
+
+Do not replace current `CT400.close()` with the uploaded legacy version:
+the latter explicitly calls `cmd_laser(DISABLE, ...)` and would remove
+the continuous optical seed required for the separate EDFA SHG workflow.
