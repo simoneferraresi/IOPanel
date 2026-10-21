@@ -1215,7 +1215,11 @@ class MainWindow(QMainWindow):
         self.tab_widget.addTab(self.edfa_panel, "IPG EDFA")
 
         self.setStatusBar(QStatusBar())
-        self.edfa_observations_status_label = QLabel("EDFA: Disconnected — no observations")
+        self.edfa_observations_status_label = QLabel(
+            "EDFA [SIM]: Disconnected"
+            if self.edfa_panel.backend_mode == "simulation"
+            else "EDFA [GPIB]: Disconnected"
+        )
         self.edfa_observations_status_label.setObjectName("edfaObservationsStatusLabel")
         self.edfa_observations_status_label.setToolTip(self.edfa_observations_status_label.text())
         self.edfa_observations_status_label.setMinimumWidth(150)
