@@ -522,7 +522,11 @@ class MainWindow(QMainWindow):
         """Independent, persistent left-hand status widget; do not steal showMessage."""
         label = self.edfa_observations_status_label
         label.setText(observation)
-        label.setToolTip(observation)
+        panel = self.edfa_panel
+        identity = panel._identity_text if panel is not None else ""
+        resource = panel.resource_name if panel is not None and panel.backend_mode == "physical" else ""
+        context = [f"Instrument: {identity}" if identity else "", f"GPIB: {resource}" if resource else ""]
+        label.setToolTip("\n".join([observation, *(line for line in context if line)]))
 
     def _update_edfa_action(self) -> None:
         """Match the PM5020 checkmark, icon, spinner and recovery conventions."""
@@ -1214,7 +1218,8 @@ class MainWindow(QMainWindow):
         self.edfa_observations_status_label = QLabel("EDFA: Disconnected — no observations")
         self.edfa_observations_status_label.setObjectName("edfaObservationsStatusLabel")
         self.edfa_observations_status_label.setToolTip(self.edfa_observations_status_label.text())
-        self.edfa_observations_status_label.setMinimumWidth(0)
+        self.edfa_observations_status_label.setMinimumWidth(150)
+        self.edfa_observations_status_label.setContentsMargins(6, 0, 4, 0)
         self.edfa_observations_status_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         # First, expanding permanent widget sits to the left of instrument indicators,
         # and stays visible when other operations use temporary status messages.

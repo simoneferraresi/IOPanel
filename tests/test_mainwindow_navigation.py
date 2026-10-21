@@ -302,29 +302,32 @@ def test_edfa_menu_owns_connection_icons_and_status_bar(qtbot, monkeypatch, tmp_
     assert action.icon().pixmap(18, 18).toImage() == QIcon(":/icons/connect.svg").pixmap(18, 18).toImage()
     assert not hasattr(panel, "connect_button") and not hasattr(panel, "disconnect_button")
     assert observation.parentWidget() is window.statusBar()
-    assert observation.text().startswith("EDFA: Disconnected")
-    assert observation.toolTip() == observation.text()
+    assert observation.text() == "EDFA [SIM]: Disconnected"
+    assert observation.toolTip().startswith(observation.text())
 
     action.trigger()
     assert action.text() == "Connecting EDFA…"
     assert not action.isEnabled()
     qtbot.waitUntil(lambda: panel._backend_state is EDFAState.IDLE, timeout=3000)
     assert action.text() == "Disconnect EDFA"
+    assert observation.text() == "EDFA [SIM]: Connected — awaiting telemetry"
+    assert "SIM" in observation.text()
+    assert "SIMULATED" in observation.toolTip()
     assert action.isChecked() and action.isEnabled()
     assert action.icon().pixmap(18, 18).toImage() == QIcon(":/icons/disconnect.svg").pixmap(18, 18).toImage()
 
     panel.request_read()
     qtbot.waitUntil(lambda: "Disconnected" not in observation.text(), timeout=3000)
-    assert observation.text().startswith("EDFA:")
-    assert observation.toolTip() == observation.text()
+    assert observation.text().startswith("EDFA [SIM]:")
+    assert observation.toolTip().startswith(observation.text())
     window.statusBar().showMessage("CT400 operation", 1000)
-    assert observation.text().startswith("EDFA:")
+    assert observation.text().startswith("EDFA [SIM]:")
     action.trigger()
     assert action.text() == "Disconnecting EDFA…"
     qtbot.waitUntil(lambda: panel._backend_state is EDFAState.DISCONNECTED, timeout=3000)
     assert action.text() == "Connect EDFA"
     assert not action.isChecked()
-    assert observation.text().startswith("EDFA: Disconnected")
+    assert observation.text() == "EDFA [SIM]: Disconnected"
     window.close()
 
 

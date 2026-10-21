@@ -40,7 +40,10 @@ def test_simulation_worker_thread_connect_read_monitor_disconnect_and_shutdown(q
     panel.request_connect()
     qtbot.waitUntil(lambda: panel._backend_state is EDFAState.IDLE, timeout=3000)
     assert worker_thread_ids and worker_thread_ids[0] != gui_thread_id
-    assert "SIMULATION" in panel.mode_label.text()
+    assert panel.backend_mode == "simulation"
+    assert not hasattr(panel, "mode_label")
+    assert not hasattr(panel, "status_label")
+    assert not hasattr(panel, "identity_label")
     panel.read_button.click()
     qtbot.waitUntil(lambda: panel.reading_labels["edfaRawStatusLabel"].text() != "—", timeout=3000)
     assert panel.reading_labels["edfaOutputLabel"].text() == "0 W"
@@ -117,7 +120,8 @@ def test_mainwindow_edfa_tab_does_not_autoconnect_even_if_configured_physical(qt
     qtbot.addWidget(window)
     assert window.tab_widget.widget(4) is window.edfa_panel
     assert window.tab_widget.tabText(4) == "IPG EDFA"
-    assert "PHYSICAL" in window.edfa_panel.mode_label.text()
+    assert window.edfa_panel.backend_mode == "physical"
+    assert window.edfa_observations_status_label.text() == "EDFA [GPIB]: Disconnected"
     assert not window.edfa_panel.task.worker_thread.isRunning()
     assert window.edfa_panel._backend_state is EDFAState.DISCONNECTED
     window.close()
@@ -146,7 +150,7 @@ def test_mainwindow_close_waits_for_edfa_thread(qtbot, monkeypatch, tmp_path):
 
 
 def test_edfa_layout_matches_pm5020_columns_without_scroll_area(qtbot):
-    from PySide6.QtWidgets import QGroupBox, QHBoxLayout, QScrollArea
+    from PySide6.QtWidgets import QGroupBox, QHBoxLayout, QLabel, QScrollArea
 
     panel = EDFAReadOnlyPanel()
     qtbot.addWidget(panel)
@@ -157,7 +161,8 @@ def test_edfa_layout_matches_pm5020_columns_without_scroll_area(qtbot):
     assert panel.controls_panel.maximumWidth() == 400
     assert panel.layout().itemAt(0).widget() is panel.controls_panel
     assert panel.layout().itemAt(1).widget() is panel.dashboard_panel
-    assert panel.findChild(QGroupBox, "edfaConnectionGroup") is not None
+    assert panel.findChild(QGroupBox, "edfaConnectionGroup") is None
+    assert panel.findChild(QLabel, "edfaModeLabel") is None
     assert panel.findChild(QGroupBox, "edfaOperationGroup") is not None
     assert panel.findChild(QGroupBox, "edfaOpticalGroup") is not None
     assert panel.findChild(QGroupBox, "edfaHealthGroup") is not None
@@ -167,4 +172,47 @@ def test_edfa_layout_matches_pm5020_columns_without_scroll_area(qtbot):
     assert panel.read_button.parentWidget() is panel.findChild(QGroupBox, "edfaOperationGroup")
     assert panel.reading_labels["edfaOutputLabel"].text() == "—"
     assert panel.reading_labels["edfaRawStatusLabel"].text() == "—"
+    panel.request_shutdown()
+
+
+
+def test_status_observations_follow_connect_monitoring_error_disconnect(qtbot):
+    from PySide6.QtCore import QSignalSpy
+
+    panel = EDFAReadOnlyPanel()
+    qtbot.addWidget(panel)
+    spy = QSignalSpy(panel.observations_changed)
+    panel.request_connect()
+    qtbot.waitUntil(lambda: panel._backend_state is EDFAState.IDLE, timeout=3000)
+    messages = [entry[0] for entry in spy]
+    assert any("Connecting" in message for message in messages)
+    assert messages[-1] == "EDFA [SIM]: Connected — awaiting telemetry"
+
+    panel.request_read()
+    qtbot.waitUntil(lambda: panel.reading_labels["edfaRawStatusLabel"].text() != "—", timeout=3000)
+    assert "Disconnected" not in spy.at(spy.count() - 1)[0]
+    assert "EDFA [SIM]" in spy.at(spy.count() - 1)[0]
+
+    panel.request_monitoring()
+    qtbot.waitUntil(lambda: panel._monitoring, timeout=3000)
+    assert "Disconnected" not in spy.at(spy.count() - 1)[0]
+    panel.request_stop()
+    qtbot.waitUntil(lambda: not panel._monitoring, timeout=3000)
+    assert "Disconnected" not in spy.at(spy.count() - 1)[0]
+
+    panel.request_disconnect()
+    qtbot.waitUntil(lambda: panel._backend_state is EDFAState.DISCONNECTED, timeout=3000)
+    assert spy.at(spy.count() - 1)[0] == "EDFA [SIM]: Disconnected"
+    panel.request_shutdown()
+    qtbot.waitUntil(lambda: panel.shutdown_finished, timeout=3000)
+
+
+def test_status_observations_error_does_not_claim_connected_or_safe(qtbot):
+    panel = EDFAReadOnlyPanel()
+    qtbot.addWidget(panel)
+    messages: list[str] = []
+    panel.observations_changed.connect(messages.append)
+    panel._on_error("Simulated VISA failure")
+    assert messages[-1] == "EDFA [SIM]: Error — see EDFA tab"
+    assert "Simulated VISA failure" in panel.error_label.text()
     panel.request_shutdown()

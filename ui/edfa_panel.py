@@ -75,6 +75,9 @@ class EDFAReadOnlyPanel(QWidget):
         self._shutdown_complete = False
         self._thread_started = False
         self._connect_started = False
+        self._identity_text = ""
+        self._last_observations: str | None = None
+        self._last_error: str | None = None
 
         self.worker = worker if worker is not None else EDFAMonitorWorker()
         self.task = TaskRunner(self.worker, auto_start_run=False)
@@ -110,33 +113,8 @@ class EDFAReadOnlyPanel(QWidget):
         controls_layout.setContentsMargins(10, 10, 10, 10)
         controls_layout.setSpacing(10)
 
-        self.mode_label = QLabel(
-            "SIMULATION — synthetic telemetry, no physical EDFA"
-            if backend_mode == "simulation"
-            else f"PHYSICAL / READ ONLY — {resource_name or 'no GPIB address configured'}"
-        )
-        self.mode_label.setObjectName("edfaModeLabel")
-        self.mode_label.setFont(make_font("sans", 10, QFont.Weight.Medium))
-        self.mode_label.setWordWrap(True)
-        controls_layout.addWidget(self.mode_label)
-
-        connection = QGroupBox("Connection")
-        connection.setObjectName("edfaConnectionGroup")
-        style_group_box_title(connection)
-        connection_layout = QVBoxLayout(connection)
-        connection_layout.setSpacing(7)
-        # The Instruments menu owns Connect/Disconnect, just as for PM5020.
-        self.status_label = QLabel("Disconnected")
-        self.status_label.setObjectName("edfaStatusLabel")
-        self.status_label.setFont(make_font("sans", 11, QFont.Weight.DemiBold))
-        self.identity_label = QLabel("Identity: —")
-        self.identity_label.setObjectName("edfaIdentityLabel")
-        self.identity_label.setWordWrap(True)
-        self.identity_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        connection_layout.addWidget(self.status_label)
-        connection_layout.addWidget(self.identity_label)
-        controls_layout.addWidget(connection)
-
+        # Connection, backend mode and identity are shown in the Instruments
+        # menu and the persistent status bar rather than duplicate tab widgets.
         operation = QGroupBox("Read-only acquisition")
         operation.setObjectName("edfaOperationGroup")
         style_group_box_title(operation)
@@ -284,10 +262,14 @@ class EDFAReadOnlyPanel(QWidget):
                 return
         self._operation_pending = True
         self._connect_started = False
+        self._identity_text = ""
+        self._last_observations = None
+        self._last_error = None
         self._activity = "Connecting"
         self.error_label.clear()
         self.error_label.hide()
         self._update_controls()
+        self._publish_status_observations()
         self.connection_status_changed.emit(self._backend_state, self._activity)
         self._ensure_worker_started()
         self.connect_requested.emit(
@@ -300,7 +282,9 @@ class EDFAReadOnlyPanel(QWidget):
         self._operation_pending = True
         self._monitoring = False
         self._activity = "Disconnecting"
+        self._last_error = None
         self._update_controls()
+        self._publish_status_observations()
         self.connection_status_changed.emit(self._backend_state, self._activity)
         self.disconnect_requested.emit()
 
@@ -336,12 +320,14 @@ class EDFAReadOnlyPanel(QWidget):
         if state is EDFAState.DISCONNECTED:
             self._clear_telemetry()
         self._update_controls()
+        self._publish_status_observations()
         self.connection_status_changed.emit(state, activity)
 
     @Slot(str)
     def _set_identity(self, identity: str) -> None:
         if not self._shutdown_requested:
-            self.identity_label.setText(f"Identity: {identity or '—'}")
+            self._identity_text = identity
+            self._publish_status_observations()
 
     @Slot(object)
     def _on_telemetry(self, report: EDFATelemetry) -> None:
@@ -384,21 +370,42 @@ class EDFAReadOnlyPanel(QWidget):
             and report.input_power.value < report.minimum_input_power.value
         ):
             alarms.append("Input reading below device threshold (even if the input-low flag is clear)")
-        self.observations_changed.emit(
-            "EDFA: " + "; ".join(alarms) if alarms else "EDFA: No alarm bits asserted (not a safety check)"
+        self._last_observations = (
+            "; ".join(alarms) if alarms else "No alarm bits asserted (not a safety check)"
         )
+        self._last_error = None
+        self._publish_status_observations()
         self.error_label.clear()
         self.error_label.hide()
 
     @Slot(str)
     def _on_error(self, message: str) -> None:
+        self._last_error = message
         self.error_label.setText(message)
         self.error_label.setVisible(bool(message))
+        self._publish_status_observations()
 
     def _clear_telemetry(self) -> None:
         for label in self.reading_labels.values():
             label.setText("—")
-        self.observations_changed.emit("EDFA: Disconnected — no observations")
+        self._last_observations = None
+
+    def _publish_status_observations(self) -> None:
+        """Publish connection and last observation together, never a stale disconnect."""
+        prefix = "EDFA [SIM]" if self.backend_mode == "simulation" else "EDFA [GPIB]"
+        if self._last_error:
+            detail = "Error — see EDFA tab"
+        elif self._operation_pending:
+            detail = self._activity
+        elif self._backend_state is EDFAState.DISCONNECTED:
+            detail = "Disconnected"
+        elif self._backend_state is EDFAState.ERROR:
+            detail = "Recovery required"
+        elif self._last_observations is not None:
+            detail = self._last_observations
+        else:
+            detail = "Monitoring — awaiting telemetry" if self._monitoring else "Connected — awaiting telemetry"
+        self.observations_changed.emit(f"{prefix}: {detail}")
 
     def _update_controls(self) -> None:
         ready = self._backend_state is EDFAState.IDLE
@@ -407,7 +414,6 @@ class EDFAReadOnlyPanel(QWidget):
         self.start_button.setEnabled(not blocked and ready and not self._monitoring)
         self.stop_button.setEnabled(not self._shutdown_requested and self._monitoring)
         self.interval_combo.setEnabled(not blocked and not self._monitoring)
-        self.status_label.setText(self._activity)
 
     def request_shutdown(self) -> None:
         if self._shutdown_requested or self._shutdown_complete:

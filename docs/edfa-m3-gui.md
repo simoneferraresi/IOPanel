@@ -2,11 +2,19 @@
 
 IOPanel now contains a fifth tab, **IPG EDFA**, after **Thorlabs PM5020**.
 It uses the same broad composition as the PM5020 tab: a **compact 320–400 px
-control column on the left** and an expanding **telemetry dashboard on the
-right**. The right-hand dashboard places **Optical monitoring** and **Amplifier
+control column on the left** (read-only acquisition controls only) and an
+expanding **telemetry dashboard on the right**. The redundant Connection
+group and simulation banner have been removed; simulation vs. physical mode,
+connection lifecycle, firmware identity and GPIB address are presented through
+the Instruments menu and persistent status-bar label/tooltip instead. The right-hand dashboard places **Optical monitoring** and **Amplifier
 status** side by side. Observations appear in a persistent, left-anchored
-**EDFA status-bar label** (full observation text is also in its tooltip),
+**EDFA status-bar label** (full context, including observed instrument
+identity, is available in its tooltip),
 not in a separate group or the shared transient status-message API.
+The label updates when a connection is requested, established, queried,
+enters recovery, and disconnects, even before the first telemetry read.
+It preserves observations between monitoring-state changes and never leaves
+a stale Disconnected label after successful Connect.
 Values use the application's existing Geist typography, and the
 page contains **no scroll area or scrollbars**; native Qt layouts
 share the available space.
@@ -65,6 +73,10 @@ numeric units, raw status and graceful shutdown under both successful and
 failed VISA operations. Do not connect the CT400 or enable EDFA emission as
 a substitute for this separate GUI-readout acceptance gate.
 
-Future milestones may add graphs, logging/export and coordinated nonlinear
-experiments, but active optical control requires its own reviewed safety
-interlocks and physically verified seed-loss behavior.
+The available space in the left column intentionally remains uncluttered
+for later amplifier controls. Mode selection, setpoint changes, gain/current
+changes and optical emission controls are **not implemented in M3**.
+They require their own command-contract review, safety gating, simulator tests,
+physically verified loss-of-seed behavior and explicit operator authorization.
+Future milestones may also add graphs, logging/export and coordinated nonlinear
+experiments.
