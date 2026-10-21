@@ -579,7 +579,7 @@ def normalize_creation_time(value: Any) -> int | None:
             return int(match.group(1)) * 1_000_000
         dmtf = re.fullmatch(r"(\d{14})\.(\d{6})([+-])(\d{3})", value)
         if dmtf:
-            parsed = dt.datetime.strptime(dmtf.group(1), "%Y%m%d%H%M%S").replace(  # noqa: DTZ007
+            parsed = dt.datetime.strptime(dmtf.group(1), "%Y%m%d%H%M%S").replace(
                 microsecond=int(dmtf.group(2))
             )
             offset_minutes = int(dmtf.group(4)) * (1 if dmtf.group(3) == "+" else -1)
