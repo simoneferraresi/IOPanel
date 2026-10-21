@@ -248,7 +248,12 @@ def _start_scan(qtbot, window):
     control = window.control_panel
     qtbot.mouseClick(control.scan_btn, Qt.MouseButton.LeftButton)
     qtbot.waitUntil(
-        lambda: control.scanning and control.scan_thread is not None and control.scan_thread.isRunning(),
+        lambda: (
+            control.scanning
+            and control.scan_thread is not None
+            and control.scan_thread.isRunning()
+            and window.ct400_device._is_scanning
+        ),
         timeout=2500,
     )
     assert control.scan_btn.property("scanning") is True
