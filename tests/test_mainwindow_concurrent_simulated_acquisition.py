@@ -3,10 +3,11 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-from PySide6.QtCore import Qt, QThread
+from PySide6.QtCore import QSettings, Qt, QThread
 from PySide6.QtTest import QSignalSpy
 
 import app
+from app_settings import AppSettings
 from config_model import AppConfig
 from hardware import ct400_init_worker
 from hardware.ct400 import CT400
@@ -218,7 +219,9 @@ ct400_backend = simulation
         lambda _window: vimba_start_attempts.append(True),
     )
 
-    window = main_window_module.MainWindow(config)
+    # Isolate persistent UI state (camera controls, active tab, geometry) per test.
+    settings = AppSettings(QSettings(str(tmp_path / "concurrent-ui.ini"), QSettings.Format.IniFormat))
+    window = main_window_module.MainWindow(config, settings=settings)
     qtbot.addWidget(window)
     window.show()
     qtbot.waitUntil(lambda: isinstance(window.ct400_device, DummyCT400), timeout=4000)
@@ -240,18 +243,25 @@ ct400_backend = simulation
     return window, progression_gate, frame_spy, dialog_messages
 
 
-def _start_scan_during_stream(qtbot, window, frame_spy):
+def _start_scan(qtbot, window):
+    """Start a real simulated CT400 scan without requiring camera rendering."""
     control = window.control_panel
-    camera = window.cameras[0]
-    camera_panel = window.camera_panels[camera.identifier]
-    initial_display_pixel = camera_panel._latest_pixmap.toImage().pixelColor(0, 0).value()
-    camera_frame_count = frame_spy.count()
     qtbot.mouseClick(control.scan_btn, Qt.MouseButton.LeftButton)
     qtbot.waitUntil(
         lambda: control.scanning and control.scan_thread is not None and control.scan_thread.isRunning(),
         timeout=2500,
     )
     assert control.scan_btn.property("scanning") is True
+
+
+def _start_scan_during_stream(qtbot, window, frame_spy):
+    """Preserve end-to-end scan/camera concurrency checks where required."""
+    control = window.control_panel
+    camera = window.cameras[0]
+    camera_panel = window.camera_panels[camera.identifier]
+    initial_display_pixel = camera_panel._latest_pixmap.toImage().pixelColor(0, 0).value()
+    camera_frame_count = frame_spy.count()
+    _start_scan(qtbot, window)
     qtbot.waitUntil(
         lambda: (
             frame_spy.count() >= camera_frame_count + 2
@@ -265,7 +275,8 @@ def _start_scan_during_stream(qtbot, window, frame_spy):
 
 
 def test_scan_owns_ct400_and_blocks_monitor_and_detector_writes(qtbot, monkeypatch, tmp_path):
-    window, gate, frame_spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path)
+    # CT400 ownership is independent of camera acquisition.
+    window, gate, _frame_spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path, include_camera=False)
     scan = window.control_panel
     monitor = window.histogram_control
     device = window.ct400_device
@@ -276,7 +287,7 @@ def test_scan_owns_ct400_and_blocks_monitor_and_detector_writes(qtbot, monkeypat
         # Make the action available in this explicit DummyCT400 test so the
         # coordinator's SCANNING gate itself is exercised.
         window.ct400_connect_action.setEnabled(True)
-        _start_scan_during_stream(qtbot, window, frame_spy)
+        _start_scan(qtbot, window)
         assert window._ct400_operation_state.name == "SCANNING"
         file_menu = next(action.menu() for action in window.menuBar().actions() if action.text() == "&File")
         open_scan_action = next(action for action in file_menu.actions() if action.objectName() == "openScanAction")
@@ -361,12 +372,13 @@ def test_monitor_owns_ct400_until_selected_input_cleanup_finishes(qtbot, monkeyp
 
 
 def test_scan_ownership_blocks_alignment_start(qtbot, monkeypatch, tmp_path):
-    window, gate, frame_spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path)
+    # Only the CT400 scan ownership lockout is under test; no camera needed.
+    window, gate, _frame_spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path, include_camera=False)
     alignment = _prepare_alignment_panel(window)
     starts = QSignalSpy(alignment.operation_started)
 
     try:
-        _start_scan_during_stream(qtbot, window, frame_spy)
+        _start_scan(qtbot, window)
         assert window._ct400_operation_state.name == "SCANNING"
         assert not alignment.align_button.isEnabled()
         assert not alignment.spiral_align_button.isEnabled()
