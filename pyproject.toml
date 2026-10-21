@@ -96,6 +96,7 @@ include = [
     "hardware/edfa_gpib.py",
     "hardware/ipg_ead2kc.py",
     "logic/edfa_monitor.py",
+    "logic/trigger_sync_alignment.py",
     "ui/edfa_panel.py",
     "tools/edfa_readonly_probe.py",
     "hardware/dummy_edfa.py",
