@@ -22,7 +22,7 @@ class AppSettings:
     APPLICATION_ICON_IDS = frozenset({"optical_burst", "prism_spectrum"})
     # Persist the selected tab by identity so future reordering does not alter
     # the logical page restored from user preferences.
-    ACTIVE_TAB_IDS = ("power_monitor", "wavelength_scan", "auto_alignment", "pm5020_monitor")
+    ACTIVE_TAB_IDS = ("power_monitor", "wavelength_scan", "auto_alignment", "pm5020_monitor", "edfa_monitor")
     LEGACY_TAB_IDS = ("wavelength_scan", "power_monitor", "auto_alignment")
     PM5020_DISPLAY_UNITS = frozenset({"W", "mW", "µW", "nW", "dBm"})
     PM5020_RANGE_UNITS = frozenset({"W", "mW", "µW", "nW"})

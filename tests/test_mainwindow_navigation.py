@@ -26,12 +26,15 @@ def test_fresh_window_uses_monitor_scan_alignment_order(qtbot, monkeypatch, tmp_
         "Wavelength Scan",
         "Auto Alignment",
         "Thorlabs PM5020",
+        "IPG EDFA",
     ]
     assert window.tab_widget.currentIndex() == 0
     assert window.tab_widget.widget(0) is window.second_tab
     assert window.tab_widget.widget(1) is window.first_tab
     assert window.tab_widget.widget(2) is window.alignment_tab
     assert window.tab_widget.widget(3) is window.pm5020_panel
+    assert window.tab_widget.widget(4) is window.edfa_panel
+    assert not window.edfa_panel.task.worker_thread.isRunning()
     window.close()
 
 
@@ -68,6 +71,7 @@ def test_menu_order_and_action_placement(qtbot, monkeypatch, tmp_path):
     assert labels("View") == ["Application Icon…", "Log Console"]
     assert "CT400 ETA Calibration…" in labels("Instruments")
     assert "Connect PM5020" in labels("Instruments")
+    assert "Connect EDFA" in labels("Instruments")
     assert "CT400 ETA Calibration…" not in labels("File")
     assert labels("Cameras") == ["Discover Cameras..."]
     assert labels("Help") == ["&About"]
@@ -277,3 +281,74 @@ def test_pm5020_status_formatter_maps_errors_and_physical_states():
     assert error.text == "PM5020: Error"
     simulated = format_pm5020_status(PM5020State.IDLE, activity="Monitoring", simulated=True, resource="")
     assert simulated.text == "PM5020: SIMULATED"
+
+
+def test_edfa_menu_owns_connection_icons_and_status_bar(qtbot, monkeypatch, tmp_path):
+    from PySide6.QtGui import QIcon
+
+    from hardware.edfa_types import EDFAState
+
+    window = _make_window(
+        qtbot,
+        monkeypatch,
+        AppSettings(QSettings(str(tmp_path / "edfa-menu.ini"), QSettings.Format.IniFormat)),
+    )
+    action = window.edfa_connect_action
+    panel = window.edfa_panel
+    observation = window.edfa_observations_status_label
+    assert action.objectName() == "edfaConnectAction"
+    assert action.isCheckable() and not action.isChecked()
+    assert action.text() == "Connect EDFA"
+    assert action.icon().pixmap(18, 18).toImage() == QIcon(":/icons/connect.svg").pixmap(18, 18).toImage()
+    assert not hasattr(panel, "connect_button") and not hasattr(panel, "disconnect_button")
+    assert observation.parentWidget() is window.statusBar()
+    assert observation.text() == "EDFA [SIM]: Disconnected"
+    assert observation.toolTip().startswith(observation.text())
+
+    action.trigger()
+    assert action.text() == "Connecting EDFA…"
+    assert not action.isEnabled()
+    qtbot.waitUntil(lambda: panel._backend_state is EDFAState.IDLE, timeout=3000)
+    assert action.text() == "Disconnect EDFA"
+    assert observation.text() == "EDFA [SIM]: Connected — awaiting telemetry"
+    assert "SIM" in observation.text()
+    assert "SIMULATED" in observation.toolTip()
+    assert action.isChecked() and action.isEnabled()
+    assert action.icon().pixmap(18, 18).toImage() == QIcon(":/icons/disconnect.svg").pixmap(18, 18).toImage()
+
+    panel.request_read()
+    qtbot.waitUntil(lambda: "Disconnected" not in observation.text(), timeout=3000)
+    assert observation.text().startswith("EDFA [SIM]:")
+    assert observation.toolTip().startswith(observation.text())
+    window.statusBar().showMessage("CT400 operation", 1000)
+    assert observation.text().startswith("EDFA [SIM]:")
+    action.trigger()
+    assert action.text() == "Disconnecting EDFA…"
+    qtbot.waitUntil(lambda: panel._backend_state is EDFAState.DISCONNECTED, timeout=3000)
+    assert action.text() == "Connect EDFA"
+    assert not action.isChecked()
+    assert observation.text() == "EDFA [SIM]: Disconnected"
+    window.close()
+
+
+def test_edfa_menu_cancelled_physical_confirmation_restores_icon(qtbot, monkeypatch, tmp_path):
+    from PySide6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(MainWindow, "_begin_lazy_init", lambda _self: None)
+    config = AppConfig(
+        instruments={
+            "ct400_backend": "simulation",
+            "edfa_backend": "physical",
+            "edfa_gpib_resource_name": "GPIB0::12::INSTR",
+        }
+    )
+    settings = AppSettings(QSettings(str(tmp_path / "edfa-decline.ini"), QSettings.Format.IniFormat))
+    window = MainWindow(config, settings=settings)
+    qtbot.addWidget(window)
+    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.No)
+    action = window.edfa_connect_action
+    action.trigger()
+    assert action.isEnabled() and not action.isChecked()
+    assert action.text() == "Connect EDFA"
+    assert not window.edfa_panel.task.worker_thread.isRunning()
+    window.close()
