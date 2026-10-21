@@ -1,5 +1,8 @@
 name: Hardware-independent tests
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main, "fix/**", "feat/**"]
@@ -49,6 +52,12 @@ jobs:
         uses: actions/upload-artifact@v7.0.0
         with:
           name: pytest-ci-${{ github.run_id }}-${{ github.run_attempt }}
-          path: pytest-ci-diagnostics/
+          # Never publish raw native process memory from PR builds. Anyone
+          # with repository read access can retrieve uploaded artifacts.
+          path: |
+            pytest-ci-diagnostics/manifest.json
+            pytest-ci-diagnostics/progress.jsonl
+            pytest-ci-diagnostics/pytest.stdout.log
+            pytest-ci-diagnostics/pytest.stderr.log
           if-no-files-found: warn
           retention-days: 14
