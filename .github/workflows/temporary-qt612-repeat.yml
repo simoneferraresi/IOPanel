@@ -1,0 +1,48 @@
+name: Temporary Qt 6.12 repeated native GUI validation
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  qt-repetition:
+    name: Qt612 ${{ matrix.group }} / trial ${{ matrix.trial }}
+    runs-on: windows-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [camera, plot]
+        trial: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.12"
+          architecture: x64
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          version: "0.13.4"
+      - run: uv sync --locked --no-default-groups --extra test
+      - name: Verify actual Qt runtime
+        shell: pwsh
+        run: |
+          uv run --no-sync python -c "from PySide6.QtCore import qVersion; print('Qt runtime:',qVersion()); assert qVersion() == '6.12.0'"
+      - name: Run independently supervised native Qt tests
+        shell: pwsh
+        run: >-
+          uv run --no-sync python -m tools.qt_stall_stress_supervisor
+          --suite --suite-group ${{ matrix.group }} --cycles 1
+          --timeout-seconds 300 --output qt612-diagnostics
+      - name: Upload safe diagnostic text only
+        if: always()
+        uses: actions/upload-artifact@v7.0.0
+        with:
+          name: qt612-${{ matrix.group }}-${{ matrix.trial }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            qt612-diagnostics/manifest.json
+            qt612-diagnostics/progress.jsonl
+            qt612-diagnostics/pytest.stdout.log
+            qt612-diagnostics/pytest.stderr.log
+          if-no-files-found: warn
+          retention-days: 7
