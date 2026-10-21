@@ -4,6 +4,8 @@ on:
   push:
     branches: ["fix/ruff-0.17.1"]
     paths: ["pyproject.toml"]
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: read
