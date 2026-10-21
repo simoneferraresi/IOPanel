@@ -226,8 +226,7 @@ class TLPMXPM5020(AbstractPM5020):
             if self._driver_factory is None:
                 if self._wrapper_path is None or self._dll_path is None:
                     raise PM5020DependencyError(
-                        "Physical PM5020 requires explicitly configured pm5020_wrapper_path "
-                        "and pm5020_dll_path"
+                        "Physical PM5020 requires explicitly configured pm5020_wrapper_path and pm5020_dll_path"
                     )
                 # Reject incompatible binaries before loading the SDK or opening VISA.
                 _require_verified_pm5020_sdk(self._dll_path)
