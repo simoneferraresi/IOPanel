@@ -23,13 +23,17 @@ def _runner_stopped(task):
 
 def _start_main_window(qtbot, monkeypatch, tmp_path, fail_after_frames=None, camera_count=1):
     config_path = tmp_path / "simulated-camera.ini"
+    if camera_count not in (0, 1, 2):
+        raise ValueError("camera_count must be 0, 1, or 2")
     config_text = """[App]
 name = IOPanel integration test
 
 [Instruments]
 ct400_backend = simulation
 ct400_dll_path = unavailable-in-test-environment.dll
-
+"""
+    if camera_count:
+        config_text += """
 [Camera:Top]
 identifier = simulated-top
 enabled = true
@@ -86,8 +90,12 @@ simulation_height = 12
     window._integration_observed_errors = observed_errors
     qtbot.addWidget(window)
     window.show()
+    qtbot.waitUntil(lambda: window._lazy_init_started, timeout=4000)
     qtbot.waitUntil(lambda: len(window.cameras) == camera_count, timeout=4000)
     qtbot.waitUntil(lambda: isinstance(window.ct400_device, DummyCT400), timeout=4000)
+    if camera_count == 0:
+        assert window.camera_panels == {}
+        assert window._init_tasks == set()
     # Camera initialization is a short-lived TaskRunner. Its QThread may have
     # finished before the GUI processes the queued bookkeeping callback.
     qtbot.waitUntil(
@@ -289,7 +297,9 @@ def test_mainwindow_closes_each_panel_once_after_stopping_its_camera(qtbot, monk
 
 
 def test_mainwindow_close_after_fig_thread_deletion_shuts_down_fake_matlab(qtbot, monkeypatch, tmp_path):
-    window = _start_main_window(qtbot, monkeypatch, tmp_path)
+    # Verify MATLAB/thread cleanup without creating an unrelated CameraPanel.
+    # Separate camera lifecycle tests retain real simulated-frame coverage.
+    window = _start_main_window(qtbot, monkeypatch, tmp_path, camera_count=0)
 
     class FakeMatlabEngine:
         quit_calls = 0
