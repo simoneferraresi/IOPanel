@@ -2,7 +2,7 @@
 # Install into an isolated tools environment; do not add these to pyproject.toml.
 resvg-py==0.5.0
 Pillow==13.0.0
-numpy==2.5.3
+numpy==2.5.4
 scikit-image==0.26.0
 scipy==1.18.1
 opencv-python-headless==5.0.0.93
