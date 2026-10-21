@@ -143,7 +143,9 @@ def audit_pm5020_burst_run(run_directory: str | Path) -> BurstRunAudit:
         else:
             candidates.append(
                 IndexBaseCandidate(
-                    base, True, "Provisional index correspondence only; no hardware timing certification",
+                    base,
+                    True,
+                    "Provisional index correspondence only; no hardware timing certification",
                     sample_count=aligned.sample_count,
                     unmatched_prefix_samples=aligned.buffer_indices[0],
                     unmatched_suffix_samples=burst.sample_count - aligned.buffer_indices[-1] - 1,
