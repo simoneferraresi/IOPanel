@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import bisect
 import math
-from itertools import pairwise
 from dataclasses import dataclass
+from itertools import pairwise
 from typing import Literal
 
 from hardware.pm5020_types import BurstPowerData
