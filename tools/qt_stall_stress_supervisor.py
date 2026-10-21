@@ -1,4 +1,4 @@
-"""External process supervisor for opt-in Windows native Qt stress runs."""
+"""Windows child-process supervisor for Qt stress and normal pytest CI."""
 
 from __future__ import annotations
 
@@ -127,11 +127,20 @@ def _capture_stack(pid: int, identity: dict[str, Any], output: Path) -> dict[str
         return {"status": "tool_error", "error": repr(exc)}
 
 
-def supervise(output: Path, timeout_s: int, cycles: int, procdump_path: str | None) -> int:
+def _pytest_command(suite: bool) -> list[str]:
+    command = [sys.executable, "-u", "-m", "pytest", "-vv", "--tb=short", "-o", "faulthandler_timeout=30"]
+    if suite:
+        return [*command, "tests"]
+    return [*command, "-s", "tests/test_qt_stall_stress.py"]
+
+
+def supervise(output: Path, timeout_s: int, cycles: int, procdump_path: str | None, *, suite: bool = False) -> int:
     if not 1 <= timeout_s <= 360:
         raise ValueError("timeout_s must be between 1 and 360 seconds")
     if not 1 <= cycles <= 1000:
         raise ValueError("cycles must be between 1 and 1000")
+    if suite and cycles != 1:
+        raise ValueError("suite mode must use exactly one run (cycles=1)")
     output.mkdir(parents=True, exist_ok=True)
     config_path = output / "simulation.ini"
     config_path.write_text(
@@ -151,19 +160,13 @@ def supervise(output: Path, timeout_s: int, cycles: int, procdump_path: str | No
             "PYTHONPATH": str(Path.cwd()),
         }
     )
+    if suite:
+        # The full suite must not accidentally enable manual-only Qt stress.
+        env.pop("IOPANEL_QT_STRESS_CONFIG", None)
+        env.pop("IOPANEL_QT_STRESS_CYCLES", None)
     if procdump_path:
         env["PROCDUMP_PATH"] = procdump_path
-    command = [
-        sys.executable,
-        "-u",
-        "-m",
-        "pytest",
-        "-vv",
-        "-s",
-        "-o",
-        "faulthandler_timeout=30",
-        "tests/test_qt_stall_stress.py",
-    ]
+    command = _pytest_command(suite)
     manifest: dict[str, Any] = {
         "started_utc": dt.datetime.now(dt.UTC).isoformat(),
         "command": command,
@@ -172,8 +175,9 @@ def supervise(output: Path, timeout_s: int, cycles: int, procdump_path: str | No
         "working_directory": str(Path.cwd()),
         "timeout_seconds": timeout_s,
         "cycles": cycles,
+        "mode": "suite" if suite else "stress",
         "qt_qpa_platform": env["QT_QPA_PLATFORM"],
-        "stack_tool": procdump_path,
+        "stack_tool": procdump_path or os.environ.get("PROCDUMP_PATH"),
     }
     capture: dict[str, Any] = {"status": "not_needed"}
     stdout_offset = stderr_offset = 0
@@ -193,7 +197,7 @@ def supervise(output: Path, timeout_s: int, cycles: int, procdump_path: str | No
             ):
                 raise RuntimeError(f"pytest process identity did not match launched pytest: {identity!r}")
             deadline = time.monotonic() + timeout_s
-            while process.poll() is None and time.monotonic() < deadline:
+            while process.poll() is None:
                 time.sleep(1)
                 stdout_offset, lines = _tail(stdout_path, stdout_offset)
                 stderr_offset, err_lines = _tail(stderr_path, stderr_offset)
@@ -218,7 +222,7 @@ def supervise(output: Path, timeout_s: int, cycles: int, procdump_path: str | No
                                         progress_count += 1
                                 except json.JSONDecodeError:
                                     pass
-                if process.poll() is None and time.monotonic() >= deadline - 1:
+                if process.poll() is None and time.monotonic() >= deadline:
                     timed_out = True
                     capture = _capture_stack(process.pid, identity, output)
                     break
@@ -258,6 +262,13 @@ def supervise(output: Path, timeout_s: int, cycles: int, procdump_path: str | No
         }
     )
     _write_json(output / "manifest.json", manifest)
+    if suite:
+        print(
+            f"Supervised pytest suite: returncode={returncode} timed_out={timed_out} "
+            f"native_capture={capture.get('status')} last_output={last_progress!r}",
+            flush=True,
+        )
+        print(f"Full stdout/stderr and manifest retained under {output}", flush=True)
     return 124 if timed_out else returncode
 
 
@@ -266,9 +277,12 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--timeout-seconds", type=int, default=300)
     parser.add_argument("--cycles", type=int, default=20)
+    parser.add_argument(
+        "--suite", action="store_true", help="supervise the normal pytest suite rather than opt-in stress"
+    )
     parser.add_argument("--procdump", type=str)
     args = parser.parse_args()
-    return supervise(args.output, args.timeout_seconds, args.cycles, args.procdump)
+    return supervise(args.output, args.timeout_seconds, args.cycles, args.procdump, suite=args.suite)
 
 
 if __name__ == "__main__":

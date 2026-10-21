@@ -97,3 +97,18 @@ def test_stack_capture_rejects_identity_change_after_dump_command(monkeypatch, t
     result = supervisor._capture_stack(123, {"CreationDate": "same-process"}, tmp_path)
 
     assert result["status"] == "identity_changed_during_capture"
+
+
+def test_suite_command_covers_all_tests_without_opt_in_stress():
+    command = supervisor._pytest_command(suite=True)
+    assert command[-1] == "tests"
+    assert "-s" not in command
+    assert "faulthandler_timeout=30" in command
+
+    stress_command = supervisor._pytest_command(suite=False)
+    assert stress_command[-2:] == ["-s", "tests/test_qt_stall_stress.py"]
+
+
+def test_suite_mode_rejects_stress_cycle_counts(tmp_path):
+    with pytest.raises(ValueError, match="exactly one"):
+        supervisor.supervise(tmp_path / "bad-suite", 300, 20, None, suite=True)

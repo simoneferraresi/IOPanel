@@ -1,5 +1,8 @@
 name: Hardware-independent tests
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main, "fix/**", "feat/**"]
@@ -22,4 +25,39 @@ jobs:
       - run: uv run --no-sync ruff check .
       - run: uv run --no-sync ruff format --check .
       - run: uv run --no-sync pyright
-      - run: uv run --no-sync pytest -vv --tb=short -o faulthandler_timeout=30
+      # Native Windows/Qt freezes require an external watchdog: pytest's
+      # faulthandler prints Python frames but cannot interrupt a blocked Qt call.
+      # Preserve the stuck process identity and native dump rather than
+      # losing all evidence to the outer 10-minute job timeout.
+      - name: Install signed Microsoft ProcDump
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'procdump.zip'
+          $destination = Join-Path $env:RUNNER_TEMP 'procdump'
+          Invoke-WebRequest -Uri 'https://download.sysinternals.com/files/Procdump.zip' -OutFile $archive
+          Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force
+          $tool = Join-Path $destination 'procdump64.exe'
+          $signature = Get-AuthenticodeSignature -LiteralPath $tool
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'Microsoft Corporation') {
+            throw "ProcDump signature verification failed: $($signature.Status); $($signature.SignerCertificate.Subject)"
+          }
+          "PROCDUMP_PATH=$tool" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Supervise full hardware-independent pytest suite
+        shell: pwsh
+        run: >-
+          uv run --no-sync python tools/qt_stall_stress_supervisor.py
+          --suite --cycles 1 --timeout-seconds 300 --output pytest-ci-diagnostics
+      - name: Upload pytest diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7.0.0
+        with:
+          name: pytest-ci-${{ github.run_id }}-${{ github.run_attempt }}
+          # Never publish raw native process memory from PR builds. Anyone
+          # with repository read access can retrieve uploaded artifacts.
+          path: |
+            pytest-ci-diagnostics/manifest.json
+            pytest-ci-diagnostics/progress.jsonl
+            pytest-ci-diagnostics/pytest.stdout.log
+            pytest-ci-diagnostics/pytest.stderr.log
+          if-no-files-found: warn
+          retention-days: 14
