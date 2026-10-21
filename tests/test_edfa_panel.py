@@ -175,7 +175,6 @@ def test_edfa_layout_matches_pm5020_columns_without_scroll_area(qtbot):
     panel.request_shutdown()
 
 
-
 def test_status_observations_follow_connect_monitoring_error_disconnect(qtbot):
     panel = EDFAReadOnlyPanel()
     qtbot.addWidget(panel)

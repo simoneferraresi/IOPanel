@@ -1216,9 +1216,7 @@ class MainWindow(QMainWindow):
 
         self.setStatusBar(QStatusBar())
         self.edfa_observations_status_label = QLabel(
-            "EDFA [SIM]: Disconnected"
-            if self.edfa_panel.backend_mode == "simulation"
-            else "EDFA [GPIB]: Disconnected"
+            "EDFA [SIM]: Disconnected" if self.edfa_panel.backend_mode == "simulation" else "EDFA [GPIB]: Disconnected"
         )
         self.edfa_observations_status_label.setObjectName("edfaObservationsStatusLabel")
         self.edfa_observations_status_label.setToolTip(self.edfa_observations_status_label.text())
