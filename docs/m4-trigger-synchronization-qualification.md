@@ -42,9 +42,7 @@ power outside the physically synchronized range.
 
 ```python
 from hardware.pm5020_types import BurstPowerData
-from logic.trigger_sync_alignment import (
-    align_ct400_burst, interpolate_within_sync_bounds, parse_ct400_sync_text
-)
+from logic.trigger_sync_alignment import align_ct400_burst, interpolate_within_sync_bounds, parse_ct400_sync_text
 
 pulses = parse_ct400_sync_text("0 1550\n1 1551\n2 1552")
 burst = BurstPowerData((100, 200, 300), (0.1, 0.2, 0.3), (1e-6, 2e-6, 3e-6))

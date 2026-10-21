@@ -79,11 +79,14 @@ def test_explicit_one_based_index_is_not_guessed():
         align_ct400_burst(pulses, _burst(), index_base=2)
 
 
-@pytest.mark.parametrize("text,base", [
-    ("0 1550\n1 1551\n5 1552", 0),
-    ("0 1550\n1 1551", 1),
-    ("7 1550\n8 1551", 0),
-])
+@pytest.mark.parametrize(
+    "text,base",
+    [
+        ("0 1550\n1 1551\n5 1552", 0),
+        ("0 1550\n1 1551", 1),
+        ("7 1550\n8 1551", 0),
+    ],
+)
 def test_sync_indices_outside_burst_fail_closed(text: str, base: int):
     with pytest.raises(TriggerSyncError, match="beyond"):
         align_ct400_burst(parse_ct400_sync_text(text), _burst(), index_base=base)
