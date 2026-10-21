@@ -8,7 +8,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   regenerate:
@@ -16,6 +16,8 @@ jobs:
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
       - uses: actions/setup-python@v7.0.0
         with:
           python-version: "3.12"
@@ -24,6 +26,16 @@ jobs:
           version: "0.12.21"
       - run: uv lock --upgrade-package ruff
       - run: uv lock --check
+      - name: Commit generated Ruff-only lockfile
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add uv.lock
+          if (!(git diff --cached --quiet)) {
+            git commit -m "Regenerate uv.lock for Ruff 0.17.1"
+            git push origin "HEAD:refs/heads/fix/ruff-0.17.1"
+          }
       - uses: actions/upload-artifact@v7.0.0
         with:
           name: ruff-generated-lock
