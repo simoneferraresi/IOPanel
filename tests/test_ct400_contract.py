@@ -75,7 +75,9 @@ class _FakeCT400DLL:
 
     def __getattr__(self, name: str):
         if name == "CT400_SetExternalSynchronization":
-            raise AttributeError(name)
+            if self.sync is None:
+                raise AttributeError(name)
+            return self.sync
         if name.startswith("CT400_"):
             return self.functions.setdefault(name, _FakeNativeFunction())
         raise AttributeError(name)
