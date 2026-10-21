@@ -277,7 +277,9 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--timeout-seconds", type=int, default=300)
     parser.add_argument("--cycles", type=int, default=20)
-    parser.add_argument("--suite", action="store_true", help="supervise the normal pytest suite rather than opt-in stress")
+    parser.add_argument(
+        "--suite", action="store_true", help="supervise the normal pytest suite rather than opt-in stress"
+    )
     parser.add_argument("--procdump", type=str)
     args = parser.parse_args()
     return supervise(args.output, args.timeout_seconds, args.cycles, args.procdump, suite=args.suite)
