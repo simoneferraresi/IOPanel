@@ -455,7 +455,7 @@ def test_status_is_observable_during_blocked_retrieval_while_io_remains_serializ
     meter.close()
 
 
-def test_physical_burst_config_and_chunked_retrieval_include_both_channels():
+def test_physical_burst_uses_one_native_call_and_includes_both_channels():
     meter, fake = driver_for()
     meter.connect("USB0::TEST::INSTR")
     config = BurstAcquisitionConfig(chunk_size=100)
@@ -471,12 +471,71 @@ def test_physical_burst_config_and_chunked_retrieval_include_both_channels():
     assert result.power_ch1_w[120] == pytest.approx(0.12)
     assert result.power_ch2_w[204] == pytest.approx(204e-6)
     assert [call[1:] for call in fake.calls if call[0] == "getBurstArraySamples"] == [
-        (0, 100, 100),
-        (100, 100, 100),
-        (200, 5, 5),
+        (0, 205, 205),
     ]
     trigger = next(call for call in fake.calls if call[0] == "confBurstArrayMeasTrigger")
     assert tuple(value.value for value in trigger[1:]) == (3, 0, 1, 1)
+    meter.close()
+
+
+def test_physical_burst_single_call_handles_full_15000_sample_capacity():
+    meter, fake = driver_for(FakeTLPMX(sample_count=15_000))
+    meter.connect("USB0::TEST::INSTR")
+    meter.configure_burst(BurstAcquisitionConfig(max_samples=15_000))
+    meter.start_burst()
+    result = meter.retrieve_burst()
+    assert result.sample_count == 15_000
+    assert result.timestamps_ticks[-1] == 15_999
+    assert [call[1:3] for call in fake.calls if call[0] == "getBurstArraySamples"] == [(0, 15_000)]
+    meter.close()
+
+
+def test_physical_burst_rejects_old_100_sample_truncation_and_requires_close():
+    class TruncatedVendorBurst(FakeTLPMX):
+        def getBurstArraySamples(self, start, count, timestamps, ch1, ch2):
+            super().getBurstArraySamples(start, count, timestamps, ch1, ch2)
+            for i in range(100, count.value):
+                timestamps[i] = 0
+                ch1[i] = 0.0
+                ch2[i] = 0.0
+
+    meter, fake = driver_for(TruncatedVendorBurst(sample_count=330))
+    meter.connect("USB0::TEST::INSTR")
+    meter.configure_burst(BurstAcquisitionConfig())
+    meter.start_burst()
+    with pytest.raises(PM5020AcquisitionError, match="timestamps are repeated or non-increasing"):
+        meter.retrieve_burst()
+    assert [call[1:3] for call in fake.calls if call[0] == "getBurstArraySamples"] == [(0, 330)]
+    assert meter.state is PM5020State.ERROR
+    with pytest.raises(PM5020StateError):
+        meter.read_power(PowerChannel.CH1)
+    meter.close()
+    assert meter.state is PM5020State.DISCONNECTED
+
+
+@pytest.mark.parametrize("is_verified", [True, False])
+def test_physical_burst_gates_native_dll_sha_before_configuration(monkeypatch, is_verified):
+    from hardware import pm5020
+
+    fake = FakeTLPMX(sample_count=205)
+    monkeypatch.setattr(pm5020, "_load_thorlabs_factory", lambda _wrapper, _dll: (lambda: fake, None))
+    sha = (
+        pm5020._VERIFIED_BURST_DLL_X64_SHA256
+        if is_verified
+        else pm5020._KNOWN_BROKEN_BURST_DLL_X64_SHA256
+    )
+    monkeypatch.setattr(pm5020, "_file_sha256", lambda _path: sha)
+    meter = TLPMXPM5020(wrapper_path="vendor-wrapper.py", dll_path="vendor-native.dll")
+    meter.connect("USB0::TEST::INSTR")
+    before = len(fake.calls)
+    if is_verified:
+        meter.configure_burst(BurstAcquisitionConfig())
+        assert len(fake.calls) > before
+    else:
+        with pytest.raises(PM5020DependencyError, match="known-broken"):
+            meter.configure_burst(BurstAcquisitionConfig())
+        assert len(fake.calls) == before
+        assert meter.state is PM5020State.IDLE
     meter.close()
 
 
