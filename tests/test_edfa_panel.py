@@ -177,32 +177,30 @@ def test_edfa_layout_matches_pm5020_columns_without_scroll_area(qtbot):
 
 
 def test_status_observations_follow_connect_monitoring_error_disconnect(qtbot):
-    from PySide6.QtCore import QSignalSpy
-
     panel = EDFAReadOnlyPanel()
     qtbot.addWidget(panel)
-    spy = QSignalSpy(panel.observations_changed)
+    messages: list[str] = []
+    panel.observations_changed.connect(messages.append)
     panel.request_connect()
     qtbot.waitUntil(lambda: panel._backend_state is EDFAState.IDLE, timeout=3000)
-    messages = [entry[0] for entry in spy]
     assert any("Connecting" in message for message in messages)
     assert messages[-1] == "EDFA [SIM]: Connected — awaiting telemetry"
 
     panel.request_read()
     qtbot.waitUntil(lambda: panel.reading_labels["edfaRawStatusLabel"].text() != "—", timeout=3000)
-    assert "Disconnected" not in spy.at(spy.count() - 1)[0]
-    assert "EDFA [SIM]" in spy.at(spy.count() - 1)[0]
+    assert "Disconnected" not in messages[-1]
+    assert "EDFA [SIM]" in messages[-1]
 
     panel.request_monitoring()
     qtbot.waitUntil(lambda: panel._monitoring, timeout=3000)
-    assert "Disconnected" not in spy.at(spy.count() - 1)[0]
+    assert "Disconnected" not in messages[-1]
     panel.request_stop()
     qtbot.waitUntil(lambda: not panel._monitoring, timeout=3000)
-    assert "Disconnected" not in spy.at(spy.count() - 1)[0]
+    assert "Disconnected" not in messages[-1]
 
     panel.request_disconnect()
     qtbot.waitUntil(lambda: panel._backend_state is EDFAState.DISCONNECTED, timeout=3000)
-    assert spy.at(spy.count() - 1)[0] == "EDFA [SIM]: Disconnected"
+    assert messages[-1] == "EDFA [SIM]: Disconnected"
     panel.request_shutdown()
     qtbot.waitUntil(lambda: panel.shutdown_finished, timeout=3000)
 
