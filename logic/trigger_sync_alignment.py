@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import bisect
 import math
+from itertools import pairwise
 from dataclasses import dataclass
 from typing import Literal
 
@@ -68,9 +69,9 @@ class ProjectedBurst:
 def _check_order(indices: tuple[int, ...], wavelengths: tuple[float, ...]) -> int:
     if len(indices) < 2:
         raise TriggerSyncError("At least two CT400 synchronization pulses are needed for wavelength alignment")
-    if any(next_index <= index for index, next_index in zip(indices, indices[1:], strict=False)):
+    if any(next_index <= index for index, next_index in pairwise(indices)):
         raise TriggerSyncError("CT400 pulse indices must be strictly increasing without duplicates")
-    changes = tuple(b - a for a, b in zip(wavelengths, wavelengths[1:], strict=False))
+    changes = tuple(b - a for a, b in pairwise(wavelengths))
     if all(change > 0 for change in changes):
         return 1
     if all(change < 0 for change in changes):
@@ -133,7 +134,7 @@ def align_ct400_burst(
             f"CT400 pulse indices with base {index_base} extend beyond the PM5020 sample buffer "
             f"of {burst.sample_count} samples"
         )
-    skipped = sum(end - start - 1 for start, end in zip(mapped, mapped[1:], strict=False))
+    skipped = sum(end - start - 1 for start, end in pairwise(mapped))
     if skipped and not allow_sparse:
         raise TriggerSyncError(
             f"CT400 pulse log skips {skipped} intermediate sample indices; "
@@ -141,7 +142,7 @@ def align_ct400_burst(
         )
 
     ticks = burst.timestamps_ticks
-    steps = tuple(next_tick - tick for tick, next_tick in zip(ticks, ticks[1:], strict=False))
+    steps = tuple(next_tick - tick for tick, next_tick in pairwise(ticks))
     if any(step <= 0 for step in steps):
         raise TriggerSyncError(
             "PM5020 raw timestamp ticks are repeated/decreasing/wrapped; "
