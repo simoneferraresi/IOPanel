@@ -19,8 +19,8 @@ from hardware.dummy_ct400 import DummyCT400
 from hardware.dummy_pm5020 import DummyPM5020
 from hardware.pm5020_types import BurstAcquisitionConfig, BurstPowerData, PM5020State
 from logic.trigger_sync_alignment import (
-    SyncPulse,
     SynchronizedBurst,
+    SyncPulse,
     align_ct400_burst,
     parse_ct400_sync_text,
 )
@@ -193,13 +193,13 @@ class SimulatedSynchronizedCoordinator:
                 try:
                     self._ct.stop_scan()
                     self._ct.scan_wait_end()
-                except Exception as cleanup_exc:
+                except Exception as cleanup_exc:  # noqa: BLE001 - preserve original failure
                     exc.add_note(f"Simulated CT400 stop/wait cleanup also failed: {cleanup_exc}")
                 self._scan_started = False
             if self._pm.state in (PM5020State.ARMED, PM5020State.RETRIEVING, PM5020State.ERROR):
                 try:
                     self._pm.close()
-                except Exception as cleanup_exc:
+                except Exception as cleanup_exc:  # noqa: BLE001 - cleanup must preserve original failure
                     exc.add_note(f"Simulated PM5020 recovery close also failed: {cleanup_exc}")
             raise
         finally:
