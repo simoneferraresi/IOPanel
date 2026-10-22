@@ -76,9 +76,7 @@ def archive_simulated_synchronized_capture(
             writer = csv.writer(handle)
             writer.writerow(("wavelength_nm", *(f"det{index}_vendor_native" for index in detector_ids)))
             for index, wavelength in enumerate(capture.ct400_wavelengths_nm):
-                writer.writerow(
-                    (wavelength, *(channel[index] for channel in capture.ct400_detector_data))
-                )
+                writer.writerow((wavelength, *(channel[index] for channel in capture.ct400_detector_data)))
 
         paths = {
             "pm5020_raw_burst": raw_path,
