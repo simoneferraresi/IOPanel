@@ -11,6 +11,28 @@ from pytestqt.qtbot import QtBot
 from tools.qt_test_lifecycle import close_native_widget, native_window_roots, release_native_windows
 
 
+class _OwnedQtBot(QtBot):
+    def __init__(self, request):
+        self.owned_widgets = []
+        super().__init__(request)
+
+    def addWidget(self, widget, *, before_close_func=None):
+        super().addWidget(widget, before_close_func=before_close_func)
+        # pytest-qt registers only a weakref. A native child paint callback
+        # does not keep its Python-owned window alive: cyclic GC can destroy
+        # the entire graph while that callback is still using its children.
+        self.owned_widgets.append(widget)
+
+
+@pytest.fixture
+def qtbot(qapp, request):
+    bot = _OwnedQtBot(request)
+    yield bot
+    # The teardown hook has already accepted close and drained native deletion.
+    # Retaining wrappers until here also covers pytest-qt's post-call events.
+    bot.owned_widgets.clear()
+
+
 def _drain_qt(app):
     app.processEvents()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
