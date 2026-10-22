@@ -1,20 +1,37 @@
 # Repository agent instructions — IOPanel
 
-IOPanel is a Windows/Python 3.12 PySide6 application that controls laboratory equipment. Read [docs/qt-test-lifecycle-standards.md](docs/qt-test-lifecycle-standards.md) before adding/modifying GUI, worker, native diagnostic, or pytest code. The [2026-10-22 lifecycle investigation](docs/qt-lifecycle-corrections-2026-10-22.md) records causal evidence and explicit limits.
+These instructions apply to the entire repository, including future tests and PRs.
 
-## Non-negotiable development constraints
+## Non-negotiable safety and validation
 
-- Default to the hardware-independent profile: `uv sync --locked --no-default-groups --extra test --extra lint --extra typecheck`. Never operate the CT400, cameras, piezos, laser, EDFA, PM5020 or real MATLAB Engine without a separately authorized, operator-attended hardware-validation procedure. Do not overwrite laboratory configuration, Windows registry preferences or local environments.
-- Tests must reuse pytest-qt's session `qapp` and `qtbot`; never create a second in-process QApplication or leave a native widget graph for interpreter finalization. Use `qtbot.addWidget` for test-owned windows, and preserve the global native-window scope cleanup. `close()` is not proof of destruction; deferred deletion must complete after an accepted close.
-- All GUI objects and graphics belong on the GUI thread. QObject workers must follow `logic/qt_worker_lifecycle.py`'s retirement protocol: stop callbacks and pending work in the correct affinity thread, return stopped Python worker trees to application-thread affinity, join the native thread, and arrange native destruction on that thread. Never treat `QThread.finished` as `QObject.destroyed`, assume `deleteLater` is immediate, or drop the last wrapper while its native destructor might run on a worker.
-- New startup/initialization code must respect the shutdown latch: create needed UI placeholders before starting workers, reject late work/results, preserve cancellation and owner/operation gates, and shut down producers before consumers.
-- Prefer signal/event-driven `qtbot.waitUntil` / `waitSignal` and bounded deadlines; explicitly establish window activation before testing native shortcuts. Do not repair flaky tests with sleeps, retries, blanket catches, relaxed assertions, new xfails/skips, or coverage reductions. Real OpenGL `UNAVAILABLE` or a capability skip does not count as rendered-GL qualification.
-- Any new `tests/test_*.py` or `*_test.py` module must remain discoverable and included exactly once in the core/camera/plot partitions; camera/plot stateful tests belong in the appropriate isolated partition. The CI collection gate must pass unchanged.
-- A green pytest summary followed by a nonzero native process exit is a **failure**. Use the bounded supervisor and preserve a failed/interrupted campaign's evidence; never hide failures by replacing manifests or counting clean retries as the original result. Never upload native memory dumps (potential secrets); use sanitized diagnostics.
-- Preserve the locked production Qt 6.11.2 profile. Qt 6.12 is experimental and must not be rolled into routine refactors or deployed from simulation-only results. Physical SDK/MATLAB shutdown and automatic RDP software-OpenGL fallback remain separate qualification limits.
+- IOPanel operates lasers, cameras, motion hardware, and power meters. **Never run, open, discover, initialize, or modify physical equipment** without explicit operator authorization for that action. An ordinary GUI launch using the lab `config.ini` can open physical cameras. Prefer `packaging/config.simulation.ini` and DummyCT400; do not copy private device identifiers into tests or evidence.
+- Use Python 3.12 x64 and the pinned uv version. On developer/CI machines without vendor SDKs, use `uv sync --locked --no-default-groups --extra test` (add `--extra lint --extra typecheck` for static checks). Do not modify the operational lab `.venv` or hardware configuration.
+- Preserve hardware ownership, selected-input laser safe-state behavior, cancellation and worker-shutdown guarantees. Keep Qt 6.12 experimental PR #232 independent of the stable Qt baseline until authorized qualification.
+- Never regard passing pytest assertions followed by a nonzero native process exit (e.g. `0xC0000409`, `0xC0000005`, `0xC0000374`) as success. Do not hide stalls with retries, skips, xfails, longer timeouts, swallowed exceptions, or forced termination.
 
-## Before proposing a merge
+## Qt ownership and lifecycle rules
 
-Run Ruff, format check, Pyright, exact collection parity, and driver-free test partitions on the actual head. Obtain passing Windows CI and packaging where applicable. For changes to Qt ownership, test fixtures, camera/plot native lifecycle, threading, or GL: also use the relevant repeated native Windows and process/simulation gates in the standards document. Include the tested commit SHA, interpreter/Qt version/platform, exit codes, skips and remaining limitations in the PR; distinguish offscreen simulations, real OpenGL rendering and physical instrument qualification.
+- Create and manipulate QWidgets, plots and Qt graphics on the GUI thread. All window startup, async result handling and shutdown must have explicit, testable ownership/lifecycle boundaries.
+- Python-implemented QObject workers must not be destroyed unpredictably in a native background thread: consult `logic/qt_worker_lifecycle.py` and use the existing `retire_worker_on_thread_finish` pattern when adding worker QThreads. Preserve strong references through native thread completion and deferred destruction. Do not introduce `QThread.finished -> worker.deleteLater` casually for Python QObject workers.
+- A worker's `finished` signal is not native `destroyed`; `deleteLater` is asynchronous; closing a widget is not necessarily accepted while operations are active. Verify Qt thread affinity, child-QObject affinity, queued callbacks, pending MetaCalls, thread joins, and accepted close before deletion.
+- A closing MainWindow cannot admit new initialization/recovery/scan operations. Construct the GUI graph before launching asynchronous initialization workers; guard late results and callbacks; make cleanup idempotent.
+- For memory tracing around camera/native callbacks, do not disable tracer hooks while foreign threads can still acquire Python thread state. Maintain caller-owned tracers and join producers/converters before stopping a locally owned tracer.
+- Never silently change OpenGL backend policy to conceal an RDP/driver mismatch. Explicit `QT_OPENGL=desktop` successes and automatic software-fallback failures are different validation results.
 
-Prefer a focused PR and explicit follow-up issue to hiding an unqualified dependency or broadening scope.
+## Adding or modifying tests
+
+- **Use pytest-qt's session `qapp` and `qtbot`**, plus `tests/conftest.py`'s automatic settings and native-lifecycle fixtures. Do not construct `QApplication`, `QGuiApplication` or `QCoreApplication` in the pytest interpreter. Truly independent application lifecycle tests must launch a bounded subprocess; the automated test-policy gate enforces common direct constructions.
+- Register every test-owned QWidget with `qtbot.addWidget` when practical. Clean up other native windows explicitly; do not leave QObjects, QThreads, QRunnables, active timers, deferred deletion, pending callbacks, or global state for interpreter finalization. Preserve an accepted asynchronous close; never destroy windows with active workers merely to make teardown fast.
+- Prefer deterministic signals, state transitions and `qtbot.waitUntil` with justified bounds; don't introduce timing sleeps where a completion signal/invariant is available. For keyboard shortcuts involving native focus, activate the window and wait for activation before sending input.
+- Tests about CT400, MATLAB or plotting alone must not bring up simulated cameras gratuitously. Retain meaningful *real Qt + simulated hardware* tests wherever production GUI/thread lifetime matters. Never weaken assertions or remove coverage just to make CI green.
+- Keep QSettings, temp directories, logs, native diagnostics, and processes isolated. Memory dumps contain process memory: never upload raw dumps to public GitHub Actions artifacts.
+- New test modules must be discoverable as `test_*.py` or `*_test.py`; `tools/ci_pytest_partition.py --verify` must prove exact union/no overlap. Existing camera and plot group assignments should be preserved; newly added modules default to core unless partition rules are explicitly updated.
+
+## Required checks before proposing a merge
+
+1. `uv run --no-sync ruff check .`, `uv run --no-sync ruff format --check .`, and `uv run --no-sync pyright` (after locked dev environment sync).
+2. `uv run --no-sync python -m tools.ci_pytest_partition --verify`, then the complete hardware-independent core, camera and plot partitions in separate supervised processes.
+3. For GUI/QThread/fixture/Qt runtime/plot lifecycle changes, repeat native Windows processes using `tools.qt_reliability_campaign` at a proportionate scale, with **every** process and supervisor exit code zero; run frozen smoke/OpenGL qualifications as appropriate and document limitations.
+4. Compare before/after evidence and provide exact SHAs, commands, test counts, warnings, skips, native-exit results and unresolved problems. Do not operate real hardware or deploy to the lab PC without authorization.
+
+Read `docs/qt-lifecycle-corrections-2026-10-22.md` and `docs/qt-test-lifecycle-guidelines.md` before changing Qt worker lifetimes or the test framework. The October investigation is a source of validated invariants, **not** a claim that every historical plot crash or hardware SDK path has been fixed.
