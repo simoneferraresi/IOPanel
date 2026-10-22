@@ -58,8 +58,10 @@ class SimulatedSyncSettings:
             raise ValueError("CT400 resolution must be an integer within 1–250 pm")
         if (
             not self.detectors
-            or any(type(item) is not Detector or item not in tuple(Detector(i) for i in range(1, 5))
-                   for item in self.detectors)
+            or any(
+                type(item) is not Detector or item not in tuple(Detector(i) for i in range(1, 5))
+                for item in self.detectors
+            )
             or len(set(self.detectors)) != len(self.detectors)
         ):
             raise ValueError("Select one or more unique CT400 detectors DE_1–DE_4")
@@ -140,8 +142,10 @@ class SimulatedSynchronizedCoordinator:
             self._ct.set_sampling_res(settings.resolution_pm)
             selected = set(settings.detectors)
             self._ct.set_detector_array(
-                *(Enable.ENABLE if det in selected else Enable.DISABLE for det in
-                  (Detector.DE_2, Detector.DE_3, Detector.DE_4)),
+                *(
+                    Enable.ENABLE if det in selected else Enable.DISABLE
+                    for det in (Detector.DE_2, Detector.DE_3, Detector.DE_4)
+                ),
                 Enable.DISABLE,
             )
             self._ct.set_scan(settings.laser_power_mw, settings.start_nm, settings.stop_nm)
@@ -235,6 +239,5 @@ def synthetic_ct400_sync_text(
     if not (math.isfinite(start_nm) and math.isfinite(stop_nm) and 0 < start_nm < stop_nm):
         raise ValueError("Invalid synthetic wavelength range")
     return "".join(
-        f"{first_index + i} {start_nm + (stop_nm - start_nm) * i / (point_count - 1):.9f}\n"
-        for i in range(point_count)
+        f"{first_index + i} {start_nm + (stop_nm - start_nm) * i / (point_count - 1):.9f}\n" for i in range(point_count)
     )
