@@ -1,10 +1,15 @@
+import os
+import subprocess
+import sys
 from pathlib import Path
 
+import pytest
 from PySide6.QtCore import QSettings
 
 import app
 from app_settings import AppSettings
 from config_model import AppConfig
+from tools.qt_stall_stress_supervisor import _terminate_process_tree
 
 
 def test_source_paths_keep_working_directory_semantics(tmp_path, monkeypatch):
@@ -100,3 +105,63 @@ def test_distribution_template_is_explicitly_driver_free():
     camera = next(iter(config.cameras.values()))
     assert camera.enabled and camera.backend == "simulation"
     assert not camera.identifier.startswith("DEV_")
+
+
+def test_smoke_image_save_failure_shuts_down_real_window(tmp_path):
+    # This must be a fresh application process: replacing QApplication inside
+    # pytest-qt's shared session cannot exercise real event-loop termination.
+    script = """
+import sys
+from pathlib import Path
+from unittest.mock import patch
+import shiboken6
+from PySide6.QtCore import QCoreApplication, QEvent, QThread
+from PySide6.QtGui import QPixmap
+from PySide6.QtWidgets import QApplication
+import app
+
+windows = []
+original_window = app.MainWindow
+def construct(*args, **kwargs):
+    window = original_window(*args, **kwargs)
+    windows.append(window)
+    return window
+app.MainWindow = construct
+sys.argv = ['app.py', '--smoke-test', '--config', 'packaging/config.simulation.ini',
+            '--log-file', str(Path(sys.argv[1]) / 'smoke.log')]
+with patch.object(QPixmap, 'save', return_value=False):
+    result = app.main()
+sys.excepthook = sys.__excepthook__
+window = windows[0]
+closed_at_return = window._shutdown_complete
+running_at_return = any(thread.isRunning() for thread in window.findChildren(QThread)
+                        if shiboken6.isValid(thread))
+try:
+    assert result == 5, result
+    assert closed_at_return, 'smoke error returned with an unclosed MainWindow'
+    assert not running_at_return, 'smoke error returned with live native window threads'
+finally:
+    # Also clean up when testing the old implementation's failing invariant.
+    window.close()
+    window.deleteLater()
+    QApplication.instance().processEvents()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+print('SMOKE_ERROR_SHUTDOWN_OK')
+"""
+    env = os.environ.copy()
+    env["QT_QPA_PLATFORM"] = "offscreen"
+    with subprocess.Popen(
+        [sys.executable, "-c", script, str(tmp_path)],
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    ) as child:
+        try:
+            stdout, stderr = child.communicate(timeout=40)
+        except subprocess.TimeoutExpired:
+            _terminate_process_tree(child)
+            stdout, stderr = child.communicate(timeout=10)
+            pytest.fail("Smoke error child timed out:\n" + (stdout + stderr).decode(errors="replace"))
+        assert child.returncode == 0, (stdout + stderr).decode(errors="replace")
+        assert b"SMOKE_ERROR_SHUTDOWN_OK" in stdout

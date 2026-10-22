@@ -401,6 +401,7 @@ def main() -> int:
                             logger.info("SMOKE_CAMERA_FRAME_OK screenshot=%s", image_path)
                         else:
                             logger.error("Smoke camera frame could not be saved.")
+                            window.close()
                             app.exit(5)
                             return
                     window.close()
