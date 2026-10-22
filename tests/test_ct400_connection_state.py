@@ -3,7 +3,9 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-from PySide6.QtCore import QSettings, Qt
+import shiboken6
+from PySide6.QtCore import QCoreApplication, QEvent, QSettings, Qt
+from pytestqt.qtbot import _close_widgets
 
 import ui.control_panel as control_panel_module
 import ui.main_window as main_window_module
@@ -73,8 +75,25 @@ def _window(qtbot, monkeypatch, tmp_path):
     config.scan_defaults.input_port = 3
     settings = AppSettings(QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat))
     window = MainWindow(config, settings=settings)
+    qtbot.addWidget(window)
     window.show()
     return window
+
+
+def test_window_helper_registers_native_teardown(qtbot, monkeypatch, tmp_path, request):
+    window = _window(qtbot, monkeypatch, tmp_path)
+    try:
+        # Exercise pytest-qt's actual close/delete boundary while the test's
+        # Python reference remains alive. Merely hiding this window leaked its
+        # entire native scene graph until QApplication interpreter cleanup.
+        _close_widgets(request.node)
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        assert not shiboken6.isValid(window)
+    finally:
+        if shiboken6.isValid(window):
+            window.close()
+            window.deleteLater()
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 def test_physical_actions_follow_confirmed_input_and_connection_transitions(qtbot, monkeypatch, tmp_path):

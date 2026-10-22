@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from typing import TypeVar, override
 
 import numpy as np
+import shiboken6
 from PySide6 import QtCore, QtGui
 from PySide6.QtCore import (
     QMetaObject,
@@ -2046,6 +2047,9 @@ class HistogramControlPanel(BaseControlPanel):
 
     def cleanup_worker_thread(self):
         logger.info("HistogramControlPanel: Initiating cleanup of power fetch worker thread.")
+        self.timer.stop()
+        if not shiboken6.isValid(self.power_fetch_thread):
+            return
         if self.monitoring:
             logger.info("HistogramControlPanel.cleanup: Monitoring was active, stopping it first.")
             self._stop_monitoring()
