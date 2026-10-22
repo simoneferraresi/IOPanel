@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import datetime as dt
 import json
 import os
@@ -30,6 +31,26 @@ $target = [int]$env:IOPANEL_QT_TARGET_PID
     [pscustomobject]@{PID=[int]$_.ProcessId; ParentPID=[int]$_.ParentProcessId}
 }) | ConvertTo-Json -Compress
 """
+
+
+def _windows_command_arguments(command: str) -> list[str]:
+    """Use Windows quoting rules; venv forwarding replaces only argv[0]."""
+    if not command:
+        return []
+    shell = ctypes.WinDLL("shell32", use_last_error=True)
+    shell.CommandLineToArgvW.argtypes = [ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_int)]
+    shell.CommandLineToArgvW.restype = ctypes.POINTER(ctypes.c_wchar_p)
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.LocalFree.argtypes = [ctypes.c_void_p]
+    kernel.LocalFree.restype = ctypes.c_void_p
+    count = ctypes.c_int()
+    argv = shell.CommandLineToArgvW(command, ctypes.byref(count))
+    if not argv:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        return [argv[index] for index in range(count.value)]
+    finally:
+        kernel.LocalFree(argv)
 
 
 def _native_pytest_identity(pid: int, launcher: dict[str, Any]) -> tuple[int, dict[str, Any]]:
@@ -60,7 +81,8 @@ def _native_pytest_identity(pid: int, launcher: dict[str, Any]) -> tuple[int, di
         if (
             identity.get("ParentPID") == pid
             and str(identity.get("ExecutablePath", "")).casefold() == sys._base_executable.casefold()
-            and identity.get("CommandLine") == launcher.get("CommandLine")
+            and _windows_command_arguments(str(identity.get("CommandLine") or ""))[1:]
+            == _windows_command_arguments(str(launcher.get("CommandLine") or ""))[1:]
             and identity.get("CreationDate", "") >= launcher.get("CreationDate", "")
         ):
             candidates.append((int(child["PID"]), identity))
