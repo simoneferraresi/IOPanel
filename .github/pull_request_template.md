@@ -1,32 +1,29 @@
-## Summary / scope
+## Summary and scope
 
-- Change:
-- Motivation / linked issue:
-- Out-of-scope or deferred behavior:
+<!-- Describe the defect/feature, affected backends, and changed behavior. Link relevant issues. -->
 
-## Validation (exact PR head)
+## Validation evidence
 
-- Tested SHA:
-- Windows / Python / PySide6 / Qt / `QT_QPA_PLATFORM`:
-- Driver-free environment (`--no-default-groups`), no physical devices opened:
-- Ruff / formatting / Pyright:
-- Exact test collection parity and full core/camera/plot CI:
-- Supervisor **and** child exits, timeouts, skips:
-- Windows packaging/smoke, if applicable:
+- Exact base/head SHA:
+- Native Windows / Python / Qt version (if relevant):
+- Ruff, format, Pyright:
+- Exact full-suite pytest collection vs core/camera/plot:
+- Supervised child and supervisor exit codes (not only pytest assertion summary):
+- Frozen smoke and OpenGL qualification, or why not applicable:
+- Known skips, failures and unresolved issues:
 
-## Qt/native lifecycle review (complete when relevant)
+## Qt lifecycle and hardware safety review
 
-See [Qt test lifecycle standards](../docs/qt-test-lifecycle-standards.md).
+For PRs that touch GUI, Qt workers, plotting, test fixtures, test tools or instrumentation, complete the relevant items:
 
-- [ ] New QObjects, QThreads, widget graphs, async callbacks and timers have explicit owner, thread affinity and destruction boundaries, or this PR introduces none
-- [ ] Test windows use the session `qapp`/`qtbot`, registered widgets and accepted-close/deferred-delete cleanup; no leaked native roots or workers at process exit
-- [ ] Startup, cancellation, error and late-shutdown paths preserve operation ownership and producer-before-consumer cleanup
-- [ ] Tests use bounded synchronization rather than timing-only assumptions, and preserve assertions/coverage
-- [ ] For Qt ownership/fixture/GL changes: repeated native Windows process gate and actual exit codes documented, or an explicit reason it is not applicable
-- [ ] Real OpenGL rendering (if affected) distinguished from capability skips/UNAVAILABLE, and physical hardware qualification is not inferred from simulation
+- [ ] No physical instruments were operated; **or** exact operator-authorized hardware actions and evidence are documented.
+- [ ] No additional QApplication/QCoreApplication was constructed inside pytest; GUI tests reuse `qapp`/`qtbot` and isolate settings, temp files and processes.
+- [ ] Native widgets and Python QObject workers have durable owners, correct thread affinity, accepted close and deferred destruction; no running worker survives teardown.
+- [ ] Async startup, cancellation, errors, late results and repeated close are covered where relevant; no new work starts once shutdown begins.
+- [ ] Tests retain real Qt/instrument-simulation coverage without new unjustified sleeps, xfails, skips, retries or weakened assertions.
+- [ ] A successful pytest summary followed by abnormal process exit is treated as FAILURE.
+- [ ] Native Windows repeated-process/packaging checks were performed for lifecycle changes, **or** missing evidence is explicitly identified.
+- [ ] No raw native dumps or private hardware identifiers were committed/uploaded.
+- [ ] New tests are discovered and included exactly once by the CI collection-parity gate.
 
-## Risks and remaining limitations
-
-- Potential impact / rollback approach:
-- Unresolved issues, skipped/optional checks and deferred laboratory validation:
-- Evidence links (sanitized; never upload process memory dumps):
+See [AGENTS.md](../AGENTS.md) and [Qt test lifecycle standards](../docs/qt-test-lifecycle-guidelines.md). Do not mark conditional hardware, OpenGL or unqualified Qt 6.12 compatibility as fully validated.
