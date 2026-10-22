@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import statistics
 import sys
 import time
@@ -97,7 +98,10 @@ def characterize(*, camera_count: int, duration: float, width: int, height: int,
         "kind": "iopanel-simulated-camera-display-characterization",
         "recorded_utc": datetime.now(UTC).isoformat(),
         "evidence_scope": "SimulatedCamera through normal CameraPanel conversion/presentation; no physical camera or SDK",
-        "environment": _environment(Path(__file__).resolve().parents[1], "offscreen"),
+        "environment": {
+            **_environment(Path(__file__).resolve().parents[1], os.environ.get("QT_QPA_PLATFORM", app.platformName())),
+            "qt_platform_in_use": app.platformName(),
+        },
         "configuration": {"camera_count": camera_count, "duration_s": duration, "width": width, "height": height},
         "cameras": [],
         "process": {},

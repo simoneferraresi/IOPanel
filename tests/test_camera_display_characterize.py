@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 import sys
 import types
 from types import SimpleNamespace
@@ -835,7 +836,7 @@ def test_simulated_error_cleanup_stops_conversion_thread(qtbot):
     assert thread is not None and not thread.isRunning()
 
 
-def test_simulated_display_capture_reports_pipeline_and_memory(qtbot, tmp_path):
+def test_simulated_display_capture_reports_pipeline_and_memory(qtbot, tmp_path, qapp):
     from tools.simulated_camera_display_characterize import characterize
 
     report = characterize(
@@ -845,6 +846,8 @@ def test_simulated_display_capture_reports_pipeline_and_memory(qtbot, tmp_path):
         height=24,
         output=tmp_path / "simulated-display.json",
     )
+    assert report["environment"]["qt_platform_in_use"] == qapp.platformName()
+    assert report["environment"]["qt_platform_requested"] == os.environ.get("QT_QPA_PLATFORM", qapp.platformName())
 
     assert "measurement_error" not in report
     assert len(report["cameras"]) == 2
