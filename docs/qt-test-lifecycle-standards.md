@@ -1,5 +1,7 @@
 # Qt/PySide6 lifecycle and test reliability standards
 
+This is a **detailed validation reference**, supplementary to the [primary lifecycle guidelines](qt-test-lifecycle-guidelines.md) and the enforced [repository agent rules](../AGENTS.md), both merged through PR #237. In case of differing wording, follow the primary guidelines and the executable CI checks.
+
 **Status:** repository development policy following [PR #236](https://github.com/simoneferraresi/IOPanel/pull/236) (2026-10-22). **Scope:** all new or changed pytest, Qt widget/worker, diagnostic, simulated camera/plotting, packaging, and native-GL code. This is a prevention policy, not a claim that historical issue [#89](https://github.com/simoneferraresi/IOPanel/issues/89), [#216](https://github.com/simoneferraresi/IOPanel/issues/216), or every physical-device exit has been definitively solved.
 
 The [engineering investigation](qt-lifecycle-corrections-2026-10-22.md) is the evidence and implementation reference. It captured an actual Qt connection-mutex / Python GIL inversion, unsafe native-widget finalization, and a distinct Python 3.12.8 tracemalloc/thread-state race. Its conclusions are narrower than "all GUI crashes are fixed."
