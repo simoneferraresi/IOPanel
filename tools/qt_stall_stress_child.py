@@ -59,6 +59,10 @@ def main() -> int:
                 app_instance.processEvents()
                 time.sleep(0.01)
             assert window.camera_panels, "simulated camera placeholder was not constructed"
+            assert len(window.cameras) == len(window.config.cameras), "not every simulated camera initialized"
+            assert all(panel._latest_pixmap is not None for panel in window.camera_panels.values()), (
+                "not every simulated camera displayed a converted frame"
+            )
             assert isinstance(window.ct400_device, DummyCT400), "safe DummyCT400 initialization did not complete"
             assert window.piezo_left is None and window.piezo_right is None, "unexpected piezo initialization"
             assert not window.vmb_instance, "unexpected Vimba system initialization"

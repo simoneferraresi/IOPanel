@@ -102,23 +102,30 @@ def characterize(*, camera_count: int, duration: float, width: int, height: int,
         "cameras": [],
         "process": {},
     }
+    # Install allocator hooks before any foreign Qt thread can acquire the
+    # GIL. CPython 3.12.8's tracemalloc can crash if hooks are removed while
+    # PyGILState_Ensure allocates a thread state (cpython#128679). Keep them
+    # until every producer and conversion thread has joined, even on errors.
+    owns_tracing = not tracemalloc.is_tracing()
+    if owns_tracing:
+        tracemalloc.start()
     try:
         for index in range(camera_count):
             identifier = f"sim-display-{index + 1}"
             camera = SimulatedCamera(
                 identifier, f"Simulated {index + 1}", width=width, height=height, frame_interval=1 / 60
             )
+            cameras.append(camera)
             panel = MeasuredCameraPanel(
                 None,
                 f"Simulated {index + 1}",
                 CameraConfig(identifier=identifier, name=f"Simulated {index + 1}", backend="simulation"),
             )
+            panels.append(panel)
             camera.open()
             panel.set_camera(camera)
             panel.resize(960, 540)
             panel.show()
-            cameras.append(camera)
-            panels.append(panel)
         app.processEvents()
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline and any(panel._latest_pixmap is None for panel in panels):
@@ -155,7 +162,9 @@ def characterize(*, camera_count: int, duration: float, width: int, height: int,
             paint.timestamps.clear()
             heartbeat.clear()
 
-        tracemalloc.start()
+        traced_baseline, _ = tracemalloc.get_traced_memory()
+        if owns_tracing:
+            tracemalloc.reset_peak()
         wall_start, cpu_start = time.monotonic(), time.process_time()
         end = wall_start + duration
         while time.monotonic() < end:
@@ -163,7 +172,6 @@ def characterize(*, camera_count: int, duration: float, width: int, height: int,
             time.sleep(0.001)
         wall, cpu = time.monotonic() - wall_start, time.process_time() - cpu_start
         traced_current, traced_peak = tracemalloc.get_traced_memory()
-        tracemalloc.stop()
         for timer in timers:
             timer.stop()
         for index, (panel, paint, heartbeat, camera, counter, snapshot) in enumerate(
@@ -201,7 +209,17 @@ def characterize(*, camera_count: int, duration: float, width: int, height: int,
             "cpu_wall_ratio": cpu / wall if wall else 0,
             "python_traced_current_bytes_after_measurement": traced_current,
             "python_traced_peak_bytes_during_measurement": traced_peak,
-            "python_traced_memory_scope": "Python allocations during measurement; excludes native NumPy/OpenCV/Qt image buffers",
+            "python_traced_baseline_bytes_before_measurement": traced_baseline,
+            "python_traced_net_change_bytes_during_measurement": traced_current - traced_baseline,
+            "python_tracing_owned_by_characterizer": owns_tracing,
+            "python_traced_memory_scope": (
+                "Python allocations; includes the reported warmup baseline, excludes native NumPy/OpenCV/Qt buffers. "
+                + (
+                    "Peak reset at measurement start."
+                    if owns_tracing
+                    else "Caller-owned tracing and its existing peak preserved."
+                )
+            ),
             **_windows_memory(),
         }
         probe = cameras[0]._make_frame(0)
@@ -218,8 +236,6 @@ def characterize(*, camera_count: int, duration: float, width: int, height: int,
             "scope": "100 NumPy uint8 mono array copies; memory-copy proxy, not an SDK-owned-buffer timing",
         }
     except Exception as exc:  # noqa: BLE001 - retain partial evidence and always clean up.
-        if tracemalloc.is_tracing():
-            tracemalloc.stop()
         result["measurement_error"] = str(exc)
     finally:
         for panel in panels:
@@ -235,6 +251,8 @@ def characterize(*, camera_count: int, duration: float, width: int, height: int,
                 panel.conversion_thread is None or not panel.conversion_thread.isRunning() for panel in panels
             ),
         }
+        if owns_tracing and all(result["cleanup"].values()):
+            tracemalloc.stop()
         for panel in panels:
             panel.deleteLater()
         for camera in cameras:
