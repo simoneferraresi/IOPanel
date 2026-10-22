@@ -24,6 +24,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from pydantic import ValidationError
+from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from app_settings import AppSettings
@@ -105,6 +106,16 @@ def configure_qt_application(app: QApplication, app_name: str = APP_NAME) -> Non
     app.setStyle("Fusion")
     if isinstance(app, QApplication):
         install_application_fonts(app)
+
+
+def create_application_settings(*, smoke_test: bool, log_file: Path) -> AppSettings:
+    if smoke_test:
+        # LOCALAPPDATA redirects smoke logs, but Windows NativeFormat settings
+        # still use the operator's registry. Keep diagnostic preferences beside
+        # its log instead; never restore or overwrite the operator's UI state.
+        backend = QSettings(str(log_file.with_name("smoke-settings.ini")), QSettings.Format.IniFormat)
+        return AppSettings(backend)
+    return AppSettings()
 
 
 def setup_logger(
@@ -359,7 +370,9 @@ def main() -> int:
         if args.smoke_opengl_test:
             return run_frozen_opengl_smoke(app, log_file_path, logger)
 
-        window = MainWindow(config=app_config, settings=AppSettings())
+        window = MainWindow(
+            config=app_config, settings=create_application_settings(smoke_test=args.smoke_test, log_file=log_file_path)
+        )
         window.log_console.log_file = log_file_path
         window.show()
         if args.smoke_test:

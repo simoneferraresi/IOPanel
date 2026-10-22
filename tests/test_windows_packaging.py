@@ -48,6 +48,21 @@ def test_frozen_export_defaults_use_writable_per_user_output_directory(tmp_path,
     assert settings.scan_export_directory() == tmp_path / "LocalAppData" / "IOPanel" / "output"
     assert settings.scan_export_directory().is_dir()
 
+    # The normal backend is redirected by the test fixture, so this checks the
+    # smoke boundary without touching the operator's actual Windows registry.
+    normal = app.create_application_settings(smoke_test=False, log_file=tmp_path / "normal.log")
+    normal.set_application_icon("prism_spectrum")
+    normal.sync()
+    original = {key: normal._settings.value(key) for key in normal._settings.allKeys()}
+    smoke = app.create_application_settings(smoke_test=True, log_file=tmp_path / "smoke.log")
+    assert smoke.application_icon() == "optical_burst"
+    assert smoke._settings.format() == QSettings.Format.IniFormat
+    assert Path(smoke._settings.fileName()) == tmp_path / "smoke-settings.ini"
+    assert smoke._settings.fileName() != normal._settings.fileName()
+    smoke.set_active_tab(2)
+    smoke.sync()
+    assert {key: normal._settings.value(key) for key in normal._settings.allKeys()} == original
+
 
 def test_smoke_mode_requires_simulation_for_ct400_and_enabled_cameras():
     simulation = AppConfig.from_ini_dict(
