@@ -15,7 +15,9 @@ CT400 scan second, retrieves PM samples and saves a two-column
 CT400 `pulse_index wavelength_nm` sync log. The notebook then slices
 PM samples from `pulse_indices[0]` to `pulse_indices[-1]`, **assuming**
 CT400 indices coincide with contiguous PM5020 sample-buffer positions.
-That assumption has not been independently verified.
+The CT400 pulse-counter numbering is now documented by the original manufacturer (see below),
+but its direct correspondence to the PM5020 sample buffer remains to be
+physically qualified.
 
 M4-A replaces the implicit mapping with a **mandatory explicit
 `index_base=0` or `index_base=1`** and checks for out-of-range indices,
@@ -23,7 +25,9 @@ duplicates, backwards sequence, missing indices and unexpected wavelength
 order. Sparse mappings require `allow_sparse=True`. The result explicitly
 retains `timing_qualified=False`: a syntactically valid mapping is **not
 evidence** that the hardware trigger edges, index origin, or latencies match.
-Do not select an index base solely because a smooth plot results.
+The manufacturer-supported candidate for CT400 pulse numbering is `index_base=0`.
+Retain `index_base=1` only as an explicit diagnostic alternative until the
+cross-instrument correspondence is qualified. Do not choose based on a smooth plot.
 
 `logic.trigger_sync_alignment` also refuses to infer time from PM5020
 unsigned 32-bit ticks. Timestamp duplicates, reversals and rollover are
@@ -37,6 +41,45 @@ increasing/decreasing wavelength scans and **rejects extrapolation**;
 this differs intentionally from the notebook's SciPy interpolation
 configured with `fill_value="extrapolate"`, which could invent apparent
 power outside the physically synchronized range.
+
+## CT400 manufacturer-confirmed zero-based pulse counter (22 October 2026)
+
+**Source:** Yenista Optics, *CT400 Programming Guide*, CT400_PG_1.4v1.0
+(10 June 2016), section 2.4.17, p. 37. This is the original CT400
+manual, not an inference from a newer CT440.
+
+The description of `CT400_GetNbDataPoints(uiHandle, &iDataPoints,
+&iDiscardPoints)` explicitly identifies `iDiscardPoints` as the
+trigger-pulse **index** of the first valid CT400 measurement, and
+states that this index **equals the total number of spurious pulses
+generated at the beginning of the sweep**. If `D` spurious trigger
+pulses occur before the first valid pulse, those preliminary pulses
+occupy indices `0 ... D-1` and the first valid pulse has index `D`.
+This establishes the vendor-documented **zero-based CT400 external
+trigger-pulse counter**. Section 2.2.8 (p. 20) states that
+`CT400_SetExternalSynchronization` causes BNC A to generate a pulse
+for each measurement.
+
+The completed 22 October M4-D1 dark captures contain first CT400
+sync-file indices 14, 19 and 20, respectively. These are consistent
+with the vendor's discarded-pulse convention. However, the manual's
+`CT400_ScanSaveWavelengthSyncFile` entry (section 2.4.7, p. 31)
+describes writing a text file without documenting its column semantics
+or explicitly stating that the exported first column is the same
+pulse index returned via `iDiscardPoints`. The archived captures
+also do **not** contain a direct `iDiscardPoints` readback.
+Consequently that exported-column connection remains to be verified.
+
+**Implementation policy:** use `index_base=0` as the
+manufacturer-supported **provisional CT400-to-PM5020 mapping**:
+`pm_buffer_index = ct400_pulse_index`, subject to the assumption
+that PM5020 was armed before the *first* BNC A pulse and recorded
+exactly one sample per pulse, with no missing or extra edges.
+Retain `index_base=1` for diagnostics, and retain
+`timing_qualified=False` until the complete trigger/count/latency
+relationship has been physically verified. This documentation
+**does not** assert calibrated wavelength accuracy or sample-time
+scale, or retroactively rewrite immutable capture metadata.
 
 ## Software demonstration (all synthetic)
 
@@ -59,9 +102,11 @@ lab acceptance gate is completed.
 
 Before permitting coordinated CT400/PM5020 scans in IOPanel:
 
-1. Confirm the **actual CT400 pulse-log format**, pulse-index origin, and
-   what exactly constitutes a recorded pulse. Check whether indices count
-   all emitted edges and whether missing/extra triggers occur.
+1. Confirm the **actual CT400 sync-file column semantics**, including
+   whether exported pulse indices implement the zero-based counter documented
+   for `CT400_GetNbDataPoints` (manual p. 37). Check whether the PM5020
+   records all emitted edges, including preliminary pulses, and whether
+   missing/extra triggers occur.
 2. Characterize CT400 external-synchronization pulse polarity/width,
    wiring, TTL levels, termination, edge-to-wavelength relationship, and
    PM5020 AUX/trigger source semantics on the lab setup.
@@ -107,10 +152,11 @@ uv run --locked python -m tools.audit_pm5020_sync_run "output/burst_runs/RUN_ID"
 The audit verifies the archived raw PM CSV and CT400 sync file against the
 metadata SHA-256 hashes; checks sample-buffer indices and native uint32 tick
 fields; compares the PM sample count reported in the metadata; and reports
-**both** explicit zero/one-based CT400 pulse-index mapping hypotheses.
+**both** explicit zero/one-based PM-buffer mapping hypotheses, even though
+CT400's pulse-counter convention itself is manufacturer-documented as zero-based.
 Even if both candidates pass, the result remains `timing_qualified=False`.
 A successful file integrity check must not be interpreted as agreement on
-the trigger index origin or synchronization latency.
+the CT400-to-PM5020 buffer correspondence or synchronization latency.
 
 The original notebook's `PersistentLaserCT400.close()` override was
 intentional: it preserved optical seeding to prevent the EDFA's low-input
