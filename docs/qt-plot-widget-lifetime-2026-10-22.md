@@ -221,11 +221,110 @@ python -m tools.qt_stall_stress_supervisor --suite --suite-group plot --cycles 1
 python -m tools.qt_reliability_campaign --output <new-folder>
 ```
 
-Final campaign and packaging results will be filled from the preserved process
-records, with source SHAs, exact exits, skips, warnings and capability outcomes.
-The reference gate is 3 core, 30 camera, 20 plot processes and 100 full simulated
-MainWindow cycles **per Qt version**, executed sequentially on the shared desktop.
-An incomplete campaign cannot satisfy it.
+Both complete reference campaigns passed, sequentially on the shared desktop.
+The [sanitized process ledger](performance-evidence/qt-plot-widget-lifetime-2026-10-22.json)
+records every principal child/supervisor exit, per-process summary, skip,
+warning category, timeout, source state, before/after matrix and frozen result.
+Raw local artifacts, diagnostic scripts, stdout/stderr, images and all failed
+observations remain in the isolated worktrees' ignored `output/` directories.
+No native dumps were collected or uploaded during this investigation.
+
+| Qt | Exact qualified source | Core processes | Camera processes | Plot processes | MainWindow cycles | Child / supervisor exits |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| 6.11.2 | `9e049ba6bfac267e6593f1c718d20dc861e686dc` | 3 | 30 | 20 | 100 | All 54 / 54 exit 0 |
+| 6.12.0 | `00dd1cf757ad76380f1a1d29841a8b13dcc3101a` | 3 | 30 | 20 | 100 | All 54 / 54 exit 0 |
+
+Both campaign drivers and both exact-collection checks exit 0. There are no
+timeouts, failed entries, supervisor errors or unexpected native/Qt exception
+signatures in their stdout/stderr. Each stress log contains exactly 100 completed
+cycles. No partial campaign or pre-correction retry is counted toward these gates.
+
+Each native core process reports **1,013 passed / one existing opt-in stress
+skip**, each camera process **209 passed**, and each plot process **308 passed**.
+The skipped stress entry is separately exercised for 100 full cycles above.
+The two real GL tests run successfully in each local core process. No xfails or
+new skips were introduced. Existing pyqtgraph/NumPy 2.5 array-shape deprecations
+produce 188 core, 21 camera and 19 plot warnings under Qt 6.11.2. Qt 6.12 has
+one additional local pytest-cache permission warning per process (189 / 22 / 20;
+one warning in its stress process). These are preserved, not hidden; none is
+a deleted-object exception. The cache warning concerns the isolated checkout's
+generated `.pytest_cache`, not test assertions, settings or native cleanup.
+
+Ruff, formatting and Pyright pass in both corrected environments. Exact collection
+is **1,531 = core 1,014 + camera 209 + plot 308**. A separate direct comparison
+against pristine stable-main collection confirms **all 1,505 original node IDs
+are preserved**, with exactly 26 additions and zero removals. Both post-fix
+fresh-process test-order matrices pass every cell: alone, parametrized family,
+preceding test, original pair, reversed pair, full module and nearby GUI modules.
+All 14 matrix children and their supervisors exit 0 without timeout.
+
+The test-ownership regression fails before correction on both versions. The
+bounded original-test regression also fails against pristine Qt 6.11 teardown:
+its child aborts with exit 3 and its parent reports the failed exit assertion.
+Corrected targeted tests pass, and the full campaigns exercise the bounded
+post-call collection child in every plotting repetition (20 per Qt version).
+
+The qualified worktrees were clean at campaign startup and differ only in
+`pyproject.toml` and `uv.lock`. The Qt 6.12 source is published on the separate
+`fix/qt612-plot-lifetime-control` branch; it does not alter PR #232's branch.
+Subsequent report/ledger commits change documentation only.
+
+### Independent Windows CI
+
+| Corrected source | Tests workflow | Packaging workflow | Result |
+| --- | --- | --- | --- |
+| Stable correction `9e049ba` | [39827540157](https://github.com/simoneferraresi/IOPanel/actions/runs/39827540157) | [39827540289](https://github.com/simoneferraresi/IOPanel/actions/runs/39827540289) | All required checks pass |
+| Qt 6.12 control `00dd1cf` | [39829733714](https://github.com/simoneferraresi/IOPanel/actions/runs/39829733714) | Independently built and smoked locally below | Static/collection and all three partitions pass |
+
+Downloaded corrected CI manifests confirm native children exit 0, no timeout,
+**1,011 core passed / three existing skips**, **209 camera passed**, **308 plot
+passed** on both versions. These runners use Python 3.12.10 x64. CI's skips are
+the manual stress entry and `test_real_gl_render_requires_a_usable_context` /
+`test_real_viewer_restored_map_title_survives_failure_then_retry`, whose context
+probes report GL error 1282. Those skips are capability results, not rendered GL
+qualification. Local native and frozen rendering provide separate evidence.
+
+### Frozen Windows application and actual graphics
+
+Each version was built from its exact qualified source with PyInstaller 6.22.3,
+using an independent build/cache/output directory:
+
+```powershell
+python -m PyInstaller --clean --noconfirm --distpath <new-dist> --workpath <new-build> packaging/IOPanel.spec
+Copy-Item packaging/config.simulation.ini <new-dist>/IOPanel/config.ini
+python tools/smoke_frozen.py <new-dist>/IOPanel/IOPanel.exe --timeout 45
+python tools/smoke_frozen_opengl.py <new-dist>/IOPanel/IOPanel.exe --platform windows --timeout 45 --evidence-dir <new-folder>
+```
+
+The diagnostic driver also runs the ordinary smoke with its child platform set
+to `windows`, and repeats GL with child-only `QT_OPENGL=desktop`. It records
+actual frozen child exits and captures their stdout/stderr; no global setting or
+production renderer policy changes. No failed smoke is silently retried.
+
+| Qualification | Qt 6.11.2 | Qt 6.12.0 |
+| --- | --- | --- |
+| One-folder build | Exit 0 | Exit 0 |
+| Ordinary frozen smoke, offscreen | GUI / wrapper 0 / 0 | GUI / wrapper 0 / 0 |
+| Ordinary frozen smoke, native Windows | GUI / wrapper 0 / 0 | GUI / wrapper 0 / 0 |
+| Native GL, automatic selection | Rendered, GUI / qualifier 0 / 0 | Rendered, GUI / qualifier 0 / 0 |
+| Native GL, explicit desktop | Rendered, GUI / qualifier 0 / 0 | Rendered, GUI / qualifier 0 / 0 |
+| Physical-profile rejection in all smoke modes | Expected exit 2, before startup | Expected exit 2, before startup |
+
+All four GL processes render the synthetic map, grid, axis labels and updated
+colorbar using **Intel HD Graphics 4600, OpenGL 4.3.0, driver 20.19.15.4835**.
+Map screenshots, framebuffer captures and colorbar images are preserved locally.
+The framebuffer contains 9,700 nonblack pixels, fully opaque alpha and a rendered
+map with labels. The two versions' deterministic automatic-selection framebuffer
+PNGs are byte-for-byte identical, SHA-256
+`585e1baf576cc2295eb8e443c6db678f2d8df0d9cff2ef239c8ae3dd04fc55a8`.
+Pixel checks and original-resolution visual inspection confirm actual rendering;
+an initial resized preview appeared blank and was resolved by decoding and
+comparing the preserved files, without changing or rerunning the application.
+No `UNAVAILABLE` outcome is counted as rendered success.
+
+These successful current Intel contexts do not demonstrate a correction to the
+previous RDP software-GL / system-PyOpenGL loader mismatch. That fallback path
+was not selected in this qualification and remains a distinct compatibility limit.
 
 ## Limits and independent acceptance
 

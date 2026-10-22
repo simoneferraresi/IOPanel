@@ -1,0 +1,2938 @@
+{
+  "schema_version": 1,
+  "repository": "simoneferraresi/IOPanel",
+  "correction_pr": 240,
+  "upgrade_pr": 232,
+  "issue": 216,
+  "baseline_sha": "37cabddc9c5a88cd2d70352379446349693b642a",
+  "original_candidate_sha": "bf30141b2fe99336e946d339d5595c13ffdc1a40",
+  "runtime": {
+    "qt612": {
+      "python": "3.12.8 (tags/v3.12.8:2dc476b, Dec  3 2024, 19:30:04) [MSC v.1942 64 bit (AMD64)]",
+      "bits": 64,
+      "windows": "Windows-10-10.0.19045-SP0",
+      "qt_runtime": "6.12.0",
+      "actual_platform": "windows",
+      "requested_platform": "windows",
+      "qt_opengl": null,
+      "pyqtgraph_use_opengl": false,
+      "dependencies": {
+        "PySide6": "6.12.0",
+        "shiboken6": "6.12.0",
+        "pyqtgraph": "0.14.0",
+        "pytest": "9.1.1",
+        "pytest-qt": "4.5.0",
+        "numpy": "2.5.3",
+        "uv": null,
+        "vmbpy": null,
+        "matlabengine": null
+      },
+      "source_sha": "00dd1cf757ad76380f1a1d29841a8b13dcc3101a",
+      "source_status": "",
+      "uv_executable_version": "0.13.4"
+    },
+    "qt611": {
+      "python": "3.12.8 (tags/v3.12.8:2dc476b, Dec  3 2024, 19:30:04) [MSC v.1942 64 bit (AMD64)]",
+      "bits": 64,
+      "windows": "Windows-10-10.0.19045-SP0",
+      "qt_runtime": "6.11.2",
+      "actual_platform": "windows",
+      "requested_platform": "windows",
+      "qt_opengl": null,
+      "pyqtgraph_use_opengl": false,
+      "dependencies": {
+        "PySide6": "6.11.2",
+        "shiboken6": "6.11.2",
+        "pyqtgraph": "0.14.0",
+        "pytest": "9.1.1",
+        "pytest-qt": "4.5.0",
+        "numpy": "2.5.3",
+        "uv": null,
+        "vmbpy": null,
+        "matlabengine": null
+      },
+      "source_sha": "9e049ba6bfac267e6593f1c718d20dc861e686dc",
+      "source_status": "",
+      "uv_executable_version": "0.13.4"
+    }
+  },
+  "ci_failures": [
+    {
+      "artifact_id": 12444917009,
+      "attempt": 1,
+      "child_exit": 3,
+      "timed_out": false,
+      "last_progress": "tests/test_power_monitor_trace_widget.py::test_mainwindow_completion_respects_manual_trace_visibility[False] ",
+      "native_capture": "not_needed",
+      "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+      "file_sha256": {
+        "manifest.json": "675b06db786cf90a6bb8688f9fecc9af63a5ebcb0cf161d0d4df5325956a38a2",
+        "progress.jsonl": "00b7cf8e938726f6b554f55b6ef7cc50c90c8fc61df91a82e5f114b34e049c68",
+        "pytest.stderr.log": "910cef0c2733f8f4648694f0726e1330ad08188ad311cf030ba8cc29ffd1c684",
+        "pytest.stdout.log": "9aa15e6b158ee76ad3663205b08c893c9bf0e4e82f3b827183ae740fd3b8e233"
+      }
+    },
+    {
+      "artifact_id": 12445970273,
+      "attempt": 2,
+      "child_exit": 3,
+      "timed_out": false,
+      "last_progress": "tests/test_power_monitor_trace_widget.py::test_mainwindow_completion_respects_manual_trace_visibility[False] ",
+      "native_capture": "not_needed",
+      "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+      "file_sha256": {
+        "manifest.json": "45c65ba6455c57cc2d1e6a0b3b130b4e7b53fdaf981860bc7532aaabab1489fc",
+        "progress.jsonl": "1a827e977aff4dc51d183438293623ba0e9b4a387054858c9575e0257fc8b4a2",
+        "pytest.stderr.log": "1b92031fed3c414253af871df6665eccf132b84d3e49ddb214f3f9136499efdc",
+        "pytest.stdout.log": "9aa15e6b158ee76ad3663205b08c893c9bf0e4e82f3b827183ae740fd3b8e233"
+      }
+    }
+  ],
+  "controlled_gc": [
+    {
+      "evidence": "lifetime-controls-qt612-01",
+      "retained": false,
+      "exit": 3
+    },
+    {
+      "evidence": "lifetime-controls-qt612-01",
+      "retained": true,
+      "exit": 3
+    },
+    {
+      "evidence": "lifetime-controls-qt612-02",
+      "retained": false,
+      "exit": 3
+    },
+    {
+      "evidence": "lifetime-controls-qt612-02",
+      "retained": true,
+      "exit": 0
+    },
+    {
+      "evidence": "lifetime-controls-qt611-01",
+      "retained": false,
+      "exit": 3
+    },
+    {
+      "evidence": "lifetime-controls-qt611-01",
+      "retained": true,
+      "exit": 0
+    }
+  ],
+  "test_order_experiments": [
+    {
+      "version": "6.12.0",
+      "evidence": "matrix-before-qt612-01",
+      "runs": [
+        {
+          "case": "alone",
+          "supervisor_exit": 0,
+          "child_exit": 0,
+          "timed_out": false,
+          "last_progress": "============================== 1 passed in 2.00s =============================="
+        },
+        {
+          "case": "family",
+          "supervisor_exit": 0,
+          "child_exit": 0,
+          "timed_out": false,
+          "last_progress": "============================== 2 passed in 2.11s =============================="
+        },
+        {
+          "case": "prior",
+          "supervisor_exit": 0,
+          "child_exit": 0,
+          "timed_out": false,
+          "last_progress": "============================== 1 passed in 2.19s =============================="
+        },
+        {
+          "case": "pair",
+          "supervisor_exit": 0,
+          "child_exit": 0,
+          "timed_out": false,
+          "last_progress": "============================== 2 passed in 2.27s =============================="
+        },
+        {
+          "case": "reverse",
+          "supervisor_exit": 0,
+          "child_exit": 0,
+          "timed_out": false,
+          "last_progress": "============================== 2 passed in 2.26s =============================="
+        },
+        {
+          "case": "module",
+          "supervisor_exit": 0,
+          "child_exit": 0,
+          "timed_out": false,
+          "last_progress": "============================= 21 passed in 4.17s =============================="
+        },
+        {
+          "case": "nearby",
+          "supervisor_exit": 0,
+          "child_exit": 0,
+          "timed_out": false,
+          "last_progress": "====================== 216 passed, 10 warnings in 25.10s ======================"
+        }
+      ]
+    },
+    {
+      "version": "6.11.2",
+      "evidence": "matrix-before-qt611-01",
+      "runs": [
+        {
+          "case": "alone",
+          "supervisor_exit": 4294967295,
+          "child_exit": 3221226525,
+          "timed_out": false,
+          "last_progress": "tests/test_power_monitor_trace_widget.py::test_mainwindow_completion_respects_manual_trace_visibility[False] "
+        },
+        {
+          "case": "family",
+          "supervisor_exit": 4294967295,
+          "child_exit": 3221226525,
+          "timed_out": false,
+          "last_progress": "tests/test_power_monitor_trace_widget.py::test_mainwindow_completion_respects_manual_trace_visibility[False] "
+        },
+        {
+          "case": "prior",
+          "supervisor_exit": 0,
+          "child_exit": 0,
+          "timed_out": false,
+          "last_progress": "============================== 1 passed in 2.21s =============================="
+        },
+        {
+          "case": "pair",
+          "supervisor_exit": 0,
+          "child_exit": 0,
+          "timed_out": false,
+          "last_progress": "============================== 2 passed in 2.34s =============================="
+        },
+        {
+          "case": "reverse",
+          "supervisor_exit": 4294967295,
+          "child_exit": 3221226525,
+          "timed_out": false,
+          "last_progress": "tests/test_power_monitor_trace_widget.py::test_mainwindow_completion_respects_manual_trace_visibility[False] "
+        },
+        {
+          "case": "module",
+          "supervisor_exit": 0,
+          "child_exit": 0,
+          "timed_out": false,
+          "last_progress": "============================= 21 passed in 4.29s =============================="
+        },
+        {
+          "case": "nearby",
+          "supervisor_exit": 0,
+          "child_exit": 0,
+          "timed_out": false,
+          "last_progress": "====================== 216 passed, 10 warnings in 23.90s ======================"
+        }
+      ]
+    },
+    {
+      "version": "6.12.0",
+      "evidence": "matrix-after-01",
+      "runs": [
+        {
+          "case": "alone",
+          "supervisor_exit": 0,
+          "child_exit": 0,
+          "timed_out": false,
+          "last_progress": "============================== 1 passed in 2.10s =============================="
+        },
+        {
+          "case": "family",
+          "supervisor_exit": 0,
+          "child_exit": 0,
+          "timed_out": false,
+          "last_progress": "============================== 2 passed in 2.09s =============================="
+        },
+        {
+          "case": "prior",
+          "supervisor_exit": 0,
+          "child_exit": 0,
+          "timed_out": false,
+          "last_progress": "============================== 1 passed in 2.16s =============================="
+        },
+        {
+          "case": "pair",
+          "supervisor_exit": 0,
+          "child_exit": 0,
+          "timed_out": false,
+          "last_progress": "============================== 2 passed in 2.24s =============================="
+        },
+        {
+          "case": "reverse",
+          "supervisor_exit": 0,
+          "child_exit": 0,
+          "timed_out": false,
+          "last_progress": "============================== 2 passed in 2.19s =============================="
+        },
+        {
+          "case": "module",
+          "supervisor_exit": 0,
+          "child_exit": 0,
+          "timed_out": false,
+          "last_progress": "============================= 21 passed in 3.49s =============================="
+        },
+        {
+          "case": "nearby",
+          "supervisor_exit": 0,
+          "child_exit": 0,
+          "timed_out": false,
+          "last_progress": "====================== 216 passed, 19 warnings in 23.31s ======================"
+        }
+      ]
+    },
+    {
+      "version": "6.11.2",
+      "evidence": "matrix-after-01",
+      "runs": [
+        {
+          "case": "alone",
+          "supervisor_exit": 0,
+          "child_exit": 0,
+          "timed_out": false,
+          "last_progress": "============================== 1 passed in 1.98s =============================="
+        },
+        {
+          "case": "family",
+          "supervisor_exit": 0,
+          "child_exit": 0,
+          "timed_out": false,
+          "last_progress": "============================== 2 passed in 2.07s =============================="
+        },
+        {
+          "case": "prior",
+          "supervisor_exit": 0,
+          "child_exit": 0,
+          "timed_out": false,
+          "last_progress": "============================== 1 passed in 2.17s =============================="
+        },
+        {
+          "case": "pair",
+          "supervisor_exit": 0,
+          "child_exit": 0,
+          "timed_out": false,
+          "last_progress": "============================== 2 passed in 2.20s =============================="
+        },
+        {
+          "case": "reverse",
+          "supervisor_exit": 0,
+          "child_exit": 0,
+          "timed_out": false,
+          "last_progress": "============================== 2 passed in 2.20s =============================="
+        },
+        {
+          "case": "module",
+          "supervisor_exit": 0,
+          "child_exit": 0,
+          "timed_out": false,
+          "last_progress": "============================= 21 passed in 3.72s =============================="
+        },
+        {
+          "case": "nearby",
+          "supervisor_exit": 0,
+          "child_exit": 0,
+          "timed_out": false,
+          "last_progress": "====================== 216 passed, 19 warnings in 24.54s ======================"
+        }
+      ]
+    }
+  ],
+  "campaigns": [
+    {
+      "version": "6.12.0",
+      "evidence": "qualification-qt612-01",
+      "source_sha": "00dd1cf757ad76380f1a1d29841a8b13dcc3101a",
+      "source_changes": "",
+      "requested": {
+        "core": 3,
+        "camera": 30,
+        "plot": 20
+      },
+      "stress_cycles": 100,
+      "complete": true,
+      "collection_exit": 0,
+      "campaign_exit": 0,
+      "unexpected_native_signature_logs": [],
+      "started_utc": "2026-10-22T17:58:15.760825+00:00",
+      "finished_utc": "2026-10-22T18:37:47.077974+00:00",
+      "runs": [
+        {
+          "group": "stress",
+          "number": 1,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "======================== 1 passed, 1 warning in 49.20s ========================",
+          "passed": true,
+          "summary": "1 passed, 1 warning in 49.20s",
+          "skips": [],
+          "warning_categories": [
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 100,
+          "stderr_bytes": 4752,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "core",
+          "number": 1,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "========== 1013 passed, 1 skipped, 189 warnings in 141.02s (0:02:21) ==========",
+          "passed": true,
+          "summary": "1013 passed, 1 skipped, 189 warnings in 141.02s (0:02:21)",
+          "skips": [
+            "tests/test_qt_stall_stress.py::test_repeated_simulated_mainwindow_lifecycle SKIPPED [ 76%]"
+          ],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 1,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 22 warnings in 35.35s ======================",
+          "passed": true,
+          "summary": "209 passed, 22 warnings in 35.35s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 1,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 20 warnings in 37.88s ======================",
+          "passed": true,
+          "summary": "308 passed, 20 warnings in 37.88s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "core",
+          "number": 2,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "========== 1013 passed, 1 skipped, 189 warnings in 125.30s (0:02:05) ==========",
+          "passed": true,
+          "summary": "1013 passed, 1 skipped, 189 warnings in 125.30s (0:02:05)",
+          "skips": [
+            "tests/test_qt_stall_stress.py::test_repeated_simulated_mainwindow_lifecycle SKIPPED [ 76%]"
+          ],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 2,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 22 warnings in 36.00s ======================",
+          "passed": true,
+          "summary": "209 passed, 22 warnings in 36.00s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 2,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 20 warnings in 37.16s ======================",
+          "passed": true,
+          "summary": "308 passed, 20 warnings in 37.16s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "core",
+          "number": 3,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "========== 1013 passed, 1 skipped, 189 warnings in 122.03s (0:02:02) ==========",
+          "passed": true,
+          "summary": "1013 passed, 1 skipped, 189 warnings in 122.03s (0:02:02)",
+          "skips": [
+            "tests/test_qt_stall_stress.py::test_repeated_simulated_mainwindow_lifecycle SKIPPED [ 76%]"
+          ],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 3,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 22 warnings in 35.68s ======================",
+          "passed": true,
+          "summary": "209 passed, 22 warnings in 35.68s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 3,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 20 warnings in 36.21s ======================",
+          "passed": true,
+          "summary": "308 passed, 20 warnings in 36.21s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 4,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 22 warnings in 35.10s ======================",
+          "passed": true,
+          "summary": "209 passed, 22 warnings in 35.10s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 4,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 20 warnings in 37.90s ======================",
+          "passed": true,
+          "summary": "308 passed, 20 warnings in 37.90s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 5,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 22 warnings in 35.13s ======================",
+          "passed": true,
+          "summary": "209 passed, 22 warnings in 35.13s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 5,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 20 warnings in 35.10s ======================",
+          "passed": true,
+          "summary": "308 passed, 20 warnings in 35.10s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 6,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 22 warnings in 35.78s ======================",
+          "passed": true,
+          "summary": "209 passed, 22 warnings in 35.78s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 6,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 20 warnings in 37.29s ======================",
+          "passed": true,
+          "summary": "308 passed, 20 warnings in 37.29s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 7,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 22 warnings in 34.57s ======================",
+          "passed": true,
+          "summary": "209 passed, 22 warnings in 34.57s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 7,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 20 warnings in 37.07s ======================",
+          "passed": true,
+          "summary": "308 passed, 20 warnings in 37.07s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 8,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 22 warnings in 33.77s ======================",
+          "passed": true,
+          "summary": "209 passed, 22 warnings in 33.77s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 8,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 20 warnings in 34.32s ======================",
+          "passed": true,
+          "summary": "308 passed, 20 warnings in 34.32s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 9,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 22 warnings in 35.12s ======================",
+          "passed": true,
+          "summary": "209 passed, 22 warnings in 35.12s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 9,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 20 warnings in 35.38s ======================",
+          "passed": true,
+          "summary": "308 passed, 20 warnings in 35.38s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 10,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 22 warnings in 34.18s ======================",
+          "passed": true,
+          "summary": "209 passed, 22 warnings in 34.18s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 10,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 20 warnings in 36.34s ======================",
+          "passed": true,
+          "summary": "308 passed, 20 warnings in 36.34s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 11,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 22 warnings in 34.48s ======================",
+          "passed": true,
+          "summary": "209 passed, 22 warnings in 34.48s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 11,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 20 warnings in 35.77s ======================",
+          "passed": true,
+          "summary": "308 passed, 20 warnings in 35.77s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 12,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 22 warnings in 33.85s ======================",
+          "passed": true,
+          "summary": "209 passed, 22 warnings in 33.85s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 12,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 20 warnings in 36.52s ======================",
+          "passed": true,
+          "summary": "308 passed, 20 warnings in 36.52s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 13,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 22 warnings in 33.82s ======================",
+          "passed": true,
+          "summary": "209 passed, 22 warnings in 33.82s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 13,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 20 warnings in 34.59s ======================",
+          "passed": true,
+          "summary": "308 passed, 20 warnings in 34.59s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 14,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 22 warnings in 34.50s ======================",
+          "passed": true,
+          "summary": "209 passed, 22 warnings in 34.50s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 14,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 20 warnings in 35.81s ======================",
+          "passed": true,
+          "summary": "308 passed, 20 warnings in 35.81s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 15,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 22 warnings in 34.68s ======================",
+          "passed": true,
+          "summary": "209 passed, 22 warnings in 34.68s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 15,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 20 warnings in 34.32s ======================",
+          "passed": true,
+          "summary": "308 passed, 20 warnings in 34.32s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 16,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 22 warnings in 35.95s ======================",
+          "passed": true,
+          "summary": "209 passed, 22 warnings in 35.95s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 16,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 20 warnings in 36.43s ======================",
+          "passed": true,
+          "summary": "308 passed, 20 warnings in 36.43s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 17,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 22 warnings in 34.52s ======================",
+          "passed": true,
+          "summary": "209 passed, 22 warnings in 34.52s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 17,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 20 warnings in 35.88s ======================",
+          "passed": true,
+          "summary": "308 passed, 20 warnings in 35.88s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 18,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 22 warnings in 34.03s ======================",
+          "passed": true,
+          "summary": "209 passed, 22 warnings in 34.03s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 18,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 20 warnings in 36.02s ======================",
+          "passed": true,
+          "summary": "308 passed, 20 warnings in 36.02s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 19,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 22 warnings in 35.10s ======================",
+          "passed": true,
+          "summary": "209 passed, 22 warnings in 35.10s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 19,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 20 warnings in 35.58s ======================",
+          "passed": true,
+          "summary": "308 passed, 20 warnings in 35.58s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 20,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 22 warnings in 34.90s ======================",
+          "passed": true,
+          "summary": "209 passed, 22 warnings in 34.90s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 20,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 20 warnings in 36.56s ======================",
+          "passed": true,
+          "summary": "308 passed, 20 warnings in 36.56s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 21,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 22 warnings in 35.05s ======================",
+          "passed": true,
+          "summary": "209 passed, 22 warnings in 35.05s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 22,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 22 warnings in 34.86s ======================",
+          "passed": true,
+          "summary": "209 passed, 22 warnings in 34.86s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 23,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 22 warnings in 37.90s ======================",
+          "passed": true,
+          "summary": "209 passed, 22 warnings in 37.90s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 24,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 22 warnings in 40.19s ======================",
+          "passed": true,
+          "summary": "209 passed, 22 warnings in 40.19s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 25,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 22 warnings in 35.69s ======================",
+          "passed": true,
+          "summary": "209 passed, 22 warnings in 35.69s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 26,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 22 warnings in 33.82s ======================",
+          "passed": true,
+          "summary": "209 passed, 22 warnings in 33.82s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 27,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 22 warnings in 35.89s ======================",
+          "passed": true,
+          "summary": "209 passed, 22 warnings in 35.89s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 28,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 22 warnings in 34.02s ======================",
+          "passed": true,
+          "summary": "209 passed, 22 warnings in 34.02s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 29,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 22 warnings in 35.63s ======================",
+          "passed": true,
+          "summary": "209 passed, 22 warnings in 35.63s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 30,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 22 warnings in 34.89s ======================",
+          "passed": true,
+          "summary": "209 passed, 22 warnings in 34.89s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning",
+            "PytestCacheWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        }
+      ]
+    },
+    {
+      "version": "6.11.2",
+      "evidence": "qualification-qt611-01",
+      "source_sha": "9e049ba6bfac267e6593f1c718d20dc861e686dc",
+      "source_changes": "",
+      "requested": {
+        "core": 3,
+        "camera": 30,
+        "plot": 20
+      },
+      "stress_cycles": 100,
+      "complete": true,
+      "collection_exit": 0,
+      "campaign_exit": 0,
+      "unexpected_native_signature_logs": [],
+      "started_utc": "2026-10-22T18:37:50.495864+00:00",
+      "finished_utc": "2026-10-22T19:16:00.537861+00:00",
+      "runs": [
+        {
+          "group": "stress",
+          "number": 1,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "============================= 1 passed in 48.76s ==============================",
+          "passed": true,
+          "summary": "1 passed in 48.76s",
+          "skips": [],
+          "warning_categories": [],
+          "completed_startup_cycles": 100,
+          "stderr_bytes": 4405,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "core",
+          "number": 1,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "========== 1013 passed, 1 skipped, 188 warnings in 124.26s (0:02:04) ==========",
+          "passed": true,
+          "summary": "1013 passed, 1 skipped, 188 warnings in 124.26s (0:02:04)",
+          "skips": [
+            "tests/test_qt_stall_stress.py::test_repeated_simulated_mainwindow_lifecycle SKIPPED [ 76%]"
+          ],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 1,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 21 warnings in 35.13s ======================",
+          "passed": true,
+          "summary": "209 passed, 21 warnings in 35.13s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 1,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 19 warnings in 36.01s ======================",
+          "passed": true,
+          "summary": "308 passed, 19 warnings in 36.01s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "core",
+          "number": 2,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "========== 1013 passed, 1 skipped, 188 warnings in 123.54s (0:02:03) ==========",
+          "passed": true,
+          "summary": "1013 passed, 1 skipped, 188 warnings in 123.54s (0:02:03)",
+          "skips": [
+            "tests/test_qt_stall_stress.py::test_repeated_simulated_mainwindow_lifecycle SKIPPED [ 76%]"
+          ],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 2,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 21 warnings in 35.27s ======================",
+          "passed": true,
+          "summary": "209 passed, 21 warnings in 35.27s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 2,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 19 warnings in 35.02s ======================",
+          "passed": true,
+          "summary": "308 passed, 19 warnings in 35.02s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "core",
+          "number": 3,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "========== 1013 passed, 1 skipped, 188 warnings in 125.88s (0:02:05) ==========",
+          "passed": true,
+          "summary": "1013 passed, 1 skipped, 188 warnings in 125.88s (0:02:05)",
+          "skips": [
+            "tests/test_qt_stall_stress.py::test_repeated_simulated_mainwindow_lifecycle SKIPPED [ 76%]"
+          ],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 3,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 21 warnings in 35.19s ======================",
+          "passed": true,
+          "summary": "209 passed, 21 warnings in 35.19s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 3,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 19 warnings in 33.94s ======================",
+          "passed": true,
+          "summary": "308 passed, 19 warnings in 33.94s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 4,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 21 warnings in 35.43s ======================",
+          "passed": true,
+          "summary": "209 passed, 21 warnings in 35.43s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 4,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 19 warnings in 35.67s ======================",
+          "passed": true,
+          "summary": "308 passed, 19 warnings in 35.67s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 5,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 21 warnings in 34.93s ======================",
+          "passed": true,
+          "summary": "209 passed, 21 warnings in 34.93s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 5,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 19 warnings in 35.34s ======================",
+          "passed": true,
+          "summary": "308 passed, 19 warnings in 35.34s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 6,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 21 warnings in 34.95s ======================",
+          "passed": true,
+          "summary": "209 passed, 21 warnings in 34.95s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 6,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 19 warnings in 35.30s ======================",
+          "passed": true,
+          "summary": "308 passed, 19 warnings in 35.30s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 7,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 21 warnings in 33.84s ======================",
+          "passed": true,
+          "summary": "209 passed, 21 warnings in 33.84s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 7,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 19 warnings in 34.90s ======================",
+          "passed": true,
+          "summary": "308 passed, 19 warnings in 34.90s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 8,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 21 warnings in 33.65s ======================",
+          "passed": true,
+          "summary": "209 passed, 21 warnings in 33.65s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 8,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 19 warnings in 34.32s ======================",
+          "passed": true,
+          "summary": "308 passed, 19 warnings in 34.32s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 9,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 21 warnings in 36.42s ======================",
+          "passed": true,
+          "summary": "209 passed, 21 warnings in 36.42s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 9,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 19 warnings in 35.64s ======================",
+          "passed": true,
+          "summary": "308 passed, 19 warnings in 35.64s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 10,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 21 warnings in 34.14s ======================",
+          "passed": true,
+          "summary": "209 passed, 21 warnings in 34.14s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 10,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 19 warnings in 34.03s ======================",
+          "passed": true,
+          "summary": "308 passed, 19 warnings in 34.03s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 11,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 21 warnings in 34.07s ======================",
+          "passed": true,
+          "summary": "209 passed, 21 warnings in 34.07s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 11,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 19 warnings in 33.41s ======================",
+          "passed": true,
+          "summary": "308 passed, 19 warnings in 33.41s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 12,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 21 warnings in 33.94s ======================",
+          "passed": true,
+          "summary": "209 passed, 21 warnings in 33.94s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 12,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 19 warnings in 35.11s ======================",
+          "passed": true,
+          "summary": "308 passed, 19 warnings in 35.11s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 13,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 21 warnings in 33.66s ======================",
+          "passed": true,
+          "summary": "209 passed, 21 warnings in 33.66s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 13,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 19 warnings in 33.48s ======================",
+          "passed": true,
+          "summary": "308 passed, 19 warnings in 33.48s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 14,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 21 warnings in 34.58s ======================",
+          "passed": true,
+          "summary": "209 passed, 21 warnings in 34.58s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 14,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 19 warnings in 33.88s ======================",
+          "passed": true,
+          "summary": "308 passed, 19 warnings in 33.88s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 15,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 21 warnings in 34.79s ======================",
+          "passed": true,
+          "summary": "209 passed, 21 warnings in 34.79s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 15,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 19 warnings in 34.32s ======================",
+          "passed": true,
+          "summary": "308 passed, 19 warnings in 34.32s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 16,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 21 warnings in 33.76s ======================",
+          "passed": true,
+          "summary": "209 passed, 21 warnings in 33.76s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 16,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 19 warnings in 34.45s ======================",
+          "passed": true,
+          "summary": "308 passed, 19 warnings in 34.45s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 17,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 21 warnings in 34.05s ======================",
+          "passed": true,
+          "summary": "209 passed, 21 warnings in 34.05s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 17,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 19 warnings in 34.08s ======================",
+          "passed": true,
+          "summary": "308 passed, 19 warnings in 34.08s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 18,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 21 warnings in 33.84s ======================",
+          "passed": true,
+          "summary": "209 passed, 21 warnings in 33.84s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 18,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 19 warnings in 34.88s ======================",
+          "passed": true,
+          "summary": "308 passed, 19 warnings in 34.88s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 19,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 21 warnings in 33.97s ======================",
+          "passed": true,
+          "summary": "209 passed, 21 warnings in 33.97s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 19,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 19 warnings in 33.88s ======================",
+          "passed": true,
+          "summary": "308 passed, 19 warnings in 33.88s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 20,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 21 warnings in 33.71s ======================",
+          "passed": true,
+          "summary": "209 passed, 21 warnings in 33.71s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "plot",
+          "number": 20,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 308 passed, 19 warnings in 33.98s ======================",
+          "passed": true,
+          "summary": "308 passed, 19 warnings in 33.98s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 21,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 21 warnings in 33.82s ======================",
+          "passed": true,
+          "summary": "209 passed, 21 warnings in 33.82s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 22,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 21 warnings in 34.89s ======================",
+          "passed": true,
+          "summary": "209 passed, 21 warnings in 34.89s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 23,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 21 warnings in 33.71s ======================",
+          "passed": true,
+          "summary": "209 passed, 21 warnings in 33.71s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 24,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 21 warnings in 33.61s ======================",
+          "passed": true,
+          "summary": "209 passed, 21 warnings in 33.61s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 25,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 21 warnings in 33.83s ======================",
+          "passed": true,
+          "summary": "209 passed, 21 warnings in 33.83s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 26,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 21 warnings in 33.65s ======================",
+          "passed": true,
+          "summary": "209 passed, 21 warnings in 33.65s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 27,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 21 warnings in 34.66s ======================",
+          "passed": true,
+          "summary": "209 passed, 21 warnings in 34.66s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 28,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 21 warnings in 34.00s ======================",
+          "passed": true,
+          "summary": "209 passed, 21 warnings in 34.00s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 29,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 21 warnings in 33.84s ======================",
+          "passed": true,
+          "summary": "209 passed, 21 warnings in 33.84s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        },
+        {
+          "group": "camera",
+          "number": 30,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 209 passed, 21 warnings in 34.44s ======================",
+          "passed": true,
+          "summary": "209 passed, 21 warnings in 34.44s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0,
+          "stderr_bytes": 0,
+          "stack_capture_status": "not_needed",
+          "supervisor_error": false
+        }
+      ]
+    }
+  ],
+  "packaging": [
+    {
+      "version": "qt612",
+      "evidence": "smoke-gl-auto",
+      "mode": "gl-auto",
+      "qualified": true,
+      "children": [
+        {
+          "exit": 0,
+          "platform": "windows",
+          "opengl": null,
+          "guard": false
+        },
+        {
+          "exit": 2,
+          "platform": "windows",
+          "opengl": null,
+          "guard": true
+        }
+      ],
+      "graphics_result": {
+        "result": "rendered",
+        "qt_platform": "windows",
+        "exit_code": 0,
+        "executable": "IOPanel.exe"
+      },
+      "graphics_capability": {
+        "vendor": "Intel",
+        "renderer": "Intel(R) HD Graphics 4600",
+        "version": "4.3.0 - Build 20.19.15.4835",
+        "major": 4,
+        "minor": 3,
+        "profile": "OpenGLContextProfile.CompatibilityProfile"
+      },
+      "framebuffer_pixels": {
+        "width": 416,
+        "height": 632,
+        "nonblack_pixels": 9700,
+        "alpha_min": 255,
+        "sha256": "585e1baf576cc2295eb8e443c6db678f2d8df0d9cff2ef239c8ae3dd04fc55a8"
+      }
+    },
+    {
+      "version": "qt612",
+      "evidence": "smoke-gl-desktop",
+      "mode": "gl-desktop",
+      "qualified": true,
+      "children": [
+        {
+          "exit": 0,
+          "platform": "windows",
+          "opengl": "desktop",
+          "guard": false
+        },
+        {
+          "exit": 2,
+          "platform": "windows",
+          "opengl": "desktop",
+          "guard": true
+        }
+      ],
+      "graphics_result": {
+        "result": "rendered",
+        "qt_platform": "windows",
+        "exit_code": 0,
+        "executable": "IOPanel.exe"
+      },
+      "graphics_capability": {
+        "vendor": "Intel",
+        "renderer": "Intel(R) HD Graphics 4600",
+        "version": "4.3.0 - Build 20.19.15.4835",
+        "major": 4,
+        "minor": 3,
+        "profile": "OpenGLContextProfile.CompatibilityProfile"
+      },
+      "framebuffer_pixels": {
+        "width": 416,
+        "height": 632,
+        "nonblack_pixels": 9700,
+        "alpha_min": 255,
+        "sha256": "585e1baf576cc2295eb8e443c6db678f2d8df0d9cff2ef239c8ae3dd04fc55a8"
+      }
+    },
+    {
+      "version": "qt612",
+      "evidence": "smoke-offscreen",
+      "mode": "offscreen",
+      "qualified": true,
+      "children": [
+        {
+          "exit": 0,
+          "platform": "offscreen",
+          "opengl": null,
+          "guard": false
+        },
+        {
+          "exit": 2,
+          "platform": "offscreen",
+          "opengl": null,
+          "guard": true
+        }
+      ]
+    },
+    {
+      "version": "qt612",
+      "evidence": "smoke-windows",
+      "mode": "windows",
+      "qualified": true,
+      "children": [
+        {
+          "exit": 0,
+          "platform": "windows",
+          "opengl": null,
+          "guard": false
+        },
+        {
+          "exit": 2,
+          "platform": "windows",
+          "opengl": null,
+          "guard": true
+        }
+      ]
+    },
+    {
+      "version": "qt611",
+      "evidence": "smoke-gl-auto",
+      "mode": "gl-auto",
+      "qualified": true,
+      "children": [
+        {
+          "exit": 0,
+          "platform": "windows",
+          "opengl": null,
+          "guard": false
+        },
+        {
+          "exit": 2,
+          "platform": "windows",
+          "opengl": null,
+          "guard": true
+        }
+      ],
+      "graphics_result": {
+        "result": "rendered",
+        "qt_platform": "windows",
+        "exit_code": 0,
+        "executable": "IOPanel.exe"
+      },
+      "graphics_capability": {
+        "vendor": "Intel",
+        "renderer": "Intel(R) HD Graphics 4600",
+        "version": "4.3.0 - Build 20.19.15.4835",
+        "major": 4,
+        "minor": 3,
+        "profile": "OpenGLContextProfile.CompatibilityProfile"
+      },
+      "framebuffer_pixels": {
+        "width": 416,
+        "height": 632,
+        "nonblack_pixels": 9700,
+        "alpha_min": 255,
+        "sha256": "585e1baf576cc2295eb8e443c6db678f2d8df0d9cff2ef239c8ae3dd04fc55a8"
+      }
+    },
+    {
+      "version": "qt611",
+      "evidence": "smoke-gl-desktop",
+      "mode": "gl-desktop",
+      "qualified": true,
+      "children": [
+        {
+          "exit": 0,
+          "platform": "windows",
+          "opengl": "desktop",
+          "guard": false
+        },
+        {
+          "exit": 2,
+          "platform": "windows",
+          "opengl": "desktop",
+          "guard": true
+        }
+      ],
+      "graphics_result": {
+        "result": "rendered",
+        "qt_platform": "windows",
+        "exit_code": 0,
+        "executable": "IOPanel.exe"
+      },
+      "graphics_capability": {
+        "vendor": "Intel",
+        "renderer": "Intel(R) HD Graphics 4600",
+        "version": "4.3.0 - Build 20.19.15.4835",
+        "major": 4,
+        "minor": 3,
+        "profile": "OpenGLContextProfile.CompatibilityProfile"
+      },
+      "framebuffer_pixels": {
+        "width": 416,
+        "height": 632,
+        "nonblack_pixels": 9700,
+        "alpha_min": 255,
+        "sha256": "585e1baf576cc2295eb8e443c6db678f2d8df0d9cff2ef239c8ae3dd04fc55a8"
+      }
+    },
+    {
+      "version": "qt611",
+      "evidence": "smoke-offscreen",
+      "mode": "offscreen",
+      "qualified": true,
+      "children": [
+        {
+          "exit": 0,
+          "platform": "offscreen",
+          "opengl": null,
+          "guard": false
+        },
+        {
+          "exit": 2,
+          "platform": "offscreen",
+          "opengl": null,
+          "guard": true
+        }
+      ]
+    },
+    {
+      "version": "qt611",
+      "evidence": "smoke-windows",
+      "mode": "windows",
+      "qualified": true,
+      "children": [
+        {
+          "exit": 0,
+          "platform": "windows",
+          "opengl": null,
+          "guard": false
+        },
+        {
+          "exit": 2,
+          "platform": "windows",
+          "opengl": null,
+          "guard": true
+        }
+      ]
+    }
+  ],
+  "collection": {
+    "before_total": 1505,
+    "after_total": 1531,
+    "core": 1014,
+    "camera": 209,
+    "plot": 308,
+    "added": 26,
+    "removed": 0,
+    "direct_before_after_comparison": {
+      "before": 1505,
+      "after": 1531,
+      "removed": [],
+      "added": [
+        "tests/test_plot_widget_lifetime.py::test_registered_plot_remains_owned_after_helper_raises",
+        "tests/test_plot_widget_lifetime.py::test_registered_plot_survives_collection_until_native_teardown[False-closed-False-addWidget]",
+        "tests/test_plot_widget_lifetime.py::test_registered_plot_survives_collection_until_native_teardown[False-closed-False-add_widget]",
+        "tests/test_plot_widget_lifetime.py::test_registered_plot_survives_collection_until_native_teardown[False-closed-True-addWidget]",
+        "tests/test_plot_widget_lifetime.py::test_registered_plot_survives_collection_until_native_teardown[False-closed-True-add_widget]",
+        "tests/test_plot_widget_lifetime.py::test_registered_plot_survives_collection_until_native_teardown[False-hidden-False-addWidget]",
+        "tests/test_plot_widget_lifetime.py::test_registered_plot_survives_collection_until_native_teardown[False-hidden-False-add_widget]",
+        "tests/test_plot_widget_lifetime.py::test_registered_plot_survives_collection_until_native_teardown[False-hidden-True-addWidget]",
+        "tests/test_plot_widget_lifetime.py::test_registered_plot_survives_collection_until_native_teardown[False-hidden-True-add_widget]",
+        "tests/test_plot_widget_lifetime.py::test_registered_plot_survives_collection_until_native_teardown[False-visible-False-addWidget]",
+        "tests/test_plot_widget_lifetime.py::test_registered_plot_survives_collection_until_native_teardown[False-visible-False-add_widget]",
+        "tests/test_plot_widget_lifetime.py::test_registered_plot_survives_collection_until_native_teardown[False-visible-True-addWidget]",
+        "tests/test_plot_widget_lifetime.py::test_registered_plot_survives_collection_until_native_teardown[False-visible-True-add_widget]",
+        "tests/test_plot_widget_lifetime.py::test_registered_plot_survives_collection_until_native_teardown[True-closed-False-addWidget]",
+        "tests/test_plot_widget_lifetime.py::test_registered_plot_survives_collection_until_native_teardown[True-closed-False-add_widget]",
+        "tests/test_plot_widget_lifetime.py::test_registered_plot_survives_collection_until_native_teardown[True-closed-True-addWidget]",
+        "tests/test_plot_widget_lifetime.py::test_registered_plot_survives_collection_until_native_teardown[True-closed-True-add_widget]",
+        "tests/test_plot_widget_lifetime.py::test_registered_plot_survives_collection_until_native_teardown[True-hidden-False-addWidget]",
+        "tests/test_plot_widget_lifetime.py::test_registered_plot_survives_collection_until_native_teardown[True-hidden-False-add_widget]",
+        "tests/test_plot_widget_lifetime.py::test_registered_plot_survives_collection_until_native_teardown[True-hidden-True-addWidget]",
+        "tests/test_plot_widget_lifetime.py::test_registered_plot_survives_collection_until_native_teardown[True-hidden-True-add_widget]",
+        "tests/test_plot_widget_lifetime.py::test_registered_plot_survives_collection_until_native_teardown[True-visible-False-addWidget]",
+        "tests/test_plot_widget_lifetime.py::test_registered_plot_survives_collection_until_native_teardown[True-visible-False-add_widget]",
+        "tests/test_plot_widget_lifetime.py::test_registered_plot_survives_collection_until_native_teardown[True-visible-True-addWidget]",
+        "tests/test_plot_widget_lifetime.py::test_registered_plot_survives_collection_until_native_teardown[True-visible-True-add_widget]",
+        "tests/test_plot_widget_lifetime_process.py::test_registered_owner_survives_post_call_paint_collection"
+      ]
+    }
+  },
+  "unqualified": [
+    "Physical VmbPy/Vimba X callbacks and teardown",
+    "Physical CT400 DLL safe-state and shutdown",
+    "PM5020/EDFA/piezo hardware",
+    "Real MATLAB Engine",
+    "Physical laboratory GUI acceptance",
+    "Historical #216 construction AV initiating write"
+  ],
+  "failed_or_incomplete_diagnostics": [
+    {
+      "evidence": "before-qt612-plot-01",
+      "classification": "sandbox/CIM/temp permission failure",
+      "supervisor_exit": 1,
+      "child_exit": null
+    },
+    {
+      "evidence": "lifetime-probe-qt612-unretained.log",
+      "classification": "collection at paint entry, less specific reproduction",
+      "shell_exit": -1073740791
+    },
+    {
+      "evidence": "lifetime-controls-qt612-01/retained",
+      "classification": "diagnostic snapshot cleanup ordering invalid; superseded by root-only cleanup",
+      "child_exit": 3
+    },
+    {
+      "evidence": "pytest-probe-before-qt612",
+      "classification": "diagnostic import path error",
+      "child_exit": 1
+    }
+  ],
+  "standalone_supervised_observations": [
+    {
+      "version": "6.12.0",
+      "evidence": "before-qt612-plot-02",
+      "child_exit": 0,
+      "timed_out": false,
+      "last_progress": "====================== 282 passed, 11 warnings in 25.86s ======================",
+      "supervisor_error": false
+    },
+    {
+      "version": "6.12.0",
+      "evidence": "pytest-probe-before-qt612",
+      "child_exit": 1,
+      "timed_out": false,
+      "last_progress": null,
+      "supervisor_error": false
+    },
+    {
+      "version": "6.12.0",
+      "evidence": "pytest-probe-before-qt612-v2",
+      "child_exit": 3,
+      "timed_out": false,
+      "last_progress": "[LIFETIME-PROBE] valid {'root': None, 'plot': False, 'group': False}",
+      "supervisor_error": false
+    },
+    {
+      "version": "6.11.2",
+      "evidence": "pytest-probe-after-qt612",
+      "child_exit": 0,
+      "timed_out": false,
+      "last_progress": "============================== 1 passed in 0.78s ==============================",
+      "supervisor_error": false
+    },
+    {
+      "version": "6.11.2",
+      "evidence": "before-qt611-plot-01",
+      "child_exit": 0,
+      "timed_out": false,
+      "last_progress": "====================== 282 passed, 10 warnings in 31.95s ======================",
+      "supervisor_error": false
+    }
+  ],
+  "regressions": [
+    {
+      "version": "6.12.0",
+      "phase": "before",
+      "evidence": "regression-before-qt612.log",
+      "exit": 1,
+      "summary": "1 failed in 2.32s",
+      "skips": [],
+      "warning_categories": [],
+      "completed_startup_cycles": 0
+    },
+    {
+      "version": "6.11.2",
+      "phase": "before",
+      "evidence": "regression-before-qt611.log",
+      "exit": 1,
+      "summary": "1 failed in 2.06s",
+      "skips": [],
+      "warning_categories": [],
+      "completed_startup_cycles": 0
+    },
+    {
+      "version": "6.11.2",
+      "phase": "before",
+      "evidence": "process-regression-before-qt611.log",
+      "exit": 1,
+      "summary": "1 failed in 3.53s",
+      "skips": [],
+      "warning_categories": [],
+      "completed_startup_cycles": 0
+    },
+    {
+      "version": "6.11.2",
+      "phase": "after",
+      "evidence": "regression-after-qt611.log",
+      "exit": 0,
+      "summary": "30 passed in 11.52s",
+      "skips": [],
+      "warning_categories": [],
+      "completed_startup_cycles": 0
+    },
+    {
+      "version": "6.12.0",
+      "phase": "after",
+      "evidence": "regression-after-qt612.log",
+      "exit": 0,
+      "summary": "28 passed in 6.32s",
+      "skips": [],
+      "warning_categories": [],
+      "completed_startup_cycles": 0
+    }
+  ],
+  "static_checks": {
+    "6.11.2": {
+      "ruff_check": 0,
+      "ruff_format_check": 0,
+      "pyright": 0,
+      "collection": 0
+    },
+    "6.12.0": {
+      "ruff_check": 0,
+      "ruff_format_check": 0,
+      "pyright": 0,
+      "collection": 0
+    }
+  },
+  "builds": [
+    {
+      "version": "6.11.2",
+      "exit": 0,
+      "source_sha": "9e049ba6bfac267e6593f1c718d20dc861e686dc",
+      "pyinstaller": "6.22.3"
+    },
+    {
+      "version": "6.12.0",
+      "exit": 0,
+      "source_sha": "00dd1cf757ad76380f1a1d29841a8b13dcc3101a",
+      "pyinstaller": "6.22.3"
+    }
+  ],
+  "github_ci": [
+    {
+      "source_sha": "9e049ba6bfac267e6593f1c718d20dc861e686dc",
+      "tests_run": 39827540157,
+      "packaging_run": 39827540289,
+      "conclusion": "success",
+      "partitions": [
+        {
+          "group": "camera",
+          "child_exit": 0,
+          "timed_out": false,
+          "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+          "summary": "209 passed, 21 warnings in 36.54s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0
+        },
+        {
+          "group": "core",
+          "child_exit": 0,
+          "timed_out": false,
+          "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+          "summary": "1011 passed, 3 skipped, 188 warnings in 109.81s (0:01:49)",
+          "skips": [
+            "tests/test_lazy_alignment_viewer.py::test_real_gl_render_requires_a_usable_context SKIPPEDerr = 1282,",
+            "tests/test_lazy_alignment_viewer.py::test_real_viewer_restored_map_title_survives_failure_then_retry SKIPPEDerr = 1282,",
+            "tests/test_qt_stall_stress.py::test_repeated_simulated_mainwindow_lifecycle SKIPPED [ 76%]"
+          ],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0
+        },
+        {
+          "group": "plot",
+          "child_exit": 0,
+          "timed_out": false,
+          "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+          "summary": "308 passed, 19 warnings in 43.48s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0
+        }
+      ]
+    },
+    {
+      "source_sha": "00dd1cf757ad76380f1a1d29841a8b13dcc3101a",
+      "tests_run": 39829733714,
+      "conclusion": "success",
+      "partitions": [
+        {
+          "group": "camera",
+          "child_exit": 0,
+          "timed_out": false,
+          "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+          "summary": "209 passed, 21 warnings in 49.17s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0
+        },
+        {
+          "group": "core",
+          "child_exit": 0,
+          "timed_out": false,
+          "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+          "summary": "1011 passed, 3 skipped, 188 warnings in 121.11s (0:02:01)",
+          "skips": [
+            "tests/test_lazy_alignment_viewer.py::test_real_gl_render_requires_a_usable_context SKIPPEDerr = 1282,",
+            "tests/test_lazy_alignment_viewer.py::test_real_viewer_restored_map_title_survives_failure_then_retry SKIPPEDerr = 1282,",
+            "tests/test_qt_stall_stress.py::test_repeated_simulated_mainwindow_lifecycle SKIPPED [ 76%]"
+          ],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0
+        },
+        {
+          "group": "plot",
+          "child_exit": 0,
+          "timed_out": false,
+          "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+          "summary": "308 passed, 19 warnings in 46.44s",
+          "skips": [],
+          "warning_categories": [
+            "DeprecationWarning"
+          ],
+          "completed_startup_cycles": 0
+        }
+      ]
+    }
+  ],
+  "qualification_audit": {
+    "two_complete_campaigns": true,
+    "both_100_cycle_stress_runs": true,
+    "all_post_fix_matrix_children_zero": true,
+    "all_eight_frozen_checks_qualified": true
+  }
+}
