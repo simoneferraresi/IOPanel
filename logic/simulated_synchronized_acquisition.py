@@ -142,10 +142,9 @@ class SimulatedSynchronizedCoordinator:
             self._ct.set_sampling_res(settings.resolution_pm)
             selected = set(settings.detectors)
             self._ct.set_detector_array(
-                *(
-                    Enable.ENABLE if det in selected else Enable.DISABLE
-                    for det in (Detector.DE_2, Detector.DE_3, Detector.DE_4)
-                ),
+                Enable.ENABLE if Detector.DE_2 in selected else Enable.DISABLE,
+                Enable.ENABLE if Detector.DE_3 in selected else Enable.DISABLE,
+                Enable.ENABLE if Detector.DE_4 in selected else Enable.DISABLE,
                 Enable.DISABLE,
             )
             self._ct.set_scan(settings.laser_power_mw, settings.start_nm, settings.stop_nm)
