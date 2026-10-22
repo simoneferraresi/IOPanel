@@ -7,10 +7,10 @@ can be claimed. In particular, this module is not wired to any live worker.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
 from threading import Event, Lock
-from typing import Iterable
 
 
 class DeviceResource(str, Enum):
