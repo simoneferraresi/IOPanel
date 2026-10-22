@@ -165,8 +165,8 @@ def test_simulated_camera_result_during_pending_close_is_cleaned(qtbot, monkeypa
     assert window._pending_init_close
     assert camera.open()
     window._on_camera_initialized("late-camera", camera, camera_config)
-    assert window.cameras == [camera]
-    assert camera.is_streaming
+    assert window.cameras == []
+    assert not camera.is_streaming
     assert cameras_cleaned == []
     assert vimba_cleanups == []
 
@@ -176,7 +176,7 @@ def test_simulated_camera_result_during_pending_close_is_cleaned(qtbot, monkeypa
     assert scheduled[0][1]() is True
     assert window.cameras == []
     assert not camera.is_streaming
-    assert cameras_cleaned == [1]
+    assert cameras_cleaned == [0]
     assert vimba_cleanups == [True]
     assert not window._pending_init_close
     assert _qt_thread_stopped(histogram_thread)

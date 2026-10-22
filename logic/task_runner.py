@@ -1,6 +1,9 @@
 import logging
 
-from PySide6.QtCore import QMetaObject, QObject, Qt, QThread, Signal, Slot
+from PySide6.QtCore import QCoreApplication, QMetaObject, QObject, Qt, QThread, Signal, Slot
+from shiboken6 import isValid
+
+from logic.qt_worker_lifecycle import retire_worker_on_thread_finish
 
 logger = logging.getLogger("LabApp.TaskRunner")
 
@@ -42,21 +45,28 @@ class TaskRunner(QObject):
                             starting the thread. Set False for service workers
                             that wait for signals.
         """
-        super().__init__()
+        # Native ownership must survive a caller dropping its Python reference
+        # in a queued finished callback. A runner retires with its QThread.
+        super().__init__(QCoreApplication.instance())
         self.worker = worker
         self.auto_start_run = auto_start_run
-        self.worker_thread: QThread = QThread()
+        self.worker_thread: QThread = QThread(self)
 
-        # 1. Move the worker to the new thread
-        self.worker.moveToThread(self.worker_thread)
+        # An unstarted task has no worker event loop to drain deleteLater.
+        # Keep its worker GUI-owned until execution actually starts.
+        self.worker.setParent(self)
 
         # 2. Connect Lifecycle Signals
         # When the worker says it's finished, quit the thread loop
         self.worker.finished.connect(self.worker_thread.quit, Qt.ConnectionType.DirectConnection)
 
-        # When the thread loop stops, delete the worker and the thread object
-        self.worker_thread.finished.connect(self.worker.deleteLater)
+        # QObject destruction calls virtual disconnectNotify in PySide. Doing
+        # that in a native worker thread can hold Qt's connection mutex while
+        # waiting for the GIL, as the GUI holds the GIL while connecting objects.
+        # Return the stopped worker before requesting GUI deferred destruction.
+        retire_worker_on_thread_finish(self.worker_thread, self.worker)
         self.worker_thread.finished.connect(self.worker_thread.deleteLater)
+        self.worker_thread.destroyed.connect(self.deleteLater)
 
         # 3. Error Forwarding (Optional, but useful)
         self.worker.error.connect(self.error_occurred)
@@ -64,6 +74,8 @@ class TaskRunner(QObject):
     def start(self) -> None:
         """Starts the background thread."""
         logger.debug(f"Starting thread for worker: {self.worker.__class__.__name__}")
+        self.worker.setParent(None)
+        self.worker.moveToThread(self.worker_thread)
         self.worker_thread.start()
         if self.auto_start_run:
             QMetaObject.invokeMethod(self.worker, "run", Qt.ConnectionType.QueuedConnection)
@@ -73,6 +85,6 @@ class TaskRunner(QObject):
         Forcefully asks the thread to stop.
         Note: The worker usually needs its own 'stop()' method to break loops safely.
         """
-        if self.worker_thread.isRunning():
+        if isValid(self.worker_thread) and self.worker_thread.isRunning():
             self.worker_thread.quit()
             self.worker_thread.wait()

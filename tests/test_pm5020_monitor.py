@@ -298,10 +298,12 @@ def test_thread_finished_callback_runs_on_gui_thread_and_is_idempotent(qtbot, _c
 
         def __init__(self):
             self.callback_threads = []
+            self.callback_python_threads = []
             super().__init__()
 
         def _on_thread_finished(self):
             self.callback_threads.append(QThread.currentThread())
+            self.callback_python_threads.append(threading.get_ident())
             super()._on_thread_finished()
 
     panel = TrackingPanel()
@@ -329,6 +331,7 @@ def test_thread_finished_callback_runs_on_gui_thread_and_is_idempotent(qtbot, _c
             f"panel_shutdown_complete={completed.count()}"
         ) from exc
     assert len(panel.callback_threads) == 1
+    assert panel.callback_python_threads == [threading.get_ident()]
     assert panel.callback_threads[0] == QThread.currentThread()
     assert not panel._shutdown_timer.isActive()
     assert completed.count() == 1

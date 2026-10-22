@@ -63,6 +63,7 @@ from app_settings import AppSettings
 from config_model import CameraConfig
 from hardware.camera import VimbaCam
 from hardware.camera_capabilities import ROI
+from logic.qt_worker_lifecycle import retire_worker_on_thread_finish
 from ui.constants import (
     CAMERA_RESIZE_EVENT_THROTTLE_MS,
     CAMERA_RESIZE_UPDATE_DELAY_MS,
@@ -832,7 +833,7 @@ class CameraPanel(QFrame):
         self.conversion_thread.started.connect(
             lambda: logger.info(f"Conversion thread started for {self._panel_title}.")
         )
-        self.conversion_thread.finished.connect(self.conversion_worker.deleteLater)
+        retire_worker_on_thread_finish(self.conversion_thread, self.conversion_worker)
 
         # Start the thread
         self.conversion_thread.start()
@@ -979,6 +980,8 @@ class CameraPanel(QFrame):
         self.video_label.setText("Applying camera mode…")
         self._update_control_availability()
         worker = ViewModeWorker(self.camera, int(height))
+        worker.signals.setParent(self)
+        worker.signals.finished.connect(worker.signals.deleteLater)
         worker.signals.finished.connect(self._finish_view_mode_change)
         self._active_view_mode_worker = worker
         self._thread_pool.start(worker)
@@ -1275,7 +1278,7 @@ class CameraPanel(QFrame):
             if not success and reverted_value_getter:
                 reverted_value = reverted_value_getter()
                 if reverted_value is not None:
-                    QTimer.singleShot(100, lambda: control_widget.setValue(reverted_value))
+                    QTimer.singleShot(100, control_widget, lambda: control_widget.setValue(reverted_value))
 
     @Slot(str)
     def _handle_camera_error_message(self, message: str):
@@ -1381,7 +1384,13 @@ class CameraPanel(QFrame):
     def _start_auto_op(self, op_type: str):
         """Starts an auto-operation in a worker thread."""
         # --- FIX: Guard against calls before camera is set ---
-        if not self.camera or self._recovery_active or self._recovery_failed or self._auto_op_active:
+        if (
+            self._panel_closing
+            or not self.camera
+            or self._recovery_active
+            or self._recovery_failed
+            or self._auto_op_active
+        ):
             logger.warning(f"Cannot start '{op_type}': camera is not yet available.")
             return
         self._cancel_pending_parameter_updates()
@@ -1426,12 +1435,12 @@ class CameraPanel(QFrame):
             self.exposure_control.setValue(result_value)
             self.exposure_status.setText("✓")
             self.exposure_status.setStyleSheet("color: green; font-weight: bold;")
-            QTimer.singleShot(2500, lambda: self.clear_status_indicators("exposure"))
+            QTimer.singleShot(2500, self, lambda: self.clear_status_indicators("exposure"))
         elif op_type == "auto_gain":
             self.gain_control.setValue(result_value)
             self.gain_status.setText("✓")
             self.gain_status.setStyleSheet("color: green; font-weight: bold;")
-            QTimer.singleShot(2500, lambda: self.clear_status_indicators("gain"))
+            QTimer.singleShot(2500, self, lambda: self.clear_status_indicators("gain"))
 
     @Slot(str, str)
     def handle_auto_error(self, op_type: str, error_str: str):
@@ -1439,7 +1448,7 @@ class CameraPanel(QFrame):
         if op_type == "auto_exposure":
             self.exposure_status.setText("✗")
             self.exposure_status.setStyleSheet("color: red; font-weight: bold;")
-            QTimer.singleShot(3500, lambda: self.clear_status_indicators("exposure"))
+            QTimer.singleShot(3500, self, lambda: self.clear_status_indicators("exposure"))
             # --- REFACTOR: Revert UI using ParameterControl ---
             reverted_value = self.camera.exposure_us
             if reverted_value is not None:
@@ -1448,7 +1457,7 @@ class CameraPanel(QFrame):
             self.gain_status.setText("✗")
             self.gain_status.setStyleSheet("color: red; font-weight: bold;")
             self.gain_control.setValue(self.camera.get_gain())
-            QTimer.singleShot(3500, lambda: self.clear_status_indicators("gain"))
+            QTimer.singleShot(3500, self, lambda: self.clear_status_indicators("gain"))
 
     def clear_status_indicators(self, control: str | None = None):
         if control is None or control == "exposure":

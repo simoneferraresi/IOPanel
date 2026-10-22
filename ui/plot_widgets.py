@@ -50,6 +50,7 @@ from logic.power_monitor_recording import (
     PowerMonitorRecording,
     PowerMonitorRecordingSample,
 )
+from logic.qt_worker_lifecycle import retire_worker_on_thread_finish
 from logic.scan_export import build_scan_export_v2
 from logic.scan_export_worker import ScanExportOutcome, ScanExportWorker
 from logic.scan_import import ImportedScan
@@ -1691,8 +1692,7 @@ class PlotWidget(QWidget):
         worker.moveToThread(thread)
         worker.finished_saving.connect(self._handle_matlab_save_finished)
         worker.engine_unhealthy.connect(self._handle_matlab_engine_unhealthy)
-        worker.finished_saving.connect(worker.deleteLater)
-        worker.engine_unhealthy.connect(worker.deleteLater)
+        retire_worker_on_thread_finish(thread, worker)
         worker.finished_saving.connect(thread.quit)
         worker.engine_unhealthy.connect(thread.quit)
         thread.started.connect(lambda: logger.info("MATLAB save worker thread started for FIG."))
