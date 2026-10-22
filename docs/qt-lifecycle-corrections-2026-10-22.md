@@ -451,6 +451,17 @@ setting was changed to obtain a passing result. Resolving software-GL/PyOpenGL
 loader interoperability or obtaining a compatible graphics session remains a
 separate validation requirement.
 
+A controlled process-only request, `QT_OPENGL=desktop`, selects a matching
+system WGL context successfully. With this explicit backend, **both final
+`759a40d` frozen executables render successfully**, reporting
+**PACKAGED_OPENGL_SMOKE_OK**, on **NVIDIA GeForce GTX 750 / OpenGL 4.6.0,
+driver 560.94**. Both real GL regression tests also pass separately on each Qt
+version (two passed, zero skipped per version). No source code, driver or
+Windows session is changed for this comparison. The failed automatic-selection
+results remain in the ledger. This qualifies final-source native rendering
+under the explicit desktop backend; automatic software fallback interoperability
+remains unresolved and no default renderer policy was changed to conceal it.
+
 Two Qt-only reductions (1,000 destruction cycles each) did not reproduce the
 camera construction hang. A simple cyclic-widget background-GC probe also did
 not demonstrate background native QWidget destruction. These negative reductions
@@ -510,6 +521,10 @@ operator phase. Green simulation results do not authorize Qt 6.12 deployment.
 - **Qt 6.12 adoption:** the corrected code has substantially stronger cross-version
   evidence. The stable lockfile remains at 6.11.2, PR #232 remains unmerged, and
   optional physical SDK/MATLAB shutdown still needs operator-authorized testing.
+- **Frozen OpenGL:** both final versions render with a matching explicitly selected
+  desktop backend. Automatic selection in the current RDP environment still
+  chooses incompatible Qt/PyOpenGL GL libraries; this independent limitation
+  remains visible alongside the successful controlled rendering qualification.
 
 No merge or production deployment was performed. The PR remains a draft so these
 limits, native ownership changes and hardware-dependent paths receive review.

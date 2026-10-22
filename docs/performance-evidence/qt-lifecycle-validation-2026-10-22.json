@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "recorded_utc": "2026-10-22T15:39:36.768306+00:00",
+  "recorded_utc": "2026-10-22T15:45:45.906499+00:00",
   "repository": "https://github.com/simoneferraresi/IOPanel",
   "draft_pr": "https://github.com/simoneferraresi/IOPanel/pull/236",
   "baseline_commit": "8562ac0db83a58695c27ff540c491b3966e39b8a",
@@ -1781,7 +1781,40 @@
       }
     ],
     "physical_profile_rejected_before_mainwindow": true,
-    "opengl_rendering_qualified": false,
+    "automatic_opengl_rendering_qualified": false,
+    "qualification_scope": "Automatic backend selection fails in current RDP environment; explicit desktop backend qualifies real NVIDIA rendering below",
+    "explicit_desktop_backend": {
+      "opengl_rendering_qualified": true,
+      "source_commit": "759a40d19d369b5404581a3909391ac5d5dcbf3a",
+      "renderer": "NVIDIA GeForce GTX 750/PCIe/SSE2",
+      "opengl_version": "4.6.0 NVIDIA 560.94",
+      "runs": [
+        {
+          "qt_version": "6.11.2",
+          "QT_QPA_PLATFORM": "windows",
+          "QT_OPENGL": "desktop",
+          "frozen_exit_code": 0,
+          "frozen_result": "PACKAGED_OPENGL_SMOKE_OK",
+          "real_gl_regression_tests": {
+            "passed": 2,
+            "skipped": 0,
+            "exit_code": 0
+          }
+        },
+        {
+          "qt_version": "6.12.0",
+          "QT_QPA_PLATFORM": "windows",
+          "QT_OPENGL": "desktop",
+          "frozen_exit_code": 0,
+          "frozen_result": "PACKAGED_OPENGL_SMOKE_OK",
+          "real_gl_regression_tests": {
+            "passed": 2,
+            "skipped": 0,
+            "exit_code": 0
+          }
+        }
+      ]
+    },
     "opengl_environment_limit": "Qt uses opengl32sw.dll llvmpipe; PyOpenGL uses system opengl32.dll with no current WGL context; reproduced without IOPanel in both environments in current RDP session",
     "earlier_real_rendering": {
       "source_commit": "5b2bcaeaf3ad2ed9a930a0260b52a9fa7f60baa2",
@@ -2072,7 +2105,7 @@
   "validation_limits": [
     "Historical issue #216 plotting access violation not independently root-caused; clean plotting campaigns are reliability evidence only.",
     "Original laboratory WER UCRT fatal-exit initiating caller remains unconfirmed.",
-    "Final frozen OpenGL rendering not requalified in current RDP environment; Qt software GL / PyOpenGL system GL loader mismatch also occurs without IOPanel. Earlier source 5b2bcae renders successfully on Intel GL in both Qt versions. Two existing GL capability skips in final core round, not newly added skips.",
+    "Automatic OpenGL backend selection fails in current RDP environment; Qt software GL / PyOpenGL system GL loader mismatch also occurs without IOPanel. Final source 759a40d renders successfully on NVIDIA GL with process-only QT_OPENGL=desktop on both versions, and both GL tests pass separately per version. Earlier source 5b2bcae renders on Intel GL. Failed automatic qualification and two existing GL capability skips in final ordinary core round remain recorded.",
     "Closed source MainWindow graphs still remain for normal QApplication/PySide finalization; no failure in 30 native application exits per version at either probed source point.",
     "Earlier frozen smoke runs used the original shared operator presentation-preference backend; original values were not captured and no speculative registry rollback was attempted. Subsequent smoke uses a dedicated INI backend.",
     "Legacy conditional forced-termination and MATLAB startup-disposal fallbacks not qualified for physical SDK shutdown.",
