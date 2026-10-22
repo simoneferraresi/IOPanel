@@ -146,7 +146,7 @@ def test_cancel_during_scan_wait_unblocks_simulated_scan_and_cleans_up():
     def execute():
         try:
             coordinator.run()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - worker records any failure for assertions
             outcomes.append(exc)
 
     thread = threading.Thread(target=execute)
