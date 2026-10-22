@@ -101,39 +101,28 @@ def driver_for(fake: FakeTLPMX | None = None) -> tuple[TLPMXPM5020, FakeTLPMX]:
 def test_backend_import_is_vendor_driver_free_and_missing_sdk_is_reported(monkeypatch):
     from hardware import pm5020
 
-    calls = []
-
-    def missing_wrapper(name):
-        calls.append(name)
-        raise ImportError("TLPMX is unavailable")
-
-    monkeypatch.setattr(pm5020.importlib, "import_module", missing_wrapper)
+    monkeypatch.setattr(
+        pm5020,
+        "_load_thorlabs_factory",
+        lambda *_args: pytest.fail("Missing verified DLL must not load the SDK"),
+    )
     meter = TLPMXPM5020()
     assert not meter.is_connected()
-    assert calls == []
-    with pytest.raises(PM5020DependencyError, match="not importable"):
+    with pytest.raises(PM5020DependencyError, match="explicitly configured"):
         meter.connect("USB0::0x1313::0x80BB::SERIAL::INSTR")
-    assert calls == ["TLPMX"]
+    assert not meter.is_connected()
 
 
-def test_legacy_importable_sdk_fallback_when_both_paths_absent(monkeypatch):
+def test_implicit_vendor_sdk_import_is_not_available(monkeypatch):
     from hardware import pm5020
 
-    fake = FakeTLPMX()
-    requested = []
-
-    def vendor_import(name):
-        requested.append(name)
-        return type("ImportableSDK", (), {"TLPMX": staticmethod(lambda: fake)})()
-
-    monkeypatch.setattr(pm5020.importlib, "import_module", vendor_import)
-    meter = TLPMXPM5020()
-    assert requested == []
-    meter.connect("USB0::TEST::INSTR")
-    assert requested == ["TLPMX"]
-    assert fake.calls[0][0] == "open"
-    meter.close()
-    assert fake.close_calls == 1
+    monkeypatch.setattr(
+        pm5020.importlib,
+        "import_module",
+        lambda _name: pytest.fail("Implicit imports are not allowed"),
+    )
+    with pytest.raises(PM5020DependencyError, match="explicitly configured"):
+        pm5020._load_thorlabs_factory(None, None)
 
 
 @pytest.mark.parametrize("missing_path", ["wrapper", "dll"])
@@ -147,7 +136,7 @@ def test_partial_sdk_paths_are_rejected_without_import(missing_path, monkeypatch
     )
     kwargs = {"dll_path": "vendor.dll"} if missing_path == "wrapper" else {"wrapper_path": "vendor.py"}
     meter = TLPMXPM5020(**kwargs)
-    with pytest.raises(PM5020DependencyError, match="requires both"):
+    with pytest.raises(PM5020DependencyError, match="explicitly configured"):
         meter.connect("USB0::TEST::INSTR")
 
 
@@ -176,6 +165,7 @@ def test_dll_search_handles_outlive_native_driver_close(monkeypatch):
         "_load_thorlabs_factory",
         lambda wrapper, dll: (lambda: fake, (Handle("stage"), Handle("vendor"))),
     )
+    monkeypatch.setattr(pm5020, "_file_sha256", lambda _path: pm5020._VERIFIED_PM5020_DLL_X64_SHA256)
     meter = TLPMXPM5020(wrapper_path="vendor.py", dll_path="native.dll")
     meter.connect("USB0::TEST::INSTR")
     assert events == []
@@ -210,6 +200,7 @@ def test_dll_search_handles_release_after_failed_native_cleanup(monkeypatch, fai
         "_load_thorlabs_factory",
         lambda wrapper, dll: (lambda: fake, (Handle(),)),
     )
+    monkeypatch.setattr(pm5020, "_file_sha256", lambda _path: pm5020._VERIFIED_PM5020_DLL_X64_SHA256)
     meter = TLPMXPM5020(wrapper_path="vendor.py", dll_path="native.dll")
     if fail_during == "open":
         with pytest.raises(PM5020CommunicationError, match="Could not open"):
@@ -455,7 +446,7 @@ def test_status_is_observable_during_blocked_retrieval_while_io_remains_serializ
     meter.close()
 
 
-def test_physical_burst_config_and_chunked_retrieval_include_both_channels():
+def test_physical_burst_uses_one_native_call_and_includes_both_channels():
     meter, fake = driver_for()
     meter.connect("USB0::TEST::INSTR")
     config = BurstAcquisitionConfig(chunk_size=100)
@@ -471,13 +462,92 @@ def test_physical_burst_config_and_chunked_retrieval_include_both_channels():
     assert result.power_ch1_w[120] == pytest.approx(0.12)
     assert result.power_ch2_w[204] == pytest.approx(204e-6)
     assert [call[1:] for call in fake.calls if call[0] == "getBurstArraySamples"] == [
-        (0, 100, 100),
-        (100, 100, 100),
-        (200, 5, 5),
+        (0, 205, 205),
     ]
     trigger = next(call for call in fake.calls if call[0] == "confBurstArrayMeasTrigger")
     assert tuple(value.value for value in trigger[1:]) == (3, 0, 1, 1)
     meter.close()
+
+
+def test_physical_burst_single_call_handles_full_15000_sample_capacity():
+    meter, fake = driver_for(FakeTLPMX(sample_count=15_000))
+    meter.connect("USB0::TEST::INSTR")
+    meter.configure_burst(BurstAcquisitionConfig(max_samples=15_000))
+    meter.start_burst()
+    result = meter.retrieve_burst()
+    assert result.sample_count == 15_000
+    assert result.timestamps_ticks[-1] == 15_999
+    assert [call[1:3] for call in fake.calls if call[0] == "getBurstArraySamples"] == [(0, 15_000)]
+    meter.close()
+
+
+def test_physical_burst_rejects_old_100_sample_truncation_and_requires_close():
+    class TruncatedVendorBurst(FakeTLPMX):
+        def getBurstArraySamples(self, start, count, timestamps, ch1, ch2):
+            super().getBurstArraySamples(start, count, timestamps, ch1, ch2)
+            for i in range(100, count.value):
+                timestamps[i] = 0
+                ch1[i] = 0.0
+                ch2[i] = 0.0
+
+    meter, fake = driver_for(TruncatedVendorBurst(sample_count=330))
+    meter.connect("USB0::TEST::INSTR")
+    meter.configure_burst(BurstAcquisitionConfig())
+    meter.start_burst()
+    with pytest.raises(PM5020AcquisitionError, match="timestamps are repeated or non-increasing"):
+        meter.retrieve_burst()
+    assert [call[1:3] for call in fake.calls if call[0] == "getBurstArraySamples"] == [(0, 330)]
+    assert meter.state is PM5020State.ERROR
+    with pytest.raises(PM5020StateError):
+        meter.read_power(PowerChannel.CH1)
+    meter.close()
+    assert meter.state is PM5020State.DISCONNECTED
+
+
+@pytest.mark.parametrize("dll_version", ["verified", "known-broken", "unverified"])
+def test_physical_pm5020_requires_verified_dll_before_any_native_connection(monkeypatch, dll_version):
+    from hardware import pm5020
+
+    fake = FakeTLPMX(sample_count=205)
+    load_calls = []
+
+    def mock_sdk_loader(_wrapper, _dll):
+        load_calls.append(True)
+        return lambda: fake, None
+
+    hashes = {
+        "verified": pm5020._VERIFIED_PM5020_DLL_X64_SHA256,
+        "known-broken": pm5020._KNOWN_BROKEN_PM5020_DLL_X64_SHA256,
+        "unverified": "0" * 64,
+    }
+    monkeypatch.setattr(pm5020, "_load_thorlabs_factory", mock_sdk_loader)
+    monkeypatch.setattr(pm5020, "_file_sha256", lambda _path: hashes[dll_version])
+    meter = TLPMXPM5020(wrapper_path="vendor-wrapper.py", dll_path="vendor-native.dll")
+    if dll_version == "verified":
+        meter.connect("USB0::TEST::INSTR")
+        assert load_calls == [True]
+        meter.configure_channel(PowerChannel.CH1, ChannelConfig())
+        assert meter.read_power(PowerChannel.CH1).power_w == pytest.approx(0.02)
+        meter.configure_burst(BurstAcquisitionConfig())
+        meter.close()
+    else:
+        with pytest.raises(PM5020DependencyError, match=dll_version):
+            meter.connect("USB0::TEST::INSTR")
+        assert load_calls == []
+        assert fake.calls == []
+        assert not meter.is_connected()
+
+
+def test_injected_fake_driver_never_requires_vendor_dll():
+    meter, fake = driver_for(FakeTLPMX(sample_count=330))
+    meter.connect("USB0::TEST::INSTR")
+    meter.configure_channel(PowerChannel.CH1, ChannelConfig())
+    assert meter.read_power(PowerChannel.CH1).power_w == pytest.approx(0.02)
+    meter.configure_burst(BurstAcquisitionConfig())
+    meter.start_burst()
+    assert meter.retrieve_burst().sample_count == 330
+    meter.close()
+    assert fake.close_calls == 1
 
 
 @pytest.mark.parametrize("sample_count", [0, 15_001])

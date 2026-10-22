@@ -41,6 +41,8 @@ class DummyCT400(AbstractCT400):
         self._scan_max_wavelength = 1560.0
         self._sampling_resolution_pm = 10
         self._laser_enabled = False
+        self._external_synchronization_enabled = False
+        self.external_synchronization_calls: list[Enable] = []
         self.scan_wait_end_calls = 0
         self.get_data_points_calls = 0
         self.cmd_laser_calls = []
@@ -106,6 +108,14 @@ class DummyCT400(AbstractCT400):
     @override
     def set_detector_array(self, det2: Enable, det3: Enable, det4: Enable, ext: Enable) -> None:
         logger.info("Dummy set_detector_array called with det2=%s, det3=%s, det4=%s, ext=%s", det2, det3, det4, ext)
+
+    @override
+    def set_external_synchronization(self, enable: Enable) -> None:
+        """Record a simulated trigger-output setting; no pulses are generated."""
+        if not isinstance(enable, Enable):
+            raise TypeError("enable must be Enable.ENABLE or Enable.DISABLE")
+        self._external_synchronization_enabled = enable is Enable.ENABLE
+        self.external_synchronization_calls.append(enable)
 
     @override
     def set_scan(self, laser_power: float, min_wavelength: float, max_wavelength: float) -> None:

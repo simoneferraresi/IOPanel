@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import importlib
 import importlib.util
 import logging
 import os
@@ -29,6 +28,11 @@ from hardware.pm5020_types import (
 )
 
 logger = logging.getLogger("LabApp.PM5020")
+
+# Thorlabs support case CAS-778044-M8W8F1: vendor fix supplied Nov 2025;
+# physically validated with 330 PM5020 samples on 2026-10-21.
+_VERIFIED_PM5020_DLL_X64_SHA256 = "0e340f2abab40b15ad692d3b7621d5738ae40a571404fcaa986ae7860d4a08b8"
+_KNOWN_BROKEN_PM5020_DLL_X64_SHA256 = "fbbe8cc3ebea45a5a42b437413adf862e9becbdf0d4bb132e2b768eafa2a4fef"
 
 
 class PM5020Error(RuntimeError):
@@ -76,24 +80,10 @@ def _replace_staged_file(source: Path, target: Path, expected_hash: str) -> None
 
 def _load_thorlabs_factory(wrapper_path: Path | None, dll_path: Path | None) -> tuple[Callable[[], Any], Any | None]:
     """Load configured vendor files from a hash-validated, application-owned stage."""
-    if wrapper_path is None and dll_path is None:
-        # Preserve the legacy vendor-installed/importable wrapper use case.
-        # The import remains lazy and is never attempted by the simulator.
-        try:
-            module = importlib.import_module("TLPMX")
-        except ImportError as exc:
-            raise PM5020DependencyError(
-                "Thorlabs TLPMX.py is not importable. Configure both pm5020_wrapper_path "
-                "and pm5020_dll_path in config.ini, or install an importable Thorlabs SDK."
-            ) from exc
-        factory = getattr(module, "TLPMX", None)
-        if not callable(factory):
-            raise PM5020DependencyError("Importable Thorlabs TLPMX module does not define a callable TLPMX.")
-        return factory, None
     if wrapper_path is None or dll_path is None:
         raise PM5020DependencyError(
-            "Physical PM5020 support requires both pm5020_wrapper_path and "
-            "pm5020_dll_path when specifying SDK paths in config.ini."
+            "Physical PM5020 requires explicitly configured pm5020_wrapper_path "
+            "and pm5020_dll_path; implicit SDK imports are disabled."
         )
     if not wrapper_path.is_file():
         raise PM5020DependencyError(f"Thorlabs wrapper was not found: {wrapper_path}")
@@ -142,6 +132,28 @@ def _load_thorlabs_factory(wrapper_path: Path | None, dll_path: Path | None) -> 
             handle.close()
         raise
     return factory, tuple(handles)
+
+
+def _require_verified_pm5020_sdk(dll_path: Path | None) -> None:
+    """Require the lab-verified native DLL before opening any physical PM5020 session.
+
+    Simulated and explicitly injected fake drivers remain vendor-independent.
+    """
+    if sys.maxsize <= 2**32:
+        raise PM5020DependencyError("Verified physical PM5020 connection currently requires 64-bit Python")
+    if dll_path is None:
+        raise PM5020DependencyError("Physical PM5020 requires an explicitly configured pm5020_dll_path")
+    try:
+        actual_sha = _file_sha256(dll_path)
+    except OSError as exc:
+        raise PM5020DependencyError(f"Cannot verify PM5020 native DLL at {dll_path}: {exc}") from exc
+    if actual_sha != _VERIFIED_PM5020_DLL_X64_SHA256:
+        condition = "known-broken" if actual_sha == _KNOWN_BROKEN_PM5020_DLL_X64_SHA256 else "unverified"
+        raise PM5020DependencyError(
+            f"PM5020 {condition} native DLL for physical connection: {dll_path} "
+            f"(SHA-256 {actual_sha}); require lab-verified SHA-256 "
+            f"{_VERIFIED_PM5020_DLL_X64_SHA256}. No physical PM5020 session was opened."
+        )
 
 
 class TLPMXPM5020(AbstractPM5020):
@@ -212,6 +224,12 @@ class TLPMXPM5020(AbstractPM5020):
             if self._driver is not None:
                 raise PM5020StateError("PM5020 is already connected; close it before reconnecting")
             if self._driver_factory is None:
+                if self._wrapper_path is None or self._dll_path is None:
+                    raise PM5020DependencyError(
+                        "Physical PM5020 requires explicitly configured pm5020_wrapper_path and pm5020_dll_path"
+                    )
+                # Reject incompatible binaries before loading the SDK or opening VISA.
+                _require_verified_pm5020_sdk(self._dll_path)
                 try:
                     factory, self._dll_directory_handle = _load_thorlabs_factory(self._wrapper_path, self._dll_path)
                 except PM5020DependencyError:
@@ -354,33 +372,26 @@ class TLPMXPM5020(AbstractPM5020):
                         f"PM5020 reported {sample_count} samples, exceeding capacity {effective_capacity}"
                     )
 
-                timestamps: list[int] = []
-                powers_ch1: list[float] = []
-                powers_ch2: list[float] = []
-                for start_index in range(0, sample_count, config.chunk_size):
-                    if cancel_event is not None and cancel_event.is_set():
-                        raise PM5020Cancelled(
-                            f"PM5020 burst retrieval cancelled after {len(timestamps)} of {sample_count} samples"
-                        )
-                    samples_to_get = min(config.chunk_size, sample_count - start_index)
-                    time_buffer = (c_uint32 * samples_to_get)()
-                    ch1_buffer = (c_float * samples_to_get)()
-                    ch2_buffer = (c_float * samples_to_get)()
-                    driver.getBurstArraySamples(
-                        c_uint32(start_index),
-                        c_uint32(samples_to_get),
-                        time_buffer,
-                        ch1_buffer,
-                        ch2_buffer,
-                    )
-                    timestamps.extend(time_buffer)
-                    powers_ch1.extend(ch1_buffer)
-                    powers_ch2.extend(ch2_buffer)
-
-                result = BurstPowerData(tuple(timestamps), tuple(powers_ch1), tuple(powers_ch2))
-                if result.sample_count != sample_count:
+                # Validated vendor DLL: fetch the full reported buffer in one call.
+                # This allocates at most three arrays of 15,000 32-bit values.
+                if cancel_event is not None and cancel_event.is_set():
+                    raise PM5020Cancelled("PM5020 burst retrieval cancelled before native array read")
+                time_buffer = (c_uint32 * sample_count)()
+                ch1_buffer = (c_float * sample_count)()
+                ch2_buffer = (c_float * sample_count)()
+                driver.getBurstArraySamples(
+                    c_uint32(0),
+                    c_uint32(sample_count),
+                    time_buffer,
+                    ch1_buffer,
+                    ch2_buffer,
+                )
+                result = BurstPowerData(tuple(time_buffer), tuple(ch1_buffer), tuple(ch2_buffer))
+                if any(new <= old for old, new in zip(result.timestamps_ticks, result.timestamps_ticks[1:])):
                     raise PM5020AcquisitionError(
-                        f"PM5020 returned {result.sample_count} samples after reporting {sample_count}"
+                        "PM5020 burst timestamps are repeated or non-increasing; "
+                        "possible outdated Thorlabs native DLL or invalid capture. "
+                        "Discard this burst and reconnect before retrying."
                     )
             except PM5020Error:
                 self._set_state(PM5020State.ERROR)
