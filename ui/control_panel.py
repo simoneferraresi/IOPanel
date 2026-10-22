@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from typing import TypeVar, override
 
 import numpy as np
+import shiboken6
 from PySide6 import QtCore, QtGui
 from PySide6.QtCore import (
     QMetaObject,
@@ -58,6 +59,7 @@ from logic.power_monitor_recording import (
     PowerMonitorRecordingSample,
     PowerMonitorRecordingStopReason,
 )
+from logic.qt_worker_lifecycle import retire_worker_on_thread_finish
 from logic.scan_eta import estimate_scan_duration, format_duration
 from logic.scan_measurement import ScanAcquisitionSettings, ScanMeasurement
 from ui.constants import (
@@ -1249,6 +1251,7 @@ class CT400ControlPanel(BaseControlPanel):
                 disable_power=self.config.scan_defaults.laser_power,
             )
             self.scan_worker.moveToThread(self.scan_thread)
+            retire_worker_on_thread_finish(self.scan_thread, self.scan_worker, delete=False)
 
             # Connect signals
             self.scan_thread.started.connect(self.scan_worker.do_scan)
@@ -1565,7 +1568,7 @@ class HistogramControlPanel(BaseControlPanel):
         self.power_fetch_worker.error_occurred.connect(self._handle_worker_error)
         self.power_fetch_worker.stop_completed.connect(self._finish_monitor_stop)
         self.power_fetch_thread.started.connect(lambda: logger.info("Power fetch worker thread started."))
-        self.power_fetch_thread.finished.connect(self.power_fetch_worker.deleteLater)
+        retire_worker_on_thread_finish(self.power_fetch_thread, self.power_fetch_worker)
         self.power_fetch_thread.finished.connect(self.power_fetch_thread.deleteLater)
         self.power_fetch_thread.finished.connect(
             lambda: logger.info("Power fetch worker thread finished and cleaned up.")
@@ -2044,6 +2047,9 @@ class HistogramControlPanel(BaseControlPanel):
 
     def cleanup_worker_thread(self):
         logger.info("HistogramControlPanel: Initiating cleanup of power fetch worker thread.")
+        self.timer.stop()
+        if not shiboken6.isValid(self.power_fetch_thread):
+            return
         if self.monitoring:
             logger.info("HistogramControlPanel.cleanup: Monitoring was active, stopping it first.")
             self._stop_monitoring()

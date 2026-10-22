@@ -425,6 +425,12 @@ def test_old_init_task_completion_cannot_clear_newer_task(qtbot, monkeypatch):
     assert window.ct400_task is current_task
     assert window.piezo_task is current_task
     assert current_task in window._init_tasks
+    # This task was deliberately never started. Finish its synthetic registry
+    # state so the real window shutdown does not wait for a nonexistent job.
+    window._on_ct400_init_task_finished(current_task)
+    window._on_piezo_init_task_finished(current_task)
+    window._on_init_task_thread_finished(current_task)
+    current_task.deleteLater()
 
 
 def test_worker_finished_does_not_release_task_before_thread_finished(qtbot, monkeypatch):

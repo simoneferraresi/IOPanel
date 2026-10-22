@@ -406,6 +406,10 @@ def test_disconnect_start_disables_alignment_before_worker_starts(qtbot, monkeyp
     assert "left" in window._piezo_operations_in_flight
     assert not window.piezo_connect_left_action.isEnabled()
     assert window.piezo_connect_left_action.text() == "Disconnecting Left..."
+    # Execute the intercepted runnable against FakePiezo, including its real
+    # terminal signal, before destroying the owning native window.
+    started[0].run()
+    assert not window._piezo_operations_in_flight
 
 
 def test_refresh_and_direct_discovery_block_during_piezo_operation(qtbot, monkeypatch):
@@ -420,6 +424,7 @@ def test_refresh_and_direct_discovery_block_during_piezo_operation(qtbot, monkey
 
     assert calls == ["ct400"]
     assert window.piezo_task is None
+    window._piezo_operations_in_flight.clear()
 
 
 def test_successful_disconnect_clears_alignment_worker_ownership(qtbot, monkeypatch):
@@ -494,6 +499,8 @@ def test_refresh_and_connection_are_blocked_during_active_alignment(qtbot, monke
 
     assert calls == []
     assert window._piezo_operations_in_flight == set()
+    # The operation state above is synthetic; no worker will release it.
+    window._ct400_operation_state = CT400OperationState.IDLE
 
 
 def test_ct400_replacement_rebinds_alignment_worker(qtbot, monkeypatch):
@@ -556,6 +563,7 @@ def test_rejected_ct400_close_failure_keeps_current_ownership(qtbot, monkeypatch
     assert window.histogram_control.ct400 is old_ct400
     assert window.alignment_tab.ct400 is old_ct400
     assert "Could not release rejected CT400 resources" in caplog.text
+    window._ct400_operation_state = CT400OperationState.IDLE
 
 
 def test_close_waits_for_single_piezo_operation_then_runs_normal_cleanup(qtbot, monkeypatch, request):

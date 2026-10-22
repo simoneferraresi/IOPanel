@@ -276,6 +276,8 @@ class MainWindow(QMainWindow):
         self._pending_piezo_operation_close: bool = False
         self._piezo_operations_in_flight: set[str] = set()
         self._lazy_init_started = False
+        self._shutdown_requested = False
+        self._shutdown_complete = False
         self.power_monitor_trace_widget: PowerMonitorTraceWidget | None = None
         self.pm5020_panel: PM5020Panel | None = None
         self._pending_pm5020_close = False
@@ -305,7 +307,10 @@ class MainWindow(QMainWindow):
 
         # Start slow hardware initializations after the main event loop has started.
         # This ensures the GUI is responsive immediately upon launch.
-        QTimer.singleShot(100, self._begin_lazy_init)
+        self._lazy_init_timer = QTimer(self)
+        self._lazy_init_timer.setSingleShot(True)
+        self._lazy_init_timer.timeout.connect(self._begin_lazy_init)
+        self._lazy_init_timer.start(100)
         logger.info("MainWindow __init__ complete. Hardware initialization deferred.")
 
     def _restore_ui_preferences(self) -> None:
@@ -387,7 +392,7 @@ class MainWindow(QMainWindow):
     @Slot(str)
     def connect_piezo(self, side: str):
         """Connects or disconnects a piezo controller on a worker thread."""
-        if self._pending_piezo_operation_close:
+        if self._shutdown_requested or self._pending_piezo_operation_close:
             logger.info("Ignoring %s piezo operation while application close is pending.", side)
             return
         if side not in {"left", "right"} or side in self._piezo_operations_in_flight:
@@ -414,6 +419,12 @@ class MainWindow(QMainWindow):
             else self.config.instruments.piezo_right_usb_serial
         )
         worker = PiezoConnectionWorker(piezo, side, port, do_connect, usb_serial=usb_serial)
+        # A QRunnable may be released in a pool thread. Its GUI-affine signal
+        # QObject needs native GUI ownership until the queued result is read.
+        worker.signals.setParent(self)
+        worker.signals.connection_succeeded.connect(worker.signals.deleteLater)
+        worker.signals.disconnection_succeeded.connect(worker.signals.deleteLater)
+        worker.signals.connection_failed.connect(worker.signals.deleteLater)
 
         # Connect signals to the main thread's *slots*
         worker.signals.connection_succeeded.connect(self.piezo_connection_succeeded)
@@ -807,7 +818,7 @@ class MainWindow(QMainWindow):
 
     def _begin_lazy_init(self):
         """Starts all slow hardware initializations on background threads."""
-        if self._lazy_init_started:
+        if self._shutdown_requested or self._lazy_init_started:
             return
         self._lazy_init_started = True
         logger.info("Starting lazy initialization of hardware...")
@@ -839,7 +850,7 @@ class MainWindow(QMainWindow):
 
     def _init_ct400_lazy(self):
         """Start one owned CT400 initialization attempt on a background thread."""
-        if self._pending_init_close:
+        if self._shutdown_requested or self._pending_init_close:
             logger.info("Skipping CT400 initialization while application close is pending.")
             return
         if self._active_ct400_init_attempt_id is not None:
@@ -977,6 +988,8 @@ class MainWindow(QMainWindow):
 
     def _init_piezos_lazy(self):
         """Initializes the Piezo controllers on a background thread."""
+        if self._shutdown_requested:
+            return
         if self._pending_piezo_operation_close:
             logger.info("Skipping piezo initialization while application close is pending.")
             return
@@ -1856,7 +1869,7 @@ class MainWindow(QMainWindow):
         Useful if instruments were turned on after the GUI started.
         """
         logger.info("Manual Instrument Refresh requested.")
-        if self._pending_init_close:
+        if self._shutdown_requested or self._pending_init_close:
             logger.info("Ignoring instrument refresh while application close is pending.")
             return
         if self._pending_piezo_operation_close:
@@ -1931,6 +1944,8 @@ class MainWindow(QMainWindow):
             checked: True if the action is toggled to a "checked" state (connect),
                      False otherwise (disconnect).
         """
+        if self._shutdown_requested:
+            return
         action = self.sender()
         if action:
             action.setEnabled(False)  # Prevent rapid re-clicks
@@ -2047,6 +2062,8 @@ class MainWindow(QMainWindow):
             operation_token=token,
             connect_speed_nm_s=connect_speed,
         )
+        worker.signals.setParent(self)
+        worker.signals.finished.connect(worker.signals.deleteLater)
         worker.signals.connection_succeeded.connect(self._handle_ct400_connection_success)
         worker.signals.connection_failed.connect(self._handle_ct400_connection_failure)
         worker.signals.disconnection_succeeded.connect(self._handle_ct400_disconnection_success)
@@ -2330,6 +2347,8 @@ class MainWindow(QMainWindow):
         open the camera. This prevents the UI from freezing while waiting for
         multiple cameras to connect.
         """
+        if self._shutdown_requested:
+            return
         logger.info("Initializing cameras lazily...")
         if not all([self.camera_container, self.camera_container.layout(), self.cameras_menu]):
             logger.error("UI components for camera initialization are not ready. Aborting.")
@@ -2357,6 +2376,9 @@ class MainWindow(QMainWindow):
             self.camera_panels[identifier] = placeholder_panel
             self.camera_container.layout().addWidget(placeholder_panel)
 
+        # Finish the entire GUI graph before any camera can publish a result
+        # or destroy its initialization worker concurrently with construction.
+        for identifier, config in camera_configs_to_init.items():
             # Create Worker
             worker = CameraInitWorker(identifier=identifier, cam_config=config)
             worker.camera_initialized.connect(self._on_camera_initialized)
@@ -2381,6 +2403,13 @@ class MainWindow(QMainWindow):
             camera_instance: The live `VimbaCam` object if successful, else `None`.
             cam_config: The configuration object for the camera.
         """
+        if camera_instance is not None:
+            camera_instance.setParent(self)
+        if self._shutdown_requested:
+            if camera_instance is not None:
+                camera_instance.close()
+                camera_instance.deleteLater()
+            return
         panel = self.camera_panels.get(identifier)  # Find panel by identifier
         if not panel:
             logger.error(f"Could not find panel for camera config: {cam_config.name}")
@@ -2488,7 +2517,11 @@ class MainWindow(QMainWindow):
     @Slot(str)
     def _request_camera_recovery(self, identifier: str):
         """Own at most one recovery TaskRunner per camera identifier."""
-        if identifier in self._camera_recovery_tasks or self._pending_camera_lifecycle_close:
+        if (
+            self._shutdown_requested
+            or identifier in self._camera_recovery_tasks
+            or self._pending_camera_lifecycle_close
+        ):
             return
         camera = next((candidate for candidate in self.cameras if candidate.identifier == identifier), None)
         panel = self.camera_panels.get(identifier)
@@ -2752,6 +2785,11 @@ class MainWindow(QMainWindow):
         Handles the user closing the window. Ensures all hardware and threads
         are shut down gracefully. This is the single source of truth for cleanup.
         """
+        self._shutdown_requested = True
+        self._lazy_init_timer.stop()
+        if self._shutdown_complete:
+            event.accept()
+            return
         # A paused/checkpoint campaign still owns the scan panel even if no scan
         # thread exists. Defer all native cleanup until its final record is
         # committed and the CT400 reservation is released.
@@ -2779,6 +2817,7 @@ class MainWindow(QMainWindow):
 
         logger.info("Shutdown complete.")
         self._finish_shutdown_ui()
+        self._shutdown_complete = True
         event.accept()
         logger.info("MainWindow.closeEvent cleanup returned after %.2f s.", time.perf_counter() - close_started_at)
 

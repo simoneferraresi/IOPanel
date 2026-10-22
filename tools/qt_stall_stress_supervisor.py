@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import datetime as dt
 import json
 import os
@@ -22,6 +23,91 @@ if ($null -eq $p) { '[]'; exit 0 }
 $owner = Invoke-CimMethod -InputObject $p -MethodName GetOwner -ErrorAction SilentlyContinue
 [pscustomobject]@{Name=$p.Name; PID=[int]$p.ProcessId; ParentPID=[int]$p.ParentProcessId; CreationDate=$p.CreationDate.ToUniversalTime().ToString('o'); ExecutablePath=$p.ExecutablePath; CommandLine=$p.CommandLine; Owner=if($owner.ReturnValue -eq 0){"$($owner.Domain)\$($owner.User)"}else{"UNVERIFIED"}} | ConvertTo-Json -Compress
 """
+
+CHILDREN_QUERY = r"""
+$ErrorActionPreference = 'Stop'
+$target = [int]$env:IOPANEL_QT_TARGET_PID
+@(Get-CimInstance Win32_Process -Filter "ParentProcessId = $target" | ForEach-Object {
+    [pscustomobject]@{PID=[int]$_.ProcessId; ParentPID=[int]$_.ParentProcessId}
+}) | ConvertTo-Json -Compress
+"""
+
+
+def _windows_command_arguments(command: str) -> list[str]:
+    """Use Windows quoting rules; venv forwarding replaces only argv[0]."""
+    if not command:
+        return []
+    shell = ctypes.WinDLL("shell32", use_last_error=True)
+    shell.CommandLineToArgvW.argtypes = [ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_int)]
+    shell.CommandLineToArgvW.restype = ctypes.POINTER(ctypes.c_wchar_p)
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.LocalFree.argtypes = [ctypes.c_void_p]
+    kernel.LocalFree.restype = ctypes.c_void_p
+    count = ctypes.c_int()
+    argv = shell.CommandLineToArgvW(command, ctypes.byref(count))
+    if not argv:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        return [argv[index] for index in range(count.value)]
+    finally:
+        kernel.LocalFree(argv)
+
+
+def _native_pytest_identity(pid: int, launcher: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    """Resolve CPython's Windows venv redirector without trusting arbitrary PIDs."""
+    if os.name != "nt" or "PID" not in launcher:
+        return pid, launcher
+    env = os.environ.copy()
+    env["IOPANEL_QT_TARGET_PID"] = str(pid)
+    result = subprocess.run(
+        ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", CHILDREN_QUERY],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        env=env,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        check=True,
+    )
+    children = json.loads(result.stdout.strip() or "[]")
+    if isinstance(children, dict):
+        children = [children]
+    candidates = []
+    for child in children:
+        if child.get("ParentPID") != pid:
+            continue
+        identity = _process_identity(int(child["PID"]))
+        if identity is None:
+            continue
+        if (
+            identity.get("ParentPID") == pid
+            and str(identity.get("ExecutablePath", "")).casefold() == sys._base_executable.casefold()
+            and _windows_command_arguments(str(identity.get("CommandLine") or ""))[1:]
+            == _windows_command_arguments(str(launcher.get("CommandLine") or ""))[1:]
+            and identity.get("CreationDate", "") >= launcher.get("CreationDate", "")
+        ):
+            candidates.append((int(child["PID"]), identity))
+    if len(candidates) > 1:
+        raise RuntimeError("Ambiguous native pytest child; refusing native capture")
+    return candidates[0] if candidates else (pid, launcher)
+
+
+def _terminate_process_tree(process: subprocess.Popen[bytes]) -> None:
+    """A venv launcher is not the interpreter: reap its descendants as well."""
+    if process.poll() is not None:
+        return
+    if os.name == "nt":
+        result = subprocess.run(
+            ["taskkill.exe", "/PID", str(process.pid), "/T", "/F"],
+            capture_output=True,
+            timeout=10,
+            check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if result.returncode and process.poll() is None:
+            raise RuntimeError(f"Failed to terminate owned pytest process tree: {result.returncode}")
+    else:
+        process.terminate()
+    process.wait(timeout=10)
 
 
 def _process_identity(pid: int) -> dict[str, Any] | None:
@@ -254,23 +340,19 @@ def supervise(
                         }
                     else:
                         try:
-                            capture = _capture_stack(process.pid, identity, output)
+                            native_pid, native_identity = _native_pytest_identity(process.pid, identity)
+                            manifest["native_child_identity"] = native_identity
+                            capture = _capture_stack(native_pid, native_identity, output)
                         except subprocess.TimeoutExpired as exc:
                             capture = {"status": "identity_probe_timeout", "error": repr(exc)}
                     break
             if timed_out and process.poll() is None:
-                process.terminate()
-                try:
-                    process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=10)
+                _terminate_process_tree(process)
             returncode = process.wait(timeout=10)
     except BaseException:  # noqa: BLE001 - terminate the child even when the supervisor is interrupted.
         manifest["supervisor_error"] = traceback.format_exc()
         if process is not None and process.poll() is None:
-            process.kill()
-            process.wait(timeout=10)
+            _terminate_process_tree(process)
         returncode = 2
     stdout_offset, lines = _tail(stdout_path, stdout_offset)
     stderr_offset, err_lines = _tail(stderr_path, stderr_offset)

@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 import sys
 import types
 from types import SimpleNamespace
@@ -835,7 +836,7 @@ def test_simulated_error_cleanup_stops_conversion_thread(qtbot):
     assert thread is not None and not thread.isRunning()
 
 
-def test_simulated_display_capture_reports_pipeline_and_memory(qtbot, tmp_path):
+def test_simulated_display_capture_reports_pipeline_and_memory(qtbot, tmp_path, qapp):
     from tools.simulated_camera_display_characterize import characterize
 
     report = characterize(
@@ -845,6 +846,8 @@ def test_simulated_display_capture_reports_pipeline_and_memory(qtbot, tmp_path):
         height=24,
         output=tmp_path / "simulated-display.json",
     )
+    assert report["environment"]["qt_platform_in_use"] == qapp.platformName()
+    assert report["environment"]["qt_platform_requested"] == os.environ.get("QT_QPA_PLATFORM", qapp.platformName())
 
     assert "measurement_error" not in report
     assert len(report["cameras"]) == 2
@@ -861,3 +864,101 @@ def test_simulated_display_capture_reports_pipeline_and_memory(qtbot, tmp_path):
     assert report["process"]["owned_array_copy_probe"]["duration"]["count"] == 100
     assert report["process"]["python_traced_peak_bytes_during_measurement"] > 0
     assert report["cleanup"] == {"cameras_closed": True, "conversion_threads_stopped": True}
+
+
+@pytest.mark.parametrize("fail_metrics", [False, True])
+def test_simulated_tracing_stops_only_after_native_workers(qtbot, tmp_path, monkeypatch, fail_metrics):
+    from tools import simulated_camera_display_characterize as diagnostic
+
+    panels = []
+    cameras = []
+    original_panel = diagnostic.MeasuredCameraPanel
+    original_camera = diagnostic.SimulatedCamera
+    original_stop = diagnostic.tracemalloc.stop
+    boundaries = []
+
+    def make_panel(*args, **kwargs):
+        panel = original_panel(*args, **kwargs)
+        panels.append(panel)
+        return panel
+
+    def make_camera(*args, **kwargs):
+        assert diagnostic.tracemalloc.is_tracing()
+        camera = original_camera(*args, **kwargs)
+        cameras.append(camera)
+        return camera
+
+    def checked_stop():
+        # CPython 3.12.8 can fault allocating a foreign thread state while
+        # tracemalloc.stop removes allocator hooks. Use real native workers.
+        assert cameras and all(not camera.is_streaming for camera in cameras)
+        assert panels and all(not panel.conversion_thread.isRunning() for panel in panels)
+        boundaries.append("stopped after join")
+        original_stop()
+
+    monkeypatch.setattr(diagnostic, "MeasuredCameraPanel", make_panel)
+    monkeypatch.setattr(diagnostic, "SimulatedCamera", make_camera)
+    monkeypatch.setattr(diagnostic.tracemalloc, "stop", checked_stop)
+    if fail_metrics:
+
+        def fail_collection(*args, **kwargs):
+            raise RuntimeError("simulated metrics failure")
+
+        monkeypatch.setattr(diagnostic, "_collect_metrics", fail_collection)
+    try:
+        report = diagnostic.characterize(
+            camera_count=2, duration=0.05, width=8, height=6, output=tmp_path / "tracing.json"
+        )
+        if fail_metrics:
+            assert report["measurement_error"] == "simulated metrics failure"
+        else:
+            assert "measurement_error" not in report
+        assert boundaries == ["stopped after join"]
+    finally:
+        original_stop()
+
+
+def test_simulated_display_preserves_callers_allocation_tracing(qtbot, tmp_path, monkeypatch):
+    from tools import simulated_camera_display_characterize as diagnostic
+
+    def reject_change():
+        raise AssertionError("caller-owned tracing must not be stopped or have its peak reset")
+
+    diagnostic.tracemalloc.start()
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(diagnostic.tracemalloc, "stop", reject_change)
+            patch.setattr(diagnostic.tracemalloc, "reset_peak", reject_change)
+            report = diagnostic.characterize(
+                camera_count=1, duration=0.05, width=8, height=6, output=tmp_path / "caller-tracing.json"
+            )
+        assert "measurement_error" not in report
+        assert diagnostic.tracemalloc.is_tracing()
+        assert report["process"]["python_tracing_owned_by_characterizer"] is False
+    finally:
+        diagnostic.tracemalloc.stop()
+
+
+def test_simulated_display_closes_camera_after_partial_attachment_failure(qtbot, tmp_path, monkeypatch):
+    from tools import simulated_camera_display_characterize as diagnostic
+
+    cameras = []
+    original_camera = diagnostic.SimulatedCamera
+
+    def make_camera(*args, **kwargs):
+        camera = original_camera(*args, **kwargs)
+        cameras.append(camera)
+        return camera
+
+    def fail_attachment(*args, **kwargs):
+        raise RuntimeError("simulated attachment failure")
+
+    monkeypatch.setattr(diagnostic, "SimulatedCamera", make_camera)
+    monkeypatch.setattr(diagnostic.MeasuredCameraPanel, "set_camera", fail_attachment)
+    report = diagnostic.characterize(
+        camera_count=1, duration=0.05, width=8, height=6, output=tmp_path / "partial-attachment.json"
+    )
+    assert report["measurement_error"] == "simulated attachment failure"
+    assert report["cleanup"] == {"cameras_closed": True, "conversion_threads_stopped": True}
+    assert cameras and all(camera._frame_thread is None and not camera.is_streaming for camera in cameras)
+    assert not diagnostic.tracemalloc.is_tracing()

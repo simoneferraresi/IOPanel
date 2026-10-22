@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 from hardware.alignment_worker import AlignmentSettings, AlignmentWorker, MappingSettings, SpiralSearchSettings
 from hardware.interfaces import AbstractCT400
 from hardware.piezo import PiezoController
+from logic.qt_worker_lifecycle import retire_worker_on_thread_finish
 from ui.plot_widgets import ColorBarWidget
 from ui.typography import make_font, style_group_box_title
 
@@ -534,7 +535,7 @@ class AlignmentPanel(QWidget):
         self.worker_thread = QThread(self)
         self.alignment_worker = AlignmentWorker(self.ct400, self.piezo_left, self.piezo_right)
         self.alignment_worker.moveToThread(self.worker_thread)
-        self.worker_thread.finished.connect(self.alignment_worker.deleteLater)
+        retire_worker_on_thread_finish(self.worker_thread, self.alignment_worker)
         self.worker_thread.finished.connect(self.worker_thread.deleteLater)
 
         # Connect signals
