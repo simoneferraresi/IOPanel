@@ -1,0 +1,2082 @@
+{
+  "schema_version": 1,
+  "recorded_utc": "2026-10-22T15:39:36.768306+00:00",
+  "repository": "https://github.com/simoneferraresi/IOPanel",
+  "draft_pr": "https://github.com/simoneferraresi/IOPanel/pull/236",
+  "baseline_commit": "8562ac0db83a58695c27ff540c491b3966e39b8a",
+  "merged_stable_main": "5c2cadc2e4222f0376e7f4efb74ee1931d64a154",
+  "unchanged_experimental_pr_232": "597953089b6094fd8071e3171da46591528f093a",
+  "production_correction_commit": "8888c23590d576a39024784c7222748b15b20a05",
+  "keyboard_test_sync_commit": "95d21c5741379283f70260ce35e17920d887668c",
+  "platform_metadata_commit": "a1f2d68a5c7e538bd78e397267f9d135430d6f20",
+  "smoke_settings_commit": "5b2bcaeaf3ad2ed9a930a0260b52a9fa7f60baa2",
+  "final_executable_source_commit": "759a40d19d369b5404581a3909391ac5d5dcbf3a",
+  "host": {
+    "os": "Windows 10 x64",
+    "build": "19045",
+    "python": "CPython 3.12.8 x64",
+    "uv": "0.13.4"
+  },
+  "dependencies": {
+    "pytest": "9.1.1",
+    "pytest_qt": "4.5.0",
+    "pyqtgraph": "0.14.0",
+    "numpy": "2.5.3"
+  },
+  "collection": {
+    "total": 1502,
+    "core": 1011,
+    "camera": 209,
+    "plot": 282,
+    "new_cases_since_merged_main": 26,
+    "removed_cases": 0
+  },
+  "large_gate_partition_summaries": {
+    "core": {
+      "passed": 1009,
+      "skipped": 1
+    },
+    "camera": {
+      "passed": 209
+    },
+    "plot": {
+      "passed": 282
+    }
+  },
+  "final_source_partition_summaries": {
+    "core": {
+      "passed": 1008,
+      "skipped": 3
+    },
+    "camera": {
+      "passed": 209
+    },
+    "plot": {
+      "passed": 282
+    }
+  },
+  "skip_scope": "Existing opt-in stress skip in ordinary core; separately executed for 100 complete real-frame lifecycles per version. Large local gates execute both real GL tests. Final local rounds and CI additionally have two existing GL capability skips; current RDP software/system GL loader mismatch is recorded separately.",
+  "acceptance": [
+    {
+      "evidence_directory": "output/lifecycle/acceptance-v5-qt611",
+      "source_commit": "8888c23590d576a39024784c7222748b15b20a05",
+      "source_status_at_start": "?? docs/qt-lifecycle-corrections-2026-10-22.md\n",
+      "runtime": "3.12.8 (tags/v3.12.8:2dc476b, Dec  3 2024, 19:30:04) [MSC v.1942 64 bit (AMD64)]\nPySide6=6.11.2\nQt=6.11.2",
+      "platform": "native Windows Qt platform (windows)",
+      "started_utc": "2026-10-22T10:44:09.292918+00:00",
+      "finished_utc": "2026-10-22T11:19:46.719270+00:00",
+      "complete": true,
+      "counts": {
+        "core_processes": 3,
+        "camera_processes": 30,
+        "plot_processes": 20,
+        "startup_shutdown_cycles": 100
+      },
+      "collection_count": 1501,
+      "run_columns": [
+        "group",
+        "number",
+        "supervisor_exit_code",
+        "child_exit_code",
+        "timed_out"
+      ],
+      "runs": [
+        [
+          "stress",
+          1,
+          0,
+          0,
+          false
+        ],
+        [
+          "core",
+          1,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          1,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          1,
+          0,
+          0,
+          false
+        ],
+        [
+          "core",
+          2,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          2,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          2,
+          0,
+          0,
+          false
+        ],
+        [
+          "core",
+          3,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          3,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          3,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          4,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          4,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          5,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          5,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          6,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          6,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          7,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          7,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          8,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          8,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          9,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          9,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          10,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          10,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          11,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          11,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          12,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          12,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          13,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          13,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          14,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          14,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          15,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          15,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          16,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          16,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          17,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          17,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          18,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          18,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          19,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          19,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          20,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          20,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          21,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          22,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          23,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          24,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          25,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          26,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          27,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          28,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          29,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          30,
+          0,
+          0,
+          false
+        ]
+      ],
+      "captured_native_exceptions": 0,
+      "monitors_observing_native_process_exit": 54,
+      "raw_manifest_sha256": "3e3dd2a633b706bf525aa1b4afb0dadae3a7c41180a27f0f1d6a3d367fbf10f9"
+    },
+    {
+      "evidence_directory": "output/lifecycle/acceptance-v6-qt612",
+      "source_commit": "95d21c5741379283f70260ce35e17920d887668c",
+      "source_status_at_start": "?? docs/qt-lifecycle-corrections-2026-10-22.md\n",
+      "runtime": "3.12.8 (tags/v3.12.8:2dc476b, Dec  3 2024, 19:30:04) [MSC v.1942 64 bit (AMD64)]\nPySide6=6.12.0\nQt=6.12.0",
+      "platform": "native Windows Qt platform (windows)",
+      "started_utc": "2026-10-22T14:28:28.190106+00:00",
+      "finished_utc": "2026-10-22T15:04:10.214025+00:00",
+      "complete": true,
+      "counts": {
+        "core_processes": 3,
+        "camera_processes": 30,
+        "plot_processes": 20,
+        "startup_shutdown_cycles": 100
+      },
+      "collection_count": 1501,
+      "run_columns": [
+        "group",
+        "number",
+        "supervisor_exit_code",
+        "child_exit_code",
+        "timed_out"
+      ],
+      "runs": [
+        [
+          "stress",
+          1,
+          0,
+          0,
+          false
+        ],
+        [
+          "core",
+          1,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          1,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          1,
+          0,
+          0,
+          false
+        ],
+        [
+          "core",
+          2,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          2,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          2,
+          0,
+          0,
+          false
+        ],
+        [
+          "core",
+          3,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          3,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          3,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          4,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          4,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          5,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          5,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          6,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          6,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          7,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          7,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          8,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          8,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          9,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          9,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          10,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          10,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          11,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          11,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          12,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          12,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          13,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          13,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          14,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          14,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          15,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          15,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          16,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          16,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          17,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          17,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          18,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          18,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          19,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          19,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          20,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          20,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          21,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          22,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          23,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          24,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          25,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          26,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          27,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          28,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          29,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          30,
+          0,
+          0,
+          false
+        ]
+      ],
+      "captured_native_exceptions": 0,
+      "monitors_observing_native_process_exit": 54,
+      "raw_manifest_sha256": "812cfd068be07efc8e57cf8f32de02f9f5d134b33720911ad6635431da317b60"
+    }
+  ],
+  "final_frozen_source_rounds": [
+    {
+      "evidence_directory": "output/lifecycle/final-759a40d-qt611",
+      "source_commit": "759a40d19d369b5404581a3909391ac5d5dcbf3a",
+      "source_status_at_start": "?? docs/qt-lifecycle-corrections-2026-10-22.md\n",
+      "runtime": "3.12.8 (tags/v3.12.8:2dc476b, Dec  3 2024, 19:30:04) [MSC v.1942 64 bit (AMD64)]\nPySide6=6.11.2\nQt=6.11.2",
+      "platform": "native Windows Qt platform (windows)",
+      "started_utc": "2026-10-22T15:27:08.977449+00:00",
+      "finished_utc": "2026-10-22T15:30:51.385009+00:00",
+      "complete": true,
+      "counts": {
+        "core_processes": 1,
+        "camera_processes": 1,
+        "plot_processes": 1,
+        "startup_shutdown_cycles": 0
+      },
+      "collection_count": 1502,
+      "run_columns": [
+        "group",
+        "number",
+        "supervisor_exit_code",
+        "child_exit_code",
+        "timed_out"
+      ],
+      "runs": [
+        [
+          "core",
+          1,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          1,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          1,
+          0,
+          0,
+          false
+        ]
+      ],
+      "captured_native_exceptions": 0,
+      "monitors_observing_native_process_exit": 3,
+      "raw_manifest_sha256": "4263be2b39c3531ae63ac1e14771311920d4dba2709221c65f3b8e0bf6a32687"
+    },
+    {
+      "evidence_directory": "output/lifecycle/final-759a40d-qt612",
+      "source_commit": "759a40d19d369b5404581a3909391ac5d5dcbf3a",
+      "source_status_at_start": "?? docs/qt-lifecycle-corrections-2026-10-22.md\n",
+      "runtime": "3.12.8 (tags/v3.12.8:2dc476b, Dec  3 2024, 19:30:04) [MSC v.1942 64 bit (AMD64)]\nPySide6=6.12.0\nQt=6.12.0",
+      "platform": "native Windows Qt platform (windows)",
+      "started_utc": "2026-10-22T15:30:52.208694+00:00",
+      "finished_utc": "2026-10-22T15:34:30.368904+00:00",
+      "complete": true,
+      "counts": {
+        "core_processes": 1,
+        "camera_processes": 1,
+        "plot_processes": 1,
+        "startup_shutdown_cycles": 0
+      },
+      "collection_count": 1502,
+      "run_columns": [
+        "group",
+        "number",
+        "supervisor_exit_code",
+        "child_exit_code",
+        "timed_out"
+      ],
+      "runs": [
+        [
+          "core",
+          1,
+          0,
+          0,
+          false
+        ],
+        [
+          "camera",
+          1,
+          0,
+          0,
+          false
+        ],
+        [
+          "plot",
+          1,
+          0,
+          0,
+          false
+        ]
+      ],
+      "captured_native_exceptions": 0,
+      "monitors_observing_native_process_exit": 3,
+      "raw_manifest_sha256": "72ed3f1a8bf5cc379063669b763aa16291458a21b89f62c47fd8c5be44d9f3e0"
+    }
+  ],
+  "real_application_exit_probes": [
+    {
+      "evidence_directory": "output/lifecycle/application-exit-native-95d21",
+      "processes_per_qt_version": 30,
+      "columns": [
+        "qt_version",
+        "number",
+        "exit_code",
+        "timed_out"
+      ],
+      "runs": [
+        [
+          "6.11.2",
+          1,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          2,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          3,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          4,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          5,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          6,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          7,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          8,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          9,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          10,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          11,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          12,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          13,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          14,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          15,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          16,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          17,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          18,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          19,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          20,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          21,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          22,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          23,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          24,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          25,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          26,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          27,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          28,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          29,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          30,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          1,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          2,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          3,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          4,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          5,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          6,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          7,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          8,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          9,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          10,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          11,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          12,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          13,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          14,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          15,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          16,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          17,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          18,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          19,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          20,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          21,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          22,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          23,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          24,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          25,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          26,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          27,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          28,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          29,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          30,
+          0,
+          false
+        ]
+      ],
+      "observed_at_main_return": "shutdown complete, no running application-owned QThreads, global pool idle; closed native window graph remains for application finalization",
+      "captured_native_exceptions": 0
+    },
+    {
+      "evidence_directory": "output/lifecycle/application-exit-native-5b2bcae",
+      "processes_per_qt_version": 30,
+      "columns": [
+        "qt_version",
+        "number",
+        "exit_code",
+        "timed_out"
+      ],
+      "runs": [
+        [
+          "6.11.2",
+          1,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          2,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          3,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          4,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          5,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          6,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          7,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          8,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          9,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          10,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          11,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          12,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          13,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          14,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          15,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          16,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          17,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          18,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          19,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          20,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          21,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          22,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          23,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          24,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          25,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          26,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          27,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          28,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          29,
+          0,
+          false
+        ],
+        [
+          "6.11.2",
+          30,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          1,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          2,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          3,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          4,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          5,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          6,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          7,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          8,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          9,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          10,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          11,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          12,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          13,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          14,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          15,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          16,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          17,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          18,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          19,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          20,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          21,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          22,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          23,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          24,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          25,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          26,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          27,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          28,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          29,
+          0,
+          false
+        ],
+        [
+          "6.12.0",
+          30,
+          0,
+          false
+        ]
+      ],
+      "observed_at_main_return": "shutdown complete, no running application-owned QThreads, global pool idle; closed native window graph remains for application finalization",
+      "captured_native_exceptions": 0
+    }
+  ],
+  "final_windows_packages": {
+    "source_commit": "759a40d19d369b5404581a3909391ac5d5dcbf3a",
+    "build_exit_codes": {
+      "6.11.2": 0,
+      "6.12.0": 0
+    },
+    "smoke_runs": [
+      {
+        "qt_version": "6.11.2",
+        "mode": "standard-offscreen",
+        "returncode": 0,
+        "timed_out": false,
+        "marker_present": true,
+        "finished_utc": "2026-10-22T15:31:24.833799+00:00"
+      },
+      {
+        "qt_version": "6.11.2",
+        "mode": "native-windows",
+        "returncode": 0,
+        "timed_out": false,
+        "marker_present": true,
+        "finished_utc": "2026-10-22T15:31:28.938997+00:00"
+      },
+      {
+        "qt_version": "6.11.2",
+        "mode": "opengl-windows",
+        "returncode": 0,
+        "timed_out": false,
+        "marker_present": false,
+        "finished_utc": "2026-10-22T15:31:33.599912+00:00"
+      },
+      {
+        "qt_version": "6.12.0",
+        "mode": "standard-offscreen",
+        "returncode": 0,
+        "timed_out": false,
+        "marker_present": true,
+        "finished_utc": "2026-10-22T15:37:50.119503+00:00"
+      },
+      {
+        "qt_version": "6.12.0",
+        "mode": "native-windows",
+        "returncode": 0,
+        "timed_out": false,
+        "marker_present": true,
+        "finished_utc": "2026-10-22T15:37:53.998106+00:00"
+      },
+      {
+        "qt_version": "6.12.0",
+        "mode": "opengl-windows",
+        "returncode": 0,
+        "timed_out": false,
+        "marker_present": false,
+        "finished_utc": "2026-10-22T15:37:58.172941+00:00"
+      }
+    ],
+    "physical_profile_rejected_before_mainwindow": true,
+    "opengl_rendering_qualified": false,
+    "opengl_environment_limit": "Qt uses opengl32sw.dll llvmpipe; PyOpenGL uses system opengl32.dll with no current WGL context; reproduced without IOPanel in both environments in current RDP session",
+    "earlier_real_rendering": {
+      "source_commit": "5b2bcaeaf3ad2ed9a930a0260b52a9fa7f60baa2",
+      "qt_versions": [
+        "6.11.2",
+        "6.12.0"
+      ],
+      "renderer": "Intel HD Graphics 4600",
+      "opengl_version": "4.3.0 - Build 20.19.15.4835",
+      "child_exit_codes": [
+        0,
+        0
+      ],
+      "result": "PACKAGED_OPENGL_SMOKE_OK; actual framebuffer, map and colorbar"
+    }
+  },
+  "targeted_comparisons": {
+    "unchanged_baseline_original_latency_tests": {
+      "qt611": {
+        "processes": 20,
+        "exit_codes": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "qt612": {
+        "processes": 4,
+        "exit_codes": [
+          0,
+          0,
+          0,
+          3221226505
+        ]
+      }
+    },
+    "old_helper_qt612": {
+      "latency": {
+        "processes": 8,
+        "exit_codes": [
+          3221226505,
+          0,
+          3221226505,
+          0,
+          3221226505,
+          0,
+          3221226505,
+          0
+        ]
+      },
+      "display": {
+        "processes": 8,
+        "exit_codes": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    "original_tests_outside_new_fixtures_with_helper_correction": {
+      "all": {
+        "processes": 20,
+        "exit_codes": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    "corrected_latency_and_display_controls_qt612": {
+      "latency": {
+        "processes": 20,
+        "exit_codes": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "display": {
+        "processes": 20,
+        "exit_codes": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    "keyboard_synchronization_qt612": {
+      "all": {
+        "processes": 20,
+        "exit_codes": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      }
+    }
+  },
+  "native_findings": [
+    {
+      "case": "baseline-stress-01",
+      "operation": "cycle 21/100 camera panel construction",
+      "result": "hang",
+      "evidence": "GUI connectImpl and background QObject destructor retain the same mutex address; background Shiboken virtual hook waits for GIL",
+      "correction": "GUI retirement after QThread.finished, native join before native destruction"
+    },
+    {
+      "case": "qt612-debug-01",
+      "operation": "interpreter cleanup after assertions",
+      "result": "heap validation / AV",
+      "evidence": "QObject child destruction through PySide destroyQCoreApplication and Python finalization",
+      "uncertainty": "initiating invalid write and original laboratory UCRT caller unconfirmed",
+      "correction": "explicit owned native widget teardown before interpreter finalization"
+    },
+    {
+      "case": "acceptance-v4-qt611/camera-03",
+      "child_exit_code": 3221225477,
+      "exception": "0xC0000005",
+      "operation": "simulated display measurement",
+      "evidence": "null-pointer write at address 0x8 in CPython tracing allocator under PyGILState_Ensure from native Qt metacall",
+      "correction": "start tracing before worker creation and stop only after all owned workers join"
+    }
+  ],
+  "failure_ledger": [
+    {
+      "case": "baseline-stress-01",
+      "result": "timeout / captured native deadlock"
+    },
+    {
+      "case": "baseline-exit-comparison",
+      "result": "Qt 6.12 minimized fourth process post-summary 0xC0000409; 20 Qt 6.11 controls clean"
+    },
+    {
+      "case": "exit-reduction-small",
+      "result": "4/8 Qt 6.12 old latency helper processes post-summary 0xC0000409"
+    },
+    {
+      "case": "candidate-core-01 and candidate-plot-01",
+      "result": "intermediate borrowed QThread wrapper regression; corrected without weakening affinity assertions"
+    },
+    {
+      "case": "candidate-qt612-camera-01",
+      "result": "197 assertions passed then native failure; not accepted"
+    },
+    {
+      "case": "acceptance-final-qt611/camera-06",
+      "result": "native 0xC0000005 during simulated display, before tracer correction"
+    },
+    {
+      "case": "acceptance-final-qt612/core-01",
+      "result": "1004 assertions passed then 0xC0000409; native window leak found"
+    },
+    {
+      "case": "window-scope-core-01",
+      "result": "unfinished fabricated worker ownership exposed by stricter teardown; tests corrected"
+    },
+    {
+      "case": "acceptance-v3-qt611/camera-03",
+      "result": "local monitor PID directory reuse; test process exit 3 before tests; fixed with unique directories"
+    },
+    {
+      "case": "acceptance-v4-qt611/camera-03",
+      "result": "native 0xC0000005 captured and traced to allocator hook teardown"
+    },
+    {
+      "case": "acceptance-v3-qt612",
+      "result": "controlled interruption after 39 clean entries when the same candidate failed on Qt 6.11; incomplete gate excluded"
+    },
+    {
+      "case": "acceptance-v5-qt612/camera-01",
+      "result": "exit 1: F12 visibility assertion, no native fault; explicit native activation synchronization added"
+    },
+    {
+      "case": "qt612-core-debug-01",
+      "result": "300-second debugger-following-child diagnostic timeout after assertion summary; not accepted as success"
+    },
+    {
+      "case": "application-exit-observation-real",
+      "result": "invalid diagnostic blindly deleted Qt-owned popup roots and aborted; excluded as application evidence; passive native probes then all exited 0"
+    },
+    {
+      "case": "smoke-settings-old-behavior",
+      "result": "replaying original shared AppSettings selection fails real INI regression; corrected backend passes without modifying normal backend"
+    },
+    {
+      "case": "smoke-save-error-before",
+      "result": "initial diagnostic assertion invoked application modal exception hook and timed out; corrected probe restores Python exception hook"
+    },
+    {
+      "case": "smoke-save-error-before-v2",
+      "result": "real app returns code 5 with unclosed native window; deterministic regression fails before window.close correction, passes afterwards"
+    },
+    {
+      "case": "packages-759a40d",
+      "result": "Final package GL rendering gate fails qualification in current RDP environment: both wrappers exit 0 with UNAVAILABLE, not a render pass; non-GL frozen smokes and builds pass. Minimal independent Qt/PyOpenGL process proves selected GL DLL mismatch."
+    }
+  ],
+  "validation_limits": [
+    "Historical issue #216 plotting access violation not independently root-caused; clean plotting campaigns are reliability evidence only.",
+    "Original laboratory WER UCRT fatal-exit initiating caller remains unconfirmed.",
+    "Final frozen OpenGL rendering not requalified in current RDP environment; Qt software GL / PyOpenGL system GL loader mismatch also occurs without IOPanel. Earlier source 5b2bcae renders successfully on Intel GL in both Qt versions. Two existing GL capability skips in final core round, not newly added skips.",
+    "Closed source MainWindow graphs still remain for normal QApplication/PySide finalization; no failure in 30 native application exits per version at either probed source point.",
+    "Earlier frozen smoke runs used the original shared operator presentation-preference backend; original values were not captured and no speculative registry rollback was attempted. Subsequent smoke uses a dedicated INI backend.",
+    "Legacy conditional forced-termination and MATLAB startup-disposal fallbacks not qualified for physical SDK shutdown.",
+    "No physical equipment, Vimba SDK or real MATLAB Engine operated; all raw memory dumps remain local.",
+    "No merge, deployment, lockfile Qt upgrade or laboratory checkout/environment modification."
+  ]
+}
