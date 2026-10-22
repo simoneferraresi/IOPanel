@@ -64,6 +64,12 @@ class CameraInitWorker(BaseWorker):
                     camera_name=self.cam_config.name,
                     flip_horizontal=self.cam_config.flip_horizontal,
                 )
+                # Failed/cancelled cameras never reach MainWindow. Keep their
+                # native objects under the worker so retirement moves and
+                # destroys them on the GUI thread, including objects retained
+                # by an exception traceback. A local Python reference alone
+                # would destroy the QObject in this background thread.
+                cam_instance.setParent(self)
                 set_cancel_event = getattr(cam_instance, "set_discovery_cancel_event", None)
                 if callable(set_cancel_event):
                     set_cancel_event(self._cancel_event)
@@ -78,6 +84,7 @@ class CameraInitWorker(BaseWorker):
                     self.finished.emit()
                     return
                 logger.info(f"Worker successfully opened camera: {self.cam_config.name}")
+                cam_instance.setParent(None)
                 app = QCoreApplication.instance()
                 if app is not None and QThread.currentThread() != app.thread():
                     cam_instance.moveToThread(app.thread())

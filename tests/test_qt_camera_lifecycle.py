@@ -1,11 +1,13 @@
 """Native ownership boundaries, including teardown after the last assertion."""
 
-from threading import Event
+from threading import Event, get_ident
 
+import pytest
 import shiboken6
-from PySide6.QtCore import QCoreApplication, QEvent, QMetaObject, Qt, QThread, QTimer, Slot
+from PySide6.QtCore import QCoreApplication, QEvent, QMetaObject, QObject, Qt, QThread, QTimer, Slot
 
 from config_model import AppConfig, CameraConfig
+from hardware import camera_init_worker
 from logic.task_runner import BaseWorker, TaskRunner
 from ui.camera_widgets import CameraPanel
 from ui.main_window import MainWindow
@@ -15,6 +17,38 @@ class FinishingWorker(BaseWorker):
     @Slot()
     def run(self):
         self.finished.emit()
+
+
+@pytest.mark.parametrize("outcome", ["failed", "cancel-before-open", "cancel-after-open", "exception"])
+def test_unadopted_camera_native_destruction_returns_to_gui(qtbot, monkeypatch, outcome):
+    gui_thread = get_ident()
+    destroyed_on = []
+
+    class FailedCamera(QObject):
+        def __init__(self, **kwargs):
+            super().__init__()
+            self.destroyed.connect(lambda: destroyed_on.append(get_ident()), Qt.ConnectionType.DirectConnection)
+            if outcome == "cancel-before-open":
+                worker.cancel()
+
+        def open(self):
+            if outcome == "exception":
+                raise RuntimeError("simulated open failure")
+            if outcome == "cancel-after-open":
+                worker.cancel()
+                return True
+            return False
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(camera_init_worker, "VimbaCam", FailedCamera)
+    config = CameraConfig(identifier="failed-camera", name="Failed camera", backend="vimba")
+    worker = camera_init_worker.CameraInitWorker(config.identifier, config)
+    task = TaskRunner(worker)
+    task.start()
+    qtbot.waitUntil(lambda: bool(destroyed_on))
+    assert destroyed_on == [gui_thread]
 
 
 def test_task_worker_native_destruction_runs_on_owning_gui_thread(qtbot, qapp):
