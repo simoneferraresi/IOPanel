@@ -9,7 +9,8 @@ import time
 import traceback
 from pathlib import Path
 
-from PySide6.QtCore import QSettings
+import shiboken6
+from PySide6.QtCore import QCoreApplication, QEvent, QSettings
 from PySide6.QtWidgets import QApplication
 
 import app
@@ -51,7 +52,9 @@ def main() -> int:
             window.show()
             deadline = time.monotonic() + 8
             while time.monotonic() < deadline and (
-                not window.camera_panels or not isinstance(window.ct400_device, DummyCT400)
+                len(window.cameras) != len(window.config.cameras)
+                or any(panel._latest_pixmap is None for panel in window.camera_panels.values())
+                or not isinstance(window.ct400_device, DummyCT400)
             ):
                 app_instance.processEvents()
                 time.sleep(0.01)
@@ -64,11 +67,15 @@ def main() -> int:
             while time.monotonic() < deadline:
                 app_instance.processEvents()
                 active = [task for task in window._init_tasks if task.worker_thread.isRunning()]
-                if not active:
+                if not active and window._shutdown_complete:
                     break
                 time.sleep(0.01)
             if any(task.worker_thread.isRunning() for task in window._init_tasks):
                 raise AssertionError("initialization task remained active after close")
+            assert window._shutdown_complete, "window did not finish asynchronous shutdown"
+            window.deleteLater()
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+            assert not shiboken6.isValid(window), "native window survived its lifecycle cycle"
             _emit("cycle_completed", cycle=cycle)
         except Exception as exc:  # noqa: BLE001 - retain the failure and shut down this diagnostic cycle.
             _emit("cycle_failed", cycle=cycle, error=repr(exc), traceback=traceback.format_exc())

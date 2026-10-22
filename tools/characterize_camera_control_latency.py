@@ -14,7 +14,7 @@ import threading
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QMutexLocker, QTimer
+from PySide6.QtCore import QCoreApplication, QEvent, QMutexLocker, QTimer
 from PySide6.QtWidgets import QApplication
 
 from config_model import CameraConfig
@@ -163,10 +163,15 @@ def run_scenario(
                 worker.join(timeout=2)
                 if worker.is_alive():
                     raise TimeoutError("Fake QMutex contention thread did not stop")
-            panel.close()
-            if other is not None:
-                other.close()
+            owned_panels = [panel] if other is None else [panel, other]
+            for owned_panel in owned_panels:
+                owned_panel.close()
+                owned_panel.deleteLater()
+            # close() only hides a widget. Finish native destruction while the
+            # QApplication and Python callbacks are fully alive, rather than
+            # leaving cyclic panel graphs for PySide interpreter cleanup.
             app.processEvents()
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
     return {
         "scenario": mode,

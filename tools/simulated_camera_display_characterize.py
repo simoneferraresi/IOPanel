@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QCoreApplication, QEvent, QTimer
 from PySide6.QtWidgets import QApplication
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -224,9 +224,10 @@ def characterize(*, camera_count: int, duration: float, width: int, height: int,
     finally:
         for panel in panels:
             panel.prepare_camera_shutdown()
-            panel.close()
         for camera in cameras:
             camera.close()
+        for panel in panels:
+            panel.close()
         app.processEvents()
         result["cleanup"] = {
             "cameras_closed": all(not camera.is_streaming for camera in cameras),
@@ -234,6 +235,11 @@ def characterize(*, camera_count: int, duration: float, width: int, height: int,
                 panel.conversion_thread is None or not panel.conversion_thread.isRunning() for panel in panels
             ),
         }
+        for panel in panels:
+            panel.deleteLater()
+        for camera in cameras:
+            camera.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
         output.write_text(json.dumps(result, indent=2, allow_nan=False) + "\n", encoding="utf-8")
     return result
 

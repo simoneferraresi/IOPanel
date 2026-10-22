@@ -1,7 +1,9 @@
 """Qt fake-feature measurement regressions, never a physical Vimba test."""
 
 import pytest
+import shiboken6
 
+import tools.characterize_camera_control_latency as diagnostic
 from tools.characterize_camera_control_latency import run_scenario
 
 
@@ -15,7 +17,7 @@ from tools.characterize_camera_control_latency import run_scenario
         ("mutex_contention", 1),
     ],
 )
-def test_camera_fake_feature_delay_and_heartbeat(mode, expected_writes):
+def test_camera_fake_feature_delay_and_heartbeat(qapp, mode, expected_writes):
     result = run_scenario(
         mode,
         updates=8,
@@ -29,6 +31,21 @@ def test_camera_fake_feature_delay_and_heartbeat(mode, expected_writes):
     assert result["qt_callback_delay_p95_ms"] >= 0
     assert result["latest_value_applied"]
     assert not result["native_sdk_used"]
+
+
+def test_characterizer_destroys_native_panels_before_return(qapp, monkeypatch):
+    panels = []
+    original = diagnostic.make_panel
+
+    def track(*args):
+        result = original(*args)
+        panels.append(result[2])
+        return result
+
+    monkeypatch.setattr(diagnostic, "make_panel", track)
+    run_scenario("dual", updates=4, repetitions=2, setter_ms=0)
+    assert len(panels) == 4
+    assert all(not shiboken6.isValid(panel) for panel in panels)
 
 
 def test_camera_characterizer_rejects_invalid_scenarios():
