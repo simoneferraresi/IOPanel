@@ -29,6 +29,20 @@ jobs:
       # This gate fails if a module or parametrized case is lost or duplicated.
       - name: Verify exact full-suite test collection coverage
         run: uv run --no-sync python -m tools.ci_pytest_partition --verify
+      - name: Characterize scan CSV import performance (F05)
+        if: github.event_name == 'pull_request' && github.head_ref == 'perf/scan-csv-import-loadtxt'
+        run: >-
+          uv run --no-sync python -m tools.performance_baseline capture-io
+          --output f05-scan-io.json --points 10000 100000 --detectors 4
+          --repetitions 2 --warmups 1 --qt-platform offscreen
+      - name: Upload F05 performance evidence
+        if: github.event_name == 'pull_request' && github.head_ref == 'perf/scan-csv-import-loadtxt'
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: f05-scan-io
+          path: f05-scan-io.json
+          if-no-files-found: error
+          retention-days: 14
 
   pytest-group:
     needs: checks-and-collection
