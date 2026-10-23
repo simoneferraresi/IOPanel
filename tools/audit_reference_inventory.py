@@ -41,7 +41,7 @@ def module_name(relative: Path) -> str:
 def _decorator_text(node: ast.AST) -> str:
     try:
         return ast.unparse(node)
-    except Exception:
+    except (TypeError, ValueError, RecursionError):
         return "<unparseable>"
 
 
@@ -129,7 +129,7 @@ class SourceInventory(ast.NodeVisitor):
         if name in QT_CALLS:
             try:
                 expression = ast.unparse(node)[:180]
-            except Exception:
+            except (TypeError, ValueError, RecursionError):
                 expression = name
             self.connections.append({"path": self.path, "line": node.lineno, "call": name, "expression": expression})
         if name in DYNAMIC_CALLS | {"invokeMethod", "findChild", "findChildren"}:
