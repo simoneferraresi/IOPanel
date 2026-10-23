@@ -110,6 +110,9 @@ class SourceInventory(ast.NodeVisitor):
             self.imports.append("." * node.level + node.module)
         elif node.level:
             self.imports.append("." * node.level)
+        for alias in node.names:
+            if alias.name != "*":
+                self.references.append((alias.name, self.path, node.lineno, "import"))
 
     def visit_Assign(self, node: ast.Assign) -> None:
         if self.scope and self.scope[-1][1] == "class" and isinstance(node.value, ast.Call):
