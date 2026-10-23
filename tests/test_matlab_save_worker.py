@@ -5,8 +5,7 @@ import pytest
 from PySide6.QtTest import QSignalSpy
 
 from ui import plot_widgets
-from ui.control_panel import ScanSettings
-from ui.plot_widgets import MatlabSaveWorker, PlotWidget
+from ui.plot_widgets import MatlabSaveWorker
 
 
 class _FakeMatlabEngine:
@@ -74,15 +73,12 @@ def _setup_worker(monkeypatch, engine):
         SimpleNamespace(double=_MatlabArraySentinel, engine=SimpleNamespace()),
         raising=False,
     )
-    widget = PlotWidget(ScanSettings())
-    widget.get_matlab_engine = lambda: engine
-    worker = MatlabSaveWorker()
-    return widget, worker
+    return MatlabSaveWorker(shared_engine=engine)
 
 
-def _call(worker, widget, payload):
+def _call(worker, payload):
     spy = QSignalSpy(worker.finished_saving)
-    worker.save_matlab_fig(payload, "unused.fig", "Scan 1 - 2 nm", "Wavelength (nm)", "Transfer function (dB)", widget)
+    worker.save_matlab_fig(payload, "unused.fig", "Scan 1 - 2 nm", "Wavelength (nm)", "Transfer function (dB)")
     assert spy.count() == 1
     return spy.at(0)
 
@@ -97,10 +93,10 @@ def _trace(detector_id, values, color="#1f78b4"):
 
 def test_worker_renders_all_acquired_traces_with_identity_and_closes_only_owned_figure(qapp, monkeypatch):
     engine = _FakeMatlabEngine()
-    widget, worker = _setup_worker(monkeypatch, engine)
+    worker = _setup_worker(monkeypatch, engine)
     payload = _payload([_trace(3, [-30.0, -31.0], "#33a02c"), _trace(1, [-10.0, -11.0])])
 
-    result = _call(worker, widget, payload)
+    result = _call(worker, payload)
 
     assert result == ["fig", True, "unused.fig"]
     plots = [call for call in engine.calls if call[0] == "plot"]
@@ -121,9 +117,9 @@ def test_worker_renders_all_acquired_traces_with_identity_and_closes_only_owned_
 
 def test_worker_keeps_single_detector_fig_supported(qapp, monkeypatch):
     engine = _FakeMatlabEngine()
-    widget, worker = _setup_worker(monkeypatch, engine)
+    worker = _setup_worker(monkeypatch, engine)
 
-    result = _call(worker, widget, _payload([_trace(2, [-5.0, -6.0], "#e31a1c")]))
+    result = _call(worker, _payload([_trace(2, [-5.0, -6.0], "#e31a1c")]))
 
     assert result[1] is True
     plots = [call for call in engine.calls if call[0] == "plot"]
@@ -135,26 +131,23 @@ def test_worker_keeps_single_detector_fig_supported(qapp, monkeypatch):
 
 
 def test_worker_does_not_start_local_engine_without_shared_engine(qapp, monkeypatch):
-    engine = _FakeMatlabEngine()
-    widget, worker = _setup_worker(monkeypatch, engine)
-    widget.get_matlab_engine = lambda: None
+    worker = _setup_worker(monkeypatch, None)
     starts = []
     plot_widgets.matlab.engine.start_matlab = lambda **kwargs: starts.append(kwargs)
 
-    result = _call(worker, widget, _payload([_trace(1, [1.0, 2.0])]))
+    result = _call(worker, _payload([_trace(1, [1.0, 2.0])]))
 
     assert result[1] is False
     assert "refusing to start a second Engine" in result[2]
     assert starts == []
-    assert engine.calls == []
 
 
 def test_worker_passes_nan_and_infinities_through_to_matlab(qapp, monkeypatch):
     engine = _FakeMatlabEngine()
-    widget, worker = _setup_worker(monkeypatch, engine)
+    worker = _setup_worker(monkeypatch, engine)
     payload = _payload([_trace(1, [float("nan"), float("inf")])])
 
-    result = _call(worker, widget, payload)
+    result = _call(worker, payload)
 
     values = _matlab_values(next(call[1][1] for call in engine.calls if call[0] == "plot"))
     assert result[1] is True
@@ -176,9 +169,9 @@ def test_worker_passes_nan_and_infinities_through_to_matlab(qapp, monkeypatch):
 )
 def test_worker_rejects_invalid_payload_without_matlab_calls(qapp, monkeypatch, payload):
     engine = _FakeMatlabEngine()
-    widget, worker = _setup_worker(monkeypatch, engine)
+    worker = _setup_worker(monkeypatch, engine)
 
-    result = _call(worker, widget, payload)
+    result = _call(worker, payload)
 
     assert result[0:2] == ["fig", False]
     assert "validating JSON data" in result[2]
@@ -187,9 +180,9 @@ def test_worker_rejects_invalid_payload_without_matlab_calls(qapp, monkeypatch, 
 
 def test_worker_closes_owned_figure_after_matlab_operation_failure(qapp, monkeypatch):
     engine = _FakeMatlabEngine(fail_on="savefig")
-    widget, worker = _setup_worker(monkeypatch, engine)
+    worker = _setup_worker(monkeypatch, engine)
 
-    result = _call(worker, widget, _payload([_trace(1, [1.0, 2.0])]))
+    result = _call(worker, _payload([_trace(1, [1.0, 2.0])]))
 
     assert result[0:2] == ["fig", False]
     assert "savefig failed" in result[2]
