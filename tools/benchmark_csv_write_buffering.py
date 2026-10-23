@@ -27,11 +27,13 @@ FLOAT_FORMAT = "%.17g"
 def _write_once(directory: Path, data: np.ndarray, *, write_through: bool) -> tuple[float, str]:
     path = directory / ("write-through.csv" if write_through else "buffered.csv")
     started = time.perf_counter()
-    with path.open("wb") as raw:
-        with io.TextIOWrapper(raw, encoding="utf-8", newline="", write_through=write_through) as stream:
-            np.savetxt(stream, data, delimiter=",", header=HEADER, comments="", fmt=FLOAT_FORMAT)
-            stream.flush()
-            os.fsync(stream.buffer.fileno())
+    with (
+        path.open("wb") as raw,
+        io.TextIOWrapper(raw, encoding="utf-8", newline="", write_through=write_through) as stream,
+    ):
+        np.savetxt(stream, data, delimiter=",", header=HEADER, comments="", fmt=FLOAT_FORMAT)
+        stream.flush()
+        os.fsync(stream.buffer.fileno())
     elapsed = time.perf_counter() - started
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     path.unlink()
