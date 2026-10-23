@@ -87,6 +87,7 @@ def test_simulated_frames_reach_existing_panel_conversion_path(qtbot):
     first_raw = raw_frames.at(0)[0]
     second_raw = raw_frames.at(1)[0]
     first_image = converted_frames.at(0)[0]
+    assert camera_instance.frame_buffer.buffer.maxlen == 1
     assert first_raw.shape == (6, 8)
     assert first_raw.dtype == np.uint8
     assert [int(first_raw[y, x]) for y, x in ((0, 0), (0, 7), (5, 0), (5, 7))] == [24, 88, 152, 216]
@@ -137,3 +138,27 @@ def test_simulator_error_can_be_recovered_and_closed(qtbot):
     instance.close()
     assert frame_thread is not None and not frame_thread.is_alive()
     assert not instance.is_streaming
+
+
+def test_camera_frame_cache_retains_only_latest_and_returns_detached_copy():
+    from hardware.camera import FrameBuffer
+
+    buffer = FrameBuffer()
+    assert buffer.get_latest_frame() is None
+    assert buffer.buffer.maxlen == 1
+
+    first = np.array([[1, 2], [3, 4]], dtype=np.uint8)
+    second = np.array([[5, 6], [7, 8]], dtype=np.uint8)
+    buffer.add_frame(first)
+    buffer.add_frame(second)
+
+    assert len(buffer.buffer) == 1
+    np.testing.assert_array_equal(buffer.get_latest_frame(), second)
+    copied = buffer.get_latest_frame()
+    assert copied is not None
+    assert not np.shares_memory(copied, second)
+    copied[0, 0] = 99
+    assert second[0, 0] == 5
+
+    buffer.clear()
+    assert buffer.get_latest_frame() is None
