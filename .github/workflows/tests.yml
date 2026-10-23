@@ -29,6 +29,19 @@ jobs:
       # This gate fails if a module or parametrized case is lost or duplicated.
       - name: Verify exact full-suite test collection coverage
         run: uv run --no-sync python -m tools.ci_pytest_partition --verify
+      # Read-only AST diagnostics on the dedicated audit PR. Results are not
+      # interpreted as proof of dead code and never touch physical hardware.
+      - name: Inventory Python and Qt symbol references
+        if: github.event_name == 'pull_request' && github.head_ref == 'audit/python-reference-inventory'
+        run: uv run --no-sync python -m tools.audit_reference_inventory --output-dir reference-inventory --show 80
+      - name: Upload reference inventory
+        if: github.event_name == 'pull_request' && github.head_ref == 'audit/python-reference-inventory'
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: python-reference-inventory
+          path: reference-inventory/
+          if-no-files-found: error
+          retention-days: 14
 
   pytest-group:
     needs: checks-and-collection
