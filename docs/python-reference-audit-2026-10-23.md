@@ -3,7 +3,7 @@
 ## Scope, baseline and limitations
 
 - Repository: simoneferraresi/IOPanel; audited baseline main after squash-merging PR #241: afa993ddaa67e4020f8d4b38c1bf6b37c003c5fc.
-- Audit branch: audit/python-reference-inventory. F07 cleanup is isolated in draft PR #242 rather than included here.
+- Audit branch: audit/python-reference-inventory. F07 was independently merged in PR #242 (commit `8c73bd17fc4e2b805db69726bf7dbbe39f9c2046`) after the inventory baseline was captured.
 - Method: Python standard-library AST scan of the entire source tree, including tests and tools, using tools/audit_reference_inventory.py; runs on the hardware-independent Windows CI runner without vendor drivers, MATLAB or physical instruments.
 - Evidence: [Actions reference inventory](https://github.com/simoneferraresi/IOPanel/actions/runs/39933808668/artifacts/12491994798), containing reference-inventory.json and reference-inventory.md (artifact retention: 14 days).
 - This is a **reference inventory**, not a complete, typed/dynamic Python call graph. A matching identifier may refer to a different symbol; absence of a syntactic reference cannot rule out callbacks, reflection, dependency injection, runtime slots, inherited virtual methods or outside callers.
@@ -29,7 +29,7 @@ The scanner reports **candidates for manual review**, never deletions authorized
 
 | Candidate and location | Interpretation / recommended next step |
 | --- | --- |
-| ui/camera_widgets.py:108 ImageConversionSignals | **High confidence unused:** no import, construction or connection found; the real QObject ImageConversionWorker owns its own signals. Addressed separately by draft PR #242; require passing native camera CI. |
+| ui/camera_widgets.py:108 ImageConversionSignals | **Resolved:** high-confidence unused definition removed in merged PR #242 after passing Windows CI. Remains in this historical pre-removal inventory. |
 | ui/control_panel.py:700 QABCMeta | **Investigate:** no direct uses; contains a custom QWidget/ABC metaclass and abstract-instantiation guard. Check class contracts and specialized tests before removal. |
 | hardware/camera_capabilities.py:296 capability_dict | **Retain pending API review:** documented compatibility alias for diagnostic callers. External use cannot be excluded. |
 | ui/application_icons.py:19 application_icon_names | **Low-risk candidate:** helper returning constant icon metadata; confirm documentation/plugin use before deletion. |
@@ -53,7 +53,7 @@ The scanner reports **candidates for manual review**, never deletions authorized
 
 ## F07 resolution
 
-Draft PR [#242](https://github.com/simoneferraresi/IOPanel/pull/242) removes only the unused ImageConversionSignals container, and corrects the obsolete QRunnable description for the real ImageConversionWorker. The production converter's signal definitions, latest-frame mailbox, conversion, QThread ownership and callback semantics remain unchanged. F07 must be merged only after independently reviewing that PR and its green CI.
+PR [#242](https://github.com/simoneferraresi/IOPanel/pull/242) was squash-merged on 2026-10-23 as `8c73bd17fc4e2b805db69726bf7dbbe39f9c2046`. It removed only the unused ImageConversionSignals container and corrected the obsolete QRunnable description. The production converter's signal definitions, latest-frame mailbox, conversion, QThread ownership and callback semantics remain unchanged. The 21-item historical inventory now includes one resolved candidate; do not interpret a subtraction as an independently rerun post-merge audit.
 
 ## Further investigation needed for a complete call graph
 
