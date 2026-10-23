@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
 
 from app_settings import AppSettings
 from hardware.ct400_types import Detector
+from logic.export_file_io import derive_export_targets
 from logic.export_task_lifecycle import ExportTaskLifecycle
 from logic.matlab_engine_manager import MatlabEngineManager, MatlabEngineState
 from logic.power_monitor_display import DEFAULT_DISPLAY_POINT_LIMIT, PowerMonitorDisplayHistory
@@ -283,16 +284,11 @@ def derive_scan_export_targets(
     include_fig: bool,
 ) -> dict[str, Path]:
     """Return only explicitly selected targets for a logical base filename."""
-    path = Path(selected_path)
-    stem = path.with_suffix("") if path.suffix.lower() in {".csv", ".mat", ".fig"} else path
-    targets: dict[str, Path] = {}
-    if include_csv:
-        targets["CSV"] = stem.with_name(stem.name + ".csv")
-    if include_mat:
-        targets["MAT"] = stem.with_name(stem.name + ".mat")
-    if include_fig:
-        targets["FIG"] = stem.with_name(stem.name + ".fig")
-    return targets
+    return derive_export_targets(
+        selected_path,
+        formats={"CSV": include_csv, "MAT": include_mat, "FIG": include_fig},
+        recognized_suffixes=frozenset({".csv", ".mat", ".fig"}),
+    )
 
 
 def build_matlab_fig_payload(measurement: ScanMeasurement) -> str:

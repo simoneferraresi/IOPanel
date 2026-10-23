@@ -21,6 +21,18 @@ import numpy as np
 CSV_FLOAT_FORMAT = "%.17g"
 
 
+def derive_export_targets(
+    selected_path: str | Path,
+    *,
+    formats: dict[str, bool],
+    recognized_suffixes: frozenset[str],
+) -> dict[str, Path]:
+    """Return selected output paths, preserving each export domain's suffix rules."""
+    path = Path(selected_path)
+    stem = path.with_suffix("") if path.suffix.lower() in recognized_suffixes else path
+    return {name: stem.with_name(stem.name + f".{name.lower()}") for name, enabled in formats.items() if enabled}
+
+
 class CsvMatPayload(Protocol):
     """The common read-only fields provided by both export payloads."""
 
