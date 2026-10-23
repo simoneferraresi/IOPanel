@@ -1,8 +1,7 @@
 # IOPanel: Photonics Lab Control GUI
 
 <p align="center">
-  <!-- TODO: Replace with an actual screenshot of your application -->
-  <img src="https://via.placeholder.com/800x450.png?text=IOPanel+Application+Screenshot" alt="Application Screenshot" width="75%">
+  <img src="docs/screenshots/multi-scan-overlays.png" alt="IOPanel wavelength-scan view with multiple saved-scan overlays" width="75%">
 </p>
 
 **IOPanel** is a robust and performant desktop application engineered to interface with and control key laboratory equipment for photonics research. Built with Python and PySide6, it provides a centralized, stable, and user-friendly GUI for running wavelength scans, monitoring optical power in real-time, and viewing high-framerate camera feeds for sample alignment.
