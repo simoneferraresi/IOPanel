@@ -6,7 +6,7 @@ These instructions apply to the entire repository, including future tests and PR
 
 - IOPanel operates lasers, cameras, motion hardware, and power meters. **Never run, open, discover, initialize, or modify physical equipment** without explicit operator authorization for that action. An ordinary GUI launch using the lab `config.ini` can open physical cameras. Prefer `packaging/config.simulation.ini` and DummyCT400; do not copy private device identifiers into tests or evidence.
 - Use Python 3.12 x64 and the pinned uv version. On developer/CI machines without vendor SDKs, use `uv sync --locked --no-default-groups --extra test` (add `--extra lint --extra typecheck` for static checks). Do not modify the operational lab `.venv` or hardware configuration.
-- Preserve hardware ownership, selected-input laser safe-state behavior, cancellation and worker-shutdown guarantees. Keep Qt 6.12 experimental PR #232 independent of the stable Qt baseline until authorized qualification.
+- Preserve hardware ownership, selected-input laser safe-state behavior, cancellation and worker-shutdown guarantees. Preserve the PySide6/Qt 6.12.0 baseline established by merged PR #232. Future Qt upgrades and OpenGL backend changes require independent compatibility qualification.
 - Never regard passing pytest assertions followed by a nonzero native process exit (e.g. `0xC0000409`, `0xC0000005`, `0xC0000374`) as success. Do not hide stalls with retries, skips, xfails, longer timeouts, swallowed exceptions, or forced termination.
 
 ## Qt ownership and lifecycle rules

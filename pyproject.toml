@@ -68,10 +68,6 @@ Homepage = "https://github.com/simoneferraresi/IOPanel"
 
 # --- Tool Configuration ---
 
-[tool.black]
-line-length = 120
-target-version = ['py312']
-
 [tool.ruff]
 # Set the lowest Python version you support.
 target-version = "py312"
