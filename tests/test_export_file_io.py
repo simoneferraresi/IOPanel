@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 from scipy.io import loadmat
 
+from logic.export_file_io import derive_export_targets
 from logic.power_monitor_export_worker import _write_staged_power_monitor_format
 from logic.scan_export_worker import _write_staged_format
 
@@ -127,3 +128,33 @@ def test_unsupported_format_fails_and_leaves_no_files(tmp_path, writer, error_co
 
     assert list(tmp_path.iterdir()) == []
     assert not list(tmp_path.glob(temp_prefix + "*"))
+
+
+@pytest.mark.parametrize(
+    ("name", "scan_expected", "monitor_expected"),
+    [
+        ("measurement", "measurement.csv", "measurement.csv"),
+        ("measurement.MAT", "measurement.csv", "measurement.csv"),
+        ("measurement.fig", "measurement.csv", "measurement.fig.csv"),
+        ("measurement.txt", "measurement.txt.csv", "measurement.txt.csv"),
+    ],
+)
+def test_shared_target_derivation_preserves_scan_and_monitor_suffix_policies(name, scan_expected, monitor_expected):
+    from logic.power_monitor_export import derive_power_monitor_export_targets
+    from ui.plot_widgets import derive_scan_export_targets
+
+    scan = derive_scan_export_targets(name, include_csv=True, include_mat=False, include_fig=False)
+    monitor = derive_power_monitor_export_targets(name, include_csv=True, include_mat=False)
+    assert scan["CSV"].name == scan_expected
+    assert monitor["CSV"].name == monitor_expected
+    assert list(scan) == ["CSV"]
+    assert list(monitor) == ["CSV"]
+
+
+def test_shared_target_derivation_preserves_selection_order_and_no_format_case():
+    from ui.plot_widgets import derive_scan_export_targets
+
+    actual = derive_scan_export_targets("scan.csv", include_csv=False, include_mat=True, include_fig=True)
+    assert {name: path.name for name, path in actual.items()} == {"MAT": "scan.mat", "FIG": "scan.fig"}
+    assert list(actual) == ["MAT", "FIG"]
+    assert derive_export_targets("scan.csv", formats={}, recognized_suffixes=frozenset({".csv"})) == {}
