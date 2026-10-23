@@ -29,17 +29,6 @@ jobs:
       # This gate fails if a module or parametrized case is lost or duplicated.
       - name: Verify exact full-suite test collection coverage
         run: uv run --no-sync python -m tools.ci_pytest_partition --verify
-      - name: Benchmark F04 buffered CSV writer with byte equivalence
-        if: github.event_name == 'pull_request' && github.head_ref == 'perf/f04-buffered-csv-export'
-        run: uv run --no-sync python -m tools.benchmark_csv_write_buffering --output f04-buffering.json --points 100000 --repetitions 4
-      - name: Upload F04 writer benchmark
-        if: github.event_name == 'pull_request' && github.head_ref == 'perf/f04-buffered-csv-export'
-        uses: actions/upload-artifact@v7.0.2
-        with:
-          name: f04-buffering-evidence
-          path: f04-buffering.json
-          if-no-files-found: error
-          retention-days: 14
       # Read-only AST diagnostics on the dedicated audit PR. Results are not
       # interpreted as proof of dead code and never touch physical hardware.
       - name: Inventory Python and Qt symbol references
