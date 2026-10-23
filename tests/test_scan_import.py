@@ -271,6 +271,7 @@ def test_import_rejects_excessive_input_size(tmp_path, monkeypatch):
     with pytest.raises(ScanImportError, match="exceeds the 32 MiB import limit"):
         load_scan(path)
 
+
 def test_csv_uses_fast_numeric_parser_for_standard_schema_v2_data(tmp_path, monkeypatch):
     from logic import scan_import
 
