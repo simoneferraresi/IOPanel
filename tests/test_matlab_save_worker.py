@@ -2,6 +2,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from PySide6.QtCore import Q_ARG, QMetaObject, Qt
 from PySide6.QtTest import QSignalSpy
 
 from ui import plot_widgets
@@ -188,3 +189,23 @@ def test_worker_closes_owned_figure_after_matlab_operation_failure(qapp, monkeyp
     assert "savefig failed" in result[2]
     assert [call[1] for call in engine.calls if call[0] == "close"] == [("worker-figure",)]
     assert not any(call[0] == "quit" for call in engine.calls)
+
+
+def test_fig_worker_five_string_arguments_can_be_invoked_through_qt_queue(qapp, qtbot, monkeypatch):
+    engine = _FakeMatlabEngine()
+    worker = _setup_worker(monkeypatch, engine)
+    spy = QSignalSpy(worker.finished_saving)
+    ok = QMetaObject.invokeMethod(
+        worker,
+        "save_matlab_fig",
+        Qt.ConnectionType.QueuedConnection,
+        Q_ARG(str, _payload([_trace(1, [-10.0, -11.0])])),
+        Q_ARG(str, "queued.fig"),
+        Q_ARG(str, "Title"),
+        Q_ARG(str, "Wavelength (nm)"),
+        Q_ARG(str, "Transfer function (dB)"),
+    )
+    assert ok
+    qtbot.waitUntil(lambda: spy.count() == 1, timeout=1000)
+    assert spy.at(0) == ["fig", True, "queued.fig"]
+    assert any(call[0] == "savefig" for call in engine.calls)
