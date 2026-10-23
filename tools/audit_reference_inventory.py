@@ -57,14 +57,16 @@ class SourceInventory(ast.NodeVisitor):
         self.string_lookups: list[tuple[str, str, int, str]] = []
 
     def _define(self, node: ast.AST, name: str, kind: str, decorators: list[str] | None = None) -> None:
-        self.symbols.append({
-            "path": self.path,
-            "line": node.lineno,
-            "name": name,
-            "qualified_name": ".".join([value for value, _ in self.scope] + [name]),
-            "kind": kind,
-            "decorators": decorators or [],
-        })
+        self.symbols.append(
+            {
+                "path": self.path,
+                "line": node.lineno,
+                "name": name,
+                "qualified_name": ".".join([value for value, _ in self.scope] + [name]),
+                "kind": kind,
+                "decorators": decorators or [],
+            }
+        )
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         self._define(node, node.name, "class", [_decorator_text(d) for d in node.decorator_list])
@@ -209,10 +211,13 @@ def audit(root: Path) -> dict[str, object]:
             flags.append("repository-uses-qt-connect")
         candidates.append({**symbol, "reference_count": 0, "cautions": flags})
 
-    candidates.sort(key=lambda item: (
-        0 if item["kind"] == "class" else 1 if item["kind"] == "function" else 2,
-        str(item["path"]), int(item["line"]),
-    ))
+    candidates.sort(
+        key=lambda item: (
+            0 if item["kind"] == "class" else 1 if item["kind"] == "function" else 2,
+            str(item["path"]),
+            int(item["line"]),
+        )
+    )
     counts = Counter(str(s["kind"]) for s in symbols)
     return {
         "method": "Conservative spelling-based AST inventory, not proof of dead code",
@@ -280,7 +285,7 @@ def main() -> None:
         f"review_candidates={len(result['zero_spelling_reference_candidates'])}",
         flush=True,
     )
-    for item in result["zero_spelling_reference_candidates"][:args.show]:
+    for item in result["zero_spelling_reference_candidates"][: args.show]:
         print(f"  {item['kind']} {item['path']}:{item['line']} {item['qualified_name']}", flush=True)
     if args.output_dir:
         args.output_dir.mkdir(parents=True, exist_ok=True)
