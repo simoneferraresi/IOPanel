@@ -4,7 +4,7 @@ This module contains the components for a single camera's user interface,
 including the main video display panel, parameter control sliders, and the
 background workers needed for performance.
 
--   `ImageConversionWorker`: A QRunnable for offloading the conversion of a
+-   `ImageConversionWorker`: A persistent QObject for offloading the conversion of a
     numpy frame to a QImage from the main GUI thread.
 -   `ParameterControl`: A reusable compound widget (Label, Slider, LineEdit)
     for controlling a single hardware parameter with linear or log scaling.
@@ -103,17 +103,6 @@ class ViewModeWorker(QRunnable):
             self.signals.finished.emit(result, "")
         except Exception as exc:  # noqa: BLE001 - surface camera transaction and rollback failures.
             self.signals.finished.emit(None, str(exc))
-
-
-class ImageConversionSignals(QObject):
-    """Defines signals for the ImageConversionWorker.
-
-    A separate QObject is required for signals because QRunnable does not
-    inherit from QObject.
-    """
-
-    image_ready = Signal(QImage)
-    conversion_error = Signal(str)
 
 
 class ImageConversionWorker(QObject):
