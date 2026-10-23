@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 
 from hardware.ct400_types import Detector
+from logic.export_file_io import derive_export_targets
 from logic.power_monitor_recording import PowerMonitorRecording
 
 POWER_MONITOR_EXPORT_SCHEMA_VERSION = 1
@@ -29,14 +30,11 @@ def derive_power_monitor_export_targets(
     include_mat: bool,
 ) -> dict[str, Path]:
     """Return selected CSV/MAT paths after stripping one recognized suffix."""
-    path = Path(selected_path)
-    stem = path.with_suffix("") if path.suffix.lower() in {".csv", ".mat"} else path
-    targets: dict[str, Path] = {}
-    if include_csv:
-        targets["CSV"] = stem.with_name(stem.name + ".csv")
-    if include_mat:
-        targets["MAT"] = stem.with_name(stem.name + ".mat")
-    return targets
+    return derive_export_targets(
+        selected_path,
+        formats={"CSV": include_csv, "MAT": include_mat},
+        recognized_suffixes=frozenset({".csv", ".mat"}),
+    )
 
 
 def default_power_monitor_export_name(recording: PowerMonitorRecording) -> str:
