@@ -5,10 +5,11 @@ from __future__ import annotations
 import csv
 import json
 import math
+import warnings
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 import numpy as np
 
@@ -187,7 +188,12 @@ def _metadata(meta: dict[str, str]) -> dict[str, Any]:
 def _load_csv(path: Path) -> dict[str, Any]:
     meta: dict[str, str] = {}
     with path.open(encoding="utf-8-sig", newline="") as stream:
-        for line in stream:
+        # readline() rather than iteration keeps tell()/seek() available so an
+        # unusual CSV data section can fall back to the original strict parser.
+        while True:
+            line = stream.readline()
+            if not line:
+                raise ScanImportError("Missing required wavelength data column header.")
             if not line.startswith("#"):
                 if line.strip():
                     raise ScanImportError("CSV data begins before the required metadata and column header.")
@@ -203,30 +209,51 @@ def _load_csv(path: Path) -> dict[str, Any]:
                 if key in meta:
                     raise ScanImportError(f"Duplicate metadata field '{key}'.")
                 meta[key] = value.strip()
-        else:
-            raise ScanImportError("Missing required wavelength data column header.")
 
         metadata = _metadata(meta)
-        sample_count = 0
+        data = _read_csv_numeric_data(stream)
+    return _assemble(data[:, 0], data[:, 1:].T, metadata)
 
-        def numeric_values():
-            nonlocal sample_count
-            for row in csv.reader(stream):
-                if not row or not any(cell.strip() for cell in row):
-                    continue
-                if len(row) != 5:
-                    raise ScanImportError("CSV contains a truncated row or a row with an unexpected number of columns.")
-                sample_count += 1
-                try:
-                    yield from (float(cell.strip()) for cell in row)
-                except ValueError as error:
-                    raise ScanImportError("CSV contains invalid numeric scan data.") from error
 
-        data = np.fromiter(numeric_values(), dtype=float)
+def _read_csv_numeric_data(stream: TextIO) -> np.ndarray:
+    """Use NumPy's fast numeric parser, retaining the legacy CSV dialect on fallback.
+
+    Standard IOPanel exports have five unquoted numeric columns; NumPy parses
+    these in native code. The original csv.reader implementation remains the
+    authoritative path for blank comma records, unusual quoting, malformed
+    rows and their existing user-facing error messages.
+    """
+    numeric_start = stream.tell()
+    try:
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="loadtxt: input contained no data", category=UserWarning)
+            data = np.loadtxt(stream, delimiter=",", comments=None, quotechar='"', dtype=float, ndmin=2)
+        if data.shape[0] > 0 and data.shape[1] == len(_CSV_COLUMNS):
+            return data
+    except ValueError:
+        # Reparse from the numeric start to preserve the original CSV semantics.
+        pass
+
+    stream.seek(numeric_start)
+    sample_count = 0
+
+    def numeric_values():
+        nonlocal sample_count
+        for row in csv.reader(stream):
+            if not row or not any(cell.strip() for cell in row):
+                continue
+            if len(row) != len(_CSV_COLUMNS):
+                raise ScanImportError("CSV contains a truncated row or a row with an unexpected number of columns.")
+            sample_count += 1
+            try:
+                yield from (float(cell.strip()) for cell in row)
+            except ValueError as error:
+                raise ScanImportError("CSV contains invalid numeric scan data.") from error
+
+    flat = np.fromiter(numeric_values(), dtype=float)
     if sample_count == 0:
         raise ScanImportError("CSV contains no wavelength samples.")
-    data = data.reshape(sample_count, 5)
-    return _assemble(data[:, 0], data[:, 1:].T, metadata)
+    return flat.reshape(sample_count, len(_CSV_COLUMNS))
 
 
 def _mat_string(value: Any, name: str) -> str:
