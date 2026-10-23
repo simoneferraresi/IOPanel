@@ -66,7 +66,9 @@ def write_staged_csv_mat(
     try:
         with os.fdopen(fd, "wb") as raw:
             if name == "CSV":
-                with io.TextIOWrapper(raw, encoding="utf-8", newline="", write_through=True) as stream:
+                # NumPy emits one write per row. Text buffering coalesces those
+                # writes while flush + fsync below retain durable publication.
+                with io.TextIOWrapper(raw, encoding="utf-8", newline="") as stream:
                     np.savetxt(
                         stream,
                         payload.csv_data,
