@@ -1,3 +1,4 @@
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -429,6 +430,23 @@ def test_update_plot_does_not_autorange_empty_or_nonfinite_trace(qtbot):
     x_data, y_data = widget.plot_data_item.getData()
     assert x_data is None or x_data.size == 0
     assert y_data is None or y_data.size == 0
+
+
+def test_update_plot_reuses_finite_mask_without_info_logging_full_array(qtbot, caplog):
+    widget = PlotWidget(ScanSettings())
+    qtbot.addWidget(widget)
+    wavelengths = np.array([1510.0, 1520.0, 1530.0, float("inf")])
+    powers = np.array([-30.0, float("nan"), float("inf"), -10.0])
+
+    with caplog.at_level(logging.INFO, logger="LabApp.plot_widgets"):
+        assert widget.update_plot(wavelengths, powers)
+    np.testing.assert_array_equal(widget.plot_data_item.getData()[0], [1510.0])
+    np.testing.assert_array_equal(widget.plot_data_item.getData()[1], [-30.0])
+    assert "Non-finite data filtered for display" in widget.plot_widget.getPlotItem().titleLabel.text
+    assert "contains 1 NaN" in caplog.text
+    assert "contains 1 Inf" in caplog.text
+    assert "Received 4 points" not in caplog.text
+    assert "y_data last 100" not in caplog.text
 
 
 @pytest.mark.parametrize("_iteration", range(50))
