@@ -1783,40 +1783,40 @@ class PlotWidget(QWidget):
             x_data_np = x_data
             y_data_np = y_data
 
-            # --- DETAILED LOGGING AND CHECKING ---
-            logger.info(f"PlotWidget.update_plot: Received {len(y_data_np)} y_data points.")
-            # LOG MORE POINTS
-            log_tail_count = min(100, len(y_data_np))
-            if log_tail_count > 0:
-                logger.info(
-                    f"  PlotWidget y_data (first {min(10, log_tail_count)} of {log_tail_count}):\n{y_data_np[: min(10, log_tail_count)]}"
-                )  # Keep first 10 concise
-                logger.info(f"  PlotWidget y_data (last {log_tail_count}):\n{y_data_np[-log_tail_count:]}")
-
-            nan_count = np.count_nonzero(np.isnan(y_data_np))
-            inf_count = np.count_nonzero(np.isinf(y_data_np))
-
-            if nan_count > 0:
-                logger.warning(f"PlotWidget: Full y_data array contains {nan_count} NaN values!")
-                nan_indices = np.where(np.isnan(y_data_np))[0]
-                logger.warning(f"  NaN indices (first 5): {nan_indices[: min(5, len(nan_indices))]}")
-                # Option: Replace NaNs for plotting if desired, e.g.:
-                # y_data_np = np.nan_to_num(y_data_np, nan=-100.0) # Replace with a very low dBm value
-
-            if inf_count > 0:
-                logger.warning(f"PlotWidget: Full y_data array contains {inf_count} Inf values!")
-                inf_indices = np.where(np.isinf(y_data_np))[0]
-                logger.warning(f"  Inf indices (first 5): {inf_indices[: min(5, len(inf_indices))]}")
-                # Option: Replace Infs for plotting, e.g.:
-                # y_data_np = np.nan_to_num(y_data_np, posinf=10.0, neginf=-100.0) # Cap at plausible values
-            # --- END DETAILED LOGGING AND CHECKING ---
-
             if x_data_np.ndim != 1 or y_data_np.ndim != 1 or len(x_data_np) != len(y_data_np):
-                logger.error(f"Invalid data shape for plotting. X: {x_data_np.shape}, Y: {y_data_np.shape}")
+                logger.error("Invalid data shape for plotting. X: %s, Y: %s", x_data_np.shape, y_data_np.shape)
                 self.plot_data_item.setData([], [])
                 self.set_plot_title("Invalid Scan Data", color="red")
                 self.save_btn.setEnabled(False)
                 return False
+
+            logger.debug("PlotWidget.update_plot: Received %d points.", len(y_data_np))
+            if logger.isEnabledFor(logging.DEBUG) and len(y_data_np):
+                logger.debug("PlotWidget y_data first 10: %s", y_data_np[:10])
+                logger.debug("PlotWidget y_data last 100: %s", y_data_np[-100:])
+
+            # One finite mask is shared by the plot, diagnostics and title.
+            finite_mask = np.isfinite(x_data_np) & np.isfinite(y_data_np)
+            finite_count = int(np.count_nonzero(finite_mask))
+            filtered_count = len(y_data_np) - finite_count
+            if filtered_count:
+                # Full-array NaN/Inf diagnostics are needed only for exceptional
+                # measurements, not for every normal plot refresh.
+                nan_mask = np.isnan(y_data_np)
+                inf_mask = np.isinf(y_data_np)
+                nan_count = int(np.count_nonzero(nan_mask))
+                inf_count = int(np.count_nonzero(inf_mask))
+                if nan_count:
+                    logger.warning("PlotWidget: Full y_data array contains %d NaN values!", nan_count)
+                    logger.warning("  NaN indices (first 5): %s", np.flatnonzero(nan_mask)[:5])
+                if inf_count:
+                    logger.warning("PlotWidget: Full y_data array contains %d Inf values!", inf_count)
+                    logger.warning("  Inf indices (first 5): %s", np.flatnonzero(inf_mask)[:5])
+                logger.info(
+                    "PlotWidget: Plotting %d finite points out of %d original y_data points.",
+                    finite_count,
+                    len(y_data_np),
+                )
 
             logger.debug(f"Updating plot. Points: {len(x_data_np)}. Pout: {output_power}")
             self.current_wavelengths = x_data_np
@@ -1826,14 +1826,8 @@ class PlotWidget(QWidget):
 
             # Filter out non-finite points FOR PLOTTING ONLY
             # This prevents PyQtGraph from trying to plot NaNs/Infs which can cause extreme axes
-            finite_mask = np.isfinite(x_data_np) & np.isfinite(y_data_np)
             x_plot_data = x_data_np[finite_mask]
             y_plot_data = y_data_np[finite_mask]
-
-            if not np.all(finite_mask):
-                logger.info(
-                    f"PlotWidget: Plotting {len(y_plot_data)} finite points out of {len(y_data_np)} original y_data points."
-                )
 
             self.plot_data_item.setData(x_plot_data, y_plot_data)
 
@@ -1846,7 +1840,7 @@ class PlotWidget(QWidget):
 
             if len(x_data_np) > 0:
                 title_text = f"Wavelength Scan ({x_data_np[0]:.1f} - {x_data_np[-1]:.1f} nm)"
-                if not np.all(finite_mask):  # If any points were filtered
+                if filtered_count:  # If any points were filtered
                     title_text += " (Non-finite data filtered for display)"
                 self.set_plot_title(title_text)
             else:
