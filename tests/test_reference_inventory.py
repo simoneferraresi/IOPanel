@@ -11,21 +11,18 @@ def test_audit_separates_unreferenced_definitions_from_uses_and_qt_connections(t
     ui = tmp_path / "ui"
     ui.mkdir()
     (ui / "example.py").write_text(
-        "\n".join(
-            [
-                "class Dead:",
-                "    pass",
-                "class Live:",
-                "    changed = Signal(int)",
-                "    def on_changed(self):",
-                "        pass",
-                "    def never_called(self):",
-                "        pass",
-                "    def attach(self):",
-                "        self.changed.connect(self.on_changed)",
-                "        getattr(self, 'on_changed')",
-            ]
-        ),
+        """class Dead:
+    pass
+class Live:
+    changed = Signal(int)
+    def on_changed(self):
+        pass
+    def never_called(self):
+        pass
+    def attach(self):
+        self.changed.connect(self.on_changed)
+        getattr(self, 'on_changed')
+""",
         encoding="utf-8",
     )
     tests = tmp_path / "tests"
