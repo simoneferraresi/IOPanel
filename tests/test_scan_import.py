@@ -270,3 +270,59 @@ def test_import_rejects_excessive_input_size(tmp_path, monkeypatch):
     monkeypatch.setattr(scan_import, "MAX_SCAN_FILE_BYTES", 5)
     with pytest.raises(ScanImportError, match="exceeds the 32 MiB import limit"):
         load_scan(path)
+
+def test_csv_uses_fast_numeric_parser_for_standard_schema_v2_data(tmp_path, monkeypatch):
+    from logic import scan_import
+
+    payload = build_scan_export_v2(_measurement())
+    path = tmp_path / "fast-import.csv"
+    # Include values outside the six-decimal compatibility test's precision.
+    path.write_text(
+        payload.csv_header
+        + "\n1500.1234567890123,1.2345678901234567,0,-1e-300,inf"
+        + "\n1500.1234567890125,nan,-inf,3.141592653589793,0\n",
+        encoding="utf-8",
+    )
+
+    def unexpected_csv_fallback(*_args, **_kwargs):
+        pytest.fail("Normal numeric schema-v2 files must use the NumPy fast path")
+
+    monkeypatch.setattr(scan_import.csv, "reader", unexpected_csv_fallback)
+    imported = load_scan(path)
+
+    np.testing.assert_array_equal(imported.wavelengths_nm, [1500.1234567890123, 1500.1234567890125])
+    # The fixture has DE_3 and DE_1 active, in precisely that order.
+    np.testing.assert_array_equal(imported.detector_data[0], [-1e-300, 3.141592653589793])
+    np.testing.assert_array_equal(imported.detector_data[1], [1.2345678901234567, np.nan])
+    assert imported.detectors == (Detector.DE_3, Detector.DE_1)
+    assert not imported.detector_data.flags.writeable
+
+
+@pytest.mark.parametrize(
+    ("body", "expected_error"),
+    [
+        ("1500,1\n", "unexpected number of columns"),
+        ("1500,1,2,3,4,5\n", "unexpected number of columns"),
+        ("1500,invalid,2,3,4\n", "invalid numeric scan data"),
+        ("1500,1,2,3,4\n# unexpected row\n", "unexpected number of columns"),
+        ("\n\n", "no wavelength samples"),
+    ],
+)
+def test_csv_fast_parser_fallback_preserves_original_validation(tmp_path, body, expected_error):
+    path = tmp_path / "invalid-data.csv"
+    payload = build_scan_export_v2(_measurement())
+    path.write_text(payload.csv_header + "\n" + body, encoding="utf-8")
+    with pytest.raises(ScanImportError, match=expected_error):
+        load_scan(path)
+
+
+def test_csv_fallback_preserves_blank_comma_records_and_quoted_multiline_values(tmp_path):
+    payload = build_scan_export_v2(_measurement())
+    path = tmp_path / "unusual-valid.csv"
+    path.write_text(
+        payload.csv_header + '\n"1500\n",1,2,3,4\n, , , ,\n1501,2,3,4,5\n',
+        encoding="utf-8",
+    )
+    imported = load_scan(path)
+    np.testing.assert_array_equal(imported.wavelengths_nm, [1500.0, 1501.0])
+    np.testing.assert_array_equal(imported.detector_data, [[3.0, 4.0], [1.0, 2.0]])
