@@ -1333,6 +1333,25 @@ def test_matlab_fig_payload_preserves_detector_identity_order_and_colors():
     ]
 
 
+def test_prepared_fig_payload_shares_only_immutable_acquisition_arrays():
+    measurement = _detector_measurement(
+        [1510.0, 1520.0],
+        [[30.0, float("inf")], [-10.0, float("nan")]],
+        (Detector.DE_3, Detector.DE_1),
+    )
+    payload = plot_widgets.build_prepared_matlab_fig_payload(measurement)
+
+    assert payload.wavelengths_nm is measurement.wavelengths_nm
+    assert [trace.label for trace in payload.traces] == ["Det 3", "Det 1"]
+    assert payload.traces[0].rgb == pytest.approx((117 / 255, 112 / 255, 179 / 255))
+    assert payload.traces[1].rgb == pytest.approx((27 / 255, 158 / 255, 119 / 255))
+    for index, trace in enumerate(payload.traces):
+        assert np.shares_memory(trace.values, measurement.detector_data)
+        assert not trace.values.flags.writeable
+        np.testing.assert_array_equal(trace.values, measurement.detector_data[index])
+    assert not payload.wavelengths_nm.flags.writeable
+
+
 def test_matlab_fig_payload_omits_inactive_detectors_and_keeps_nonfinite_values():
     import json
 
