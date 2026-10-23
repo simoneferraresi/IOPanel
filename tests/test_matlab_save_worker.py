@@ -1,6 +1,7 @@
 import json
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 from PySide6.QtCore import Q_ARG, QMetaObject, Qt
 from PySide6.QtTest import QSignalSpy
@@ -209,3 +210,43 @@ def test_fig_worker_five_string_arguments_can_be_invoked_through_qt_queue(qapp, 
     qtbot.waitUntil(lambda: spy.count() == 1, timeout=1000)
     assert spy.at(0) == ["fig", True, "queued.fig"]
     assert any(call[0] == "savefig" for call in engine.calls)
+
+
+def test_prepared_fig_worker_uses_readonly_arrays_and_queued_four_string_slot(qapp, qtbot, monkeypatch):
+    engine = _FakeMatlabEngine()
+    _setup_worker(monkeypatch, engine)
+    wavelengths = np.array([1510.0, 1520.0])
+    detector_3 = np.array([float("nan"), float("inf")])
+    detector_1 = np.array([-10.0, -11.0])
+    for array in (wavelengths, detector_3, detector_1):
+        array.setflags(write=False)
+
+    payload = plot_widgets.PreparedMatlabFigPayload(
+        wavelengths,
+        (
+            plot_widgets.PreparedMatlabFigTrace("Det 3", detector_3, (0.3, 0.5, 0.7)),
+            plot_widgets.PreparedMatlabFigTrace("Det 1", detector_1, (0.2, 0.4, 0.6)),
+        ),
+    )
+    worker = MatlabSaveWorker(shared_engine=engine, prepared_payload=payload)
+    spy = QSignalSpy(worker.finished_saving)
+    ok = QMetaObject.invokeMethod(
+        worker,
+        "save_prepared_matlab_fig",
+        Qt.ConnectionType.QueuedConnection,
+        Q_ARG(str, "prepared.fig"),
+        Q_ARG(str, "Title"),
+        Q_ARG(str, "Wavelength (nm)"),
+        Q_ARG(str, "Transfer function (dB)"),
+    )
+    assert ok
+    qtbot.waitUntil(lambda: spy.count() == 1, timeout=1000)
+    assert spy.at(0) == ["fig", True, "prepared.fig"]
+
+    plots = [call for call in engine.calls if call[0] == "plot"]
+    assert [call[1][5] for call in plots] == ["Det 3", "Det 1"]
+    assert [_matlab_values(call[1][0]) for call in plots] == [[1510.0, 1520.0]] * 2
+    assert _matlab_values(plots[0][1][1])[1] == float("inf")
+    assert np.isnan(_matlab_values(plots[0][1][1])[0])
+    assert _matlab_values(plots[1][1][1]) == [-10.0, -11.0]
+    assert not any(call[0] == "quit" for call in engine.calls)

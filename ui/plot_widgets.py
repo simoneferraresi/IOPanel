@@ -312,6 +312,37 @@ def _is_numeric_list(values: list[object]) -> bool:
     return all(isinstance(value, int | float) and not isinstance(value, bool) for value in values)
 
 
+@dataclass(frozen=True)
+class PreparedMatlabFigTrace:
+    label: str
+    values: np.ndarray
+    rgb: tuple[float, float, float]
+
+
+@dataclass(frozen=True)
+class PreparedMatlabFigPayload:
+    """References only the existing read-only, owned ScanMeasurement arrays."""
+
+    wavelengths_nm: np.ndarray
+    traces: tuple[PreparedMatlabFigTrace, ...]
+
+
+def build_prepared_matlab_fig_payload(measurement: ScanMeasurement) -> PreparedMatlabFigPayload:
+    """Prepare FIG metadata on the GUI thread without materializing JSON/lists."""
+    if measurement.wavelengths_nm.size == 0 or not measurement.detectors:
+        raise ValueError("FIG export requires wavelength data and at least one detector.")
+    traces = []
+    for row, detector in enumerate(measurement.detectors):
+        if detector not in (Detector.DE_1, Detector.DE_2, Detector.DE_3, Detector.DE_4):
+            raise ValueError(f"MATLAB FIG export does not support {detector.name}.")
+        color = _DETECTOR_COLOR_BY_ID[detector]
+        rgb = tuple(int(color[offset : offset + 2], 16) / 255 for offset in (1, 3, 5))
+        traces.append(PreparedMatlabFigTrace(f"Det {int(detector)}", measurement.detector_data[row], rgb))
+    # ScanMeasurement.__post_init__ already copied both arrays and made them
+    # read-only, so retaining references is safe and avoids an extra 4 MiB copy.
+    return PreparedMatlabFigPayload(measurement.wavelengths_nm, tuple(traces))
+
+
 class PowerMonitorTraceWidget(QWidget):
     """Live selected-detector trace driven only by accepted M1 recording samples."""
 
@@ -698,11 +729,18 @@ class MatlabSaveWorker(QObject):
     finished_saving = Signal(str, bool, str)  # Emits: filetype, success, message_or_filename
     engine_unhealthy = Signal(str)
 
-    def __init__(self, shared_engine: object | None = None, parent: QObject | None = None):
+    def __init__(
+        self,
+        shared_engine: object | None = None,
+        parent: QObject | None = None,
+        *,
+        prepared_payload: PreparedMatlabFigPayload | None = None,
+    ):
         super().__init__(parent)
-        # Snapshot on the GUI thread before moveToThread: the worker must never
-        # dereference a PlotWidget or its Qt-owned MATLAB manager from QThread.
+        # Both objects are captured on the GUI thread before moveToThread.
+        # The worker never dereferences a QWidget or GUI-owned Engine manager.
         self._shared_engine = shared_engine
+        self._prepared_payload = prepared_payload
         self._is_running = True
 
     @Slot(str, str, str, str, str)
@@ -769,6 +807,40 @@ class MatlabSaveWorker(QObject):
             self.finished_saving.emit("fig", False, error_msg)
             return
 
+        self._render_matlab_figure(wavelengths_list, traces, fig_filename, title_str, xlabel_str, ylabel_str)
+
+    @Slot(str, str, str, str)
+    def save_prepared_matlab_fig(
+        self,
+        fig_filename: str,
+        title_str: str,
+        xlabel_str: str,
+        ylabel_str: str,
+    ) -> None:
+        """Render a detached scan snapshot, converting to MATLAB lists on this worker thread."""
+        if not self._is_running:
+            self.finished_saving.emit("fig", False, "Save cancelled by user.")
+            return
+        if not MATLAB_ENGINE_AVAILABLE:
+            self.finished_saving.emit("fig", False, "MATLAB Engine not available.")
+            return
+        payload = self._prepared_payload
+        if payload is None:
+            self.finished_saving.emit("fig", False, "FIG: Prepared scan data missing.")
+            return
+        wavelengths_list = payload.wavelengths_nm.tolist()
+        traces = [(trace.label, trace.values.tolist(), list(trace.rgb)) for trace in payload.traces]
+        self._render_matlab_figure(wavelengths_list, traces, fig_filename, title_str, xlabel_str, ylabel_str)
+
+    def _render_matlab_figure(
+        self,
+        wavelengths_list: list[float],
+        traces: list[tuple[str, list[float], list[float]]],
+        fig_filename: str,
+        title_str: str,
+        xlabel_str: str,
+        ylabel_str: str,
+    ) -> None:
         # The Engine reference was obtained by the GUI before this QThread began.
         # In particular, do not access PlotWidget or Qt manager methods here.
         eng_to_use: matlab.engine.MatlabEngine | None = self._shared_engine
@@ -1275,7 +1347,7 @@ class PlotWidget(QWidget):
         self.matlab_engine_manager.ready.connect(self._on_matlab_engine_ready)
         self.matlab_engine_manager.startup_failed.connect(self._on_matlab_engine_startup_failed)
         self.matlab_engine_manager.state_changed.connect(self._on_matlab_engine_state_changed)
-        self._pending_matlab_fig: tuple[str, str, str, str, str] | None = None
+        self._pending_matlab_fig: tuple[PreparedMatlabFigPayload | str, str, str, str, str] | None = None
         self._matlab_fig_retry_count = 0
         self._cleaned_up = False
         self._matlab_save_thread_finished.connect(
@@ -1675,7 +1747,10 @@ class PlotWidget(QWidget):
 
         self._set_matlab_status(f"Saving {Path(fig_path).name}…")
         thread = QThread(self)
-        worker = MatlabSaveWorker(shared_engine=self.matlab_engine_manager.engine)
+        worker = MatlabSaveWorker(
+            shared_engine=self.matlab_engine_manager.engine,
+            prepared_payload=payload if isinstance(payload, PreparedMatlabFigPayload) else None,
+        )
         self.matlab_save_thread = thread
         self.matlab_save_worker = worker
         worker.moveToThread(thread)
@@ -1692,16 +1767,28 @@ class PlotWidget(QWidget):
         )
         thread.finished.connect(thread.deleteLater)
         thread.start()
-        QMetaObject.invokeMethod(
-            worker,
-            "save_matlab_fig",
-            Qt.ConnectionType.QueuedConnection,
-            Q_ARG(str, payload),
-            Q_ARG(str, fig_path),
-            Q_ARG(str, title),
-            Q_ARG(str, xlabel),
-            Q_ARG(str, ylabel),
-        )
+        if isinstance(payload, PreparedMatlabFigPayload):
+            QMetaObject.invokeMethod(
+                worker,
+                "save_prepared_matlab_fig",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(str, fig_path),
+                Q_ARG(str, title),
+                Q_ARG(str, xlabel),
+                Q_ARG(str, ylabel),
+            )
+        else:
+            # Backward-compatible JSON path for callers/tests of the old API.
+            QMetaObject.invokeMethod(
+                worker,
+                "save_matlab_fig",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(str, payload),
+                Q_ARG(str, fig_path),
+                Q_ARG(str, title),
+                Q_ARG(str, xlabel),
+                Q_ARG(str, ylabel),
+            )
 
     @Slot(object, object)
     def _handle_matlab_save_thread_finished(self, thread: QThread, worker: MatlabSaveWorker) -> None:
@@ -1736,7 +1823,7 @@ class PlotWidget(QWidget):
         self._set_matlab_status("Error saving FIG")
         self._check_all_saves_done()
 
-    def _queue_matlab_fig(self, request: tuple[str, str, str, str, str]) -> None:
+    def _queue_matlab_fig(self, request: tuple[PreparedMatlabFigPayload | str, str, str, str, str]) -> None:
         if not self.matlab_engine_manager.available:
             self.error_list.append("FIG: MATLAB Engine support is not available.")
             return
@@ -2349,7 +2436,7 @@ class PlotWidget(QWidget):
                 title_str_matlab += f" (Pout: {pout:.2f} dBm)"
             self._queue_matlab_fig(
                 (
-                    build_matlab_fig_payload(measurement),
+                    build_prepared_matlab_fig_payload(measurement),
                     str(fig_path.resolve()),
                     title_str_matlab,
                     "Wavelength (nm)",
