@@ -30,11 +30,7 @@ def derive_export_targets(
     """Return selected output paths, preserving each export domain's suffix rules."""
     path = Path(selected_path)
     stem = path.with_suffix("") if path.suffix.lower() in recognized_suffixes else path
-    return {
-        name: stem.with_name(stem.name + f".{name.lower()}")
-        for name, enabled in formats.items()
-        if enabled
-    }
+    return {name: stem.with_name(stem.name + f".{name.lower()}") for name, enabled in formats.items() if enabled}
 
 
 class CsvMatPayload(Protocol):
