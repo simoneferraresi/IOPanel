@@ -132,9 +132,9 @@ class FrameRateMonitor:
 
 
 class FrameBuffer:
-    """A thread-safe buffer to store the latest few frames from a camera."""
+    """Thread-safe storage for the newest camera frame only."""
 
-    def __init__(self, max_size: int = 3):
+    def __init__(self, max_size: int = 1):
         self.buffer: deque[np.ndarray] = deque(maxlen=max_size)
         self.lock = QMutex()
 
@@ -224,7 +224,7 @@ class VimbaCam(QObject):
         self._discovery_cancel_event = threading.Event()
 
         self.frame_monitor = FrameRateMonitor()
-        self.frame_buffer = FrameBuffer(max_size=3)
+        self.frame_buffer = FrameBuffer(max_size=1)
         self.settings = CameraSettings()
         self.setObjectName(f"VimbaCam_{self.identifier}")
         logger.info(f"VimbaCam instance created for identifier: {self.identifier} (Name: {self.camera_name})")
