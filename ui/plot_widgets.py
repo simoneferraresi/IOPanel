@@ -1818,7 +1818,6 @@ class PlotWidget(QWidget):
                     len(y_data_np),
                 )
 
-
             logger.debug(f"Updating plot. Points: {len(x_data_np)}. Pout: {output_power}")
             self.current_wavelengths = x_data_np
             self._current_wavelength_lookup = _build_wavelength_lookup(x_data_np)
