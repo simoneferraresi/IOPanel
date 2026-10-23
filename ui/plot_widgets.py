@@ -698,11 +698,14 @@ class MatlabSaveWorker(QObject):
     finished_saving = Signal(str, bool, str)  # Emits: filetype, success, message_or_filename
     engine_unhealthy = Signal(str)
 
-    def __init__(self, parent: QObject | None = None):  # parent is PlotWidget
+    def __init__(self, shared_engine: object | None = None, parent: QObject | None = None):
         super().__init__(parent)
+        # Snapshot on the GUI thread before moveToThread: the worker must never
+        # dereference a PlotWidget or its Qt-owned MATLAB manager from QThread.
+        self._shared_engine = shared_engine
         self._is_running = True
 
-    @Slot(str, str, str, str, str, "QWidget*")
+    @Slot(str, str, str, str, str)
     def save_matlab_fig(
         self,
         payload_json_str: str,
@@ -710,7 +713,6 @@ class MatlabSaveWorker(QObject):
         title_str: str,
         xlabel_str: str,
         ylabel_str: str,
-        plot_widget_ptr: QWidget | None,
     ):
         if not self._is_running:
             logger.info("MatlabSaveWorker: Save FIG cancelled (worker not running).")
@@ -767,18 +769,9 @@ class MatlabSaveWorker(QObject):
             self.finished_saving.emit("fig", False, error_msg)
             return
 
-        shared_matlab_engine: matlab.engine.MatlabEngine | None = None
-        if plot_widget_ptr is not None and isinstance(plot_widget_ptr, PlotWidget):  # Type check
-            # Call the getter method on the PlotWidget instance
-            # This call happens in the worker's thread.
-            # The get_matlab_engine method in PlotWidget needs to be thread-safe.
-            shared_matlab_engine = plot_widget_ptr.get_matlab_engine()
-        else:
-            logger.error("MatlabSaveWorker: PlotWidget instance not provided correctly.")
-            self.finished_saving.emit("fig", False, "Internal error: PlotWidget reference missing.")
-            return
-
-        eng_to_use: matlab.engine.MatlabEngine | None = shared_matlab_engine
+        # The Engine reference was obtained by the GUI before this QThread began.
+        # In particular, do not access PlotWidget or Qt manager methods here.
+        eng_to_use: matlab.engine.MatlabEngine | None = self._shared_engine
 
         try:
             if eng_to_use is None:
@@ -1682,7 +1675,7 @@ class PlotWidget(QWidget):
 
         self._set_matlab_status(f"Saving {Path(fig_path).name}…")
         thread = QThread(self)
-        worker = MatlabSaveWorker()
+        worker = MatlabSaveWorker(shared_engine=self.matlab_engine_manager.engine)
         self.matlab_save_thread = thread
         self.matlab_save_worker = worker
         worker.moveToThread(thread)
@@ -1708,7 +1701,6 @@ class PlotWidget(QWidget):
             Q_ARG(str, title),
             Q_ARG(str, xlabel),
             Q_ARG(str, ylabel),
-            Q_ARG(QWidget, self),
         )
 
     @Slot(object, object)
