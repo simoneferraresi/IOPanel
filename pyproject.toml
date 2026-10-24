@@ -86,6 +86,7 @@ required-version = "==0.13.4"
 constraint-dependencies = [
     "filelock>=4.2.4",
     "virtualenv>=21.14.13",
+    "setuptools>=84.1.0",
 ]
 # 'uv sync --locked' on the lab PC installs VmbPy and MATLAB Engine automatically.
 # CI and driver-free users explicitly pass --no-default-groups.
