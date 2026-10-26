@@ -106,11 +106,10 @@ def test_canonical_import_does_not_load_gui_or_hardware():
 
 @pytest.mark.parametrize("order", ["plot-first", "control-first"])
 def test_import_order_preserves_class_identity(order):
-    first, second = (
-        ("ui.plot_widgets", "ui.control_panel")
-        if order == "plot-first"
-        else ("ui.control_panel", "ui.plot_widgets")
-    )
+    if order == "plot-first":
+        first, second = "ui.plot_widgets", "ui.control_panel"
+    else:
+        first, second = "ui.control_panel", "ui.plot_widgets"
     code = (
         f"import {first}\n"
         f"import {second}\n"
