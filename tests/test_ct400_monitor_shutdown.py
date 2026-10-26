@@ -13,6 +13,7 @@ from config_model import AppConfig
 from hardware.ct400 import CT400Error
 from hardware.ct400_types import Enable, LaserInput, PowerData
 from hardware.dummy_ct400 import DummyCT400
+from tools.qt_stall_stress_supervisor import _terminate_process_tree
 from ui.control_panel import HistogramControlPanel
 
 
@@ -167,24 +168,25 @@ def test_read_error_releases_monitor_ownership_once(qtbot, monkeypatch, error):
 def test_monitor_shutdown_process_exits_after_unblocking(tmp_path):
     env = os.environ.copy()
     env["QT_QPA_PLATFORM"] = "windows"
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pytest",
-            str(Path(__file__).resolve()),
-            "-q",
-            "-k",
-            "not process_exits",
-            "--basetemp",
-            str(tmp_path / "child"),
-        ],
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=45,
-        check=False,
-    )
+    command = [
+        sys.executable,
+        "-m",
+        "pytest",
+        str(Path(__file__).resolve()),
+        "-q",
+        "-k",
+        "not process_exits",
+        "--basetemp",
+        str(tmp_path / "child"),
+    ]
+    with subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as child:
+        try:
+            stdout, stderr = child.communicate(timeout=45)
+        except subprocess.TimeoutExpired:
+            _terminate_process_tree(child)
+            child.communicate(timeout=5)
+            raise
+    result = subprocess.CompletedProcess(command, child.returncode, stdout, stderr)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "6 passed" in result.stdout
     assert "QThread: Destroyed" not in result.stderr

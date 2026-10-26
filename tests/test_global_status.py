@@ -40,6 +40,8 @@ def test_matlab_and_activity_status_cover_full_lifecycle():
         MatlabEngineState.READY: "ready",
         MatlabEngineState.FAILED: "error",
         MatlabEngineState.SHUTTING_DOWN: "busy",
+        MatlabEngineState.SHUT_DOWN: "idle",
+        MatlabEngineState.SHUTDOWN_FAILED: "error",
     }
     for engine_state, expected in matlab.items():
         assert format_matlab_status(engine_state).state == expected

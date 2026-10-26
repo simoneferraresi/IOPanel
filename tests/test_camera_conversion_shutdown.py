@@ -9,6 +9,7 @@ from PySide6.QtCore import QTimer
 
 from config_model import AppConfig, CameraConfig
 from hardware.simulated_camera import SimulatedCamera
+from tools.qt_stall_stress_supervisor import _terminate_process_tree
 from ui import camera_widgets
 
 
@@ -105,25 +106,26 @@ def test_mainwindow_retains_panel_and_camera_system_during_conversion(qtbot, mon
 def test_conversion_shutdown_exits_cleanly_in_fresh_process(tmp_path):
     env = os.environ.copy()
     env["QT_QPA_PLATFORM"] = "windows"
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pytest",
-            str(Path(__file__).resolve()),
-            "tests/test_task_runner_threading.py",
-            "-q",
-            "-k",
-            "not fresh_process",
-            "--basetemp",
-            str(tmp_path / "child"),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=45,
-        check=False,
-        env=env,
-    )
+    command = [
+        sys.executable,
+        "-m",
+        "pytest",
+        str(Path(__file__).resolve()),
+        "tests/test_task_runner_threading.py",
+        "-q",
+        "-k",
+        "not fresh_process",
+        "--basetemp",
+        str(tmp_path / "child"),
+    ]
+    with subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as child:
+        try:
+            stdout, stderr = child.communicate(timeout=45)
+        except subprocess.TimeoutExpired:
+            _terminate_process_tree(child)
+            child.communicate(timeout=5)
+            raise
+    result = subprocess.CompletedProcess(command, child.returncode, stdout, stderr)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "9 passed" in result.stdout
     assert "QThread: Destroyed" not in result.stderr
