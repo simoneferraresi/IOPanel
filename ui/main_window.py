@@ -1063,9 +1063,9 @@ class MainWindow(QMainWindow):
             logger.info("Attempting to start VmbSystem...")
             self.vmb_instance = VmbSystem.get_instance()
             instance = self.vmb_instance
-        if instance is None:
-            raise RuntimeError("Vimba SDK did not return a system instance")
-        instance.__enter__()
+            if instance is None:
+                raise RuntimeError("Vimba SDK did not return a system instance")
+            instance.__enter__()
             logger.info("VmbSystem entered successfully.")
         except VmbSystemError as e:
             logger.exception("Failed to enter VmbSystem")
