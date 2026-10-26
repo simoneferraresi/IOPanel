@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from itertools import count
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
@@ -155,7 +156,13 @@ def install_fake_sdk(monkeypatch, camera: FakeCamera | None) -> FakeSystem:
     sdk.VmbSystem = SimpleNamespace(get_instance=lambda: system)
     monkeypatch.setitem(sys.modules, "vmbpy", sdk)
     monkeypatch.setattr(diagnostic, "version", lambda _name: "fake-vmbpy")
-    monkeypatch.setattr(diagnostic.time, "sleep", lambda _seconds: None)
+    # Synchronous fake callbacks need increasing arrivals even on coarse Windows clocks.
+    ticks = count()
+    monkeypatch.setattr(
+        diagnostic,
+        "time",
+        SimpleNamespace(monotonic=lambda: next(ticks) / 1000, sleep=lambda _seconds: None),
+    )
     return system
 
 
