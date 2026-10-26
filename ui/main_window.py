@@ -2370,7 +2370,8 @@ class MainWindow(QMainWindow):
         if not camera_configs_to_init:
             no_cameras_action = QAction("No enabled cameras found in config", self)
             no_cameras_action.setEnabled(False)
-            self.cameras_menu.addAction(no_cameras_action)
+            if self.cameras_menu is not None:
+                self.cameras_menu.addAction(no_cameras_action)
             logger.info("No valid, enabled cameras to initialize.")
             return
 
@@ -2726,6 +2727,8 @@ class MainWindow(QMainWindow):
         if layout is not None:
             while layout.count():
                 item = layout.takeAt(0)
+                if item is None:
+                    break
                 widget = item.widget()
                 if widget is not None:
                     if isinstance(widget, CameraPanel):
