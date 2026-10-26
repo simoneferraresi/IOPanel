@@ -55,6 +55,7 @@ from hardware.piezo import PiezoController
 from hardware.piezo_init_worker import PiezoInitWorker
 from hardware.pm5020_types import PM5020State
 from logic.scan_import import load_scan
+from logic.scan_settings import ScanSettings
 from logic.scan_import_worker import ScanImportOutcome, ScanImportWorker
 from logic.task_runner import TaskRunner
 from ui.alignment_panel import AlignmentPanel
@@ -108,7 +109,6 @@ from ui.control_panel import (
     CT400ControlPanel,
     HistogramControlPanel,
     ScanSafetyIssue,
-    ScanSettings,
 )
 from ui.log_console import LogConsole
 from ui.plot_widgets import HistogramWidget, PlotWidget, PowerMonitorTraceWidget

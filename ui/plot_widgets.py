@@ -56,6 +56,7 @@ from logic.scan_export import build_scan_export_v2
 from logic.scan_export_worker import ScanExportOutcome, ScanExportWorker
 from logic.scan_import import ImportedScan
 from logic.scan_measurement import ScanMeasurement
+from logic.scan_settings import ScanSettings
 from logic.task_runner import TaskRunner
 from ui.power_monitor_export_dialog import PowerMonitorExportDialog
 from ui.scan_export_dialog import ScanExportDialog
@@ -2601,15 +2602,6 @@ class PlotWidget(QWidget):
             return
         self.cleanup()
         super().closeEvent(event)
-
-
-try:
-    from ui.control_panel import ScanSettings
-except ImportError:
-    logger.error("ScanSettings class not found. Ensure it's defined or imported correctly.")
-
-    class ScanSettings:
-        pass
 
 
 def __getattr__(name: str):
