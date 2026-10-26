@@ -315,8 +315,9 @@ uv run pyside6-rcc resources/resources.qrc -o resources/resources_rc.py
 The exporter copies the 16, 24, 32, 48, 64, 128, and 256 px RGBA outputs for
 both identifiers from the generator's ignored output directory. To add a future
 candidate, first approve its vector master and generated PNGs, then add its
-stable identifier and display name in `ui/application_icons.py`, its preference
-validation in `app_settings.py`, Qt resource aliases, and focused tests.
+stable identifier and display name in `application_icon_registry.py`,
+then update Qt resource aliases and focused tests. The GUI and QSettings
+validator use that same shared registry.
 
 ### Project Structure
 
