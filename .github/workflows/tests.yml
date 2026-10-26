@@ -26,7 +26,7 @@ jobs:
       - run: uv run --no-sync ruff format --check .
       - run: uv run --no-sync pyright
       - name: Full Phase D Pyright GUI diagnostic inventory (temporary branch)
-        if: github.ref == 'refs/heads/chore/phase-d-complete-pyright-probe'
+        if: github.ref == 'refs/heads/fix/phase-d-complete-pyright-probe'
         shell: pwsh
         run: |
           $PSNativeCommandUseErrorActionPreference = $false
