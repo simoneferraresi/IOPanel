@@ -1574,6 +1574,54 @@ def _silence_export_messages(monkeypatch):
     monkeypatch.setattr(plot_widgets.QMessageBox, "warning", lambda *_args: None)
 
 
+@pytest.mark.parametrize(
+    ("formats", "expected_files"),
+    [
+        ((True, False, False), {"scan.csv"}),
+        ((False, True, False), {"scan.mat"}),
+        ((False, False, True), set()),
+        ((True, True, False), {"scan.csv", "scan.mat"}),
+        ((True, False, True), {"scan.csv"}),
+        ((False, True, True), {"scan.mat"}),
+        ((True, True, True), {"scan.csv", "scan.mat"}),
+    ],
+    ids=["csv", "mat", "fig", "csv-mat", "csv-fig", "mat-fig", "csv-mat-fig"],
+)
+def test_scan_export_only_builds_schema_payload_when_csv_or_mat_is_selected(
+    qtbot, monkeypatch, tmp_path, formats, expected_files
+):
+    widget = _prepare_export_widget(qtbot)
+    measurement = widget.current_measurement
+    _stub_save_dialog(monkeypatch, tmp_path, formats=formats, comment="phase-b")
+    _silence_export_messages(monkeypatch)
+    monkeypatch.setattr(plot_widgets, "MATLAB_ENGINE_AVAILABLE", True)
+
+    original_builder = plot_widgets.build_scan_export_v2
+    build_calls = []
+
+    def tracked_builder(snapshot, *, comment=""):
+        build_calls.append((snapshot, comment))
+        return original_builder(snapshot, comment=comment)
+
+    monkeypatch.setattr(plot_widgets, "build_scan_export_v2", tracked_builder)
+    queued_figs = []
+    monkeypatch.setattr(widget, "_queue_matlab_fig", lambda request: queued_figs.append(request))
+
+    widget.save_scan_data()
+    qtbot.waitUntil(lambda: not widget.scan_export_busy, timeout=5000)
+
+    assert len(build_calls) == int(formats[0] or formats[1])
+    if build_calls:
+        assert build_calls == [(measurement, "phase-b")]
+    assert {path.name for path in tmp_path.iterdir()} == expected_files
+    assert len(queued_figs) == int(formats[2])
+    if queued_figs:
+        prepared_payload = queued_figs[0][0]
+        assert isinstance(prepared_payload, plot_widgets.PreparedMatlabFigPayload)
+        assert prepared_payload.wavelengths_nm is measurement.wavelengths_nm
+    assert widget.pending_saves == 0
+
+
 def test_csv_mat_formats_never_start_matlab_and_write_both(qtbot, monkeypatch, tmp_path):
     widget = _prepare_export_widget(qtbot)
     assert widget.has_unsaved_acquisition()
@@ -1681,6 +1729,9 @@ def test_late_fig_completion_does_not_change_current_acquisition_persistence(qtb
 
 def test_fig_only_startup_waits_without_failure(qtbot, monkeypatch, tmp_path):
     monkeypatch.setattr(plot_widgets, "MATLAB_ENGINE_AVAILABLE", True)
+    monkeypatch.setattr(
+        plot_widgets, "build_scan_export_v2", lambda *_args, **_kwargs: pytest.fail("FIG must not build CSV/MAT")
+    )
     widget = _prepare_export_widget(qtbot)
     _stub_save_dialog(monkeypatch, tmp_path, formats=(False, False, True))
     monkeypatch.setattr(widget.matlab_engine_manager, "request_engine", lambda: plot_widgets.MatlabEngineState.STARTING)
@@ -1711,6 +1762,9 @@ def test_all_formats_writes_csv_mat_and_queues_selected_fig(qtbot, monkeypatch, 
 
 
 def test_overwrite_decline_writes_nothing_and_lists_only_selected_conflict(qtbot, monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        plot_widgets, "build_scan_export_v2", lambda *_args, **_kwargs: pytest.fail("declined overwrite built data")
+    )
     widget = _prepare_export_widget(qtbot)
     conflict = tmp_path / "scan.mat"
     conflict.write_bytes(b"original")
@@ -1757,6 +1811,9 @@ def test_dialog_cancel_does_not_write_or_persist(qtbot, monkeypatch, tmp_path):
 
     from app_settings import AppSettings
 
+    monkeypatch.setattr(
+        plot_widgets, "build_scan_export_v2", lambda *_args, **_kwargs: pytest.fail("cancelled dialog built data")
+    )
     settings = AppSettings(QSettings(str(tmp_path / "prefs.ini"), QSettings.Format.IniFormat))
     widget = _prepare_export_widget(qtbot, settings)
     assert widget.has_unsaved_acquisition()
