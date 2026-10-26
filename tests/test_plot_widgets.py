@@ -1574,7 +1574,6 @@ def _silence_export_messages(monkeypatch):
     monkeypatch.setattr(plot_widgets.QMessageBox, "warning", lambda *_args: None)
 
 
-
 @pytest.mark.parametrize(
     ("formats", "expected_files"),
     [
