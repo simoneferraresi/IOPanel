@@ -25,6 +25,39 @@ jobs:
       - run: uv run --no-sync ruff check .
       - run: uv run --no-sync ruff format --check .
       - run: uv run --no-sync pyright
+      # Temporary branch-only R06 diagnostic inventory. Never modify production files.
+      - name: R06 targeted Pyright diagnostic probe
+        if: github.ref == 'refs/heads/fix/phase-d-r06-diagnostic-probe'
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          $targets = @(
+            'logic/scan_measurement.py',
+            'logic/scan_settings.py',
+            'ui/plot_widgets.py',
+            'ui/camera_widgets.py',
+            'ui/main_window.py'
+          )
+          foreach ($target in $targets) {
+            $reportFile = Join-Path $env:RUNNER_TEMP 'r06-pyright-report.json'
+            & uv run --no-sync pyright --outputjson $target > $reportFile
+            $resultCode = $LASTEXITCODE
+            $report = Get-Content -LiteralPath $reportFile -Raw | ConvertFrom-Json
+            Write-Output "R06-SUMMARY target=$target exit=$resultCode errors=$($report.summary.errorCount) warnings=$($report.summary.warningCount) infos=$($report.summary.informationCount) analyzed=$($report.summary.filesAnalyzed) seconds=$($report.summary.timeInSec)"
+            foreach ($group in ($report.generalDiagnostics | Group-Object rule | Sort-Object Count -Descending)) {
+              $ruleName = if ($group.Name) { $group.Name } else { '(unspecified)' }
+              Write-Output "R06-RULE target=$target rule=$ruleName count=$($group.Count)"
+            }
+            foreach ($group in ($report.generalDiagnostics | Group-Object file | Sort-Object Count -Descending)) {
+              Write-Output "R06-FILE target=$target file=$($group.Name) count=$($group.Count)"
+            }
+            foreach ($entry in ($report.generalDiagnostics | Select-Object -First 30)) {
+              $line = $entry.range.start.line + 1
+              $message = ($entry.message -replace '[\r\n]+', ' ')
+              if ($message.Length -gt 180) { $message = $message.Substring(0, 180) }
+              Write-Output "R06-DETAIL target=$target severity=$($entry.severity) rule=$($entry.rule) file=$($entry.file) line=$line message=$message"
+            }
+          }
       # Compare exact pytest node IDs against the unpartitioned collection.
       # This gate fails if a module or parametrized case is lost or duplicated.
       - name: Verify exact full-suite test collection coverage
