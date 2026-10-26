@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -31,14 +32,14 @@ def test_application_icon_registry_can_import_without_qt_or_resources():
         [
             sys.executable,
             "-c",
-            "\n".join(
-                [
-                    "import sys",
-                    "import application_icon_registry",
-                    "assert 'PySide6' not in sys.modules",
-                    "assert 'ui.application_icons' not in sys.modules",
-                    "assert 'resources.resources_rc' not in sys.modules",
-                ]
+            textwrap.dedent(
+                """
+                import sys
+                import application_icon_registry
+                assert 'PySide6' not in sys.modules
+                assert 'ui.application_icons' not in sys.modules
+                assert 'resources.resources_rc' not in sys.modules
+                """
             ),
         ],
         cwd=Path(__file__).resolve().parents[1],
