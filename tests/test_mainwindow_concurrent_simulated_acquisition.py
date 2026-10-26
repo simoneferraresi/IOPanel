@@ -822,6 +822,7 @@ def test_shutdown_releases_initialized_ct400_and_only_disables_when_connected(qt
 
     try:
         window.close()
+        qtbot.waitUntil(lambda: window._shutdown_complete)
         if connected:
             assert events == [
                 (
@@ -852,6 +853,7 @@ def test_shutdown_releases_initialized_ct400_and_only_disables_when_connected(qt
     finally:
         if window.isVisible():
             window.close()
+    qtbot.waitUntil(lambda: window._shutdown_complete)
 
 
 def test_shutdown_without_ct400_is_harmless(qtbot, monkeypatch, tmp_path):
@@ -859,6 +861,7 @@ def test_shutdown_without_ct400_is_harmless(qtbot, monkeypatch, tmp_path):
     window.ct400_device = None
 
     window.close()
+    qtbot.waitUntil(lambda: window._shutdown_complete)
 
     assert not window.isVisible()
 
@@ -887,6 +890,7 @@ def test_failed_disconnect_is_not_treated_as_confirmed_and_shutdown_retries_disa
     assert window._ct400_connection_configured
 
     window.close()
+    qtbot.waitUntil(lambda: window._shutdown_complete)
 
     assert events[0][0] == "disable_failed"
     assert events[1] == ("close", 73)

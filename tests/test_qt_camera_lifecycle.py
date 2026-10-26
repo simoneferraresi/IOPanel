@@ -162,7 +162,8 @@ def test_close_before_startup_timer_cannot_initialize_hardware(qtbot, monkeypatc
     monkeypatch.setattr(MainWindow, "_init_cameras_lazy", lambda self: starts.append("camera"))
     window = MainWindow(_config())
     qtbot.addWidget(window)
-    assert window.close()
+    assert not window.close()
+    qtbot.waitUntil(lambda: window._shutdown_complete)
     window._begin_lazy_init()
     assert starts == []
 

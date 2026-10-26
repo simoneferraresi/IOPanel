@@ -10,7 +10,6 @@ from datetime import UTC, datetime
 from typing import TypeVar, override
 
 import numpy as np
-import shiboken6
 from PySide6 import QtCore, QtGui
 from PySide6.QtCore import (
     QMetaObject,
@@ -675,10 +674,14 @@ class PowerFetchWorker(QObject):
             with QMutexLocker(self._busy_lock):
                 self._is_busy = False
 
-    @Slot()
     def request_stop(self):
+        """Thread-safe cancellation flag only; never touches Qt affinity or hardware."""
         with QMutexLocker(self._is_running_lock):
             self._is_actually_running = False
+
+    @Slot()
+    def acknowledge_stop(self):
+        """Queued behind pending reads, proving native device access has ended."""
         self.stop_completed.emit()
 
 
@@ -1440,7 +1443,7 @@ class CT400ControlPanel(BaseControlPanel):
 # HistogramControlPanel
 ###############################################################################
 class HistogramControlPanel(BaseControlPanel):
-    _THREAD_WAIT_TIMEOUT_MS = 2000
+    shutdown_complete = QtCore.Signal()
     power_data_ready = QtCore.Signal(dict)
     operation_started = QtCore.Signal()
     operation_finished = QtCore.Signal()
@@ -1459,6 +1462,9 @@ class HistogramControlPanel(BaseControlPanel):
         self.monitoring = False
         self._monitor_stop_pending = False
         self._monitor_starting = False
+        self._worker_shutdown_requested = False
+        self._worker_shutdown_complete = False
+        self._close_pending = False
         self._recording_active = False
         self._recording_started_monotonic: float | None = None
         self._recording_started_at_utc: datetime | None = None
@@ -1560,6 +1566,7 @@ class HistogramControlPanel(BaseControlPanel):
         self.power_fetch_thread.started.connect(lambda: logger.info("Power fetch worker thread started."))
         retire_worker_on_thread_finish(self.power_fetch_thread, self.power_fetch_worker)
         self.power_fetch_thread.finished.connect(self.power_fetch_thread.deleteLater)
+        self.power_fetch_thread.finished.connect(self._finish_worker_shutdown)
         self.power_fetch_thread.finished.connect(
             lambda: logger.info("Power fetch worker thread finished and cleaned up.")
         )
@@ -1671,7 +1678,7 @@ class HistogramControlPanel(BaseControlPanel):
             return False
 
     def _start_monitoring(self):
-        if self.ct400_operation_state != "IDLE":
+        if self._worker_shutdown_requested or self._monitor_stop_pending or self.ct400_operation_state != "IDLE":
             return
         ct400 = self.ct400
         if self.is_instrument_connected and ct400 is None:
@@ -1726,9 +1733,10 @@ class HistogramControlPanel(BaseControlPanel):
             logger.debug("Monitor Panel: Stopping QTimer.")
             self.timer.stop()
         if hasattr(self, "power_fetch_worker"):
+            self.power_fetch_worker.request_stop()
             QMetaObject.invokeMethod(
                 self.power_fetch_worker,
-                "request_stop",
+                "acknowledge_stop",
                 Qt.ConnectionType.QueuedConnection,
             )
         if not was_actively_monitoring:
@@ -1751,6 +1759,8 @@ class HistogramControlPanel(BaseControlPanel):
             self.on_instrument_connected(self.is_instrument_connected)
             self.operation_finished.emit()
             logger.debug("Monitor Panel: selected-input cleanup complete; ownership released.")
+        if self._worker_shutdown_requested:
+            self.power_fetch_thread.quit()
 
     def _perform_laser_disable(self):
         ct400 = self.ct400
@@ -2036,24 +2046,33 @@ class HistogramControlPanel(BaseControlPanel):
             )
 
     def cleanup_worker_thread(self):
-        logger.info("HistogramControlPanel: Initiating cleanup of power fetch worker thread.")
-        self.timer.stop()
-        if not shiboken6.isValid(self.power_fetch_thread):
+        """Request permanent teardown; shutdown_complete proves native retirement.
+
+        A blocked driver read keeps this panel and its device owned until it
+        returns. There is deliberately no timeout that pretends to cancel it.
+        """
+        if self._worker_shutdown_requested:
             return
+        self._worker_shutdown_requested = True
+        self.timer.stop()
         if self.monitoring:
-            logger.info("HistogramControlPanel.cleanup: Monitoring was active, stopping it first.")
             self._stop_monitoring()
-        if hasattr(self, "power_fetch_thread") and self.power_fetch_thread.isRunning():
-            logger.info("HistogramControlPanel.cleanup: Quitting power fetch thread.")
+        elif not self._monitor_stop_pending:
+            self.power_fetch_worker.request_stop()
             self.power_fetch_thread.quit()
-            if not self.power_fetch_thread.wait(self._THREAD_WAIT_TIMEOUT_MS):
-                logger.warning("Power fetch worker thread did not quit gracefully during cleanup. Terminating.")
-                self.power_fetch_thread.terminate()
-                self.power_fetch_thread.wait()
-            else:
-                logger.info("Power fetch worker thread quit gracefully during cleanup.")
-        elif hasattr(self, "power_fetch_thread"):
-            logger.info("Power fetch worker thread was not running at cleanup.")
+
+    @property
+    def shutdown_finished(self) -> bool:
+        return self._worker_shutdown_complete
+
+    @Slot()
+    def _finish_worker_shutdown(self):
+        # The retirement helper's queued join/affinity callback was connected
+        # first. Keep ownership until it has joined and scheduled destruction.
+        self._worker_shutdown_complete = True
+        self.shutdown_complete.emit()
+        if self._close_pending:
+            QTimer.singleShot(0, self.close)
 
     @Slot()
     def _detector_selection_changed(self):
@@ -2080,5 +2099,9 @@ class HistogramControlPanel(BaseControlPanel):
     @override
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         """Handle widget close event to clean up the worker thread."""
-        self.cleanup_worker_thread()
+        if not self.shutdown_finished:
+            self._close_pending = True
+            self.cleanup_worker_thread()
+            event.ignore()
+            return
         super().closeEvent(event)

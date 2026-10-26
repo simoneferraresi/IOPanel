@@ -71,8 +71,10 @@ def test_close_defers_for_ct400_or_piezo_task_without_stopping_thread(qtbot, mon
         assert window._pending_init_close
         assert calls == []
         window.histogram_control.cleanup_worker_thread()
+        qtbot.waitUntil(lambda window=window: window.histogram_control.shutdown_finished)
         assert _qt_thread_stopped(histogram_thread)
-        window.deleteLater()
+        task.worker_thread.finished.emit()
+        qtbot.waitUntil(lambda window=window: window._shutdown_complete)
 
 
 def test_camera_init_defers_cleanup_until_last_thread_finished(qtbot, monkeypatch, request):
@@ -116,6 +118,8 @@ def test_camera_init_defers_cleanup_until_last_thread_finished(qtbot, monkeypatc
 
     # Execute the GUI-loop retry. Cleanup is now permitted and runs once.
     scheduled[0][1]()
+    qtbot.waitUntil(lambda window=window: window.histogram_control.shutdown_finished)
+    scheduled[-1][1]()
     assert camera_cleanups == ["camera"]
     assert vimba_cleanups == ["vimba"]
     assert not window._pending_init_close
@@ -173,7 +177,9 @@ def test_simulated_camera_result_during_pending_close_is_cleaned(qtbot, monkeypa
     task.worker_thread.finished.emit()
     assert task not in window._init_tasks
     assert len(scheduled) == 1
-    assert scheduled[0][1]() is True
+    assert scheduled[0][1]() is False
+    qtbot.waitUntil(lambda window=window: window.histogram_control.shutdown_finished)
+    assert scheduled[-1][1]() is True
     assert window.cameras == []
     assert not camera.is_streaming
     assert cameras_cleaned == [0]
