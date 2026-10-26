@@ -6,11 +6,13 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast, override
 from weakref import ReferenceType, ref
 
 import numpy as np
 import pyqtgraph as pg
 import shiboken6
+from pyqtgraph.GraphicsScene import GraphicsScene
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import (
     Q_ARG,
@@ -63,7 +65,7 @@ from ui.scan_export_dialog import ScanExportDialog
 from ui.typography import make_font, pyqtgraph_title_style
 
 try:
-    import matlab.engine
+    import matlab.engine  # pyright: ignore[reportMissingImports] - optional vendor SDK absent from CI.
 
     MATLAB_ENGINE_AVAILABLE = True
 except ImportError:
@@ -219,7 +221,7 @@ def _configure_plot_legend(legend: pg.LegendItem) -> pg.LegendItem:
     legend.setBrush(pg.mkBrush(_PLOT_LEGEND_BACKGROUND))
     legend.opts["labelTextColor"] = _PLOT_LEGEND_TEXT_COLOR
     legend.opts["labelTextSize"] = f"{_PLOT_LEGEND_POINT_SIZE}pt"
-    legend.layout.setVerticalSpacing(2)
+    cast(QtWidgets.QGraphicsGridLayout, legend.layout).setVerticalSpacing(2)
 
     family = make_font("sans", _PLOT_LEGEND_POINT_SIZE).family()
     for sample, label in legend.items:
@@ -337,7 +339,7 @@ def build_prepared_matlab_fig_payload(measurement: ScanMeasurement) -> PreparedM
         if detector not in (Detector.DE_1, Detector.DE_2, Detector.DE_3, Detector.DE_4):
             raise ValueError(f"MATLAB FIG export does not support {detector.name}.")
         color = _DETECTOR_COLOR_BY_ID[detector]
-        rgb = tuple(int(color[offset : offset + 2], 16) / 255 for offset in (1, 3, 5))
+        rgb = (int(color[1:3], 16) / 255, int(color[3:5], 16) / 255, int(color[5:7], 16) / 255)
         traces.append(PreparedMatlabFigTrace(f"Det {int(detector)}", measurement.detector_data[row], rgb))
     # ScanMeasurement.__post_init__ already copied both arrays and made them
     # read-only, so retaining references is safe and avoids an extra 4 MiB copy.
@@ -454,6 +456,8 @@ class PowerMonitorTraceWidget(QWidget):
             labelTextSize=f"{_PLOT_LEGEND_POINT_SIZE}pt",
             verSpacing=2,
         )
+        if self.legend is None:
+            raise RuntimeError("Unable to create Power Monitor legend")
         self.legend.sigSampleClicked.connect(
             lambda item, legend=self.legend: _update_plot_legend_hidden_state(legend, item)
         )
@@ -531,6 +535,7 @@ class PowerMonitorTraceWidget(QWidget):
         self._set_status("")
         self.hide()
 
+    @override
     def showEvent(self, event: QtGui.QShowEvent) -> None:
         super().showEvent(event)
         self._render_display_history()
@@ -670,6 +675,7 @@ class PowerMonitorTraceWidget(QWidget):
             self._pending_power_monitor_export_close = False
             QTimer.singleShot(0, self.close)
 
+    @override
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         if self.power_monitor_export_busy:
             self._pending_power_monitor_export_close = True
@@ -1037,7 +1043,7 @@ class HistogramWidget(QtWidgets.QWidget):
 
         self.plot_widget.setTitle("Real-time Power Monitoring", **pyqtgraph_title_style())
         self.plot_widget.setYRange(-70, 10)  # Initial Y range
-        self.plot_widget.setXRange(-0.5, self.num_bars - 0.5, padding=0)
+        self.plot_widget.getViewBox().setXRange(-0.5, self.num_bars - 0.5, padding=0)
 
     def _create_plot_items(self):
         # Create BarGraphItem
@@ -1075,6 +1081,7 @@ class HistogramWidget(QtWidgets.QWidget):
             self.plot_widget.addItem(curr_text)
             self.current_texts.append(curr_text)
 
+    @override
     def showEvent(self, event: QtGui.QShowEvent):
         super().showEvent(event)
         self._is_visible = True
@@ -1082,6 +1089,7 @@ class HistogramWidget(QtWidgets.QWidget):
             logger.debug("HistogramWidget visible, starting update timer.")
             self._update_timer.start()
 
+    @override
     def hideEvent(self, event: QtGui.QHideEvent):
         super().hideEvent(event)
         self._is_visible = False
@@ -1232,7 +1240,7 @@ class HistogramWidget(QtWidgets.QWidget):
             viewable_max = self.max_values[np.isfinite(self.max_values)]
 
             if viewable_current.size == 0 and viewable_max.size == 0:
-                self.plot_widget.setYRange(-70, 10, padding=0)
+                self.plot_widget.getViewBox().setYRange(-70, 10, padding=0)
                 return
 
             combined_finite_vals = np.array([])
@@ -1242,7 +1250,7 @@ class HistogramWidget(QtWidgets.QWidget):
                 combined_finite_vals = np.concatenate((combined_finite_vals, viewable_max))
 
             if combined_finite_vals.size == 0:
-                self.plot_widget.setYRange(-70, 10, padding=0)
+                self.plot_widget.getViewBox().setYRange(-70, 10, padding=0)
                 return
 
             y_min_data = np.min(combined_finite_vals)
@@ -1280,7 +1288,7 @@ class HistogramWidget(QtWidgets.QWidget):
                 y_min_view -= extra_span / 2.0
                 y_max_view += extra_span / 2.0
 
-            self.plot_widget.setYRange(y_min_view, y_max_view, padding=0)
+            self.plot_widget.getViewBox().setYRange(y_min_view, y_max_view, padding=0)
 
         except Exception:
             logger.exception("Error updating y-axis scale")
@@ -1451,8 +1459,11 @@ class PlotWidget(QWidget):
         self.h_line = pg.InfiniteLine(angle=0, movable=False, pen=pg.mkPen("#aaa", style=Qt.PenStyle.DashLine))
         self.v_line.setVisible(False)
         self.h_line.setVisible(False)
-        self.plot_widget.addItem(self.v_line, ignoreBounds=True)
-        self.plot_widget.addItem(self.h_line, ignoreBounds=True)
+        plot_item = self.plot_widget.plotItem
+        if plot_item is None:
+            raise RuntimeError("Scan plot is unavailable during crosshair initialization")
+        plot_item.addItem(self.v_line, ignoreBounds=True)
+        plot_item.addItem(self.h_line, ignoreBounds=True)
 
         # Label to display coordinates
         self.cursor_label = pg.TextItem(anchor=(0, 1), color="k")  # 'k' is black, use 'w' for dark mode
@@ -1463,8 +1474,8 @@ class PlotWidget(QWidget):
         self._crosshair_refresh_timer.setSingleShot(True)
         self._crosshair_refresh_timer.setInterval(40)
         self._crosshair_refresh_timer.timeout.connect(self._process_latest_mouse_position)
-        self.plot_widget.scene().sigMouseMoved.connect(self._queue_mouse_moved)
-        self.plot_widget.plotItem.vb.sigRangeChangedManually.connect(self._on_manual_view_range_changed)
+        cast(GraphicsScene, self.plot_widget.scene()).sigMouseMoved.connect(self._queue_mouse_moved)
+        self.plot_widget.getViewBox().sigRangeChangedManually.connect(self._on_manual_view_range_changed)
         # ----------------------------
 
         self.save_btn = QToolButton()
@@ -1548,7 +1559,9 @@ class PlotWidget(QWidget):
         if file_path:
             try:
                 # 2. Export
-                exporter = pg.exporters.ImageExporter(self.plot_widget.plotItem)
+                from pyqtgraph.exporters import ImageExporter
+
+                exporter = ImageExporter(self.plot_widget.plotItem)
 
                 # Optional: Force a specific high resolution width (e.g. 1920px)
                 # exporter.parameters()['width'] = 1920
@@ -1620,7 +1633,7 @@ class PlotWidget(QWidget):
     def _on_mouse_moved(self, pos):
         """Updates the crosshair position and label text."""
         if self.plot_widget.sceneBoundingRect().contains(pos):
-            mouse_point = self.plot_widget.plotItem.vb.mapSceneToView(pos)
+            mouse_point = self.plot_widget.getViewBox().mapSceneToView(pos)
             mouse_x, mouse_y = mouse_point.x(), mouse_point.y()
             wavelengths = self.current_wavelengths
             if wavelengths is not None and len(wavelengths) > 0:
@@ -1658,7 +1671,12 @@ class PlotWidget(QWidget):
                     if reference_lookup.finite_indices.size == 0:
                         label_lines.append("Reference: n/a")
                     else:
-                        if x < reference_lookup.minimum or x > reference_lookup.maximum:
+                        if (
+                            reference_lookup.minimum is None
+                            or reference_lookup.maximum is None
+                            or x < reference_lookup.minimum
+                            or x > reference_lookup.maximum
+                        ):
                             label_lines.append("Reference: out of range")
                         else:
                             reference_idx = _nearest_wavelength_index(reference_lookup, x)
@@ -1914,7 +1932,7 @@ class PlotWidget(QWidget):
             # Unlike enableAutoRange(), autoRange() does not stay active, so users
             # can zoom and pan normally after each scan update.
             if len(x_plot_data) > 0:
-                self.plot_widget.plotItem.vb.autoRange(items=[self.plot_data_item])
+                self.plot_widget.getViewBox().autoRange(items=[self.plot_data_item])
 
             if len(x_data_np) > 0:
                 title_text = f"Wavelength Scan ({x_data_np[0]:.1f} - {x_data_np[-1]:.1f} nm)"
@@ -1939,6 +1957,7 @@ class PlotWidget(QWidget):
             item.setData([], [])
             item.setVisible(False)
 
+    @override
     def showEvent(self, event: QtGui.QShowEvent) -> None:
         super().showEvent(event)
         self._enable_detector_display_optimizations()
@@ -1985,19 +2004,21 @@ class PlotWidget(QWidget):
         return item
 
     def _ensure_detector_legend(self) -> pg.LegendItem:
-        if self.detector_legend is None:
-            self.detector_legend = self.plot_widget.addLegend(
+        legend = self.detector_legend
+        if legend is None:
+            legend = self.plot_widget.addLegend(
                 pen=pg.mkPen(_PLOT_LEGEND_BORDER, width=1),
                 brush=pg.mkBrush(_PLOT_LEGEND_BACKGROUND),
                 labelTextColor=_PLOT_LEGEND_TEXT_COLOR,
                 labelTextSize=f"{_PLOT_LEGEND_POINT_SIZE}pt",
                 verSpacing=2,
             )
-            self.detector_legend.sigSampleClicked.connect(
-                lambda item, legend=self.detector_legend: _update_plot_legend_hidden_state(legend, item)
-            )
-        self.detector_legend.setVisible(True)
-        return self.detector_legend
+            if legend is None:
+                raise RuntimeError("Unable to create detector legend")
+            self.detector_legend = legend
+            legend.sigSampleClicked.connect(lambda item, target=legend: _update_plot_legend_hidden_state(target, item))
+        legend.setVisible(True)
+        return legend
 
     def _refresh_scan_legend(self) -> None:
         legend = self._ensure_detector_legend()
@@ -2081,7 +2102,7 @@ class PlotWidget(QWidget):
         if self.current_measurement is None and self.plot_data_item.isVisible():
             visible_items.append(self.plot_data_item)
         if visible_items and not self._user_adjusted_view:
-            self.plot_widget.plotItem.vb.autoRange(items=visible_items)
+            self.plot_widget.getViewBox().autoRange(items=visible_items)
         return True
 
     def set_overlay_visible(self, identity: str, visible: bool) -> None:
@@ -2148,8 +2169,8 @@ class PlotWidget(QWidget):
             table.setCellWidget(row, 1, focus_button)
             label_item = QtWidgets.QTableWidgetItem(overlay.label)
             label_item.setData(Qt.ItemDataRole.UserRole, overlay.identity)
+            label_item.setToolTip(str(overlay.source_path))
             table.setItem(row, 2, label_item)
-            table.item(row, 2).setToolTip(str(overlay.source_path))
             provenance = "Simulated" if overlay.scan.simulated else "Saved acquisition"
             table.setItem(row, 3, QtWidgets.QTableWidgetItem(provenance))
         layout.addWidget(table)
@@ -2203,7 +2224,7 @@ class PlotWidget(QWidget):
         self._refresh_scan_legend()
 
         if finite_live_items:
-            self.plot_widget.plotItem.vb.autoRange(items=finite_live_items)
+            self.plot_widget.getViewBox().autoRange(items=finite_live_items)
 
         if len(wavelengths) > 0:
             title_text = f"Wavelength Scan ({wavelengths[0]:.1f} - {wavelengths[-1]:.1f} nm)"
@@ -2510,7 +2531,7 @@ class PlotWidget(QWidget):
         if success:
             # ... (append to saved_files_list, update status_label) ...
             logger.info(f"Successfully saved {filetype}: {message_or_filename}")
-            self.saved_files_list.append(message_or_filename)
+            self.saved_files_list.append(Path(message_or_filename))
             # FIG is a useful MATLAB plot, but it does not preserve the
             # schema-v2 measurement needed to count the acquisition as saved.
             self._set_matlab_status(f"{Path(message_or_filename).name} saved.")
@@ -2598,6 +2619,7 @@ class PlotWidget(QWidget):
                 self.matlab_save_worker = None
             self.matlab_engine_manager.shutdown()
 
+    @override
     def closeEvent(self, event: QtGui.QCloseEvent):
         if self.scan_export_busy:
             self._pending_export_widget_close = True
