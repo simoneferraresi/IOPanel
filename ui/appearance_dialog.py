@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from application_icon_registry import DEFAULT_APPLICATION_ICON_ID
 from ui.application_icons import APPLICATION_ICON_IDS, APPLICATION_ICONS, application_icon
 
 
@@ -31,7 +32,9 @@ class AppearanceDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Appearance")
         self.setAccessibleName("Appearance settings")
-        self._selected_icon_id = current_icon_id if current_icon_id in APPLICATION_ICON_IDS else "optical_burst"
+        self._selected_icon_id = (
+            current_icon_id if current_icon_id in APPLICATION_ICON_IDS else DEFAULT_APPLICATION_ICON_ID
+        )
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(28, 20, 28, 20)

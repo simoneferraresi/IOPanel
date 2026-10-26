@@ -1,14 +1,53 @@
 from __future__ import annotations
 
+import subprocess
+import sys
+import textwrap
+from pathlib import Path
+
 import pytest
 from PySide6.QtCore import QFile, QIODevice, QSettings, QSize, Qt
 from PySide6.QtWidgets import QApplication, QDialog, QMenu, QRadioButton
 
 from app_settings import AppSettings
+from application_icon_registry import APPLICATION_ICON_IDS, APPLICATION_ICONS, DEFAULT_APPLICATION_ICON_ID
 from config_model import AppConfig
+from ui import application_icons as application_icon_ui
 from ui.appearance_dialog import AppearanceDialog
-from ui.application_icons import APPLICATION_ICON_SIZES, APPLICATION_ICONS, application_icon
+from ui.application_icons import APPLICATION_ICON_SIZES, application_icon
 from ui.main_window import MainWindow
+
+
+def test_application_icon_registry_is_shared_by_settings_and_gui():
+    assert AppSettings.APPLICATION_ICON_IDS is APPLICATION_ICON_IDS
+    assert application_icon_ui.APPLICATION_ICON_IDS is APPLICATION_ICON_IDS
+    assert application_icon_ui.APPLICATION_ICONS is APPLICATION_ICONS
+    assert application_icon_ui.application_icon_names() is APPLICATION_ICONS
+    assert [icon_id for icon_id, _name in APPLICATION_ICONS] == ["optical_burst", "prism_spectrum"]
+    assert DEFAULT_APPLICATION_ICON_ID == "optical_burst"
+
+
+def test_application_icon_registry_can_import_without_qt_or_resources():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            textwrap.dedent(
+                """
+                import sys
+                import application_icon_registry
+                assert 'PySide6' not in sys.modules
+                assert 'ui.application_icons' not in sys.modules
+                assert 'resources.resources_rc' not in sys.modules
+                """
+            ),
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_application_icon_resources_render_with_transparent_corners(qapp, monkeypatch, tmp_path):
