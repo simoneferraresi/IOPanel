@@ -395,7 +395,7 @@ def test_power_monitor_plot_widgets_have_zero_outer_layout_margins(qtbot):
     trace = PowerMonitorTraceWidget()
     qtbot.addWidget(histogram)
     qtbot.addWidget(trace)
-    for layout in (histogram.layout, trace.layout()):
+    for layout in (histogram.layout(), trace.layout()):
         margins = layout.contentsMargins()
         assert (margins.left(), margins.top(), margins.right(), margins.bottom()) == (0, 0, 0, 0)
         assert layout.spacing() == 0
@@ -1918,3 +1918,17 @@ def test_unavailable_matlab_preserves_saved_fig_preference(qtbot, monkeypatch, t
 
     assert {path.name for path in output.iterdir()} == {"scan.csv", "scan.mat"}
     assert settings.scan_export_formats() == (True, True, True)
+
+
+def test_histogram_layout_is_accessible_through_qwidget_method(qtbot):
+    widget = HistogramWidget(None, ["Det 1"])
+    qtbot.addWidget(widget)
+
+    assert widget.layout() is widget._main_layout
+    assert widget.layout().indexOf(widget.plot_container) >= 0
+
+    # Missing annotations must be handled without dereferencing None.
+    widget.max_texts[0] = None
+    widget.current_texts[0] = None
+    widget._update_max_text(0, 0.0, 2.0)
+    widget._update_current_text(0, 0.0, 1.0)
