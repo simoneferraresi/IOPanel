@@ -2402,12 +2402,14 @@ class PlotWidget(QWidget):
                 self._update_save_button_state()
                 return
 
-        try:
-            export_payload = build_scan_export_v2(measurement, comment=request.comment)
-        except (TypeError, ValueError) as error:
-            QMessageBox.warning(self, "Scan Export Not Supported", str(error))
-            self._update_save_button_state()
-            return
+        export_payload = None
+        if request.csv or request.mat:
+            try:
+                export_payload = build_scan_export_v2(measurement, comment=request.comment)
+            except (TypeError, ValueError) as error:
+                QMessageBox.warning(self, "Scan Export Not Supported", str(error))
+                self._update_save_button_state()
+                return
 
         self.saved_files_list: list[Path] = []
         self.error_list: list[str] = []
@@ -2415,7 +2417,7 @@ class PlotWidget(QWidget):
         self._export_measurement = measurement
         self._completion_reported = False
 
-        if request.csv or request.mat:
+        if export_payload is not None:
             # Payload is an immutable acquisition snapshot plus the chosen
             # annotation. The potentially slow serialization and disk writes
             # belong entirely to the worker thread.
