@@ -85,8 +85,7 @@ except ImportError:
         file=sys.stderr,
     )
 
-from hardware.camera import VIMBA_AVAILABLE, VimbaCam
-from hardware.camera import VmbCameraError, VmbSystem, VmbSystemError  # pyright: ignore[reportAttributeAccessIssue] - optional VmbPy exports.
+from hardware.camera import VIMBA_AVAILABLE, VimbaCam, VmbCameraError, VmbSystem, VmbSystemError  # pyright: ignore[reportAttributeAccessIssue] - optional VmbPy exports.
 from hardware.camera_init_worker import CameraInitWorker
 from hardware.camera_recovery_worker import CameraRecoveryWorker
 from hardware.ct400 import CT400
