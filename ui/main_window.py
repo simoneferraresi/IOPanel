@@ -23,6 +23,7 @@ import sys
 import time
 import weakref
 from enum import Enum, auto
+from typing import override
 
 from PySide6 import QtGui, QtWidgets
 from PySide6.QtCore import QObject, QRunnable, QSize, Qt, QThreadPool, QTimer, Signal, Slot
@@ -84,7 +85,7 @@ except ImportError:
         file=sys.stderr,
     )
 
-from hardware.camera import VIMBA_AVAILABLE, VimbaCam, VmbCameraError, VmbSystem, VmbSystemError
+from hardware.camera import VIMBA_AVAILABLE, VimbaCam, VmbCameraError, VmbSystem, VmbSystemError  # pyright: ignore[reportAttributeAccessIssue] - optional VmbPy exports.
 from hardware.camera_init_worker import CameraInitWorker
 from hardware.camera_recovery_worker import CameraRecoveryWorker
 from hardware.ct400 import CT400
@@ -138,6 +139,7 @@ class PiezoConnectionWorker(QRunnable):
         self.signals = PiezoConnectionSignals()
 
     @Slot()
+    @override
     def run(self):
         try:
             if self.do_connect:
@@ -1059,7 +1061,10 @@ class MainWindow(QMainWindow):
         try:
             logger.info("Attempting to start VmbSystem...")
             self.vmb_instance = VmbSystem.get_instance()
-            self.vmb_instance.__enter__()
+            instance = self.vmb_instance
+            if instance is None:
+                raise RuntimeError("Vimba SDK did not return a system instance")
+            instance.__enter__()
             logger.info("VmbSystem entered successfully.")
         except VmbSystemError as e:
             logger.exception("Failed to enter VmbSystem")
@@ -1156,6 +1161,7 @@ class MainWindow(QMainWindow):
         splitter.setChildrenCollapsible(False)
         self.camera_container = QWidget()
         cam_layout = QHBoxLayout(self.camera_container)
+        self.camera_layout = cam_layout
         cam_layout.setContentsMargins(0, 0, 0, 0)
         cam_layout.setSpacing(5)
         self.control_container = QWidget()
@@ -1260,7 +1266,6 @@ class MainWindow(QMainWindow):
         self._create_menus()
 
         self.log_console = LogConsole(parent=self)
-        self.log_console.log_file = self.config.logging.file
         self.log_console_dock = QDockWidget("Log Console", self)
         self.log_console_dock.setObjectName("LogConsoleDock")
         self.log_console_dock.setWidget(self.log_console)
@@ -1290,7 +1295,7 @@ class MainWindow(QMainWindow):
         icon = application_icon(icon_id)
         self._application_icon_id = icon_id
         app = QApplication.instance()
-        if app is not None:
+        if isinstance(app, QApplication):
             app.setWindowIcon(icon)
         self.setWindowIcon(icon)
 
@@ -1946,7 +1951,8 @@ class MainWindow(QMainWindow):
         """
         if self._shutdown_requested:
             return
-        action = self.sender()
+        sender = self.sender()
+        action = sender if isinstance(sender, QAction) else None
         if action:
             action.setEnabled(False)  # Prevent rapid re-clicks
 
@@ -2350,7 +2356,7 @@ class MainWindow(QMainWindow):
         if self._shutdown_requested:
             return
         logger.info("Initializing cameras lazily...")
-        if not all([self.camera_container, self.camera_container.layout(), self.cameras_menu]):
+        if not all([self.camera_container, self.camera_layout, self.cameras_menu]):
             logger.error("UI components for camera initialization are not ready. Aborting.")
             return
 
@@ -2364,7 +2370,8 @@ class MainWindow(QMainWindow):
         if not camera_configs_to_init:
             no_cameras_action = QAction("No enabled cameras found in config", self)
             no_cameras_action.setEnabled(False)
-            self.cameras_menu.addAction(no_cameras_action)
+            if self.cameras_menu is not None:
+                self.cameras_menu.addAction(no_cameras_action)
             logger.info("No valid, enabled cameras to initialize.")
             return
 
@@ -2374,7 +2381,7 @@ class MainWindow(QMainWindow):
             # 1. Create and add the placeholder panel to the UI
             placeholder_panel = self._create_camera_panel(None, config)
             self.camera_panels[identifier] = placeholder_panel
-            self.camera_container.layout().addWidget(placeholder_panel)
+            self.camera_layout.addWidget(placeholder_panel)
 
         # Finish the entire GUI graph before any camera can publish a result
         # or destroy its initialization worker concurrently with construction.
@@ -2447,7 +2454,7 @@ class MainWindow(QMainWindow):
             logger.warning(f"Skipping camera '{cam_config.name}': Invalid or placeholder identifier.")
             error_msg = f"{cam_config.name}\n(Config Error: Invalid ID)"
             placeholder = self._create_camera_error_placeholder(error_msg)
-            self.camera_container.layout().addWidget(placeholder)
+            self.camera_layout.addWidget(placeholder)
             return False
         return True
 
@@ -2464,7 +2471,7 @@ class MainWindow(QMainWindow):
                 logger.error(f"Failed to open camera {cam_config.name} (ID: {cam_config.identifier}).")
                 error_msg = MSG_CAMERA_FAILED.format(cam_config.name)
                 placeholder = self._create_camera_error_placeholder(error_msg)
-                self.camera_container.layout().addWidget(placeholder)
+                self.camera_layout.addWidget(placeholder)
                 cam_instance.close()  # Clean up the failed instance
                 return None
             return cam_instance
@@ -2472,7 +2479,7 @@ class MainWindow(QMainWindow):
             logger.error(f"Vimba Error initializing camera {cam_config.name} (ID: {cam_config.identifier}): {e}")
             error_msg = f"{cam_config.name}\n(Vimba Error)"
             placeholder = self._create_camera_error_placeholder(error_msg)
-            self.camera_container.layout().addWidget(placeholder)
+            self.camera_layout.addWidget(placeholder)
             return None
         except Exception:
             logger.exception(
@@ -2480,7 +2487,7 @@ class MainWindow(QMainWindow):
             )
             error_msg = f"{cam_config.name}\n(Init Error)"
             placeholder = self._create_camera_error_placeholder(error_msg)
-            self.camera_container.layout().addWidget(placeholder)
+            self.camera_layout.addWidget(placeholder)
             return None
 
     def _create_camera_panel(self, cam_instance: VimbaCam | None, cam_config: CameraConfig) -> CameraPanel:
@@ -2720,6 +2727,8 @@ class MainWindow(QMainWindow):
         if layout is not None:
             while layout.count():
                 item = layout.takeAt(0)
+                if item is None:
+                    break
                 widget = item.widget()
                 if widget is not None:
                     if isinstance(widget, CameraPanel):
@@ -2757,6 +2766,8 @@ class MainWindow(QMainWindow):
                 return False
             return True
         try:
+            if self.ct400_device is None:
+                raise RuntimeError("CT400 unavailable during configured-input shutdown")
             self.ct400_device.cmd_laser(
                 laser_input=laser_input,
                 enable=Enable.DISABLE,
@@ -2780,6 +2791,7 @@ class MainWindow(QMainWindow):
             )
             return False
 
+    @override
     def closeEvent(self, event: QtGui.QCloseEvent):
         """
         Handles the user closing the window. Ensures all hardware and threads
@@ -2843,7 +2855,7 @@ class MainWindow(QMainWindow):
             scan_active = scan_thread is not None and scan_thread.isRunning()
         except RuntimeError:
             scan_active = False
-        if scan_active:
+        if scan_active and scan_thread is not None and scan_panel is not None:
             event.ignore()
             self.statusBar().showMessage("Stopping/waiting for CT400 scan to finish…", 0)
             logger.info("Deferring application close until the active CT400 scan worker finishes.")
