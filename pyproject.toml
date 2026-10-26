@@ -124,6 +124,7 @@ include = [
     "logic/scan_settings.py",
     "ui/control_panel.py",
     "ui/camera_widgets.py",
+    "ui/main_window.py",
     "ui/pm5020_panel.py",
     "ui/log_console.py",
     "tools/check_environment.py",
