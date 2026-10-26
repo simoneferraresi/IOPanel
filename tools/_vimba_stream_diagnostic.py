@@ -276,4 +276,3 @@ def run_stream_diagnostic(approved_camera_id: str, camera_label: str, *, descrip
         return 0
     print("RESULT: FAIL — frame target or normal cleanup not achieved")
     return 1
-
