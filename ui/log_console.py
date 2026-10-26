@@ -466,9 +466,6 @@ class LogConsole(QWidget):
         self.overflow_notice.hide()
         self.text.clear()
 
-    def copy_selected(self) -> None:
-        QApplication.clipboard().setText(self.text.textCursor().selectedText().replace("\u2029", "\n"))
-
     def copy_visible(self) -> None:
         QApplication.clipboard().setText(self.text.toPlainText())
 

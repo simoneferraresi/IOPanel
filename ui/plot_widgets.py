@@ -1294,8 +1294,6 @@ class PlotWidget(QWidget):
     _STATUS_CLEAR_TIMEOUT_MS = 3000
     _DETECTOR_COLORS = _DETECTOR_COLOR_BY_ID
 
-    # Signal to update UI from worker, e.g., re-enable button, show status
-    matlab_save_status_update = Signal(str)  # Message for status bar or dialog
     _matlab_save_thread_finished = Signal(object, object)
     open_scan_requested = Signal()
     add_scan_requested = Signal()
