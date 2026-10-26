@@ -100,6 +100,7 @@ def test_simulated_frames_reach_existing_panel_conversion_path(qtbot):
     frame_thread = camera_instance._frame_thread
     camera_instance.close()
     panel.close()
+    qtbot.waitUntil(lambda: panel._conversion_shutdown_complete)
     assert not camera_instance.is_streaming
     assert frame_thread is not None and not frame_thread.is_alive()
     assert not panel.conversion_thread.isRunning()

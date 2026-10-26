@@ -36,6 +36,7 @@ class TaskRunner(QObject):
 
     # Signal to re-emit errors from the worker to the main thread convenience
     error_occurred = Signal(str)
+    stopped = Signal()
 
     def __init__(self, worker: BaseWorker, auto_start_run: bool = True) -> None:
         """
@@ -50,6 +51,8 @@ class TaskRunner(QObject):
         super().__init__(QCoreApplication.instance())
         self.worker = worker
         self.auto_start_run = auto_start_run
+        self._stop_requested = False
+        self._started = False
         self.worker_thread: QThread = QThread(self)
 
         # An unstarted task has no worker event loop to drain deleteLater.
@@ -65,6 +68,7 @@ class TaskRunner(QObject):
         # waiting for the GIL, as the GUI holds the GIL while connecting objects.
         # Return the stopped worker before requesting GUI deferred destruction.
         retire_worker_on_thread_finish(self.worker_thread, self.worker)
+        self.worker_thread.finished.connect(self._on_thread_finished)
         self.worker_thread.finished.connect(self.worker_thread.deleteLater)
         self.worker_thread.destroyed.connect(self.deleteLater)
 
@@ -73,6 +77,9 @@ class TaskRunner(QObject):
 
     def start(self) -> None:
         """Starts the background thread."""
+        if self._stop_requested:
+            return
+        self._started = True
         logger.debug(f"Starting thread for worker: {self.worker.__class__.__name__}")
         self.worker.setParent(None)
         self.worker.moveToThread(self.worker_thread)
@@ -81,10 +88,22 @@ class TaskRunner(QObject):
             QMetaObject.invokeMethod(self.worker, "run", Qt.ConnectionType.QueuedConnection)
 
     def stop(self) -> None:
+        """Request cooperative exit and return; stopped follows native retirement.
+
+        Owners must retain this runner until stopped. quit cannot interrupt a
+        synchronous native call; workers may observe the interruption request.
+        Service-specific hardware cleanup must be requested before calling stop.
         """
-        Forcefully asks the thread to stop.
-        Note: The worker usually needs its own 'stop()' method to break loops safely.
-        """
+        if self._stop_requested:
+            return
+        self._stop_requested = True
+        if not self._started:
+            self.stopped.emit()
+            return
         if isValid(self.worker_thread) and self.worker_thread.isRunning():
+            self.worker_thread.requestInterruption()
             self.worker_thread.quit()
-            self.worker_thread.wait()
+
+    @Slot()
+    def _on_thread_finished(self) -> None:
+        self.stopped.emit()

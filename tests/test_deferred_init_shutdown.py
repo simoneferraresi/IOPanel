@@ -84,7 +84,13 @@ def test_camera_init_defers_cleanup_until_last_thread_finished(qtbot, monkeypatc
     camera_cleanups = []
     vimba_cleanups = []
     scheduled = []
-    monkeypatch.setattr(window, "_cleanup_cameras", lambda: camera_cleanups.append("camera"))
+    original_cleanup = window._cleanup_cameras
+
+    def record_camera_cleanup():
+        camera_cleanups.append("camera")
+        original_cleanup()
+
+    monkeypatch.setattr(window, "_cleanup_cameras", record_camera_cleanup)
     monkeypatch.setattr(window, "_cleanup_vimbasystem", lambda: vimba_cleanups.append("vimba"))
     monkeypatch.setattr(
         main_window_module.QTimer,
