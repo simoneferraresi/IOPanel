@@ -171,9 +171,7 @@ def run_launcher(monkeypatch, launcher, camera_id: str) -> int:
         (side, "DEV_000F315BA8F9", "Side"),
     ],
 )
-def test_each_launcher_streams_only_its_approved_camera(
-    monkeypatch, capsys, launcher, camera_id, camera_name
-):
+def test_each_launcher_streams_only_its_approved_camera(monkeypatch, capsys, launcher, camera_id, camera_name):
     camera = FakeCamera(camera_id)
     system = install_fake_sdk(monkeypatch, camera)
 
