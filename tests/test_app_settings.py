@@ -4,6 +4,7 @@ import pytest
 from PySide6.QtCore import QByteArray, QSettings
 
 from app_settings import AppSettings
+from application_icon_registry import APPLICATION_ICON_IDS, DEFAULT_APPLICATION_ICON_ID
 
 
 def make_settings(path: Path) -> AppSettings:
@@ -179,6 +180,20 @@ def test_pm5020_corrupt_values_fall_back_individually_and_future_schema_is_read_
     assert not future.supported
     assert future.pm5020_channel_preferences(1)["wavelength_nm"] == 1550.0
     assert future.pm5020_preferences()["monitor_interval_ms"] == 1000
+
+
+@pytest.mark.parametrize("icon_id", sorted(APPLICATION_ICON_IDS))
+def test_all_registered_application_icons_round_trip_through_qsettings(tmp_path, icon_id):
+    path = tmp_path / "all-application-icons.ini"
+    settings = make_settings(path)
+    settings.set_application_icon(icon_id)
+    settings.sync()
+
+    restored = AppSettings(QSettings(str(path), QSettings.Format.IniFormat))
+    assert restored.application_icon() == icon_id
+    assert restored._settings.value("Appearance/application_icon") == icon_id
+    assert AppSettings.APPLICATION_ICON_IDS is APPLICATION_ICON_IDS
+    assert DEFAULT_APPLICATION_ICON_ID in APPLICATION_ICON_IDS
 
 
 def test_application_icon_rejects_unknown_values_and_invalid_types(tmp_path):
