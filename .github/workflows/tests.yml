@@ -25,6 +25,9 @@ jobs:
       - run: uv run --no-sync ruff check .
       - run: uv run --no-sync ruff format --check .
       - run: uv run --no-sync pyright
+      - name: Phase D native Qt reliability campaign (temporary diagnostic branch)
+        if: github.ref == 'refs/heads/fix/phase-d-qt-native-campaign'
+        run: uv run --no-sync python -m tools.qt_reliability_campaign --output phase-d-native-evidence --core-runs 0 --camera-runs 1 --plot-runs 2 --stress-cycles 3
       # Compare exact pytest node IDs against the unpartitioned collection.
       # This gate fails if a module or parametrized case is lost or duplicated.
       - name: Verify exact full-suite test collection coverage
