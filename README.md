@@ -1,368 +1,159 @@
-# IOPanel: Photonics Lab Control GUI
+<div align="center">
 
-<p align="center">
-  <img src="docs/screenshots/multi-scan-overlays.png" alt="IOPanel wavelength-scan view with multiple saved-scan overlays" width="75%">
-</p>
+<img src="resources/icons/app/optical_burst/256.png" width="112" alt="IOPanel Optical Burst logo">
 
-**IOPanel** is a robust and performant desktop application engineered to interface with and control key laboratory equipment for photonics research. Built with Python and PySide6, it provides a centralized, stable, and user-friendly GUI for running wavelength scans, monitoring optical power in real-time, and viewing high-framerate camera feeds for sample alignment.
+# IOPanel
 
-This application is architected for stability during long-running experiments, with a focus on a responsive user interface, resilient hardware communication, and clear, immediate data visualization.
+**Laboratory control and data visualization for photonics research.**
+
+A Python and PySide6 desktop application for instrument control, automated
+optical measurements, and sample alignment.
+
+[![Hardware-independent tests](https://github.com/simoneferraresi/IOPanel/actions/workflows/tests.yml/badge.svg)](https://github.com/simoneferraresi/IOPanel/actions/workflows/tests.yml)
+[![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](pyproject.toml)
+[![PySide6](https://img.shields.io/badge/GUI-PySide6-41CD52?logo=qt&logoColor=white)](pyproject.toml)
+[![MIT License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+[Features](#key-features) ·
+[Installation](#installation) ·
+[Documentation](#documentation) ·
+[Development](#development) ·
+[Contributing](CONTRIBUTING.md)
+
+<img src="docs/screenshots/issue132-main-layout.png" alt="IOPanel desktop interface with optical lab control panels" width="100%">
+
+<sub>IOPanel desktop interface. Screenshots document application features; instrument availability depends on the configured backend and laboratory hardware.</sub>
+
+</div>
 
 ---
 
 ## Key Features
 
--   **Modular Instrument Control:**
-    -   **CT400 Wavelength Scan:** Full control over the Yenista CT400 for configurable wavelength scans. Set start/end wavelengths, resolution, laser power, and speed.
-    -   **Real-time Power Monitor:** A multi-channel power monitor displayed as a live-updating histogram, perfect for alignment tasks and stability checks.
-    -   **Thorlabs PM5020 monitor:** A standalone dual-channel panel provides simulator or optional physical connection, per-channel settings, and live plots. The physical Thorlabs SDK is loaded only after a deliberate connection request. See [PM5020 panel and backend notes](docs/pm5020-backend.md).
--   **High-Performance Multi-Camera Support:**
-    -   Simultaneously stream from multiple Vimba-compatible cameras in parallel.
-    -   Individual, thread-safe controls for gamma and exposure (including one-shot auto-exposure and auto-gain).
-    -   Asynchronous, non-blocking camera initialization.
-    -   Automatic connection recovery watchdog for enhanced stability.
--   **Advanced Data Visualization:**
-    -   Scan results are plotted instantly using the fast and interactive `pyqtgraph` library.
-    -   Live, throttled histogram for smooth power monitoring without overwhelming the CPU.
--   **Robust Data Export:**
-    -   Save scan data in multiple formats simultaneously with a single click.
--   Supported formats: **CSV**, **MATLAB (.mat)**.
--   Saved schema-v2 scan CSV and MAT files can be reopened with **File > Open Scan...** for offline plotting and detector comparison.
-    -   **(Optional)** **MATLAB Figure (.fig)** export is available if the MATLAB Engine for Python is installed.
--   **Engineered for Stability:**
-    -   **Asynchronous Architecture:** All hardware communication and long-running tasks are executed on background threads, ensuring the GUI remains responsive at all times.
-    -   **Type-Safe Configuration:** Powered by **Pydantic**, the application validates the `config.ini` file on startup, preventing errors from invalid settings.
-    -   **Resilient Error Handling:** Graceful error handling and built-in hardware watchdogs ensure robust, long-term operation.
+- **Automated wavelength scans.** Configure and visualize tunable-laser sweeps using
+  the Yenista CT400, with detector measurements and acquisition metadata.
+- **Live optical-power monitoring.** Monitor detector channels during alignment;
+  the Thorlabs PM5020 panel supports simulation and a separately configured
+  physical backend.
+- **Multi-camera alignment.** View multiple Allied Vision Vimba X camera streams,
+  with independent exposure and gain controls and asynchronous initialization.
+- **Measurement comparison and export.** Export scan data to CSV and MATLAB
+  `.mat`, reopen supported schema-v2 measurements, and compare saved traces with
+  overlays. Native MATLAB `.fig` export additionally requires MATLAB Engine.
+- **Laboratory-oriented reliability.** Validated configuration, background
+  operations, diagnostics, logging, and simulated backends for development
+  without connected instruments.
 
----
+### More of the interface
+
+| Saved wavelength scans | Log console and diagnostics |
+| :---: | :---: |
+| <img src="docs/screenshots/multi-scan-overlays.png" alt="Saved scan overlays on a wavelength plot" width="100%"> | <img src="docs/screenshots/issue132-log-console-refined.png" alt="IOPanel log console" width="100%"> |
 
 ## Installation
 
-This project is designed to be run from a local Python environment and uses [`uv`](https://github.com/astral-sh/uv) as its recommended package and project manager. `uv` is an extremely fast, all-in-one tool that replaces `pip` and `venv`.
+IOPanel targets **Windows x64 and Python 3.12** for its validated laboratory
+profile. It uses [uv](https://docs.astral.sh/uv/) to manage dependencies.
+Cloning the source does **not** install proprietary SDKs, device drivers, or
+MATLAB itself.
 
-### 1. Prerequisites
+### Driver-free development and simulation
 
--   **Python 3.12 x64 for the default laboratory setup** (the MATLAB R2024b Engine is not compatible with Python 3.13+; driver-free setups may use newer supported Python versions).
--   **`uv`**: Install `uv` on your system.
-    -   On macOS / Linux: `curl -LsSf https://astral.sh/uv/install.sh | sh`
-    -   On Windows: `powershell -c "irm https://astral.sh/uv/install.ps1 | iex"`
-    -   See the [official `uv` installation guide](https://github.com/astral-sh/uv#installation) for more options.
--   **Git**
--   **Required Hardware Drivers:**
-    -   **Allied Vision Vimba X:** For physical camera support. The preferred laboratory profile is Vimba X 2026-2 with VmbPy 1.2.2, VmbC 1.3.1 and VmbImageTransform 2.3 on Windows x64 / Python 3.12.8. See the [VmbPy compatibility profiles](docs/vmbpy-compatibility.md).
-    -   Camera capability, exposure/gain, ROI, frame-pacing, and GigE validation guidance is in [Camera performance and image quality](docs/camera-performance.md).
-    -   **Yenista CT400 Drivers:** The `CT400_lib.dll` file is required. This is provided with the instrument. Ensure you have the correct 32-bit or 64-bit version that matches your Python interpreter.
--   **MATLAB R2024b installed and licensed on the Windows lab PC:** The default `uv sync` installs the matching MATLAB Engine Python binding. MATLAB remains necessary for actual `.fig` export. Driver-free setups can skip the lab group.
+After installing Git and uv:
 
-### 2. Environment Setup
-
-The `uv` workflow simplifies environment creation and dependency installation into two main steps.
-
-```bash
-# 1. Clone the repository
+~~~powershell
 git clone https://github.com/simoneferraresi/IOPanel.git
 cd IOPanel
-
-# 2. Create/update .venv including the default lab integrations (Windows x64)
-uv sync --locked
-
-# 3. Activate the virtual environment
-# On Windows (PowerShell):
-.venv\Scripts\Activate.ps1
-# On macOS/Linux:
-source .venv/bin/activate
-```
-
-### 3. Default laboratory profile and driver-free override
-
-On **Windows x64 / CPython 3.12**, plain `uv sync --locked` installs the
-`lab` dependency group by default:
-
-- `vmbpy==1.2.2`, matched to the validated Vimba X 2026-2 /
-  VmbC 1.3.1 laboratory camera profile.
-- `matlabengine==24.2.2`, matched to **MATLAB R2024b Update 4** at
-  `C:\Program Files\MATLAB\R2024b`.
-
-The lab Python bindings are no longer `camera`/`matlab` optional extras.
-Both bindings are installed automatically by the default setup, but **uv does
-not install or license MATLAB or install Vimba X device drivers/GenTL layers**.
-Install and configure those native applications first. MATLAB Engine 24.2.2 is
-release-specific; do not replace it with the current PyPI version unless the
-lab's MATLAB release also changes.
-
-On a machine without MATLAB or Vimba X, preserve the hardware-independent
-environment by **explicitly disabling the default lab group**:
-
-```powershell
 uv sync --locked --no-default-groups
-# For tests:
-uv sync --locked --no-default-groups --extra test
-```
+uv run --no-default-groups --no-sync python app.py --config packaging/config.simulation.ini
+~~~
 
-This is the CI/driver-free route. To return to the full lab setup, use
-`uv sync --locked` again after installing the native prerequisites; uv will
-reconcile the virtual environment. Any `uv run` invocation without
-`--no-default-groups` also selects the default lab group, so use
-`uv run --no-default-groups ...` for driver-free work when synchronization is
-enabled.
+The supplied simulation profile explicitly uses simulated devices. This path
+is intended for application exploration and development, **not** as validation
+of physical camera or instrument support.
 
-Without a functioning Engine, CSV and MAT data exports and PNG/JPG plot
-images remain available; only MATLAB `.fig` output requires MATLAB.
-IOPanel asynchronously prewarms the Engine 350 ms after opening the main
-window, reuses it for `.fig` exports, and shuts it down at exit. An Engine
-startup failure does not disable the rest of the application.
+### Laboratory PC
 
-For setup diagnostics, run these commands on the lab PC after the sync (these
-do not acquire data or operate cameras; the second explicitly starts MATLAB).
-See [MathWorks' Engine installation guidance](https://www.mathworks.com/help/matlab/matlab_external/install-the-matlab-engine-for-python.html)
-if installation fails:
+On a properly configured Windows x64 / CPython 3.12 lab computer with the
+required native integrations installed:
 
-```powershell
-.\.venv\Scripts\python.exe -c "import matlab.engine; print('MATLAB Engine import OK')"
-.\.venv\Scripts\python.exe -c "import matlab.engine; eng=matlab.engine.start_matlab(); print(eng.version()); print(eng.matlabroot()); eng.quit()"
-& "C:\Program Files\MATLAB\R2024b\bin\matlab.exe" -batch "disp(version('-release')); disp(matlabroot)"
-```
+~~~powershell
+uv sync --locked
+uv run --no-sync python app.py
+~~~
 
-### Reopen and compare saved wavelength scans
-
-Use **File > Open Scan...** or the folder icon in the wavelength plot toolbar to replace the foreground trace with an IOPanel schema-v2 `.csv` or `.mat` scan. The toolbar dropdown also offers **Add Scan to Plot...** and **Manage Overlays...**; File contains both Open and Add actions. Add keeps the foreground measurement and frozen reference intact. Up to eight additional scans can be shown together. Detector color identifies the channel; line pattern and width distinguish scans. The overlay manager supports show, hide, remove, and clear operations. Its **Inspect** choice selects the saved scan shown in the crosshair alongside the foreground and frozen reference; lookups use each scan's independent wavelength grid.
-
-The snowflake button freezes the foreground trace as one separate A/B reference. **Clear Overlays** removes only added scans; the plot's eraser clears all displayed scan and reference data. Open is disabled while a CT400 scan is running or its worker is completing. Replacing an unsaved acquired scan, including a simulated acquisition, asks for confirmation; adding an overlay does not. Import works without CT400, cameras, piezos, or MATLAB. Imported scans retain their stored provenance and remain read-only/non-reexportable as acquisitions.
-
-Driver-free UI examples: [four-scan comparison](docs/screenshots/multi-scan-overlays.png), [toolbar actions](docs/screenshots/multi-scan-toolbar-menu.png), and [overlay manager](docs/screenshots/multi-scan-manage-overlays.png). The [scan overlay performance report](docs/scan-overlay-performance.md) describes synthetic profiling methodology and results.
-
-The importer retains wavelength samples, active optical detector identities in acquisition order, detector samples, UTC completion time, resolution, speed, entered laser power and unit, laser input, comment, backend, simulation flag, result kind and code, and optional final Pout. Requested wavelength limits, the original result message, and other fields omitted by schema v2 remain unavailable. Imported data cannot be re-exported as a new acquisition because those fields and the original acquisition snapshot are incomplete. Legacy exports and unrelated CSV/MAT files are rejected; only the documented IOPanel schema-v2 layout is supported. Nonfinite detector measurements are preserved on import and filtered by the plot for display.
-
-### Read-only environment diagnostics
-
-Run `python -m tools.check_environment` from the project root for a concise
-report, or add `--json` for schema-versioned JSON suitable for bug reports.
-Use `--config path\to\config.ini` to inspect a different configuration file.
-The command reports Python details, core and lab-integration package metadata,
-configuration validation, and static CT400 DLL existence/PE architecture.
-Configuration validation reuses `AppConfig` without importing the GUI or
-hardware adapters. VmbPy and MATLAB Engine are detected through package
-metadata only. Missing lab bindings are expected only when the lab group is
-explicitly excluded; metadata presence does not establish native runtime
-readiness. Installed metadata does not verify native
-SDK loading or runtime compatibility. The command never starts MATLAB, loads a
-DLL, initializes Vimba, or contacts hardware. It cannot qualify physical
-camera or CT400 operation; follow the [laboratory validation protocol](docs/laboratory-hardware-validation.md)
-for that. For example, a missing VmbPy package is expected in a driver-free
-development environment, while a missing configured CT400 DLL is actionable
-when the physical CT400 backend is selected.
-
-### Operator-only device inventory scripts
-
-The standalone `cameras_info.py` and `find_piezos.py` scripts are retained
-for independent camera and piezo discovery on an authorized laboratory PC.
-Their `--help` options are safe in driver-free environments; actually
-running discovery enters the vendor SDK or loads a native DLL, so **do not
-invoke either during a live experiment**. The piezo tool accepts
-`--dll path\\to\\MDT_COMMAND_LIB_x64.dll` instead of requiring a source edit.
-See [standalone device discovery](docs/standalone-device-discovery.md) for
-usage, limitations, tests, and why these unreferenced scripts were preserved.
-
-### In-app Log Console
-
-Open **View → Log Console** or press **F12** to show the floating Log Console.
-It can be resized and moved to another monitor, then docked back into the main
-window if preferred. The toolbar uses tab-specific controls. In Logs, the
-severity selector uses minimum levels (INFO+, WARNING+, ERROR+, or CRITICAL),
-with search, pause/resume, clear, copy, and open-file actions. The Diagnostics
-tab has its own run and copy actions. Logs and the diagnostics report use Geist
-Sans; timestamps, severity labels, and messages align with font-aware tab stops.
-Multiline messages and tracebacks continue under the message column. Logger
-names remain available in structured records and search but are omitted from
-visible rows. The console visibility, floating or docked layout, floating
-geometry and severity selection are saved with the other harmless UI
-preferences. Previously saved exact-level selections migrate to their matching
-minimum level.
-
-The white-background viewer uses colored severity labels and retains up to
-5,000 recent Python logging records in memory. Pausing does not stop logging; if
-the buffer fills, older viewer records are discarded and a warning appears only
-after records are dropped. There is no permanent status footer. The existing
-rotating file log (normally
-`lab_app.log` in the working directory, or the path selected with `--log-file`)
-continues to follow its configured rotation and retention policy and remains
-the source for older history. The console shows IOPanel Python logging records;
-it does not necessarily capture arbitrary native DLL stdout/stderr output.
-
-The GUI diagnostics action uses the same read-only `tools.check_environment`
-API as the command-line report. It inspects static environment and configuration
-details only; a report does not establish that physical hardware has been
-validated. This console supports future terminal-free Windows launches, but
-does not itself package or install IOPanel.
-
----
-
-## Configuration
-
-Before running the application for the first time, you must configure your hardware connections in the `config.ini` file.
-
-1.  **Copy the Template:** In the project root, find `config.ini`. If it does not exist, copy `config.template.ini` (if available) or create it from scratch.
-2.  **Edit `config.ini`:**
-    -   **`[Instruments]` Section:**
-        -   Set `ct400_dll_path` to the **absolute path** of your `CT400_lib.dll` file. Use forward slashes (`/`) for compatibility.
-        -   Update `tunics_gpib_address` to match your hardware setup.
-    -   **`[Camera:*]` Sections:**
-        -   For each camera you want to use, create a section like `[Camera:Top]`.
-        -   Set `enabled = true`.
-        -   Set the `name` to a user-friendly description.
-        -   Find the camera's unique `identifier` (e.g., `DEV_...` or a serial number). You can find this using the **`Instruments > Discover Cameras...`** menu item within the application. Copy the ID from the discovery dialog and paste it here.
-
----
+The default `lab` dependency group includes the compatible Python bindings
+for **Vimba X 2026-2 / VmbPy 1.2.2** and **MATLAB R2024b / MATLAB Engine
+24.2.2**. The CT400 requires its vendor DLL, and other physical instruments
+require their own configured connections and SDKs. Check your local
+`config.ini` and complete supervised hardware validation before operating
+devices. See the [full installation and configuration guide](docs/technical-guide.md)
+and [hardware validation protocol](docs/laboratory-hardware-validation.md).
 
 ## Usage
 
-Once the environment is set up and `config.ini` is configured, run the application from the project's root directory:
+The GUI provides scan acquisition and live monitoring, camera views, and
+instrument-specific panels. Use **File → Open Scan…** to inspect supported
+saved measurements, or add overlays for comparison. **View → Log Console**
+(or **F12**) exposes runtime logs and read-only environment diagnostics.
 
-```bash
-python app.py
-```
+See the [technical guide](docs/technical-guide.md) for configuration,
+command-line options, data handling, runtime diagnostics, and operator
+workflows.
 
-### Command-Line Arguments
+## Documentation
 
-You can override certain settings from the `config.ini` file using command-line arguments:
+The [documentation index](docs/README.md) is the starting point for the
+existing technical and validation material.
 
--   `--log-level`: Set the logging level (e.g., `DEBUG`, `INFO`).
--   `--log-file`: Specify a different path for the log file.
--   `--config`: Specify a different configuration file path.
+| Guide | What it covers |
+| --- | --- |
+| [Technical guide](docs/technical-guide.md) | Detailed installation, configuration, operation, and development |
+| [Hardware validation](docs/laboratory-hardware-validation.md) | Operator-supervised physical-device checks and limitations |
+| [Camera compatibility](docs/vmbpy-compatibility.md) | Validated Vimba X profiles and rollback context |
+| [Power meter](docs/pm5020-backend.md) | PM5020 backend and connection behavior |
+| [Windows packaging](docs/windows-packaging.md) | Reproducible one-folder, simulation-oriented packaging |
+| [Scan overlays](docs/scan-overlay-performance.md) | Saved-scan comparison and performance evidence |
 
-**Example:**
-```bash
-python app.py --log-level DEBUG --config config.production.ini
-```
+**Automated CI and simulation do not prove that physical devices work.**
+Hardware compatibility claims are scoped to the individual validation reports;
+the present packaged build does not bundle VmbPy or MATLAB Engine.
 
----
+## Configuration
+
+Instrument paths, addresses, camera identities, and backend selection live in
+`config.ini`. The checked-in configuration contains laboratory-specific
+settings: **review or replace them before use on another computer**.
+For driver-free exploration, use `packaging/config.simulation.ini`.
+
+See [configuration instructions](docs/technical-guide.md#configuration).
 
 ## Development
 
-### Local development workflow
+The hardware-independent test, lint, and type-checking tools can run without
+vendor drivers:
 
-For driver-free tests (including CI), explicitly exclude the default lab
-group. Keep dependencies isolated in the project environment:
-
-```bash
-uv sync --locked --no-default-groups --extra test
+~~~powershell
+uv sync --locked --no-default-groups --extra test --extra typecheck --extra lint
 uv run --no-default-groups --no-sync pytest -q
-```
+uv run --no-default-groups --no-sync ruff check .
+uv run --no-default-groups --no-sync pyright
+~~~
 
-The test extra installs pytest and pytest-qt. Run a focused test while iterating, for example `uv run pytest tests/test_config_model.py -q` or `uv run pytest tests/test_mainwindow_camera_integration.py -q`. The full suite exercises Qt widgets and currently runs on the standard Windows GitHub Actions runner without proprietary drivers.
+For scoped PRs, test expectations, and handling physical hardware safely,
+see [CONTRIBUTING.md](CONTRIBUTING.md). For the detailed development
+reference, see the [technical guide](docs/technical-guide.md#development).
 
-The full hardware-independent suite runs without proprietary instrument drivers. CI runs this suite for pull requests targeting `main`.
+## Contributing
 
-Development and CI should not require proprietary hardware drivers. `hardware/dummy_ct400.py` provides the existing `DummyCT400` implementation; use it for CT400-independent work and tests. Camera discovery and opening should be exercised with mocks or the driver's unavailable path. Do not treat these tests as evidence that a physical CT400 or camera works.
-
-Camera support has driver-free development, the preferred physical-camera profile, and a historical rollback profile:
-
-- **Driver-free development:** Exclude the default `lab` group with `uv sync --locked --no-default-groups`. Use the simulated camera backend; camera UI work remains available without VmbPy or its runtime.
-- **Preferred laboratory camera profile:** Windows x64, Python 3.12.8, Allied Vision Vimba X 2026-2, VmbPy 1.2.2, VmbC 1.3.1, and VmbImageTransform 2.3, using the Vimba/Vimba X physical backend. This isolated project/candidate environment has been physically validated with two Allied Vision Mako G-125B cameras. See the [qualification record](docs/laboratory-validation-report.md).
-- **Historical rollback profile:** Windows x64, Python 3.12.8, Vimba X 2024.1.0.3916, VmbC 1.0.6, and VmbPy 1.0.5 was previously validated and is retained for rollback/reference.
-
-The completed camera qualification includes both standalone streams; normal IOPanel startup with both cameras and DummyCT400; converted-frame display; clean shutdown and VmbSystem release; manual Exposure and Gamma on both cameras; one-shot Auto Exposure on both; and one-shot Auto Gain on both after the Vimba X update. Continuous dual-camera use succeeded during normal operation, but no timed endurance gate was run. CT400 was intentionally simulated, so physical CT400 operation remains unvalidated and requires separate validation. The VmbPy runtime is still not required for CT400-only and simulated-camera work, although its Python binding is installed in the default lab profile.
-
-For driver-free camera UI development, set `backend = simulation` in an enabled `[Camera:*]` section. The simulator delivers a deterministic mono8 quadrant pattern through the normal camera panel pipeline; its displayed name is marked `[SIMULATED]`. `simulation_width` and `simulation_height` configure frame dimensions. The default backend remains `vimba`, and a missing or failed physical camera is never replaced by the simulator. For operator-supervised CT400 and Allied Vision checks, follow the [laboratory hardware validation protocol](docs/laboratory-hardware-validation.md); no driver-free result establishes physical compatibility.
-
-Perform hardware integration checks on the laboratory PC, where the CT400 DLL, its matching architecture/runtime, the Allied Vision SDK, and physical devices are available. Check startup, CT400 connection and scan behavior, camera discovery, opening/streaming, and clean shutdown there. Keep these checks separate from the driver-free automated test job.
-
-For changes, branch from the intended base (`main` for independent work), link the branch to a GitHub issue, and keep each PR scoped to one issue. Use descriptive commit subjects in imperative form, run the focused tests and `git diff --check`, then open a draft PR when review is useful. Add tests for behavior changes and state clearly which hardware checks remain outstanding. CI should run hardware-independent tests on a standard runner with no proprietary drivers installed; hardware integration results must be recorded separately after lab testing.
-
-### Compiling Qt Resources
-
-The SVG source assets under `resources/icons/` and their aliases in
-`resources/resources.qrc` are versioned. `resources/resources_rc.py` is generated
-from that source and intentionally committed so a fresh clone can launch with
-`python app.py` without a separate resource-compilation step. When changing an
-icon or the resource collection, regenerate the module from the project
-environment and commit it with the source changes:
-
-Run the following command from the project root:
-
-```bash
-uv run pyside6-rcc resources/resources.qrc -o resources/resources_rc.py
-```
-
-### Application icon
-
-Open **View → Application Icon…** to preview Optical Burst and Prism Spectrum
-in the Appearance dialog. Select a card and choose **Apply** to switch the
-running application icon; **Cancel**, Escape, and closing the dialog discard a
-provisional choice. The applied selection is saved in Qt `QSettings` under
-`Appearance/application_icon`; Optical Burst is the default. It is independent
-of `config.ini`.
-
-Qt updates the running app and window icon, which Windows uses for the running
-window, taskbar, and Alt+Tab where supported. This does not change an executable's
-embedded icon or existing pinned shortcuts. A separately configured executable
-or installer must use a build-time icon; Optical Burst is the proposed default,
-with Prism Spectrum available as an alternative. This repository does not
-currently define an executable packaging configuration.
-
-Runtime icons are pre-rendered transparent PNGs embedded in the Qt resource
-bundle, so launching or switching icons needs no external image packages or
-repository-relative paths. To regenerate them from the approved SVG masters,
-install `tools/icons/requirements-icon-tools.txt` in an isolated environment,
-then run:
-
-```powershell
-.icon-tools\Scripts\python tools\icons\build_icons.py
-.icon-tools\Scripts\python tools\icons\export_runtime_resources.py
-uv run pyside6-rcc resources/resources.qrc -o resources/resources_rc.py
-```
-
-The exporter copies the 16, 24, 32, 48, 64, 128, and 256 px RGBA outputs for
-both identifiers from the generator's ignored output directory. To add a future
-candidate, first approve its vector master and generated PNGs, then add its
-stable identifier and display name in `application_icon_registry.py`,
-then update Qt resource aliases and focused tests. The GUI and QSettings
-validator use that same shared registry.
-
-### Project Structure
-
-The codebase is organized into hardware abstractions, UI components, and a main application entry point.
-
-```
-IOPanel/
-├── .gitignore
-├── .pre-commit-config.yaml
-├── app.py                      # Main application entry point, arg parsing, logger setup
-├── config.ini                  # User configuration file (local, not in git)
-├── config_model.py             # Pydantic models for type-safe configuration
-├── LICENSE
-├── pyproject.toml              # Project metadata and dependencies (PEP 621)
-├── README.md                   # This file
-├── hardware/                   # Hardware abstraction layer
-│   ├── camera.py               # Vimba camera abstraction class
-│   ├── camera_init_worker.py   # Worker for asynchronous camera initialization
-│   ├── ct400.py                # Ctypes wrapper for the CT400 DLL
-│   ├── ct400_types.py          # Enums and data classes for CT400
-│   ├── dummy_ct400.py          # Dummy implementation for testing without hardware
-│   └── interfaces.py           # Abstract base classes for hardware
-├── resources/                  # Icons and other static assets
-│   ├── resources.qrc           # Qt Resource Collection file
-│   └── icons/                  # SVG icons for the UI
-├── tests/
-│   └── test_camera_widgets.py  # Automated tests for UI components
-└── ui/                         # All GUI-related code
-    ├── camera_widgets.py       # Widgets for camera display and controls
-    ├── constants.py            # Centralized UI constants (IDs, messages)
-    ├── control_panel.py        # Widgets for instrument control (scan, monitor)
-    ├── discovery_dialog.py     # Dialog for finding connected cameras
-    ├── main_window.py          # Main QMainWindow, orchestrates all UI components
-    ├── plot_widgets.py         # Widgets for plotting (scan graph, histogram)
-```
-
----
-
-# Per-user UI preferences
-
-IOPanel stores harmless interface preferences and recent output folders through Qt `QSettings`. This includes the main
-window layout, selected scan detectors, camera control visibility, and the last-used scan, plot-image, and per-camera
-screenshot folders. `config.ini` remains the source for hardware configuration and startup defaults. IOPanel never
-restores hardware state from saved preferences or sends hardware commands while loading them.
+Bug reports, documentation improvements, and focused pull requests are welcome
+through [GitHub Issues](https://github.com/simoneferraresi/IOPanel/issues)
+and [Pull Requests](https://github.com/simoneferraresi/IOPanel/pulls).
+Please read [CONTRIBUTING.md](CONTRIBUTING.md) before making changes that
+could affect instrument behavior.
 
 ## License
 
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+IOPanel is licensed under the [MIT License](LICENSE). See
+[third-party notices](THIRD_PARTY_NOTICES.md) for relevant dependencies
+and assets.
