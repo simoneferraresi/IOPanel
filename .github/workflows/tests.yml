@@ -25,6 +25,24 @@ jobs:
       - run: uv run --no-sync ruff check .
       - run: uv run --no-sync ruff format --check .
       - run: uv run --no-sync pyright
+      - name: Full Phase D Pyright GUI diagnostic inventory (temporary branch)
+        if: github.ref == 'refs/heads/chore/phase-d-complete-pyright-probe'
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          foreach ($target in @('ui/plot_widgets.py', 'ui/main_window.py')) {
+            $reportFile = Join-Path $env:RUNNER_TEMP 'full-pyright.json'
+            & uv run --no-sync pyright --outputjson $target > $reportFile
+            $exitCode = $LASTEXITCODE
+            $report = Get-Content $reportFile -Raw | ConvertFrom-Json
+            Write-Output "FULL-PYRIGHT target=$target exit=$exitCode errors=$($report.summary.errorCount) warnings=$($report.summary.warningCount)"
+            foreach ($entry in $report.generalDiagnostics) {
+              $lineno = $entry.range.start.line + 1
+              $msg = $entry.message -replace '[\r\n]+', ' '
+              Write-Output "FULL-ISSUE target=$target line=$lineno rule=$($entry.rule) message=$msg"
+            }
+          }
+          exit 0
       # Compare exact pytest node IDs against the unpartitioned collection.
       # This gate fails if a module or parametrized case is lost or duplicated.
       - name: Verify exact full-suite test collection coverage
