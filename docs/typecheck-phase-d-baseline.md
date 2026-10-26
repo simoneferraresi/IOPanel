@@ -60,4 +60,6 @@ with attention to actual optional-state risks and vendor/Qt typing limitations.
 
 Mandatory CI must pass Ruff, formatting, Pyright, exact pytest collection,
 all supervised hardware-independent partitions, and Windows packaging where
-the PR checks require it. Do not merge without explicit approval.
+the PR checks require it. The D1 prerequisite was merged as #258;
+this PR was rebased onto the resulting main branch and must satisfy its
+required Windows packaging check before merge.
