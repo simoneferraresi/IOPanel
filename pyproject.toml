@@ -120,6 +120,8 @@ include = [
     "logic/task_runner.py",
     "logic/pm5020_monitor.py",
     "logic/scan_import.py",
+    "logic/scan_measurement.py",
+    "logic/scan_settings.py",
     "ui/control_panel.py",
     "ui/pm5020_panel.py",
     "ui/log_console.py",
