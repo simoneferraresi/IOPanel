@@ -13,13 +13,16 @@ from typing import Any
 
 from PySide6.QtCore import QByteArray, QSettings
 
+from application_icon_registry import APPLICATION_ICON_IDS as _APPLICATION_ICON_IDS
+from application_icon_registry import DEFAULT_APPLICATION_ICON_ID
+
 
 class AppSettings:
     """Typed boundary around this application's QSettings namespace."""
 
     SCHEMA_VERSION = 1
     MAX_SPLITTER_SIZE = 1_000_000
-    APPLICATION_ICON_IDS = frozenset({"optical_burst", "prism_spectrum"})
+    APPLICATION_ICON_IDS = _APPLICATION_ICON_IDS
     # Persist the selected tab by identity so future reordering does not alter
     # the logical page restored from user preferences.
     ACTIVE_TAB_IDS = ("power_monitor", "wavelength_scan", "auto_alignment", "pm5020_monitor", "edfa_monitor")
@@ -220,7 +223,7 @@ class AppSettings:
     def application_icon(self) -> str:
         """Return the selected application icon, falling back to Optical Burst."""
         value = self._read("Appearance/application_icon", None)
-        return value if isinstance(value, str) and value in self.APPLICATION_ICON_IDS else "optical_burst"
+        return value if isinstance(value, str) and value in self.APPLICATION_ICON_IDS else DEFAULT_APPLICATION_ICON_ID
 
     def set_application_icon(self, icon_id: str) -> None:
         """Persist a supported application icon identifier."""
