@@ -62,6 +62,7 @@ from logic.power_monitor_recording import (
 from logic.qt_worker_lifecycle import retire_worker_on_thread_finish
 from logic.scan_eta import estimate_scan_duration, format_duration
 from logic.scan_measurement import ScanAcquisitionSettings, ScanMeasurement
+from logic.scan_settings import ScanSettings
 from ui.constants import (
     ID_CT400_MONITOR_PANEL,
     ID_CT400_SCAN_PANEL,
@@ -186,17 +187,6 @@ class CT400ConnectionWorker(QRunnable):
                 self.signals.disconnection_failed.emit(error_msg, self.operation_token, self.ct400)
         finally:
             self.signals.finished.emit(self.operation_token, self.ct400)
-
-
-###############################################################################
-# ScanSettings
-###############################################################################
-class ScanSettings:
-    def __init__(self):
-        self.resolution: str = "N/A"
-        self.motor_speed: str = "N/A"
-        self.laser_power: str = "N/A"
-        self.power_unit: str = ""
 
 
 @dataclass(frozen=True)
