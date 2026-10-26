@@ -55,3 +55,20 @@ def test_parameter_control_log_slider_endpoints_and_round_trip(qtbot):
     widget.setValue(1000.0)
     assert widget.slider.value() == 1000
     assert widget.value() == 1000.0
+
+
+def test_auto_error_after_camera_detaches_preserves_feedback(qtbot):
+    from config_model import CameraConfig
+    from ui.camera_widgets import CameraPanel
+
+    panel = CameraPanel(
+        None,
+        "Disconnected",
+        CameraConfig(identifier="detached-probe", name="Disconnected", backend="simulation"),
+    )
+    qtbot.addWidget(panel)
+
+    panel.handle_auto_error("auto_exposure", "camera detached")
+    assert panel.exposure_status.text() == "✗"
+    panel.handle_auto_error("auto_gain", "camera detached")
+    assert panel.gain_status.text() == "✗"

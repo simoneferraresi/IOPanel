@@ -413,3 +413,19 @@ def test_close_after_conversion_worker_deletion_is_harmless(qtbot):
     assert not thread.isRunning()
     assert finished.count() == 1
     assert worker is not None
+
+
+def test_missing_frame_rate_capability_does_not_start_mode_worker(qtbot, monkeypatch):
+    camera = FakePhysicalCamera(ROI(1292, 964, 0, 0))
+    panel = _physical_panel(qtbot, camera)
+    panel.view_mode_buttons[720].click()
+    monkeypatch.setattr(camera, "get_frame_rate_capability", lambda: None)
+    feedback: list[str] = []
+    monkeypatch.setattr(panel, "_show_view_mode_feedback", feedback.append)
+
+    panel._apply_selected_view_mode()
+
+    assert feedback == ["Cannot read frame-rate baseline"]
+    assert panel._view_mode_baseline is None
+    assert not panel._camera_mode_change_active
+    assert not panel._view_mode_changed
