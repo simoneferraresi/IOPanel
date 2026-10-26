@@ -20,8 +20,9 @@ import logging
 import math
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Literal
+from typing import Literal, override
 
 import cv2
 import numpy as np
@@ -97,6 +98,7 @@ class ViewModeWorker(QRunnable):
         self.height = height
         self.signals = ViewModeSignals()
 
+    @override
     def run(self):
         try:
             result = self.camera.apply_view_mode(1292, self.height, maximize_rate=True)
@@ -424,10 +426,12 @@ class AspectLockedLabel(QLabel):
         else:
             self._aspect_ratio = None
 
+    @override
     def hasHeightForWidth(self) -> bool:
         """Required override for aspect ratio-dependent widgets."""
         return self._aspect_ratio is not None
 
+    @override
     def heightForWidth(self, width: int) -> int:
         """Calculates the required height to maintain the aspect ratio for a given width."""
         if self._aspect_ratio is not None and self._aspect_ratio > 1e-6:
@@ -435,6 +439,7 @@ class AspectLockedLabel(QLabel):
             return calculated_height
         return super().heightForWidth(width)
 
+    @override
     def sizeHint(self) -> QSize:
         w = self.width()
         if self.hasHeightForWidth():
@@ -456,6 +461,7 @@ class AutoOpWorker(QRunnable):
         self.op_type = op_type
         self.panel_callback = panel_callback
 
+    @override
     def run(self):
         try:
             result_value: float | None = None
@@ -952,7 +958,10 @@ class CameraPanel(QFrame):
         self._cancel_pending_parameter_updates()
         if self._view_mode_baseline is None:
             capability = self.camera.get_frame_rate_capability()
-            feature = capability.get("feature") if isinstance(capability, dict) else None
+            if not isinstance(capability, dict):
+                self._show_view_mode_feedback("Cannot read frame-rate baseline")
+                return
+            feature = capability.get("feature")
             if feature is None or feature.value is None:
                 self._show_view_mode_feedback("Cannot read frame-rate baseline")
                 return
@@ -1237,27 +1246,24 @@ class CameraPanel(QFrame):
 
         success = False
         control_widget = None
-        reverted_value_getter = None
+        reverted_value_getter: Callable[[], float | None] | None = None
 
         match name:
             case "gamma":
                 success = camera.set_gamma(value)
                 control_widget = self.gamma_control
 
-                def reverted_value_getter():
-                    return camera.gamma
+                reverted_value_getter = lambda: camera.gamma
             case "exposure":
                 success = camera.set_exposure(value)
                 control_widget = self.exposure_control
 
-                def reverted_value_getter():
-                    return camera.exposure_us
+                reverted_value_getter = lambda: camera.exposure_us
             case "gain":
                 success = camera.set_gain(value)
                 control_widget = self.gain_control
 
-                def reverted_value_getter():
-                    return camera.get_gain()
+                reverted_value_getter = camera.get_gain
             case _:
                 logger.warning(f"Unhandled parameter change: {name}")
                 return
@@ -1439,13 +1445,19 @@ class CameraPanel(QFrame):
             self.exposure_status.setStyleSheet("color: red; font-weight: bold;")
             QTimer.singleShot(3500, self, lambda: self.clear_status_indicators("exposure"))
             # --- REFACTOR: Revert UI using ParameterControl ---
-            reverted_value = self.camera.exposure_us
-            if reverted_value is not None:
-                self.exposure_control.setValue(reverted_value)
+            camera = self.camera
+            if camera is not None:
+                reverted_value = camera.exposure_us
+                if reverted_value is not None:
+                    self.exposure_control.setValue(reverted_value)
         elif op_type == "auto_gain":
             self.gain_status.setText("✗")
             self.gain_status.setStyleSheet("color: red; font-weight: bold;")
-            self.gain_control.setValue(self.camera.get_gain())
+            camera = self.camera
+            if camera is not None:
+                reverted_value = camera.get_gain()
+                if reverted_value is not None:
+                    self.gain_control.setValue(reverted_value)
             QTimer.singleShot(3500, self, lambda: self.clear_status_indicators("gain"))
 
     def clear_status_indicators(self, control: str | None = None):
@@ -1549,6 +1561,7 @@ class CameraPanel(QFrame):
             logger.exception(f"Panel {self._panel_title}: Unhandled error displaying converted image")
             self.set_frame_pixmap(None)
 
+    @override
     def mouseDoubleClickEvent(self, event: QtGui.QMouseEvent):
         """Emits a signal to toggle fullscreen mode when double-clicked."""
         # Only trigger on left button double-click
@@ -1558,6 +1571,7 @@ class CameraPanel(QFrame):
         else:
             super().mouseDoubleClickEvent(event)
 
+    @override
     def showEvent(self, event: QtGui.QShowEvent):
         """Override for QFrame.showEvent."""
         super().showEvent(event)
@@ -1569,6 +1583,7 @@ class CameraPanel(QFrame):
         else:
             logger.debug(f"Placeholder CameraPanel '{self._panel_title}' shown.")
 
+    @override
     def hideEvent(self, event: QtGui.QHideEvent):
         """Override for QFrame.hideEvent."""
         super().hideEvent(event)
@@ -1595,6 +1610,7 @@ class CameraPanel(QFrame):
         self._current_fps = fps
         self.process_new_frame_data()
 
+    @override
     def resizeEvent(self, event: QtGui.QResizeEvent):
         super().resizeEvent(event)
         now = time.monotonic()
@@ -1648,6 +1664,7 @@ class CameraPanel(QFrame):
         self.watchdog_timer.stop()
         self._resize_timer.stop()
 
+    @override
     def closeEvent(self, event: QtGui.QCloseEvent):
         """Tear down the conversion consumer after camera production has stopped."""
         logger.debug(f"Closing CameraPanel for {self._panel_title}")
