@@ -963,9 +963,9 @@ class HistogramWidget(QtWidgets.QWidget):
         self.text_font = make_font("mono", self.value_text_font_size)  # Numeric Power Monitor readouts.
 
         # UI Elements
-        self.layout = QtWidgets.QVBoxLayout(self)
-        self.layout.setContentsMargins(0, 0, 0, 0)
-        self.layout.setSpacing(0)
+        self._main_layout = QtWidgets.QVBoxLayout(self)
+        self._main_layout.setContentsMargins(0, 0, 0, 0)
+        self._main_layout.setSpacing(0)
         self.plot_container = QWidget(self)
         plot_layout = QtWidgets.QGridLayout(self.plot_container)
         plot_layout.setContentsMargins(0, 0, 0, 0)
@@ -994,7 +994,7 @@ class HistogramWidget(QtWidgets.QWidget):
             Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight,
         )
         self.overlay_controls.raise_()
-        self.layout.addWidget(self.plot_container, stretch=1)
+        self._main_layout.addWidget(self.plot_container, stretch=1)
 
         # Plot items
         self.bars: pg.BarGraphItem | None = None
@@ -1176,9 +1176,11 @@ class HistogramWidget(QtWidgets.QWidget):
 
     def _update_max_text(self, i: int, x_center: float, max_val: float):
         # Max text: To appear ABOVE the line
-        if i >= len(self.max_texts) or self.max_texts[i] is None:
+        if i >= len(self.max_texts):
             return
         text_item = self.max_texts[i]
+        if text_item is None:
+            return
         show_text = np.isfinite(max_val) and max_val > -90
         if show_text:
             text_item.setText(f"{max_val:.2f}")
@@ -1191,9 +1193,11 @@ class HistogramWidget(QtWidgets.QWidget):
 
     def _update_current_text(self, i: int, x_center: float, current_val: float):
         # Current text: To appear BELOW the line
-        if i >= len(self.current_texts) or self.current_texts[i] is None:
+        if i >= len(self.current_texts):
             return
         text_item = self.current_texts[i]
+        if text_item is None:
+            return
         show_text = np.isfinite(current_val) and current_val > -90
         if show_text:
             text_item.setText(f"{current_val:.2f}")
