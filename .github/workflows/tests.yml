@@ -58,6 +58,8 @@ jobs:
               Write-Output "R06-DETAIL target=$target severity=$($entry.severity) rule=$($entry.rule) file=$($entry.file) line=$line message=$message"
             }
           }
+          # Diagnostic targets are deliberately allowed to return nonzero.
+          exit 0
       # Compare exact pytest node IDs against the unpartitioned collection.
       # This gate fails if a module or parametrized case is lost or duplicated.
       - name: Verify exact full-suite test collection coverage
