@@ -352,3 +352,23 @@ def test_edfa_menu_cancelled_physical_confirmation_restores_icon(qtbot, monkeypa
     assert action.text() == "Connect EDFA"
     assert not window.edfa_panel.task.worker_thread.isRunning()
     window.close()
+
+
+def test_loading_defaults_error_uses_qt_status_bar(qtbot, monkeypatch, tmp_path):
+    settings = AppSettings(QSettings(str(tmp_path / "error.ini"), QSettings.Format.IniFormat))
+    window = _make_window(qtbot, monkeypatch, settings)
+
+    class InvalidDefaults:
+        @property
+        def scan_defaults(self):
+            raise RuntimeError("simulated configuration read failure")
+
+    original_config = window.config
+    window.config = InvalidDefaults()
+    try:
+        window._load_defaults_from_config()
+    finally:
+        window.config = original_config
+
+    assert window.statusBar().currentMessage() == "Error loading defaults from config"
+    window.close()

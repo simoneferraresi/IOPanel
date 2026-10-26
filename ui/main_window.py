@@ -1128,7 +1128,7 @@ class MainWindow(QMainWindow):
                         checkbox.setChecked(is_enabled)
         except Exception:
             logger.exception("Error loading defaults from config")
-            self.statusBar.showMessage("Error loading defaults from config", 5000)
+            self.statusBar().showMessage("Error loading defaults from config", 5000)
 
     def _init_ui(self):
         """Constructs the main user interface of the application."""
