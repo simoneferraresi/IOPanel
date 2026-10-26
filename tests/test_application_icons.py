@@ -22,7 +22,6 @@ from ui.application_icons import (
 from ui.main_window import MainWindow
 
 
-
 def test_application_icon_registry_is_shared_by_settings_and_gui():
     assert AppSettings.APPLICATION_ICON_IDS is APPLICATION_ICON_IDS
     assert GUI_APPLICATION_ICON_IDS is APPLICATION_ICON_IDS
