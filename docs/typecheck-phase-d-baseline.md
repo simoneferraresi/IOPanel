@@ -85,3 +85,8 @@ suppression was added.
 
 Combined CI evidence: [Windows test run](https://github.com/simoneferraresi/IOPanel/actions/runs/40337724768).
 Additional simulated/native-exit evidence: [Qt reliability campaign](https://github.com/simoneferraresi/IOPanel/actions/runs/40338197367).
+
+The two final code changes are split by dependency: #263 (plot module)
+precedes #264 (MainWindow). The latter must be checked again against the
+squash-merged #263 commit with the repository's normal main-targeted
+Windows test and packaging workflows before it is merged.
