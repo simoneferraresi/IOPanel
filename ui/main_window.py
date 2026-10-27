@@ -55,10 +55,12 @@ from hardware.edfa_types import EDFAState
 from hardware.piezo import PiezoController
 from hardware.piezo_init_worker import PiezoInitWorker
 from hardware.pm5020_types import PM5020State
+from logic.device_lease_registry import DeviceLeaseRegistry
 from logic.matlab_engine_manager import MatlabEngineState
 from logic.scan_import import load_scan
 from logic.scan_import_worker import ScanImportOutcome, ScanImportWorker
 from logic.scan_settings import ScanSettings
+from logic.synchronized_owner_leases import SynchronizedOwnerLeases
 from logic.task_runner import TaskRunner
 from ui.alignment_panel import AlignmentPanel
 from ui.appearance_dialog import AppearanceDialog
@@ -244,6 +246,11 @@ class MainWindow(QMainWindow):
         self._pending_scan_export_close = False
         self._pending_power_monitor_export_close = False
         self._scan_import_generation = 0
+
+        # M4-E2B: one logical registry per application window. The synchronized
+        # feature remains disabled until all Qt/native call sites are lease-aware.
+        self.device_lease_registry = DeviceLeaseRegistry()
+        self.synchronized_owner_leases = SynchronizedOwnerLeases(self.device_lease_registry)
 
         # --- CT400 and Piezo hardware will be None until workers finish ---
         self.ct400_device: AbstractCT400 | None = None
