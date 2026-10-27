@@ -5,7 +5,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum, auto
-from threading import Thread
+from threading import Event, Thread
 from typing import Any
 
 from PySide6.QtCore import QObject, QTimer, Signal
@@ -32,25 +32,30 @@ class _EngineDisposal:
     engine: Any = None
     error: str | None = None
     thread: Thread | None = None
+    release_future_only: bool = False
+    future_handoff: Event | None = None
 
 
 def _dispose_engine(job: _EngineDisposal) -> None:
+    if job.future_handoff is not None:
+        job.future_handoff.wait()
     if job.future is not None:
         future = job.future
         try:
-            cancel = getattr(future, "cancel", None)
-            try:
-                cancelled = bool(cancel()) if callable(cancel) else False
-            except Exception:
-                logger.info("MATLAB startup cancellation raised; waiting for startup disposal.", exc_info=True)
-                cancelled = False
-            logger.info("MATLAB startup cancellation returned %s after cancellation request.", cancelled)
-            if not cancelled:
-                logger.info("Waiting for in-progress MATLAB startup to finish before disposal.")
+            if not job.release_future_only:
+                cancel = getattr(future, "cancel", None)
                 try:
-                    job.engine = future.result()
+                    cancelled = bool(cancel()) if callable(cancel) else False
                 except Exception:
-                    logger.info("MATLAB startup disposal completed with exception.", exc_info=True)
+                    logger.info("MATLAB startup cancellation raised; waiting for startup disposal.", exc_info=True)
+                    cancelled = False
+                logger.info("MATLAB startup cancellation returned %s after cancellation request.", cancelled)
+                if not cancelled:
+                    logger.info("Waiting for in-progress MATLAB startup to finish before disposal.")
+                    try:
+                        job.engine = future.result()
+                    except Exception:
+                        logger.info("MATLAB startup disposal completed with exception.", exc_info=True)
         finally:
             # Future destruction also enters the vendor API. Release its final
             # reference here, never in a GUI completion callback.
@@ -177,7 +182,7 @@ class MatlabEngineManager(QObject):
         """Ensure startup is underway, retrying FAILED only after an explicit request."""
         if self._shutdown or self._failed_disposals:
             return self._state
-        if self._retire_engine_requested or self._disposals:
+        if self._retire_engine_requested or (self._disposals and self._state is not MatlabEngineState.READY):
             self._restart_requested = True
             self._set_state(MatlabEngineState.STARTING)
             return self._state
@@ -225,28 +230,49 @@ class MatlabEngineManager(QObject):
                 return
             engine = future.result()
         except Exception as error:  # noqa: BLE001 - FutureResult exposes MATLAB-specific exceptions.
+            message = str(error)
+            error.__traceback__ = None
+            error.__cause__ = None
+            error.__context__ = None
+            error = None
             if self._poll_timer is not None:
                 self._poll_timer.stop()
             self._future = None
+            future_handoff = Event()
+            job = _EngineDisposal(future=future, release_future_only=True, future_handoff=future_handoff)
+            self._start_disposal(job)
+            future = None
+            future_handoff.set()
             if self._shutdown:
                 return
-            self._fail_startup(error)
+            self._fail_startup(message)
             return
 
         if self._poll_timer is not None:
             self._poll_timer.stop()
         self._future = None
         if self._shutdown or self._state is MatlabEngineState.SHUTTING_DOWN:
-            self._start_disposal(_EngineDisposal(engine=engine))
+            future_handoff = Event()
+            job = _EngineDisposal(future=future, engine=engine, release_future_only=True, future_handoff=future_handoff)
+            self._start_disposal(job)
+            future = None
+            future_handoff.set()
             return
 
+        # FutureResult destruction enters MATLAB's native API too. Retire its
+        # final reference on a tracked worker instead of the GUI completion path.
+        future_handoff = Event()
+        job = _EngineDisposal(future=future, release_future_only=True, future_handoff=future_handoff)
+        self._start_disposal(job)
+        future = None
+        future_handoff.set()
         self._engine = engine
         elapsed = time.perf_counter() - (self._started_at or time.perf_counter())
         logger.info("MATLAB READY after %.2f s.", elapsed)
         self._set_state(MatlabEngineState.READY)
         self.ready.emit()
 
-    def _fail_startup(self, error: Exception) -> None:
+    def _fail_startup(self, error: Exception | str) -> None:
         self._engine = None
         self._future = None
         logger.error("MATLAB Engine startup failed: %s", error)
@@ -283,6 +309,8 @@ class MatlabEngineManager(QObject):
     def _dispose_owned_resources(self) -> None:
         if self._engine_users:
             return
+        if any(job.release_future_only for job in self._disposals):
+            return
         if self._engine is not None or self._future is not None:
             job = _EngineDisposal(future=self._future, engine=self._engine)
             self._engine = None
@@ -306,7 +334,16 @@ class MatlabEngineManager(QObject):
             return
         self._disposal_timer.stop()
         if self._shutdown:
+            self._dispose_owned_resources()
             self._finish_shutdown_if_idle()
+        elif self._retire_engine_requested:
+            self._dispose_owned_resources()
+            if self._disposals:
+                return
+            if self._restart_requested and not self._failed_disposals:
+                self._restart_requested = False
+                self._set_state(MatlabEngineState.FAILED)
+                self._start_async()
         elif self._restart_requested and not self._failed_disposals:
             self._restart_requested = False
             self._set_state(MatlabEngineState.FAILED)
