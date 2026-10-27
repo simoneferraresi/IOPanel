@@ -2000,7 +2000,10 @@ class MainWindow(QMainWindow):
             and self._ct400_scan_state_uncertain
             and self._ct400_operation_lease is not None
         )
-        if not (recovery_disconnect or self._ct400_recovery_disconnect_completed) and not self._ct400_lease_available_for_new_operation():
+        if (
+            not (recovery_disconnect or self._ct400_recovery_disconnect_completed)
+            and not self._ct400_lease_available_for_new_operation()
+        ):
             logger.warning("Rejecting CT400 connection request while device lease is occupied.")
             if action:
                 action.setChecked(self.is_ct400_connected_state)
