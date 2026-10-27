@@ -27,6 +27,7 @@ SCENARIOS = (
     "close-during-fig",
 )
 OPERATOR_CONFIRMATION = "I approve native MATLAB Engine acceptance on this workstation"
+EXPECTED_MATLAB_ROOT = r"C:\Program Files\MATLAB\R2024b"
 PROCESS_QUERY = r"""
 $rows = Get-CimInstance Win32_Process | ForEach-Object {
     $owner = $null
@@ -73,6 +74,17 @@ def descendants(rows: list[dict[str, Any]], root_pid: int) -> set[int]:
         found = next_found
 
 
+def expected_matlab_path(path: object) -> bool:
+    if not isinstance(path, str) or not path:
+        return False
+    try:
+        root = os.path.normcase(os.path.abspath(EXPECTED_MATLAB_ROOT))
+        executable = os.path.normcase(os.path.abspath(path))
+        return os.path.commonpath((root, executable)) == root
+    except (OSError, ValueError):
+        return False
+
+
 def append_event(path: Path, event: str, **fields: object) -> None:
     row = {"utc": datetime.now(UTC).isoformat(), "event": event, **fields}
     with path.open("a", encoding="utf-8") as stream:
@@ -99,6 +111,7 @@ def run_child(scenario: str, evidence: Path, *, deadline_seconds: float) -> int:
     child = subprocess.Popen(command, cwd=Path(__file__).resolve().parents[2], env=environment)
     started = time.monotonic()
     seen_owned_matlab: dict[int, dict[str, Any]] = {}
+    unexpected_matlab_paths: dict[int, dict[str, Any]] = {}
     timed_out = False
     while child.poll() is None:
         rows = process_snapshot()
@@ -110,6 +123,8 @@ def run_child(scenario: str, evidence: Path, *, deadline_seconds: float) -> int:
                 continue
             if pid in child_descendants and str(row.get("name", "")).lower().startswith("matlab"):
                 seen_owned_matlab[pid] = row
+                if not expected_matlab_path(row.get("path")):
+                    unexpected_matlab_paths[pid] = row
         if time.monotonic() - started >= deadline_seconds:
             timed_out = True
             break
@@ -117,10 +132,12 @@ def run_child(scenario: str, evidence: Path, *, deadline_seconds: float) -> int:
 
     after = process_snapshot()
     after_by_pid = {int(row["pid"]): row for row in after if row.get("pid") is not None}
-    before_pids = {int(row["pid"]) for row in before if row.get("pid") is not None}
+    before_by_pid = {int(row["pid"]): row for row in before if row.get("pid") is not None}
     owned = []
     for pid, row in sorted(seen_owned_matlab.items()):
-        owned.append({**row, "still_running_after_child": pid in after_by_pid})
+        after_row = after_by_pid.get(pid)
+        same_process = after_row is not None and after_row.get("created") == row.get("created")
+        owned.append({**row, "still_running_after_child": same_process})
     report = {
         "scenario": scenario,
         "child_pid": child.pid,
@@ -132,12 +149,16 @@ def run_child(scenario: str, evidence: Path, *, deadline_seconds: float) -> int:
             row for row in before if str(row.get("name", "")).lower().startswith("matlab")
         ],
         "test_owned_matlab_processes_observed": owned,
+        "test_owned_matlab_processes_with_unexpected_executable_path": list(unexpected_matlab_paths.values()),
         "matlab_processes_remaining": [row for row in after if str(row.get("name", "")).lower().startswith("matlab")],
         "new_matlab_pids_without_confirmed_child_ancestry": [
             row
             for row in after
             if row.get("pid") is not None
-            and int(row["pid"]) not in before_pids
+            and (
+                int(row["pid"]) not in before_by_pid
+                or row.get("created") != before_by_pid[int(row["pid"])].get("created")
+            )
             and str(row.get("name", "")).lower().startswith("matlab")
             and int(row["pid"]) not in seen_owned_matlab
         ],
@@ -150,6 +171,27 @@ def run_child(scenario: str, evidence: Path, *, deadline_seconds: float) -> int:
             file=sys.stderr,
         )
         return 2
+    if any(row["still_running_after_child"] for row in owned):
+        print(
+            "NATIVE_ACCEPTANCE_STOP: a test-owned MATLAB process remained after its Python child exited; "
+            "the next case will not start.",
+            file=sys.stderr,
+        )
+        return 3
+    if unexpected_matlab_paths:
+        print(
+            "NATIVE_ACCEPTANCE_STOP: test-owned MATLAB process path could not be verified under R2024b; "
+            "the next case will not start.",
+            file=sys.stderr,
+        )
+        return 4
+    if report["new_matlab_pids_without_confirmed_child_ancestry"]:
+        print(
+            "NATIVE_ACCEPTANCE_STOP: a new MATLAB process lacked confirmed child ancestry; "
+            "the next case will not start.",
+            file=sys.stderr,
+        )
+        return 5
     return child.returncode or 0
 
 

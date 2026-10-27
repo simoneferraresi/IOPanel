@@ -696,9 +696,6 @@ def test_failed_explicit_fig_retry_reports_error_and_finishes_pending(qtbot, mon
 
     widget.matlab_engine_manager.prewarm()
     qtbot.waitUntil(lambda: widget.matlab_engine_manager.state is MatlabEngineState.FAILED, timeout=1000)
-    widget.pending_saves = 0
-    widget.saved_files_list = []
-    widget.error_list = []
     widget._completion_reported = False
     widget._queue_matlab_fig(("payload", "scan.fig", "title", "x", "y"))
     qtbot.waitUntil(lambda: widget.pending_saves == 0, timeout=1000)
