@@ -10,20 +10,20 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal, Slot
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget
 
 from hardware.ct400_types import CT400ScanResultKind, Enable
 from hardware.dummy_ct400 import DummyCT400
 from hardware.pm5020_types import BurstAcquisitionConfig
 from logic.simulated_synchronized_acquisition import (
-    SimulatedSyncSettings,
     SimulatedSynchronizedCapture,
+    SimulatedSyncSettings,
     synthetic_ct400_sync_text,
 )
 from logic.simulated_synchronized_archive import archive_simulated_synchronized_capture
-from logic.trigger_sync_alignment import align_ct400_burst, parse_ct400_sync_text
 from logic.synchronized_owner_leases import OwnerRequest
+from logic.trigger_sync_alignment import align_ct400_burst, parse_ct400_sync_text
 
 if TYPE_CHECKING:
     from ui.main_window import MainWindow
