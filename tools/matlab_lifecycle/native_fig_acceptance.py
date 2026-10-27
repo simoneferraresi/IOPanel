@@ -15,6 +15,8 @@ import secrets
 import subprocess
 import sys
 import time
+import traceback
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -28,6 +30,28 @@ SCENARIOS = (
 )
 OPERATOR_CONFIRMATION = "I approve native MATLAB Engine acceptance on this workstation"
 EXPECTED_MATLAB_ROOT = r"C:\Program Files\MATLAB\R2024b"
+POST_CHILD_EXIT_OBSERVATION_SECONDS = 30.0
+POST_CHILD_EXIT_POLL_INTERVAL_SECONDS = 0.25
+EXCEPTION_CLEANUP_TIMEOUT_SECONDS = 30.0
+MATLAB_FIG_REOPEN_VERIFICATION = """
+iopanel_native_fig = openfig(iopanel_native_fig_path, 'new', 'invisible');
+iopanel_native_lines = findall(iopanel_native_fig, 'Type', 'line');
+assert(numel(iopanel_native_lines) == 2, 'Expected two detector traces');
+iopanel_native_det1 = findobj(iopanel_native_lines, 'DisplayName', 'Det 1');
+iopanel_native_det2 = findobj(iopanel_native_lines, 'DisplayName', 'Det 2');
+assert(isequal(get(iopanel_native_det1, 'XData'), iopanel_expected_x));
+assert(isequal(get(iopanel_native_det2, 'XData'), iopanel_expected_x));
+assert(isequal(get(iopanel_native_det1, 'YData'), iopanel_expected_det1));
+assert(isequal(get(iopanel_native_det2, 'YData'), iopanel_expected_det2));
+assert(max(abs(get(iopanel_native_det1, 'Color') - [27 158 119] / 255)) < 1e-12);
+assert(max(abs(get(iopanel_native_det2, 'Color') - [217 95 2] / 255)) < 1e-12);
+iopanel_native_axes = get(iopanel_native_det1(1), 'Parent');
+assert(strcmp(get(get(iopanel_native_axes, 'XLabel'), 'String'), 'Wavelength (nm)'));
+assert(strcmp(get(get(iopanel_native_axes, 'YLabel'), 'String'), 'Power (mW)'));
+assert(strcmp(get(get(iopanel_native_axes, 'Title'), 'String'), 'Native acceptance'));
+close(iopanel_native_fig);
+clear iopanel_native_fig iopanel_native_lines iopanel_native_det1 iopanel_native_det2;
+"""
 PROCESS_QUERY = r"""
 $rows = Get-CimInstance Win32_Process | ForEach-Object {
     $owner = $null
@@ -85,6 +109,47 @@ def expected_matlab_path(path: object) -> bool:
         return False
 
 
+def _owned_matlab_processes_still_running(
+    seen_owned_matlab: dict[int, dict[str, Any]], rows: list[dict[str, Any]]
+) -> list[int]:
+    after_by_pid = {int(row["pid"]): row for row in rows if row.get("pid") is not None}
+    active = []
+    for pid, owned_row in seen_owned_matlab.items():
+        after_row = after_by_pid.get(pid)
+        if after_row is None:
+            continue
+        owned_created = owned_row.get("created")
+        after_created = after_row.get("created")
+        if owned_created is None or after_created is None or owned_created == after_created:
+            active.append(pid)
+    return active
+
+
+def observe_owned_matlab_exit(
+    seen_owned_matlab: dict[int, dict[str, Any]],
+    initial_rows: list[dict[str, Any]],
+    *,
+    timeout_seconds: float = POST_CHILD_EXIT_OBSERVATION_SECONDS,
+    snapshot_fn: Callable[[], list[dict[str, Any]]] | None = None,
+    sleep_fn: Callable[[float], None] | None = None,
+    monotonic_fn: Callable[[], float] | None = None,
+) -> tuple[list[dict[str, Any]], float]:
+    """Observe orderly MATLAB exit after Python finishes; never terminate it."""
+    snapshot = snapshot_fn or process_snapshot
+    sleep = sleep_fn or time.sleep
+    monotonic = monotonic_fn or time.monotonic
+    started = monotonic()
+    deadline = started + max(0.0, timeout_seconds)
+    rows = initial_rows
+    while _owned_matlab_processes_still_running(seen_owned_matlab, rows):
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            break
+        sleep(min(POST_CHILD_EXIT_POLL_INTERVAL_SECONDS, remaining))
+        rows = snapshot()
+    return rows, monotonic() - started
+
+
 def append_event(path: Path, event: str, **fields: object) -> None:
     row = {"utc": datetime.now(UTC).isoformat(), "event": event, **fields}
     with path.open("a", encoding="utf-8") as stream:
@@ -130,14 +195,52 @@ def run_child(scenario: str, evidence: Path, *, deadline_seconds: float) -> int:
             break
         time.sleep(0.5)
 
-    after = process_snapshot()
+    after_immediately = process_snapshot()
+    after = after_immediately
+    post_child_observation_seconds = 0.0
+    if (
+        not timed_out
+        and child.poll() is not None
+        and _owned_matlab_processes_still_running(seen_owned_matlab, after_immediately)
+    ):
+        after, post_child_observation_seconds = observe_owned_matlab_exit(seen_owned_matlab, after_immediately)
     after_by_pid = {int(row["pid"]): row for row in after if row.get("pid") is not None}
+    immediate_by_pid = {int(row["pid"]): row for row in after_immediately if row.get("pid") is not None}
     before_by_pid = {int(row["pid"]): row for row in before if row.get("pid") is not None}
     owned = []
     for pid, row in sorted(seen_owned_matlab.items()):
         after_row = after_by_pid.get(pid)
-        same_process = after_row is not None and after_row.get("created") == row.get("created")
-        owned.append({**row, "still_running_after_child": same_process})
+        immediate_row = immediate_by_pid.get(pid)
+        running_immediately = immediate_row is not None and (
+            row.get("created") is None
+            or immediate_row.get("created") is None
+            or immediate_row.get("created") == row.get("created")
+        )
+        same_process = after_row is not None and (
+            row.get("created") is None
+            or after_row.get("created") is None
+            or after_row.get("created") == row.get("created")
+        )
+        owned.append(
+            {
+                **row,
+                "running_immediately_after_child": running_immediately,
+                "still_running_after_child": same_process,
+                "exited_during_post_child_observation": running_immediately and not same_process,
+            }
+        )
+    observed_rows = {
+        (int(row["pid"]), row.get("created")): row for row in (*after_immediately, *after) if row.get("pid") is not None
+    }
+
+    def has_confirmed_child_ancestry(row: dict[str, Any]) -> bool:
+        owned_row = seen_owned_matlab.get(int(row["pid"]))
+        if owned_row is None:
+            return False
+        owned_created = owned_row.get("created")
+        observed_created = row.get("created")
+        return owned_created is None or observed_created is None or owned_created == observed_created
+
     report = {
         "scenario": scenario,
         "child_pid": child.pid,
@@ -145,22 +248,26 @@ def run_child(scenario: str, evidence: Path, *, deadline_seconds: float) -> int:
         "timed_out": timed_out,
         "child_left_running": child.poll() is None,
         "elapsed_seconds": time.monotonic() - started,
+        "post_child_exit_observation_seconds": post_child_observation_seconds,
         "preexisting_matlab_processes": [
             row for row in before if str(row.get("name", "")).lower().startswith("matlab")
         ],
         "test_owned_matlab_processes_observed": owned,
         "test_owned_matlab_processes_with_unexpected_executable_path": list(unexpected_matlab_paths.values()),
+        "matlab_processes_remaining_immediately_after_child": [
+            row for row in after_immediately if str(row.get("name", "")).lower().startswith("matlab")
+        ],
         "matlab_processes_remaining": [row for row in after if str(row.get("name", "")).lower().startswith("matlab")],
         "new_matlab_pids_without_confirmed_child_ancestry": [
             row
-            for row in after
+            for row in observed_rows.values()
             if row.get("pid") is not None
             and (
                 int(row["pid"]) not in before_by_pid
                 or row.get("created") != before_by_pid[int(row["pid"])].get("created")
             )
             and str(row.get("name", "")).lower().startswith("matlab")
-            and int(row["pid"]) not in seen_owned_matlab
+            and not has_confirmed_child_ancestry(row)
         ],
     }
     (evidence / "supervisor.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
@@ -327,6 +434,7 @@ def child_main(scenario: str, evidence: Path, deadline_seconds: float) -> int:
         append_event(event_path, "deadline_reached", label=label, timeout_seconds=timeout_seconds)
         return bool(predicate())
 
+    scenario_exception: Exception | None = None
     try:
         if scenario == "close-before-startup":
             startup_attempts = []
@@ -449,28 +557,7 @@ def child_main(scenario: str, evidence: Path, deadline_seconds: float) -> int:
                 engine.workspace["iopanel_expected_x"] = matlab.double(wavelengths.tolist())
                 engine.workspace["iopanel_expected_det1"] = matlab.double(detector_1.tolist())
                 engine.workspace["iopanel_expected_det2"] = matlab.double(detector_2.tolist())
-                engine.eval(
-                    """
-                    iopanel_native_fig = openfig(iopanel_native_fig_path, 'visible', 'off');
-                    iopanel_native_lines = findall(iopanel_native_fig, 'Type', 'line');
-                    assert(numel(iopanel_native_lines) == 2, 'Expected two detector traces');
-                    iopanel_native_det1 = findobj(iopanel_native_lines, 'DisplayName', 'Det 1');
-                    iopanel_native_det2 = findobj(iopanel_native_lines, 'DisplayName', 'Det 2');
-                    assert(isequal(get(iopanel_native_det1, 'XData'), iopanel_expected_x));
-                    assert(isequal(get(iopanel_native_det2, 'XData'), iopanel_expected_x));
-                    assert(isequal(get(iopanel_native_det1, 'YData'), iopanel_expected_det1));
-                    assert(isequal(get(iopanel_native_det2, 'YData'), iopanel_expected_det2));
-                    assert(max(abs(get(iopanel_native_det1, 'Color') - [27 158 119] / 255)) < 1e-12);
-                    assert(max(abs(get(iopanel_native_det2, 'Color') - [217 95 2] / 255)) < 1e-12);
-                    iopanel_native_axes = get(iopanel_native_det1(1), 'Parent');
-                    assert(strcmp(get(get(iopanel_native_axes, 'XLabel'), 'String'), 'Wavelength (nm)'));
-                    assert(strcmp(get(get(iopanel_native_axes, 'YLabel'), 'String'), 'Power (mW)'));
-                    assert(strcmp(get(get(iopanel_native_axes, 'Title'), 'String'), 'Native acceptance'));
-                    close(iopanel_native_fig);
-                    clear iopanel_native_fig iopanel_native_lines iopanel_native_det1 iopanel_native_det2;
-                    """,
-                    nargout=0,
-                )
+                engine.eval(MATLAB_FIG_REOPEN_VERIFICATION, nargout=0)
                 append_event(event_path, "native_fig_reopened_and_verified", fig_path=str(fig_path))
                 widget.close()
 
@@ -488,12 +575,85 @@ def child_main(scenario: str, evidence: Path, deadline_seconds: float) -> int:
             fig_path=str(fig_path) if fig_path.exists() else None,
         )
         return 0
+    except Exception as error:
+        scenario_exception = error
+        try:
+            append_event(
+                event_path,
+                "scenario_exception",
+                exception_type=type(error).__name__,
+                exception=str(error),
+                traceback=traceback.format_exc(),
+            )
+        except (OSError, TypeError, ValueError) as logging_error:
+            print(f"Could not record native acceptance exception: {logging_error}", file=sys.stderr)
+        raise
     finally:
+        cleanup_error: Exception | None = None
+
+        def record_cleanup_event(event: str, **fields: object) -> None:
+            try:
+                append_event(event_path, event, **fields)
+            except (OSError, TypeError, ValueError) as logging_error:
+                print(f"Could not record native cleanup event {event}: {logging_error}", file=sys.stderr)
+
         if not widget.shutdown_finished:
-            widget.close()
-            pump_until(lambda: widget.shutdown_finished, min(deadline_seconds, 5.0), "best_effort_orderly_cleanup")
-        widget.deleteLater()
-        app.processEvents()
+            try:
+                record_cleanup_event(
+                    "exception_cleanup_started" if scenario_exception else "final_cleanup_started",
+                    manager_state=manager.state.name,
+                    shutdown_finished=widget.shutdown_finished,
+                )
+                close_accepted = widget.close()
+                record_cleanup_event(
+                    "exception_cleanup_close_requested" if scenario_exception else "final_cleanup_close_requested",
+                    close_accepted=close_accepted,
+                )
+                cleanup_completed = pump_until(
+                    lambda: widget.shutdown_finished,
+                    min(deadline_seconds, EXCEPTION_CLEANUP_TIMEOUT_SECONDS),
+                    "exception_path_cleanup" if scenario_exception else "final_cleanup",
+                )
+                record_cleanup_event(
+                    "exception_cleanup_finished" if scenario_exception else "final_cleanup_finished",
+                    completed=cleanup_completed,
+                    manager_state=manager.state.name,
+                    shutdown_finished=widget.shutdown_finished,
+                )
+            except Exception as error:  # noqa: BLE001 - cleanup errors must not replace the original failure.
+                cleanup_error = error
+                try:
+                    append_event(
+                        event_path,
+                        "exception_cleanup_failed",
+                        exception_type=type(error).__name__,
+                        exception=str(error),
+                        traceback=traceback.format_exc(),
+                    )
+                except (OSError, TypeError, ValueError) as logging_error:
+                    print(f"Could not record native cleanup failure: {logging_error}", file=sys.stderr)
+        elif scenario_exception is not None:
+            record_cleanup_event(
+                "exception_cleanup_not_needed",
+                manager_state=manager.state.name,
+                shutdown_finished=True,
+            )
+        try:
+            widget.deleteLater()
+            app.processEvents()
+        except Exception as error:  # noqa: BLE001 - report cleanup failure without hiding the original error.
+            cleanup_error = cleanup_error or error
+            try:
+                record_cleanup_event(
+                    "exception_cleanup_disposal_failed",
+                    exception_type=type(error).__name__,
+                    exception=str(error),
+                    traceback=traceback.format_exc(),
+                )
+            except (OSError, TypeError, ValueError) as logging_error:
+                print(f"Could not record native cleanup disposal failure: {logging_error}", file=sys.stderr)
+        if cleanup_error is not None and scenario_exception is None:
+            raise cleanup_error
 
 
 def print_plan() -> None:
