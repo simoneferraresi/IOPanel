@@ -14,6 +14,7 @@ from hardware.dummy_pm5020 import DummyPM5020
 from hardware.interfaces import AbstractPM5020
 from hardware.pm5020 import TLPMXPM5020
 from hardware.pm5020_types import ChannelConfig, PM5020State, PowerChannel
+from logic.device_lease_registry import DeviceLease, DeviceLeaseRegistry, DeviceResource, DeviceRecoveryRequired, LeaseState
 from logic.task_runner import BaseWorker
 
 logger = logging.getLogger("LabApp.pm5020_monitor")
@@ -74,12 +75,15 @@ class PM5020MonitorWorker(BaseWorker):
         simulator_factory: Callable[[], AbstractPM5020] = DummyPM5020,
         wrapper_path: str | None = None,
         dll_path: str | None = None,
+        lease_registry: DeviceLeaseRegistry | None = None,
     ) -> None:
         super().__init__()
         self._physical_factory = physical_factory
         self._simulator_factory = simulator_factory
         self._wrapper_path = wrapper_path
         self._dll_path = dll_path
+        self._lease_registry = lease_registry if lease_registry is not None else DeviceLeaseRegistry()
+        self._connection_lease: DeviceLease | None = None
         self._backend: AbstractPM5020 | None = None
         self._timer: QTimer | None = None
         self._monitoring = False
@@ -89,6 +93,22 @@ class PM5020MonitorWorker(BaseWorker):
         self._channels = (PowerChannel.CH1, PowerChannel.CH2)
         self._connection_generation = 0
         self._monitor_session_id = 0
+
+    def bind_lease_registry(self, registry: DeviceLeaseRegistry) -> None:
+        """Bind MainWindow registry before starting this owner thread."""
+        if self._backend is not None or self._timer is not None or self._connection_lease is not None:
+            raise RuntimeError("Cannot change registry after PM5020 worker initialization")
+        self._lease_registry = registry
+
+    def _release_connection_lease(self) -> None:
+        lease = self._connection_lease
+        if lease is not None:
+            self._lease_registry.release(lease, operations_complete=True)
+            self._connection_lease = None
+
+    def _quarantine_connection_lease(self, reason: str) -> None:
+        if self._connection_lease is not None:
+            self._lease_registry.mark_uncertain(self._connection_lease, reason)
 
     @Slot()
     def initialize(self) -> None:
@@ -118,6 +138,13 @@ class PM5020MonitorWorker(BaseWorker):
             self.error_occurred.emit("Enter the PM5020 USB/VISA resource identifier.")
             return
         try:
+            if self._connection_lease is None:
+                self._connection_lease = self._lease_registry.acquire(
+                    "pm5020-owner-worker", (DeviceResource.PM5020,)
+                )
+            elif any(item.resource is DeviceResource.PM5020 and item.state is LeaseState.UNCERTAIN
+                     for item in self._lease_registry.snapshot()):
+                raise DeviceRecoveryRequired("PM5020 is quarantined until explicit recovery")
             if mode == "Simulator":
                 self._backend = self._simulator_factory()
                 self._backend.connect(None)
@@ -131,6 +158,15 @@ class PM5020MonitorWorker(BaseWorker):
             self.activity_state.emit("Connected / idle")
         except Exception as exc:  # Vendor wrappers may raise types outside the backend hierarchy.
             logger.exception("PM5020 connection failed")
+            try:
+                if self._backend is None or not self._backend.is_connected():
+                    self._release_connection_lease()
+                else:
+                    self._quarantine_connection_lease(f"PM5020 connection failed: {exc}")
+            except DeviceRecoveryRequired:
+                pass
+            except Exception:
+                self._quarantine_connection_lease("PM5020 connection state could not be verified")
             self._publish_state()
             state = PM5020State.DISCONNECTED if self._backend is None else self._backend.state
             self.activity_state.emit("Recovery required" if state is PM5020State.ERROR else "Disconnected")
@@ -237,8 +273,18 @@ class PM5020MonitorWorker(BaseWorker):
                 self._backend.close()
             except Exception as exc:
                 logger.exception("PM5020 disconnect failed")
+                self._quarantine_connection_lease(f"PM5020 disconnect failed: {exc}")
                 self.error_occurred.emit(f"PM5020 disconnect failed: {exc}")
             self._publish_state()
+        try:
+            if not self._connected():
+                self._release_connection_lease()
+            else:
+                self._quarantine_connection_lease("PM5020 disconnect is not confirmed")
+        except DeviceRecoveryRequired:
+            pass
+        except Exception:
+            self._quarantine_connection_lease("PM5020 disconnect state could not be verified")
         self.activity_state.emit("Disconnected" if not self._connected() else "Recovery required")
 
     @Slot()
@@ -247,8 +293,19 @@ class PM5020MonitorWorker(BaseWorker):
         if self._backend is not None:
             try:
                 self._backend.close()
-            except Exception:
+            except Exception as exc:
                 logger.exception("PM5020 close failed during application shutdown")
+                self._quarantine_connection_lease(f"PM5020 shutdown close failed: {exc}")
+        try:
+            if not self._connected():
+                self._release_connection_lease()
+            else:
+                self._quarantine_connection_lease("PM5020 remained connected during shutdown")
+        except DeviceRecoveryRequired:
+            pass
+        except Exception:
+            logger.exception("PM5020 shutdown state could not be verified")
+            self._quarantine_connection_lease("PM5020 shutdown state could not be verified")
         self._publish_state()
         self.shutdown_complete.emit()
         self.finished.emit()
@@ -283,6 +340,13 @@ class PM5020MonitorWorker(BaseWorker):
             self._poll_in_progress = False
 
     def _ready_backend(self) -> AbstractPM5020 | None:
+        if self._connection_lease is None:
+            self.error_occurred.emit("PM5020 has no owner lease; refusing device access.")
+            return None
+        if any(item.resource is DeviceResource.PM5020 and item.state is LeaseState.UNCERTAIN
+               for item in self._lease_registry.snapshot()):
+            self.error_occurred.emit("PM5020 ownership is uncertain; refusing device access.")
+            return None
         backend = self._backend
         if backend is None or not backend.is_connected():
             self.error_occurred.emit("Connect to a PM5020 before requesting this operation.")
