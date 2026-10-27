@@ -970,7 +970,11 @@ class PM5020Panel(QWidget):
             except ValueError:
                 interval_valid = False
         can_start = (
-            ready and self._configuration_applied and interval_valid and not recovering and not self._monitor_session
+            ready
+            and self._configuration_applied
+            and interval_valid
+            and not recovering
+            and not self._monitor_session
             and not self._sync_active
         )
         self.start_button.setEnabled(can_start)
@@ -983,7 +987,12 @@ class PM5020Panel(QWidget):
         for channel in (self.ch1, self.ch2):
             for widget in (channel.wavelength, channel.auto_range, channel.input_filter, channel.enabled):
                 widget.setEnabled(not self._monitor_session and not self._paused and not self._sync_active)
-            manual_enabled = not self._monitor_session and not self._paused and not channel.auto_range.isChecked() and not self._sync_active
+            manual_enabled = (
+                not self._monitor_session
+                and not self._paused
+                and not channel.auto_range.isChecked()
+                and not self._sync_active
+            )
             channel.manual_range.setEnabled(manual_enabled)
             channel.range_unit.setEnabled(manual_enabled)
             channel.unit.setEnabled(True)
