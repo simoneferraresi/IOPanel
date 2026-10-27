@@ -2,7 +2,7 @@
 
 ## Recommendation
 
-Do not merge Phase E yet. Keep the current PRs as drafts while native MATLAB acceptance is blocked on license availability verification, physical CT400/Vimba acceptance is pending, and PR #270 still needs fresh CI after the runner safety update. The application candidate passed the hardware-independent Windows and frozen-package gates recorded in [the qualification report](phase-e-final-qualification-2026-10-27.md).
+Do not merge Phase E yet. Keep the current PRs as drafts while native MATLAB acceptance is blocked on license availability verification and physical CT400/Vimba acceptance is pending. PR #270's published head passed all four CI jobs, but the local runner safety update was rejected by automatic review as outside the exact authorized payload and is not in the PR. The application candidate passed the hardware-independent Windows and frozen-package gates recorded in [the qualification report](phase-e-final-qualification-2026-10-27.md).
 
 ## Current pull request stack
 
@@ -11,8 +11,8 @@ Do not merge Phase E yet. Keep the current PRs as drafts while native MATLAB acc
 | [#266](https://github.com/simoneferraresi/IOPanel/pull/266) | E1 CT400 lifecycle | `main` | Open draft; mergeable; historical jobs passed |
 | [#267](https://github.com/simoneferraresi/IOPanel/pull/267) | E2 camera/TaskRunner | E1 | Open draft; mergeable; historical jobs passed |
 | [#268](https://github.com/simoneferraresi/IOPanel/pull/268) | E3 MATLAB lifecycle | E2 | Open draft; mergeable; historical jobs passed |
-| [#270](https://github.com/simoneferraresi/IOPanel/pull/270) | E3 finalizer follow-up + qualification files | #268 | Open draft; mergeable after indexing; initial workflow query empty; new runner safety update awaiting publication |
-| Local `fix/phase-e-integration-hardening` | Latest runner safety update | local #270 tree | Adds fail-closed process attribution/cleanup checks; not yet on the remote branch |
+| [#270](https://github.com/simoneferraresi/IOPanel/pull/270) | E3 finalizer follow-up + qualification files | #268 | Open draft; current head `f2e0b272`; all four jobs passed |
+| Local `fix/phase-e-integration-hardening` | Latest runner safety update | local only | Adds fail-closed process attribution/cleanup checks; upload rejected by auto-review and not retried |
 
 Origin/main was `63c0c4b4bdaf1a2c931e63dce13e20f88da5c9f6` when fetched. The main update since the original Phase E baseline was documentation-only with no source overlap. E1/E2/E3 remote trees equal the local validated trees. Current GitHub repository metadata permits merge-commit, rebase, and squash strategies; auto-merge and automatic branch updates are disabled. Exact branch-protection rules were not available through the inspected connector, so required status checks and reviewer policy must be checked in GitHub before final merge.
 
@@ -32,10 +32,10 @@ E3's finalizer correction is now published in #270, whose sole parent is #268 he
 
 ## Suggested integration sequence after gates pass
 
-1. Keep #270 based on #268 while the stack is under review. Publish the current runner fail-closed update as a fast-forward commit to #270 and verify its tree, focused diff, and fresh CI.
+1. Keep #270 based on #268 while the stack is under review. Do not merge or use the published runner for native tests while the updated fail-closed runner is not authorized/published. If the user authorizes this exact modified runner after the automatic review rejection, publish it as a fast-forward update and verify its tree, focused diff, and fresh CI.
 2. Merge #266 (`87791a2…` → `main`) using a merge commit after required CT400 acceptance/review. Fetch again. Retarget #267 (`04cf3f…`) to `main`, verify its diff contains only E2, wait for fresh required CI/reviews, then merge by merge commit after any required Vimba acceptance.
 3. Fetch again. Retarget #268 (`fae56c9…`) to `main` and verify its diff contains only E3. Require native MATLAB acceptance and fresh CI/review, then merge by merge commit.
-4. After #268 merges, retarget #270 (`3246bd2…` plus its safety-update commit) to `main`. Verify its diff contains only the finalizer correction, tests, and the approved qualification files. Require fresh CI/review and ensure E3 is not released between the two merges. Merge #270 by merge commit only after these gates pass.
+4. After #268 merges, retarget #270 (`f2e0b27…` plus any subsequently authorized runner update) to `main`. Verify its diff contains only the finalizer correction, tests, and approved qualification files. Require fresh CI/review and ensure E3 is not released between the two merges. Merge #270 by merge commit only after these gates pass.
 5. Keep all PRs in draft until required acceptance and reviewer sign-off are attached to the exact final SHA. Confirm branch protection, required checks, approvals, and release steps directly in GitHub. No merge is approved by this report.
 
 Useful read-only verification after each base/head change:
@@ -53,7 +53,7 @@ If project policy requires squash merging, create clean successor branches from 
 
 ## Stop conditions
 
-- PR #270 runner safety update has not yet passed fresh CI.
+- The local runner safety update was rejected by automatic review because it was outside the specifically authorized payload; do not retry without explicit authorization for that exact file content.
 - The online MATLAB license pool remains unverified; do not execute native cases until the account owner confirms availability.
 - A native MATLAB case times out, fails FIG assertions, returns without orderly Engine disposal, or leaves an unattributed process.
 - CT400 or Vimba acceptance is absent for a phase that changes its ownership path, or the operator cannot establish device identity/safe state.
