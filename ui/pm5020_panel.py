@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 from app_settings import AppSettings
 from hardware.pm5020_types import ChannelConfig, PM5020State, PowerChannel, PowerReading
 from logic.pm5020_monitor import DISPLAY_UNITS, ConfigurationRequest, PM5020MonitorWorker, convert_power, format_power
+from logic.device_lease_registry import DeviceLeaseRegistry
 from logic.task_runner import TaskRunner
 from ui.typography import make_font, pyqtgraph_title_style, style_group_box_title
 
@@ -280,6 +281,7 @@ class PM5020Panel(QWidget):
         wrapper_path: str = "",
         dll_path: str = "",
         settings: AppSettings | None = None,
+        lease_registry: DeviceLeaseRegistry | None = None,
     ):
         super().__init__(parent)
         if backend_mode not in {"physical", "simulation"}:
@@ -323,6 +325,8 @@ class PM5020Panel(QWidget):
             if worker is not None
             else PM5020MonitorWorker(wrapper_path=wrapper_path or None, dll_path=dll_path or None)
         )
+        if lease_registry is not None:
+            self.worker.bind_lease_registry(lease_registry)
         self.task = TaskRunner(self.worker, auto_start_run=False)
         self.task.worker_thread.setObjectName("PM5020-monitor")
         self.task.worker_thread.started.connect(self.worker.initialize)
