@@ -14,7 +14,7 @@ from hardware.ct400 import CT400
 from hardware.ct400_types import Detector, Enable, LaserInput
 from hardware.dummy_ct400 import DummyCT400
 from hardware.simulated_camera import SimulatedCamera
-from logic.device_lease_registry import DeviceBusyError
+from logic.device_lease_registry import DeviceBusyError, DeviceResource
 from ui import alignment_panel as alignment_panel_module
 from ui import control_panel as control_panel_module
 from ui import main_window as main_window_module
@@ -1092,5 +1092,127 @@ def test_ct400_operation_completion_restores_controls_from_confirmed_state(
         assert window.ct400_connect_action.isEnabled()
     finally:
         release.set()
+        if window.isVisible():
+            window.close()
+
+
+def test_shg_simulated_queued_owner_handoff_archives_and_releases(qtbot, monkeypatch, tmp_path):
+    """End-to-end CT dummy thread and permanent PM owner QThread, never DLLs."""
+    import json
+
+    from hardware.pm5020_types import PM5020State
+    from logic.pm5020_capture_audit import audit_pm5020_burst_run
+
+    window, gate, _spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path, include_camera=False)
+    panel = window.pm5020_panel
+    shg = window.shg_tab
+    result_spy = QSignalSpy(shg.finished)
+    try:
+        panel.request_connect()
+        qtbot.waitUntil(lambda: panel._backend_state is PM5020State.IDLE, timeout=3500)
+        qtbot.waitUntil(lambda: panel._configuration_applied, timeout=3500)
+        panel._start()
+        qtbot.waitUntil(lambda: panel._monitor_session, timeout=2000)
+        panel.pause_requested.emit()
+        qtbot.waitUntil(lambda: panel._paused, timeout=2000)
+
+        shg.start_capture(destination_root=tmp_path / "shg")
+        qtbot.waitUntil(lambda: shg._ct_worker is not None, timeout=4000)
+        assert shg.active
+        assert panel._sync_active
+        assert window.device_lease_registry.snapshot()[0].owner == "synchronized-acquisition"
+        assert window.device_lease_registry.snapshot()[1].owner == "synchronized-acquisition"
+        assert not window.control_panel.scan_btn.isEnabled()
+        assert not window._is_alignment_operation_authorized()
+        with pytest.raises(DeviceBusyError):
+            window.device_lease_registry.acquire("calibration", (DeviceResource.CT400,))
+        assert window.ct400_device.external_synchronization_calls[-1] is Enable.ENABLE
+
+        gate.set()
+        qtbot.waitUntil(lambda: result_spy.count() == 1, timeout=6000)
+        assert result_spy.at(0)[0] is True
+        assert not shg.active
+        assert not panel._sync_active
+        assert all(entry.owner is None for entry in window.device_lease_registry.snapshot())
+        target = next((tmp_path / "shg").iterdir())
+        metadata = json.loads((target / "acquisition_metadata.json").read_text(encoding="utf-8"))
+        assert metadata["timing_qualified"] is False
+        assert metadata["index_base"] == 0
+        assert metadata["ct400_scan_result_code"] == 0
+        assert set(metadata["files"]) == {"pm5020_raw_burst", "ct400_sync", "ct400_processed"}
+        audit = audit_pm5020_burst_run(target)
+        assert audit.pm5020_samples == 257
+        assert audit.ct400_pulses == 240
+        assert window.ct400_device.external_synchronization_calls[-1] is Enable.DISABLE
+    finally:
+        gate.set()
+        if window.isVisible():
+            window.close()
+
+
+def test_shg_simulated_cancellation_waits_for_owner_cleanup(qtbot, monkeypatch, tmp_path):
+    window, gate, _spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path, include_camera=False)
+    shg = window.shg_tab
+    spy = QSignalSpy(shg.finished)
+    try:
+        shg.start_capture(destination_root=tmp_path / "cancelled")
+        qtbot.waitUntil(lambda: shg._ct_worker is not None, timeout=4000)
+        assert shg.active
+        shg.cancel()
+        # Native-like wait ends only after Stop (or explicit test gate).
+        gate.set()
+        qtbot.waitUntil(lambda: spy.count() == 1, timeout=6000)
+        assert spy.at(0)[0] is False
+        assert not shg.active
+        assert all(entry.owner is None for entry in window.device_lease_registry.snapshot())
+        assert not list((tmp_path / "cancelled").glob("sim_m4e1_*"))
+        assert window.ct400_device.external_synchronization_calls[-1] is Enable.DISABLE
+    finally:
+        gate.set()
+        if window.isVisible():
+            window.close()
+
+
+def test_shg_rejects_physical_profile_and_stale_pm_callbacks(qtbot, monkeypatch, tmp_path):
+    window, gate, _spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path, include_camera=False)
+    shg = window.shg_tab
+    spy = QSignalSpy(shg.finished)
+    try:
+        window.pm5020_panel.backend_mode = "physical"
+        shg.start_capture(destination_root=tmp_path / "forbidden")
+        assert not shg.active
+        assert all(item.owner is None for item in window.device_lease_registry.snapshot())
+        window.pm5020_panel.backend_mode = "simulation"
+        shg.start_capture(destination_root=tmp_path / "valid")
+        qtbot.waitUntil(lambda: shg.active, timeout=1000)
+        window.pm5020_panel.worker.synchronized_armed.emit(999, 999, True, "")
+        assert shg._ct_worker is None
+        qtbot.waitUntil(lambda: shg._ct_worker is not None, timeout=4000)
+        gate.set()
+        qtbot.waitUntil(lambda: spy.count() == 1, timeout=6000)
+        assert spy.at(0)[0] is True
+    finally:
+        gate.set()
+        if window.isVisible():
+            window.close()
+
+
+def test_shg_simulated_pm_arm_failure_aborts_without_archive(qtbot, monkeypatch, tmp_path):
+    from hardware.dummy_pm5020 import DummyPM5020
+
+    window, gate, _spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path, include_camera=False)
+    window.pm5020_panel.worker._simulator_factory = lambda: DummyPM5020(fail_operations={"start_burst"})
+    shg = window.shg_tab
+    spy = QSignalSpy(shg.finished)
+    try:
+        shg.start_capture(destination_root=tmp_path / "failed")
+        qtbot.waitUntil(lambda: spy.count() == 1, timeout=5500)
+        assert spy.at(0)[0] is False
+        assert not shg.active
+        assert shg._ct_worker is None
+        assert all(item.owner is None for item in window.device_lease_registry.snapshot())
+        assert not (tmp_path / "failed").exists()
+    finally:
+        gate.set()
         if window.isVisible():
             window.close()
