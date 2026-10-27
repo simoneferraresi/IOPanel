@@ -88,6 +88,8 @@ def format_matlab_status(state: MatlabEngineState) -> StatusText:
         MatlabEngineState.READY: ("Ready", "MATLAB Engine is ready", "ready"),
         MatlabEngineState.FAILED: ("Failed", "MATLAB Engine startup failed", "error"),
         MatlabEngineState.SHUTTING_DOWN: ("Stopping", "MATLAB Engine is shutting down", "busy"),
+        MatlabEngineState.SHUT_DOWN: ("Stopped", "MATLAB Engine cleanup completed", "idle"),
+        MatlabEngineState.SHUTDOWN_FAILED: ("Stop Failed", "MATLAB Engine cleanup failed; ownership retained", "error"),
     }
     text, tooltip, status = labels[state]
     return StatusText(f"MATLAB: {text}", tooltip, status)

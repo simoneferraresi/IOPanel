@@ -173,7 +173,7 @@ def _begin_close_with_piezo_operations(window, monkeypatch, sides, ct400_device=
     monkeypatch.setattr(
         main_window_module.QTimer,
         "singleShot",
-        lambda delay, callback: scheduled.append((delay, callback)),
+        lambda delay, *args: scheduled.append((delay, args[-1])),
     )
     window.ct400_device = ct400_device
     window.piezo_left = FakePiezo()
@@ -665,7 +665,7 @@ def test_piezo_terminal_during_pending_close_does_not_rebuild_alignment(qtbot, m
     monkeypatch.setattr(
         main_window_module.QTimer,
         "singleShot",
-        lambda delay, callback: scheduled.append((delay, callback)),
+        lambda delay, *args: scheduled.append((delay, args[-1])),
     )
     monkeypatch.setattr(main_window_module.QMessageBox, "critical", lambda *_args: None)
     window.alignment_tab.cleanup()

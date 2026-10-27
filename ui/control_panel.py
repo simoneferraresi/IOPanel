@@ -2072,7 +2072,7 @@ class HistogramControlPanel(BaseControlPanel):
         self._worker_shutdown_complete = True
         self.shutdown_complete.emit()
         if self._close_pending:
-            QTimer.singleShot(0, self.close)
+            QTimer.singleShot(0, self, self.close)
 
     @Slot()
     def _detector_selection_changed(self):

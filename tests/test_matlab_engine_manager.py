@@ -54,7 +54,7 @@ class BlockingFuture(FakeFuture):
 
     def result(self):
         self.result_calls += 1
-        self.completed.wait()
+        assert self.completed.wait(5), "fake startup was not released"
         if self.error is not None:
             raise self.error
         return self.value
@@ -77,13 +77,13 @@ class ControlledFuture(FakeFuture):
     def cancel(self) -> bool:
         self.cancel_calls += 1
         self.cancel_started.set()
-        self.release_cancel.wait()
+        assert self.release_cancel.wait(5), "fake cancellation was not released"
         return self.cancel_result
 
     def result(self):
         self.result_calls += 1
         self.result_started.set()
-        self.release_result.wait()
+        assert self.release_result.wait(5), "fake result was not released"
         if self.error is not None:
             raise self.error
         return self.value
@@ -213,9 +213,10 @@ def test_ready_shutdown_quits_exactly_once(qtbot):
     manager.shutdown()
     manager.shutdown()
 
+    qtbot.waitUntil(lambda: manager.shutdown_finished)
     assert engine.quit_calls == 1
     assert manager.engine is None
-    assert manager.state is MatlabEngineState.SHUTTING_DOWN
+    assert manager.state is MatlabEngineState.SHUT_DOWN
 
 
 def test_plotwidget_clears_finished_thread_refs_and_starts_later_fig_thread(qtbot, monkeypatch):
@@ -298,7 +299,13 @@ def test_plotwidget_cleanup_tolerates_deleted_qthread_and_always_shuts_manager(q
     widget.matlab_save_thread = thread
     widget.matlab_save_worker = worker
     shutdown_calls = []
-    widget.matlab_engine_manager.shutdown = lambda: shutdown_calls.append(True)
+    original_shutdown = widget.matlab_engine_manager.shutdown
+
+    def shutdown():
+        shutdown_calls.append(True)
+        original_shutdown()
+
+    widget.matlab_engine_manager.shutdown = shutdown
 
     widget.cleanup()
     widget.cleanup()
@@ -308,29 +315,27 @@ def test_plotwidget_cleanup_tolerates_deleted_qthread_and_always_shuts_manager(q
     assert widget.matlab_save_worker is None
 
 
-def test_plotwidget_cleanup_logs_thread_teardown_error_and_still_shuts_manager(qtbot, monkeypatch, caplog):
+def test_plotwidget_cleanup_retains_active_thread_until_retirement(qtbot):
+    from logic.qt_worker_lifecycle import retire_worker_on_thread_finish
+
     widget = PlotWidget(ScanSettings())
     qtbot.addWidget(widget)
-
-    class BrokenThread:
-        @staticmethod
-        def isRunning():
-            raise RuntimeError("deleted wrapper")
-
-    thread = BrokenThread()
+    thread = QThread(widget)
     worker = QObject()
+    worker.moveToThread(thread)
+    retire_worker_on_thread_finish(thread, worker)
+    thread.finished.connect(lambda: widget._matlab_save_thread_finished.emit(thread, worker))
     widget.matlab_save_thread = thread
     widget.matlab_save_worker = worker
-    shutdown_calls = []
-    widget.matlab_engine_manager.shutdown = lambda: shutdown_calls.append(True)
-    monkeypatch.setattr(shiboken6, "isValid", lambda obj: obj is thread or obj is worker)
-
-    widget.cleanup()
-
-    assert shutdown_calls == [True]
-    assert widget.matlab_save_thread is None
-    assert widget.matlab_save_worker is None
-    assert "Could not fully stop the MATLAB save thread" in caplog.text
+    thread.start()
+    try:
+        widget.cleanup()
+        assert widget.matlab_save_thread is thread
+        assert not widget.shutdown_finished
+        assert not widget.close()
+    finally:
+        thread.quit()
+        qtbot.waitUntil(lambda: widget.shutdown_finished)
 
 
 def test_matlab_status_persists_for_long_startup_states(qtbot, monkeypatch):
@@ -380,8 +385,9 @@ def test_startup_shutdown_disposes_late_engine_off_the_qt_thread(qtbot):
 
     future.value = engine
     future.completed.set()
-    qtbot.waitUntil(lambda: engine.quit_calls == 1, timeout=1000)
-    assert manager.state is MatlabEngineState.SHUTTING_DOWN
+    qtbot.waitUntil(lambda: manager.shutdown_finished, timeout=1000)
+    assert engine.quit_calls == 1
+    assert manager.state is MatlabEngineState.SHUT_DOWN
     assert manager.engine is None
 
 
@@ -399,7 +405,7 @@ def test_starting_shutdown_does_not_wait_for_blocking_cancel(qtbot, caplog):
     assert future.cancel_started.wait(1)
     assert future.cancel_calls == 1
     assert manager._startup_disposal_thread is not None
-    assert manager._startup_disposal_thread.daemon
+    assert not manager._startup_disposal_thread.daemon
     assert manager.state is MatlabEngineState.SHUTTING_DOWN
     future.release_cancel.set()
     manager._startup_disposal_thread.join(timeout=1)
@@ -432,8 +438,9 @@ def test_starting_shutdown_does_not_wait_for_blocking_result_and_disposes_engine
     future.release_result.set()
     disposal_thread.join(timeout=1)
     assert not disposal_thread.is_alive()
+    qtbot.waitUntil(lambda: manager.shutdown_finished)
     assert engine.quit_calls == 1
-    assert manager.state is MatlabEngineState.SHUTTING_DOWN
+    assert manager.state is MatlabEngineState.SHUT_DOWN
     assert "Waiting for in-progress MATLAB startup to finish before disposal." in caplog.text
     assert "Late MATLAB startup disposed after" in caplog.text
 
@@ -654,7 +661,7 @@ def test_unhealthy_ready_engine_retries_without_losing_fig_request(qtbot, monkey
 
     assert widget.matlab_engine_manager.state is MatlabEngineState.STARTING
     assert widget._pending_matlab_fig == request
-    assert starts == [{"background": True}]
+    qtbot.waitUntil(lambda: starts == [{"background": True}])
     future.value = FakeEngine()
     future.complete = True
     qtbot.waitUntil(lambda: widget.matlab_engine_manager.state is MatlabEngineState.READY, timeout=1000)

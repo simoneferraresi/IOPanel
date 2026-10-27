@@ -14,6 +14,7 @@ from config_model import AppConfig
 from hardware.ct400 import CT400
 from hardware.ct400_types import Enable, LaserInput, ScanWaitResult
 from hardware.dummy_ct400 import DummyCT400
+from tools.qt_test_lifecycle import close_native_widget
 from ui.control_panel import (
     CT400ConnectionSignals,
     CT400ConnectionWorker,
@@ -86,12 +87,13 @@ def test_window_helper_registers_native_teardown(qtbot, monkeypatch, tmp_path, r
         # Exercise pytest-qt's actual close/delete boundary while the test's
         # Python reference remains alive. Merely hiding this window leaked its
         # entire native scene graph until QApplication interpreter cleanup.
+        close_native_widget(window, qtbot)
         _close_widgets(request.node)
         QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
         assert not shiboken6.isValid(window)
     finally:
         if shiboken6.isValid(window):
-            window.close()
+            close_native_widget(window, qtbot)
             window.deleteLater()
             QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 

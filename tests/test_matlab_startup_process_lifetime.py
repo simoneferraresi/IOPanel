@@ -1,14 +1,17 @@
 """Fresh-process probes for MATLAB Engine shutdown ownership, without MATLAB.
 
-A daemon can keep cleaning up while Python is alive, but its completion is not
-guaranteed after interpreter exit. These tests record that distinction; they
-are not tests of a real MATLAB process or the MATLAB vendor FutureResult.
+Required cleanup must keep Python alive until its controlled fake native call
+returns. These probes observe real interpreter exit; they never launch MATLAB.
 """
 
 import os
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
+
+from tools.qt_stall_stress_supervisor import _terminate_process_tree
 
 _CHILD_PROBE = r"""
 import sys
@@ -46,7 +49,10 @@ class Future:
     def cancel(self):
         record("cancel_entered")
         self.cancel_entered.set()
-        self.release_cancel.wait(timeout=20)
+        if case == "blocked":
+            assert sys.stdin.readline().strip() == "release"
+        else:
+            assert self.release_cancel.wait(timeout=4)
         return False
 
     def result(self):
@@ -77,48 +83,61 @@ if case == "resolved":
     disposer.join(timeout=4)
     if disposer.is_alive():
         raise RuntimeError("Released disposal thread did not finish")
+    manager._poll_disposals()
+    assert manager.shutdown_finished
     record("disposal_joined")
 
 record("main_return")
 """
 
 
-def _assert_matlab_shutdown_process_exit_boundary(tmp_path: Path, case: str) -> None:
-    """Distinguish early Python exit from a cleanup observed before exit."""
+def _assert_matlab_shutdown_process_exit_boundary(tmp_path: Path, case: str, qtbot) -> None:
+    """Observe that even main-return cannot abandon required cleanup."""
     trace = tmp_path / f"startup-{case}.events"
     env = os.environ.copy()
     env["PYTHONDONTWRITEBYTECODE"] = "1"
-
-    process = subprocess.run(
+    with subprocess.Popen(
         [sys.executable, "-c", _CHILD_PROBE, str(trace), case],
         cwd=Path(__file__).resolve().parents[1],
         env=env,
-        capture_output=True,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        timeout=12,
-        check=False,
-    )
-
-    assert process.returncode == 0, f"{process.stdout}\n{process.stderr}"
+    ) as process:
+        try:
+            qtbot.waitUntil(
+                lambda: (
+                    (trace.exists() and "main_return" in trace.read_text(encoding="utf-8"))
+                    or process.poll() is not None
+                ),
+                timeout=6000,
+            )
+            if case == "blocked":
+                assert process.poll() is None
+                with pytest.raises(subprocess.TimeoutExpired):
+                    process.wait(timeout=0.25)
+            stdout, stderr = process.communicate(input="release\n" if case == "blocked" else None, timeout=8)
+        finally:
+            if process.poll() is None:
+                _terminate_process_tree(process)
+                process.communicate(timeout=5)
+    assert process.returncode == 0, stdout + stderr
     events = trace.read_text(encoding="utf-8").splitlines()
     assert events.count("shutdown_returned") == 1
     assert events.count("cancel_entered") == 1
     assert events.count("main_return") == 1
+    assert events.count("engine_quit") == 1
     if case == "resolved":
-        assert events.count("engine_quit") == 1
         assert events.count("disposal_joined") == 1
         assert events.index("engine_quit") < events.index("main_return")
     else:
-        # The child exited successfully while fake cancellation was blocked.
-        # This is evidence that Python exit can abandon daemon cleanup, not
-        # evidence that MATLAB itself was orphaned or that its API was invoked.
-        assert "engine_quit" not in events
-        assert "disposal_joined" not in events
+        assert events.index("main_return") < events.index("engine_quit")
 
 
-def test_matlab_shutdown_cleans_engine_before_interpreter_exit(tmp_path: Path) -> None:
-    _assert_matlab_shutdown_process_exit_boundary(tmp_path, "resolved")
+def test_matlab_shutdown_cleans_engine_before_interpreter_exit(tmp_path: Path, qtbot) -> None:
+    _assert_matlab_shutdown_process_exit_boundary(tmp_path, "resolved", qtbot)
 
 
-def test_matlab_shutdown_cannot_guarantee_disposal_after_interpreter_exit(tmp_path: Path) -> None:
-    _assert_matlab_shutdown_process_exit_boundary(tmp_path, "blocked")
+def test_matlab_shutdown_keeps_process_alive_until_disposal_returns(tmp_path: Path, qtbot) -> None:
+    _assert_matlab_shutdown_process_exit_boundary(tmp_path, "blocked", qtbot)

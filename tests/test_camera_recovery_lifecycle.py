@@ -291,7 +291,7 @@ def test_mainwindow_owns_one_recovery_per_camera_and_defers_close(qtbot, monkeyp
     assert window._camera_recovery_tasks["first"] is replacement
 
     scheduled = []
-    monkeypatch.setattr(main_window_module.QTimer, "singleShot", lambda _delay, callback: scheduled.append(callback))
+    monkeypatch.setattr(main_window_module.QTimer, "singleShot", lambda _delay, *args: scheduled.append(args[-1]))
     event = QCloseEvent()
     window.closeEvent(event)
     assert not event.isAccepted()
@@ -329,7 +329,7 @@ def test_mainwindow_defers_shutdown_for_active_auto_operation(qtbot, monkeypatch
     monkeypatch.setattr(window, "_cleanup_cameras", record_camera_cleanup)
     monkeypatch.setattr(window, "_cleanup_vimbasystem", lambda: cleanup_events.append("vimba"))
     scheduled = []
-    monkeypatch.setattr(main_window_module.QTimer, "singleShot", lambda _delay, callback: scheduled.append(callback))
+    monkeypatch.setattr(main_window_module.QTimer, "singleShot", lambda _delay, *args: scheduled.append(args[-1]))
 
     event = QCloseEvent()
     window.closeEvent(event)
@@ -377,7 +377,7 @@ def test_shutdown_waits_for_recovery_thread_finished_before_camera_and_vimba_cle
 
     monkeypatch.setattr(window, "_cleanup_cameras", record_camera_cleanup)
     monkeypatch.setattr(window, "_cleanup_vimbasystem", lambda: cleanup_events.append("vimba"))
-    monkeypatch.setattr(main_window_module.QTimer, "singleShot", lambda _delay, callback: scheduled.append(callback))
+    monkeypatch.setattr(main_window_module.QTimer, "singleShot", lambda _delay, *args: scheduled.append(args[-1]))
 
     window._request_camera_recovery(config.identifier)
     qtbot.waitUntil(entered.is_set, timeout=5000)

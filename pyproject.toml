@@ -118,6 +118,7 @@ include = [
     "hardware/camera_recovery_worker.py",
     "hardware/piezo_init_worker.py",
     "logic/task_runner.py",
+    "logic/matlab_engine_manager.py",
     "logic/pm5020_monitor.py",
     "logic/scan_import.py",
     "logic/scan_measurement.py",

@@ -1712,4 +1712,4 @@ class CameraPanel(QFrame):
         self.conversion_worker = None
         self.conversion_shutdown_complete.emit()
         if self._conversion_close_pending:
-            QTimer.singleShot(0, self.close)
+            QTimer.singleShot(0, self, self.close)

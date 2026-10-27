@@ -55,6 +55,7 @@ from hardware.edfa_types import EDFAState
 from hardware.piezo import PiezoController
 from hardware.piezo_init_worker import PiezoInitWorker
 from hardware.pm5020_types import PM5020State
+from logic.matlab_engine_manager import MatlabEngineState
 from logic.scan_import import load_scan
 from logic.scan_import_worker import ScanImportOutcome, ScanImportWorker
 from logic.scan_settings import ScanSettings
@@ -669,7 +670,7 @@ class MainWindow(QMainWindow):
     def _resume_close_after_piezo_operation(self):
         """Schedule close only after all piezo workers release their controllers."""
         if self._pending_piezo_operation_close and not self._piezo_operations_in_flight:
-            QTimer.singleShot(0, self.close)
+            QTimer.singleShot(0, self, self.close)
 
     @Slot(str, str)
     def _on_ct400_status_updated(self, state_name: str, message: str):
@@ -1041,7 +1042,7 @@ class MainWindow(QMainWindow):
         self._init_tasks.remove(task)
         if self._pending_init_close and not self._init_tasks:
             logger.info("All initialization tasks finished; resuming deferred application close.")
-            QTimer.singleShot(0, self.close)
+            QTimer.singleShot(0, self, self.close)
 
     @Slot(object)
     def _on_piezo_init_task_finished(self, task):
@@ -1766,7 +1767,7 @@ class MainWindow(QMainWindow):
         self._update_scan_import_actions()
         if self._pending_scan_import_close:
             self._pending_scan_import_close = False
-            QTimer.singleShot(0, self.close)
+            QTimer.singleShot(0, self, self.close)
             return
         if context is None or self._scan_import_shutdown_in_progress():
             return
@@ -2175,7 +2176,7 @@ class MainWindow(QMainWindow):
     def _resume_close_after_ct400_operation(self):
         if self._pending_ct400_operation_close and self._ct400_operation_state is CT400OperationState.IDLE:
             self._pending_ct400_operation_close = False
-            QTimer.singleShot(0, self.close)
+            QTimer.singleShot(0, self, self.close)
 
     def _is_current_ct400_connection_callback(self, token: int | None, device: AbstractCT400 | None) -> bool:
         return (token is None or token == self._ct400_connection_operation_token) and (
@@ -2582,7 +2583,7 @@ class MainWindow(QMainWindow):
 
     def _resume_close_after_camera_lifecycle_if_ready(self):
         if self._pending_camera_lifecycle_close and not self._camera_lifecycle_busy():
-            QTimer.singleShot(0, self.close)
+            QTimer.singleShot(0, self, self.close)
 
     def _create_camera_error_placeholder(self, message: str) -> QWidget:
         """Helper to create a consistent placeholder for camera errors."""
@@ -2744,7 +2745,7 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _schedule_camera_retirement(self):
-        QTimer.singleShot(0, self._finish_camera_retirement)
+        QTimer.singleShot(0, self, self._finish_camera_retirement)
 
     @Slot()
     def _finish_camera_retirement(self):
@@ -2803,6 +2804,7 @@ class MainWindow(QMainWindow):
         if self._shutdown_complete:
             event.accept()
             return
+        self.plot_widget.prepare_shutdown()
         # A paused/checkpoint campaign still owns the scan panel even if no scan
         # thread exists. Defer all native cleanup until its final record is
         # committed and the CT400 reservation is released.
@@ -2825,10 +2827,19 @@ class MainWindow(QMainWindow):
             self._shutdown_panels_requested = True
             self._save_ui_preferences()
             self.histogram_control.shutdown_complete.connect(self._resume_close_after_monitor_retirement)
+            self.plot_widget.shutdown_complete.connect(self._resume_close_after_monitor_retirement)
+            self.plot_widget.shutdown_failed.connect(self._report_matlab_shutdown_failure)
             self._cleanup_shutdown_panel_workers()
         if not self.histogram_control.shutdown_finished:
             event.ignore()
             self.statusBar().showMessage("Waiting for power monitor worker retirement…", 0)
+            return
+        if not self.plot_widget.shutdown_finished:
+            event.ignore()
+            if self.plot_widget.matlab_engine_manager.state is MatlabEngineState.SHUTDOWN_FAILED:
+                self.statusBar().showMessage("MATLAB shutdown failed; native ownership is retained.", 0)
+            else:
+                self.statusBar().showMessage("Waiting for MATLAB export/startup and Engine cleanup…", 0)
             return
         self._cleanup_cameras()
         if not self._camera_cleanup_complete:
@@ -2956,7 +2967,11 @@ class MainWindow(QMainWindow):
     @Slot()
     def _resume_close_after_monitor_retirement(self):
         if self._shutdown_requested and not self._shutdown_complete:
-            QTimer.singleShot(0, self.close)
+            QTimer.singleShot(0, self, self.close)
+
+    @Slot(str)
+    def _report_matlab_shutdown_failure(self, error: str):
+        self.statusBar().showMessage(f"MATLAB shutdown failed: {error}. Native ownership is retained.", 0)
 
     def _cleanup_shutdown_panel_workers(self) -> None:
         """Release panel worker resources before stopping cameras."""
@@ -3042,32 +3057,32 @@ class MainWindow(QMainWindow):
     def _resume_close_after_scan_export(self) -> None:
         if self._pending_scan_export_close:
             self._pending_scan_export_close = False
-            QTimer.singleShot(0, self.close)
+            QTimer.singleShot(0, self, self.close)
 
     @Slot()
     def _resume_close_after_power_monitor_export(self) -> None:
         if self._pending_power_monitor_export_close:
             self._pending_power_monitor_export_close = False
-            QTimer.singleShot(0, self.close)
+            QTimer.singleShot(0, self, self.close)
 
     @Slot()
     def _resume_close_after_edfa(self) -> None:
         if self._pending_edfa_close:
             self._pending_edfa_close = False
-            QTimer.singleShot(0, self.close)
+            QTimer.singleShot(0, self, self.close)
 
     @Slot()
     def _resume_close_after_pm5020(self) -> None:
         if self._pending_pm5020_close:
             self._pending_pm5020_close = False
-            QTimer.singleShot(0, self.close)
+            QTimer.singleShot(0, self, self.close)
 
     @Slot()
     def _resume_close_after_scan(self):
         """Resume a deferred close on the GUI thread after scan cleanup."""
         if getattr(self, "_pending_scan_close", False):
             self._pending_scan_close = False
-            QTimer.singleShot(0, self.close)
+            QTimer.singleShot(0, self, self.close)
 
     def _connect_signals(self):
         """Connects signals between different components of the application."""

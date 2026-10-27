@@ -95,7 +95,7 @@ def test_camera_init_defers_cleanup_until_last_thread_finished(qtbot, monkeypatc
     monkeypatch.setattr(
         main_window_module.QTimer,
         "singleShot",
-        lambda delay, callback: scheduled.append((delay, callback)),
+        lambda delay, *args: scheduled.append((delay, args[-1])),
     )
 
     event = QCloseEvent()
@@ -168,7 +168,7 @@ def test_simulated_camera_result_during_pending_close_is_cleaned(qtbot, monkeypa
     monkeypatch.setattr(
         main_window_module.QTimer,
         "singleShot",
-        lambda delay, callback: scheduled.append((delay, callback)),
+        lambda delay, *args: scheduled.append((delay, args[-1])),
     )
     window.show()
     assert not window.close()

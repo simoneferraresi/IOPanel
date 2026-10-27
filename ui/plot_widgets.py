@@ -673,7 +673,7 @@ class PowerMonitorTraceWidget(QWidget):
         self.export_idle.emit()
         if self._pending_power_monitor_export_close:
             self._pending_power_monitor_export_close = False
-            QTimer.singleShot(0, self.close)
+            QTimer.singleShot(0, self, self.close)
 
     @override
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
@@ -1311,6 +1311,8 @@ class PlotWidget(QWidget):
     open_scan_requested = Signal()
     add_scan_requested = Signal()
     scan_export_idle = Signal()
+    shutdown_complete = Signal()
+    shutdown_failed = Signal(str)
 
     def __init__(self, shared_settings, parent: QWidget | None = None, settings: AppSettings | None = None):
         super().__init__(parent)
@@ -1348,6 +1350,7 @@ class PlotWidget(QWidget):
         # We'll create the thread and worker on-demand when saving to .fig
         self.matlab_save_thread: QThread | None = None
         self.matlab_save_worker: MatlabSaveWorker | None = None
+        self._fig_engine_lease: QThread | None = None
         # --- End Worker Thread Setup ---
 
         self.matlab_engine_manager = MatlabEngineManager(
@@ -1358,9 +1361,14 @@ class PlotWidget(QWidget):
         self.matlab_engine_manager.ready.connect(self._on_matlab_engine_ready)
         self.matlab_engine_manager.startup_failed.connect(self._on_matlab_engine_startup_failed)
         self.matlab_engine_manager.state_changed.connect(self._on_matlab_engine_state_changed)
+        self.matlab_engine_manager.shutdown_complete.connect(self._finish_cleanup_if_ready)
+        self.matlab_engine_manager.shutdown_failed.connect(self.shutdown_failed)
         self._pending_matlab_fig: tuple[PreparedMatlabFigPayload | str, str, str, str, str] | None = None
         self._matlab_fig_retry_count = 0
         self._cleaned_up = False
+        self._matlab_shutdown_requested = False
+        self._cleanup_complete = False
+        self._pending_cleanup_widget_close = False
         self._matlab_save_thread_finished.connect(
             self._handle_matlab_save_thread_finished, Qt.ConnectionType.QueuedConnection
         )
@@ -1733,15 +1741,21 @@ class PlotWidget(QWidget):
         self.cursor_label.setVisible(False)
 
     def schedule_matlab_prewarm(self) -> None:
+        if self._matlab_shutdown_requested:
+            return
         self.matlab_engine_manager.schedule_prewarm()
 
     @Slot(object)
     def _on_matlab_engine_state_changed(self, state: MatlabEngineState) -> None:
+        if self._matlab_shutdown_requested:
+            return
         if state is MatlabEngineState.STARTING and self._pending_matlab_fig is None:
             self._set_matlab_status("MATLAB Starting…", persistent=True)
 
     @Slot()
     def _on_matlab_engine_ready(self) -> None:
+        if self._matlab_shutdown_requested:
+            return
         self._set_matlab_status("MATLAB Ready")
         self._status_clear_timer.start(self._MATLAB_STATUS_TIMEOUT_MS)
         if self._pending_matlab_fig is not None:
@@ -1750,6 +1764,8 @@ class PlotWidget(QWidget):
     @Slot(str)
     def _on_matlab_engine_startup_failed(self, error: str) -> None:
         logger.warning("MATLAB background startup failed: %s", error)
+        if self._matlab_shutdown_requested:
+            return
         if self._pending_matlab_fig is None:
             self._set_matlab_status("MATLAB Start Failed")
             self._status_clear_timer.start(self._MATLAB_STATUS_TIMEOUT_MS)
@@ -1758,7 +1774,11 @@ class PlotWidget(QWidget):
 
     def _start_pending_matlab_fig(self) -> None:
         request = self._pending_matlab_fig
-        if request is None or self.matlab_engine_manager.state is not MatlabEngineState.READY:
+        if (
+            self._matlab_shutdown_requested
+            or request is None
+            or self.matlab_engine_manager.state is not MatlabEngineState.READY
+        ):
             return
 
         payload, fig_path, title, xlabel, ylabel = request
@@ -1766,14 +1786,19 @@ class PlotWidget(QWidget):
         if previous_thread is not None and shiboken6.isValid(previous_thread) and previous_thread.isRunning():
             return
 
+        engine = self.matlab_engine_manager.acquire_engine()
+        if engine is None:
+            return
+
         self._set_matlab_status(f"Saving {Path(fig_path).name}…")
         thread = QThread(self)
         worker = MatlabSaveWorker(
-            shared_engine=self.matlab_engine_manager.engine,
+            shared_engine=engine,
             prepared_payload=payload if isinstance(payload, PreparedMatlabFigPayload) else None,
         )
         self.matlab_save_thread = thread
         self.matlab_save_worker = worker
+        self._fig_engine_lease = thread
         worker.moveToThread(thread)
         worker.finished_saving.connect(self._handle_matlab_save_finished)
         worker.engine_unhealthy.connect(self._handle_matlab_engine_unhealthy)
@@ -1817,6 +1842,15 @@ class PlotWidget(QWidget):
             self.matlab_save_thread = None
         if self.matlab_save_worker is worker:
             self.matlab_save_worker = None
+        if self._fig_engine_lease is thread:
+            self._fig_engine_lease = None
+            self.matlab_engine_manager.release_engine()
+        if self._cleaned_up:
+            if self._pending_matlab_fig is not None:
+                self._pending_matlab_fig = None
+                self.pending_saves = max(0, self.pending_saves - 1)
+            self._finish_cleanup_if_ready()
+            return
         if (
             not self._cleaned_up
             and self._pending_matlab_fig is not None
@@ -1826,6 +1860,9 @@ class PlotWidget(QWidget):
 
     @Slot(str)
     def _handle_matlab_engine_unhealthy(self, error: str) -> None:
+        if self._matlab_shutdown_requested:
+            logger.error("MATLAB Engine health check failed during shutdown: %s", error)
+            return
         self.matlab_engine_manager.engine_unresponsive(RuntimeError(error))
         if self._matlab_fig_retry_count >= 1:
             self._finish_pending_matlab_fig_failure(f"FIG: MATLAB Engine remained unresponsive: {error}")
@@ -1845,6 +1882,8 @@ class PlotWidget(QWidget):
         self._check_all_saves_done()
 
     def _queue_matlab_fig(self, request: tuple[PreparedMatlabFigPayload | str, str, str, str, str]) -> None:
+        if self._matlab_shutdown_requested:
+            return
         if not self.matlab_engine_manager.available:
             self.error_list.append("FIG: MATLAB Engine support is not available.")
             return
@@ -2522,7 +2561,7 @@ class PlotWidget(QWidget):
         self.scan_export_idle.emit()
         if self._pending_export_widget_close:
             self._pending_export_widget_close = False
-            QTimer.singleShot(0, self.close)
+            QTimer.singleShot(0, self, self.close)
 
     @Slot(str, bool, str)
     def _handle_matlab_save_finished(self, filetype: str, success: bool, message_or_filename: str):
@@ -2550,7 +2589,9 @@ class PlotWidget(QWidget):
             return
         self._update_save_button_state()
         self._export_measurement = None
-        if not self.matlab_status_label.text() or "Saving" not in self.matlab_status_label.text():
+        if not self._matlab_shutdown_requested and (
+            not self.matlab_status_label.text() or "Saving" not in self.matlab_status_label.text()
+        ):
             self._status_clear_timer.start(self._STATUS_CLEAR_TIMEOUT_MS)
         if getattr(self, "_completion_reported", False):
             return
@@ -2589,44 +2630,63 @@ class PlotWidget(QWidget):
     def cleanup(self):
         if self._cleaned_up:
             return
+        self.prepare_shutdown()
         self._cleaned_up = True
         self._crosshair_refresh_timer.stop()
         self._latest_mouse_position = None
         logger.debug("PlotWidget cleanup: Cleaning up resources.")
         self._status_clear_timer.stop()
         thread = self.matlab_save_thread
-        worker = self.matlab_save_worker
-        try:
-            if thread is not None and shiboken6.isValid(thread) and thread.isRunning():
-                logger.info("PlotWidget close: Stopping active MATLAB save worker thread.")
-                if worker is not None and shiboken6.isValid(worker):
-                    QMetaObject.invokeMethod(
-                        worker,
-                        "stop_worker",
-                        Qt.ConnectionType.QueuedConnection,
-                    )
-                thread.quit()
-                if not thread.wait(self._THREAD_WAIT_TIMEOUT_MS) and shiboken6.isValid(thread) and thread.isRunning():
-                    logger.warning("MATLAB save thread did not quit gracefully on PlotWidget close. Terminating.")
-                    thread.terminate()
-                    thread.wait()
-        except Exception:
-            logger.exception("Could not fully stop the MATLAB save thread during PlotWidget cleanup.")
-        finally:
-            if self.matlab_save_thread is thread:
-                self.matlab_save_thread = None
-            if self.matlab_save_worker is worker:
-                self.matlab_save_worker = None
-            self.matlab_engine_manager.shutdown()
+        if thread is None or not shiboken6.isValid(thread):
+            self.matlab_save_thread = None
+            self.matlab_save_worker = None
+            if self._fig_engine_lease is not None:
+                self._fig_engine_lease = None
+                self.matlab_engine_manager.release_engine()
+            if self._pending_matlab_fig is not None:
+                self._pending_matlab_fig = None
+                self.pending_saves = max(0, self.pending_saves - 1)
+        # An active FIG operation finishes naturally. Its lease blocks engine
+        # disposal until the native thread retirement callback releases it.
+        self._finish_cleanup_if_ready()
+
+    def prepare_shutdown(self) -> None:
+        """Latch close even while other instrument owners delay final cleanup."""
+        if self._matlab_shutdown_requested:
+            return
+        self._matlab_shutdown_requested = True
+        self._closing_for_export = True
+        self._status_clear_timer.stop()
+        self.matlab_engine_manager.shutdown()
+
+    @property
+    def shutdown_finished(self) -> bool:
+        return self._cleanup_complete
+
+    @Slot()
+    def _finish_cleanup_if_ready(self) -> None:
+        if not self._cleaned_up or self._cleanup_complete:
+            return
+        if self.matlab_save_thread is not None or not self.matlab_engine_manager.shutdown_finished:
+            return
+        self._cleanup_complete = True
+        self.shutdown_complete.emit()
+        if self._pending_cleanup_widget_close:
+            QTimer.singleShot(0, self, self.close)
 
     @override
     def closeEvent(self, event: QtGui.QCloseEvent):
+        self.prepare_shutdown()
         if self.scan_export_busy:
             self._pending_export_widget_close = True
             self._closing_for_export = True
             event.ignore()
             return
+        self._pending_cleanup_widget_close = True
         self.cleanup()
+        if not self.shutdown_finished:
+            event.ignore()
+            return
         super().closeEvent(event)
 
 
