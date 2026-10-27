@@ -117,6 +117,7 @@ from ui.control_panel import (
 from ui.log_console import LogConsole
 from ui.plot_widgets import HistogramWidget, PlotWidget, PowerMonitorTraceWidget
 from ui.pm5020_panel import PM5020Panel
+from ui.shg_synchronized_panel import SimulatedSHGPanel
 
 logger = logging.getLogger("LabApp.main_window")
 
@@ -715,6 +716,12 @@ class MainWindow(QMainWindow):
         that depends on the CT400.
         """
         logger.info(f"CT400 initialization finished. Received device: {type(device)}")
+        if device is not self.ct400_device and any(
+            item.resource is DeviceResource.CT400 and item.owner == "synchronized-acquisition"
+            for item in self.device_lease_registry.snapshot()
+        ):
+            self._defer_ct400_device_replacement(device)
+            return
         if device is not self.ct400_device and self._ct400_operation_state in (
             CT400OperationState.CONNECTING,
             CT400OperationState.DISCONNECTING,
@@ -832,7 +839,11 @@ class MainWindow(QMainWindow):
 
     def _apply_pending_ct400_device_replacement(self):
         replacement = self._pending_ct400_device_replacement
-        if replacement is None or self._ct400_operation_state is not CT400OperationState.IDLE:
+        if (
+            replacement is None
+            or self._ct400_operation_state is not CT400OperationState.IDLE
+            or self.device_lease_registry.snapshot()[0].owner is not None
+        ):
             return
         if self._ct400_device_has_unresolved_laser_state():
             self._defer_ct400_device_replacement(replacement)
@@ -1255,6 +1266,8 @@ class MainWindow(QMainWindow):
         self.edfa_panel.connection_status_changed.connect(self._on_edfa_connection_status_changed)
         self.edfa_panel.observations_changed.connect(self._on_edfa_observations_changed)
         self.tab_widget.addTab(self.edfa_panel, "IPG EDFA")
+        self.shg_tab = SimulatedSHGPanel(self)
+        self.tab_widget.addTab(self.shg_tab, "SHG (Simulation)")
 
         self.setStatusBar(QStatusBar())
         self.edfa_observations_status_label = QLabel(
@@ -2924,6 +2937,12 @@ class MainWindow(QMainWindow):
 
     def _defer_close_for_active_work(self, event: QtGui.QCloseEvent) -> bool:
         """Defer native cleanup until owners and active tasks finish, in original priority."""
+        shg = getattr(self, "shg_tab", None)
+        if shg is not None and shg.active:
+            event.ignore()
+            self.statusBar().showMessage("Cancelling synchronized simulation; waiting for both owner cleanups…", 0)
+            shg.request_shutdown()
+            return True
         edfa_panel = getattr(self, "edfa_panel", None)
         if edfa_panel is not None and not edfa_panel.shutdown_finished:
             event.ignore()

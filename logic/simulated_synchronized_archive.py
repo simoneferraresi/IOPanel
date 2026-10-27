@@ -29,6 +29,8 @@ _PM_HEADER = (
 def archive_simulated_synchronized_capture(
     capture: SimulatedSynchronizedCapture,
     destination_root: str | Path,
+    *,
+    milestone: str = "M4-E1",
 ) -> Path:
     """Write an immutable, checksum-linked run directory; never overwrite.
 
@@ -37,13 +39,15 @@ def archive_simulated_synchronized_capture(
     plausible completed run. Save the processed CT400 data independently of
     the original PM5020 native-rate samples.
     """
+    if milestone not in {"M4-E1", "M4-E2B"}:
+        raise ValueError("Unknown simulator-only M4 milestone")
     if not capture.simulated or capture.timing_qualified or capture.aligned.timing_qualified:
         raise ValueError("M4-E1 archive supports simulated, timing-unqualified captures only")
     root = Path(destination_root)
     root.mkdir(parents=True, exist_ok=True)
     if not root.is_dir():
         raise NotADirectoryError(str(root))
-    run_id = f"sim_m4e1_{uuid4().hex}"
+    run_id = f"sim_{milestone.lower().replace('-', '')}_{uuid4().hex}"
     target = root / run_id
     stage = Path(tempfile.mkdtemp(prefix=".m4e1_staging_", dir=root))
     try:
@@ -85,7 +89,7 @@ def archive_simulated_synchronized_capture(
         }
         metadata = {
             "schema_version": 1,
-            "milestone": "M4-E1",
+            "milestone": milestone,
             "run_id": run_id,
             "simulated": True,
             "timing_qualified": False,
