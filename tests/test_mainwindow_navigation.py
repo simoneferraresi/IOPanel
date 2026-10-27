@@ -27,6 +27,7 @@ def test_fresh_window_uses_monitor_scan_alignment_order(qtbot, monkeypatch, tmp_
         "Auto Alignment",
         "Thorlabs PM5020",
         "IPG EDFA",
+        "SHG (Simulation)",
     ]
     assert window.tab_widget.currentIndex() == 0
     assert window.tab_widget.widget(0) is window.second_tab
@@ -34,6 +35,7 @@ def test_fresh_window_uses_monitor_scan_alignment_order(qtbot, monkeypatch, tmp_
     assert window.tab_widget.widget(2) is window.alignment_tab
     assert window.tab_widget.widget(3) is window.pm5020_panel
     assert window.tab_widget.widget(4) is window.edfa_panel
+    assert window.tab_widget.widget(5) is window.shg_tab
     assert not window.edfa_panel.task.worker_thread.isRunning()
     window.close()
 
