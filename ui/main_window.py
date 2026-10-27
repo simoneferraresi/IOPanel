@@ -1996,9 +1996,7 @@ class MainWindow(QMainWindow):
         # recovery-disconnect route. A synchronized lease never authorizes
         # ordinary CT400 connect/disconnect dispatch.
         recovery_disconnect = (
-            not checked
-            and self._ct400_scan_state_uncertain
-            and self._ct400_operation_lease is not None
+            not checked and self._ct400_scan_state_uncertain and self._ct400_operation_lease is not None
         )
         if (
             not (recovery_disconnect or self._ct400_recovery_disconnect_completed)
