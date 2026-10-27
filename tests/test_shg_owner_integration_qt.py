@@ -91,3 +91,32 @@ def test_existing_pm_lease_denies_connect_without_constructing_backend(qtbot):
     finally:
         panel.request_shutdown()
         qtbot.waitUntil(lambda: panel.shutdown_finished, timeout=5000)
+
+def test_failed_pm_close_quarantines_lease_instead_of_freeing_for_sync(qtbot):
+    from logic.device_lease_registry import LeaseState
+
+    class FailingClose(DummyPM5020):
+        def close(self):
+            raise RuntimeError("simulated close failure")
+
+    registry = DeviceLeaseRegistry()
+    panel = PM5020Panel(
+        worker=PM5020MonitorWorker(simulator_factory=FailingClose),
+        lease_registry=registry,
+    )
+    qtbot.addWidget(panel)
+    try:
+        panel.request_connect()
+        qtbot.waitUntil(lambda: panel._backend_state is PM5020State.IDLE, timeout=3500)
+        panel.request_disconnect()
+        qtbot.waitUntil(
+            lambda: registry.snapshot()[1].state is LeaseState.UNCERTAIN,
+            timeout=3000,
+        )
+        assert _owner(registry, DeviceResource.PM5020) == "pm5020-owner-worker"
+        with pytest.raises(DeviceBusyError):
+            registry.acquire("shg", (DeviceResource.CT400, DeviceResource.PM5020))
+    finally:
+        panel.request_shutdown()
+        qtbot.waitUntil(lambda: panel.shutdown_finished, timeout=5000)
+    assert registry.snapshot()[1].state is LeaseState.UNCERTAIN
