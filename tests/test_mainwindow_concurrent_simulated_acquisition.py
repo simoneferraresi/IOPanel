@@ -1127,8 +1127,10 @@ def test_shg_simulated_queued_owner_handoff_archives_and_releases(qtbot, monkeyp
         with pytest.raises(DeviceBusyError):
             window.device_lease_registry.acquire("calibration", (DeviceResource.CT400,))
         qtbot.waitUntil(
-            lambda: bool(window.ct400_device.external_synchronization_calls)
-            and window.ct400_device.external_synchronization_calls[-1] is Enable.ENABLE,
+            lambda: (
+                bool(window.ct400_device.external_synchronization_calls)
+                and window.ct400_device.external_synchronization_calls[-1] is Enable.ENABLE
+            ),
             timeout=2000,
         )
 
