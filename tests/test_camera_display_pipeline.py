@@ -146,6 +146,7 @@ def test_panel_shutdown_drops_pending_frame_and_stops_conversion_thread(qtbot):
     worker.submit_frame(np.zeros((964, 1292), dtype=np.uint8))
 
     panel.close()
+    qtbot.waitUntil(lambda: panel._conversion_shutdown_complete)
 
     assert thread is not None and not thread.isRunning()
     assert worker._latest_frame is None

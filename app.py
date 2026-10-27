@@ -377,6 +377,13 @@ def main() -> int:
         window.show()
         if args.smoke_test:
 
+            def close_smoke_with_code(code: int) -> None:
+                # app.exit() must follow accepted asynchronous window close;
+                # otherwise its event loop abandons worker retirement callbacks.
+                app.setQuitOnLastWindowClosed(False)
+                window.shutdown_complete.connect(lambda: QTimer.singleShot(0, lambda: app.exit(code)))
+                window.close()
+
             def close_when_initialized():
                 if not window._lazy_init_started or window._init_tasks:
                     QTimer.singleShot(100, close_when_initialized)
@@ -387,8 +394,7 @@ def main() -> int:
                     logger.info("SMOKE_SIMULATION_READY cameras=%d/%d", actual_cameras, expected_cameras)
                     if actual_cameras != expected_cameras:
                         logger.error("Smoke camera initialization incomplete.")
-                        window.close()
-                        app.exit(4)
+                        close_smoke_with_code(4)
                         return
                     panels = list(window.camera_panels.values())
                     if expected_cameras:
@@ -401,8 +407,7 @@ def main() -> int:
                             logger.info("SMOKE_CAMERA_FRAME_OK screenshot=%s", image_path)
                         else:
                             logger.error("Smoke camera frame could not be saved.")
-                            window.close()
-                            app.exit(5)
+                            close_smoke_with_code(5)
                             return
                     window.close()
 

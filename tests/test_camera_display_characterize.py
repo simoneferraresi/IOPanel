@@ -833,6 +833,7 @@ def test_simulated_error_cleanup_stops_conversion_thread(qtbot):
     thread = panel.conversion_thread
     camera.close()
     panel.close()
+    qtbot.waitUntil(lambda: panel._conversion_shutdown_complete)
     assert thread is not None and not thread.isRunning()
 
 

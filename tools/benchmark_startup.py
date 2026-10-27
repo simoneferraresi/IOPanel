@@ -40,7 +40,7 @@ def characterize(
 
     app_imported = time.perf_counter()
 
-    from PySide6.QtCore import QEvent, QObject, QSettings, QTimer
+    from PySide6.QtCore import QCoreApplication, QEvent, QEventLoop, QObject, QSettings, QTimer
     from PySide6.QtWidgets import QApplication
 
     from config_model import InstrumentsConfig
@@ -66,7 +66,7 @@ def characterize(
     def maybe_done() -> None:
         required = ("first_qt_callback", "first_paint_event", "post_paint_callback", "deferred_init_callback")
         if all(key in events for key in required):
-            app.quit()
+            window.close()
 
     def deferred_init_suppressed(_window: object) -> None:
         events["deferred_init_callback"] = time.perf_counter()
@@ -92,7 +92,7 @@ def characterize(
     def timeout() -> None:
         nonlocal timed_out
         timed_out = True
-        app.quit()
+        window.close()
 
     with (
         tempfile.TemporaryDirectory(prefix="iopanel-startup-") as temporary,
@@ -108,6 +108,7 @@ def characterize(
         config = app_module.AppConfig(instruments=InstrumentsConfig(ct400_backend="simulation"), cameras={})
         construction_started = time.perf_counter()
         window = app_module.MainWindow(config, settings=settings)
+        window.shutdown_complete.connect(lambda: QTimer.singleShot(0, app.quit))
         constructed = time.perf_counter()
         probe = PaintProbe(window)
         window.installEventFilter(probe)
@@ -126,8 +127,23 @@ def characterize(
         finally:
             watchdog.stop()
             window.removeEventFilter(probe)
+            retirement = QEventLoop()
+            deadline = QTimer()
+            deadline.setSingleShot(True)
+            deadline.timeout.connect(retirement.quit)
+            window.histogram_control.shutdown_complete.connect(retirement.quit)
             window.close()
+            if not window.histogram_control.shutdown_finished:
+                deadline.start(5000)
+                retirement.exec()
+                deadline.stop()
+            if not window.histogram_control.shutdown_finished:
+                raise RuntimeError("Startup probe monitor worker did not retire")
+            if not window.close():
+                raise RuntimeError("Startup probe window did not accept close after retirement")
+            window.deleteLater()
             app.processEvents()
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
     required = ("first_qt_callback", "first_paint_event", "post_paint_callback", "deferred_init_callback")
     if timed_out or any(name not in events for name in required):

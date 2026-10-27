@@ -554,6 +554,7 @@ class CameraPanel(QFrame):
     auto_operation_finished = Signal()
     status_changed = Signal()
     _display_image_ready = Signal()
+    conversion_shutdown_complete = Signal()
 
     def __init__(
         self,
@@ -612,6 +613,8 @@ class CameraPanel(QFrame):
         self.conversion_thread: QThread | None = None
         self.conversion_worker: ImageConversionWorker | None = None
         self._conversion_shutdown_complete = False
+        self._conversion_shutdown_requested = False
+        self._conversion_close_pending = False
 
         self._last_resize_time: float = 0.0
         self._resize_timer = QTimer(self)
@@ -710,6 +713,8 @@ class CameraPanel(QFrame):
         Args:
             camera: The successfully initialized `VimbaCam` instance.
         """
+        if self._panel_closing:
+            return
         if self.camera is not None:
             logger.warning(f"CameraPanel for {self._panel_title} is already assigned a camera.")
             return
@@ -829,6 +834,7 @@ class CameraPanel(QFrame):
             lambda: logger.info(f"Conversion thread started for {self._panel_title}.")
         )
         retire_worker_on_thread_finish(self.conversion_thread, self.conversion_worker)
+        self.conversion_thread.finished.connect(self._finish_conversion_shutdown)
 
         # Start the thread
         self.conversion_thread.start()
@@ -1670,14 +1676,17 @@ class CameraPanel(QFrame):
         logger.debug(f"Closing CameraPanel for {self._panel_title}")
         self.prepare_camera_shutdown()
         self._teardown_conversion_pipeline()
-
+        if not self._conversion_shutdown_complete:
+            self._conversion_close_pending = True
+            event.ignore()
+            return
         super().closeEvent(event)
 
     def _teardown_conversion_pipeline(self):
         """Disconnect and stop the conversion consumer once, even after thread exit."""
-        if self._conversion_shutdown_complete:
+        if self._conversion_shutdown_requested:
             return
-        self._conversion_shutdown_complete = True
+        self._conversion_shutdown_requested = True
         camera = self.camera
         worker = self.conversion_worker
         thread = self.conversion_thread
@@ -1690,6 +1699,17 @@ class CameraPanel(QFrame):
             if worker is not None and shiboken6.isValid(worker):
                 worker.stop()
             thread.quit()
-            if not thread.wait(3000):
-                logger.warning("Conversion thread for %s did not close gracefully.", self._panel_title)
+            return
+        self._finish_conversion_shutdown()
+
+    @Slot()
+    def _finish_conversion_shutdown(self):
+        # Connected after the retirement helper's GUI-thread join. The panel
+        # retains both wrappers until no native conversion can still use them.
+        if self._conversion_shutdown_complete:
+            return
+        self._conversion_shutdown_complete = True
         self.conversion_worker = None
+        self.conversion_shutdown_complete.emit()
+        if self._conversion_close_pending:
+            QTimer.singleShot(0, self.close)

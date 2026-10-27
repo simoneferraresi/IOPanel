@@ -115,6 +115,7 @@ def test_auto_start_run_false_keeps_worker_as_service(qtbot):
     task.start()
     qtbot.waitUntil(lambda: thread_started.count() == 1, timeout=2000)
     assert worker.run_count == 0
+
     assert started.count() == 0
 
     # A queued service slot proves the event loop is running without invoking
@@ -127,3 +128,41 @@ def test_auto_start_run_false_keeps_worker_as_service(qtbot):
     assert python_ident != threading.get_ident()
     qtbot.waitUntil(lambda: thread_finished.count() == 1, timeout=2000)
     assert worker.run_count == 0
+
+
+def test_stop_never_waits_for_blocked_worker_and_keeps_owner(qtbot, monkeypatch):
+    gate = threading.Event()
+    worker = ThreadProbeWorker(gate)
+    task = TaskRunner(worker)
+    entered = QSignalSpy(worker.entered)
+    done = QSignalSpy(task.worker_thread.finished)
+    task.start()
+    qtbot.waitUntil(lambda: entered.count() == 1)
+
+    def forbidden_wait(*_args):
+        raise AssertionError("TaskRunner.stop must not wait for a native operation")
+
+    monkeypatch.setattr(task.worker_thread, "wait", forbidden_wait)
+    try:
+        task.stop()
+        task.stop()
+        assert task.worker_thread.isRunning()
+        assert task.parent() is not None
+        assert done.count() == 0
+    finally:
+        monkeypatch.undo()
+        gate.set()
+        qtbot.waitUntil(lambda: done.count() == 1)
+
+
+def test_stop_before_start_completes_once_and_prevents_late_run(qtbot):
+    worker = ThreadProbeWorker()
+    task = TaskRunner(worker)
+    stopped = QSignalSpy(task.stopped)
+    task.stop()
+    task.stop()
+    task.start()
+    assert stopped.count() == 1
+    assert not task.worker_thread.isRunning()
+    assert worker.run_count == 0
+    task.deleteLater()

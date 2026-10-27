@@ -114,6 +114,7 @@ def _close_window_and_check_cleanup(window, qtbot):
     ct400_task = window.ct400_task
 
     window.close()
+    qtbot.waitUntil(lambda: window._shutdown_complete)
 
     assert all(frame_thread is not None for frame_thread in frame_threads)
     qtbot.waitUntil(lambda: all(not frame_thread.is_alive() for frame_thread in frame_threads), timeout=1500)
@@ -126,7 +127,9 @@ def _close_window_and_check_cleanup(window, qtbot):
             pass
     for task in window._init_tasks:
         assert _runner_stopped(task)
-    assert all(not panel.conversion_thread.isRunning() for panel in panels)
+    assert all(
+        (not shiboken6.isValid(panel.conversion_thread) or not panel.conversion_thread.isRunning()) for panel in panels
+    )
     window.close()
     assert not window.cameras
     assert all(not frame_thread.is_alive() for frame_thread in frame_threads)
@@ -296,15 +299,16 @@ def test_mainwindow_closes_each_panel_once_after_stopping_its_camera(qtbot, monk
     side = window.camera_panels["simulated-bottom"]
     window.close()
     window.close()
+    qtbot.waitUntil(lambda: window._shutdown_complete)
 
     assert observed == [
-        (top.camera_identifier, True, True, False),
-        (side.camera_identifier, True, True, False),
+        (top.camera_identifier, True, True, True),
+        (side.camera_identifier, True, True, True),
     ]
     assert not any(camera.is_streaming for camera in cameras.values())
     assert top._conversion_shutdown_complete and side._conversion_shutdown_complete
-    assert not top.conversion_thread.isRunning()
-    assert not side.conversion_thread.isRunning()
+    assert not shiboken6.isValid(top.conversion_thread) or not top.conversion_thread.isRunning()
+    assert not shiboken6.isValid(side.conversion_thread) or not side.conversion_thread.isRunning()
 
 
 def test_mainwindow_close_after_fig_thread_deletion_shuts_down_fake_matlab(qtbot, monkeypatch, tmp_path):
@@ -339,6 +343,7 @@ def test_mainwindow_close_after_fig_thread_deletion_shuts_down_fake_matlab(qtbot
 
     window.close()
     window.close()
+    qtbot.waitUntil(lambda: window._shutdown_complete)
 
     assert engine.quit_calls == 1
     assert window.plot_widget.matlab_save_thread is None
@@ -366,10 +371,15 @@ def test_camera_cleanup_attempts_peer_after_one_close_failure(qtbot, monkeypatch
     panels = list(window.camera_panels.values())
 
     window._cleanup_cameras()
+    qtbot.waitUntil(lambda: window._camera_cleanup_complete)
 
     assert attempts == [first.identifier, second.identifier]
     assert all(not camera._frame_thread for camera in (first, second))
-    assert all(panel.conversion_thread is not None and not panel.conversion_thread.isRunning() for panel in panels)
+    assert all(
+        panel.conversion_thread is not None
+        and (not shiboken6.isValid(panel.conversion_thread) or not panel.conversion_thread.isRunning())
+        for panel in panels
+    )
     window.close()
 
 

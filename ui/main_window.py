@@ -208,6 +208,7 @@ class MainWindow(QMainWindow):
     _piezo_init_task_finished = Signal(object)
     _init_task_thread_finished = Signal(object)
     _camera_recovery_thread_finished = Signal(str, object)
+    shutdown_complete = Signal()
 
     def __init__(self, config: AppConfig, parent=None, settings: AppSettings | None = None):
         """Initializes the MainWindow.
@@ -229,6 +230,8 @@ class MainWindow(QMainWindow):
         self.cameras: list[VimbaCam] = []
         self.camera_panels: dict[str, CameraPanel] = {}
         self._camera_cleanup_complete = False
+        self._camera_cleanup_requested = False
+        self._camera_shutdown_panels: list[CameraPanel] = []
         self._init_tasks: set[TaskRunner] = set()
         self._camera_recovery_tasks: dict[str, TaskRunner] = {}
         self._scan_import_task: TaskRunner | None = None
@@ -2697,60 +2700,58 @@ class MainWindow(QMainWindow):
     def _cleanup_cameras(self):
         if self._camera_cleanup_complete:
             return
-        self._camera_cleanup_complete = True
-        logger.info(f"Closing {len(self.cameras)} camera(s)...")
-        cameras_to_close = list(self.cameras)
-        panels_to_close = list(
-            dict.fromkeys([*self.camera_panels.values(), *self.camera_container.findChildren(CameraPanel)])
-        )
-
-        # Restore per-session camera settings and quiesce all panel work while
-        # the camera is still open, then stop every producer before consumers.
-        for panel in panels_to_close:
-            try:
+        if not self._camera_cleanup_requested:
+            self._camera_cleanup_requested = True
+            logger.info("Closing %d camera(s)...", len(self.cameras))
+            panels = list(
+                dict.fromkeys([*self.camera_panels.values(), *self.camera_container.findChildren(CameraPanel)])
+            )
+            self._camera_shutdown_panels = panels
+            for panel in panels:
+                panel.conversion_shutdown_complete.connect(self._schedule_camera_retirement)
                 panel.prepare_camera_shutdown()
-            except Exception:
-                logger.exception("Error preparing camera panel %s for shutdown", panel._panel_title)
-
-        for cam in cameras_to_close:
-            if cam is not None:
-                logger.debug(f"Closing camera: {cam.camera_name}")
+            # Every producer stops before any converter is asked to retire.
+            for camera in self.cameras:
                 try:
-                    # The camera's close() method handles stopping streaming etc.
-                    cam.close()
+                    camera.close()
                 except Exception:
-                    logger.exception(f"Error closing camera {cam.camera_name}")
+                    logger.exception("Error closing camera %s", camera.camera_name)
+            for panel in panels:
+                panel._teardown_conversion_pipeline()
 
-        # Camera callbacks and frame threads are now stopped. It is safe to
-        # disconnect and destroy each conversion consumer.
-        layout = self.camera_container.layout() if hasattr(self, "camera_container") else None
+        if any(not panel._conversion_shutdown_complete for panel in self._camera_shutdown_panels):
+            return
+
+        # No live converter remains. Only now may panel/native owners go away.
+        layout = self.camera_container.layout()
         if layout is not None:
             while layout.count():
                 item = layout.takeAt(0)
                 if item is None:
                     break
                 widget = item.widget()
-                if widget is not None:
-                    if isinstance(widget, CameraPanel):
-                        if widget not in panels_to_close:
-                            panels_to_close.append(widget)
-                    else:
-                        try:
-                            widget.close()
-                        except Exception:
-                            logger.exception("Error closing camera placeholder widget")
-                        widget.deleteLater()
-        for panel in panels_to_close:
-            try:
-                panel.close()
-            except Exception:
-                logger.exception("Error closing camera panel %s", panel._panel_title)
+                if widget is not None and not isinstance(widget, CameraPanel):
+                    widget.close()
+                    widget.deleteLater()
+        for panel in self._camera_shutdown_panels:
+            panel.close()
             panel.deleteLater()
-
+        self._camera_shutdown_panels.clear()
         self.cameras.clear()
         self.camera_panels.clear()
-
+        self._camera_cleanup_complete = True
         logger.info("Camera cleanup finished.")
+
+    @Slot()
+    def _schedule_camera_retirement(self):
+        QTimer.singleShot(0, self._finish_camera_retirement)
+
+    @Slot()
+    def _finish_camera_retirement(self):
+        if not self._camera_cleanup_complete:
+            self._cleanup_cameras()
+        if self._camera_cleanup_complete:
+            self._resume_close_after_monitor_retirement()
 
     def _disable_configured_ct400_input_for_shutdown(self) -> bool:
         """Apply the connection-level selected-input cleanup before close."""
@@ -2820,9 +2821,20 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Shutting down...", 0)
 
         # UI preferences must be saved before camera panels are removed.
-        self._save_ui_preferences()
-        self._cleanup_shutdown_panel_workers()
+        if not getattr(self, "_shutdown_panels_requested", False):
+            self._shutdown_panels_requested = True
+            self._save_ui_preferences()
+            self.histogram_control.shutdown_complete.connect(self._resume_close_after_monitor_retirement)
+            self._cleanup_shutdown_panel_workers()
+        if not self.histogram_control.shutdown_finished:
+            event.ignore()
+            self.statusBar().showMessage("Waiting for power monitor worker retirement…", 0)
+            return
         self._cleanup_cameras()
+        if not self._camera_cleanup_complete:
+            event.ignore()
+            self.statusBar().showMessage("Waiting for camera conversion to finish…", 0)
+            return
         self._disconnect_piezos_for_shutdown()
         self._release_ct400_for_shutdown()
         self._cleanup_vimbasystem()
@@ -2831,6 +2843,7 @@ class MainWindow(QMainWindow):
         self._finish_shutdown_ui()
         self._shutdown_complete = True
         event.accept()
+        self.shutdown_complete.emit()
         logger.info("MainWindow.closeEvent cleanup returned after %.2f s.", time.perf_counter() - close_started_at)
 
     def _defer_close_for_active_work(self, event: QtGui.QCloseEvent) -> bool:
@@ -2939,6 +2952,11 @@ class MainWindow(QMainWindow):
             return True
 
         return False
+
+    @Slot()
+    def _resume_close_after_monitor_retirement(self):
+        if self._shutdown_requested and not self._shutdown_complete:
+            QTimer.singleShot(0, self.close)
 
     def _cleanup_shutdown_panel_workers(self) -> None:
         """Release panel worker resources before stopping cameras."""
