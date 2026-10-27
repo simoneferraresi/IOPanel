@@ -2,7 +2,7 @@
 
 ## Decision
 
-**Hardware-independent source and frozen-package qualification passed for local candidate `4de5211351caa46fd3cfa0079866db35858c8348`. Phase E is not ready for integration yet.** Native MATLAB acceptance and physical CT400/Vimba acceptance remain unrun and require an authorized lab operator. The local hardening change has not reached GitHub or CI because automatic approval review rejected the source upload. Keep PRs #266–#268 as drafts and do not merge on the evidence in this report alone.
+**Hardware-independent source and frozen-package qualification passed for application candidate `4de5211351caa46fd3cfa0079866db35858c8348`. Phase E is not ready for integration yet.** The correction and associated reports were published after explicit authorization as successor draft PR #270. Its fresh CI is pending. Native MATLAB acceptance was conditionally authorized but not executed because online-license availability could not be verified without starting MATLAB or taking a license checkout. Physical CT400/Vimba acceptance remains unrun and unauthorized. Keep #266–#270 as drafts and do not merge on this evidence alone.
 
 This report describes the tested source SHA. The native acceptance runner added afterward is a local, plan-only checked tool and was not part of the tested application source commit.
 
@@ -66,13 +66,15 @@ Five offscreen captures per revision compared origin/main `63c0c4b` with the exa
 
 These small differences show no material startup regression in this offscreen measurement. The metric does not measure compositor presentation, camera throughput, idle CPU, or active instrument operations. Evidence: `output/phase-e-package-4de5211/startup-comparison.json`.
 
-## Native MATLAB acceptance — pending operator approval
+## Native MATLAB acceptance — blocked by license preflight
 
-The workstation has `C:\Program Files\MATLAB\R2024b\bin\matlab.exe`; read-only environment metadata reports MATLAB Engine 24.2.2. MATLAB R2024b Update 4 is recorded by the preceding E3 lab validation. The prepared native environment is the preserved lab `.venv` with Python 3.12.8 / MATLAB Engine 24.2.2 / MATLAB R2024b Update 4; execution must be launched from `.phase-e-worktree` so application imports resolve to the reviewed tree. MATLAB was **not launched**. No native FIG file was produced or reopened. Vendor calls, future cancellation semantics, license cleanup, and test-owned MATLAB PID exit remain unverified.
+The workstation has `C:\Program Files\MATLAB\R2024b\bin\matlab.exe`; read-only environment metadata reports MATLAB Engine 24.2.2 and R2024b Update 4. The lab `.venv` has Python 3.12.8 and Engine 24.2.2 but PySide6/Qt 6.11.2, so its MATLAB package and metadata were copied into the isolated worktree `.venv`, which remains on locked Python 3.12.8 / PySide6 6.12.0 / Qt 6.12.0. `import matlab.engine` and metadata checks succeeded there without starting MATLAB; the original lab `.venv` was not changed. Read-only CIM inventory found no existing MATLAB process.
 
-The added [native acceptance runner](../tools/matlab_lifecycle/native_fig_acceptance.py) defaults to plan-only and its `--help` and plan modes were checked without importing/starting MATLAB. Ruff and Pyright passed for the runner. The runner itself is new after source qualification; its native execution path is unvalidated. It requires `--execute`, `--confirm-native-matlab`, a fresh evidence directory, and an exact typed phrase. It runs the cases sequentially in separate children, records process ancestry/identity snapshots, event timestamps, startup cancellation, manager states, FIG thread retirement, Engine lease acquire/release, native quit entry/return and child exit. It applies a per-scenario observation deadline and never terminates processes. A deadline leaves the attributed test child/native owner running, records the pending state, and stops the sequence for operator-controlled recovery. Review the source and do a non-native plan review before anyone executes it.
+The installation reports `onlinelicensing`; no `lmutil` utility or other non-launch license-pool status query was available. That does not establish that a license checkout is available without interfering with users on other workstations. Per the conditional approval preflight, MATLAB was **not launched**. No native FIG file was produced or reopened. Vendor calls, future cancellation semantics, license cleanup, and test-owned MATLAB PID exit remain unverified.
 
-Suggested approved invocation (do not run without explicit operator approval for these cases):
+The [native acceptance runner](../tools/matlab_lifecycle/native_fig_acceptance.py) defaults to plan-only; `--help`, plan mode, and executable-path validation passed without starting MATLAB. Ruff and Pyright passed. This preflight found and fixed a runner gap: it now stops before the next case if a MATLAB process lacks confirmed child ancestry, has an executable outside the R2024b installation, or remains alive after its Python child exits. This updated runner has not yet been published or checked by app CI. Its native execution path remains unvalidated. It requires `--execute`, `--confirm-native-matlab`, a fresh evidence directory, and an exact typed phrase. It runs cases sequentially in separate children, records process ancestry/identity snapshots, event timestamps, startup cancellation, manager states, FIG thread retirement, Engine lease acquire/release, native quit entry/return and child exit. A deadline leaves the attributed test child/native owner running and stops the sequence for operator-controlled recovery; it never terminates processes.
+
+Approved command (conditional approval; do not execute until license availability is verified):
 
 ```powershell
 C:\Users\bellanca\Desktop\IOPanel\.venv\Scripts\python.exe tools\matlab_lifecycle\native_fig_acceptance.py --scenario all --execute --confirm-native-matlab --evidence-dir output\native-matlab-acceptance-<new-id> --deadline-minutes 20
@@ -85,6 +87,16 @@ The operator must type exactly `I approve native MATLAB Engine acceptance on thi
 The runner uses synthetic immutable arrays, isolated QSettings, and a standalone PlotWidget. It will not read or alter the operational lab config; call CT400, Vimba, piezo/stage, laser, EDFA, or scan/alignment code; change instrument settings; or terminate any MATLAB/Python process. It does not touch unrelated MATLAB sessions. It writes only to the explicitly chosen new evidence directory. If a child blocks, recovery is left to the operator and the lab's MATLAB/license procedure.
 
 Review each scenario's logs and supervisor evidence. Verify child return 0, orderly widget close, manager shutdown completion, worker retirement before quit, expected FIG values/labels/colors, and disappearance of only the MATLAB process attributed to that scenario. Existing/unrelated MATLAB sessions must remain untouched. A timeout is pending/failed evidence, not a pass; do not terminate an image-name match or claim cleanup from API return alone.
+
+Preflight verified the clean checkout SHA, published tree, MATLAB R2024b Update 4 and Engine 24.2.2 installation, isolated Python 3.12.8 / PySide6 6.12.0 / Qt 6.12.0 native environment, Engine import without startup, opt-in flag, plan-only behavior, no existing local MATLAB process, and the runner's synthetic-only standalone PlotWidget path. The test cannot construct MainWindow or call CT400, Vimba, piezo, EDFA, laser, scan, or alignment APIs. However, this installation uses online licensing; `lmutil` is absent and there is no available non-launch query to verify that 3–4 sequential checkouts will not affect other users. The conditional approval therefore does not permit execution yet.
+
+| Native scenario | Result |
+| --- | --- |
+| Close before startup | **Not executed** |
+| Normal FIG export/reopen | **Not executed** |
+| Close during startup | **Not executed** |
+| Rejected cancellation/late Engine | **Not executed** |
+| Close during FIG save | **Not executed** |
 
 ## Physical acceptance — pending lab operator and instrument availability
 
@@ -110,9 +122,9 @@ Physical acceptance must be additive evidence tied to the candidate SHA. Do not 
 
 ## Publication and integration status
 
-The connector attempted to upload the source blob for `logic/matlab_engine_manager.py` and the regression file `tests/test_matlab_engine_manager.py` to `simoneferraresi/IOPanel` for a draft hardening PR. Automatic approval review rejected both uploads because they disclose full source files to the external GitHub repository without trusted authorization for those exact payloads/destination. No alternative upload route was used. The commit remains local at `4de5211351caa46fd3cfa0079866db35858c8348`; it has no remote branch, PR, or CI result.
+The first publication attempt was rejected by automatic review because the source payloads lacked trusted authorization for that destination. After explicit user authorization, exact committed blobs were uploaded and matched their local Git blob SHAs. The new tree based on remote E3 `fae56c9d1fca574c089e0dacccf9d23e0195a6bb` exactly matches local deliverable tree `b9272cf5dc11e565dcde3f12a071bb1b08b60a33`. Successor commit `3246bd2d8ee7c7ba92bf80cb79cf656e37c703fa` is on `fix/phase-e3-finalizer-successor`; draft [PR #270](https://github.com/simoneferraresi/IOPanel/pull/270) targets #268's branch. The PR is open, mergeable, and draft. Its first workflow query returned no runs. The runner fail-closed hardening described above is a later local change and needs publication/CI.
 
-Latest inspected PR heads: #266 `87791a2bfdce30e630b35986930854a97ad389a0`; #267 `04cf3f64dbaf4f46402fc3c0fa92cb2d29e5218c`; #268 `fae56c9d1fca574c089e0dacccf9d23e0195a6bb`. All three were open, draft, and mergeable; no review submissions, inline threads, or comments were present. Historical CI runs on those heads passed. No remote branch update occurred during this qualification. They remain drafts. No PR was merged. No main branch, existing PR branch, physical device, or real MATLAB session was modified by this qualification.
+Latest inspected PR heads: #266 `87791a2bfdce30e630b35986930854a97ad389a0`; #267 `04cf3f64dbaf4f46402fc3c0fa92cb2d29e5218c`; #268 `fae56c9d1fca574c089e0dacccf9d23e0195a6bb`; #270 `3246bd2d8ee7c7ba92bf80cb79cf656e37c703fa`. They were open drafts; #270 became mergeable after indexing. No reviews, inline threads, or comments were present. Historical CI on #266–#268 passed; #270 fresh CI is pending. No PR was merged. No main branch, original Phase E branch, physical device, or real MATLAB session was modified.
 
 The original checkout's `config.ini` and untracked `config.lab.ini` remain unchanged. The final recommendation is **hold integration until the local hardening is reviewed and receives CI, and authorized operators provide native MATLAB plus the relevant physical device acceptances**. See [merge readiness](phase-e-merge-readiness-2026-10-27.md) for the tested sequencing options.
 
@@ -123,5 +135,5 @@ The original checkout's `config.ini` and untracked `config.lab.ini` remain uncha
 | E1 CT400 | Passed; no new finding | No follow-up fix | Passed | Simulation package smoke passed | CT400 physical acceptance **Pending approval** | **No**; E1 is separable but physical acceptance and normal PR review remain |
 | E2 camera | Passed; no new finding | No follow-up fix | Passed | Simulated-camera package smoke passed | Physical Vimba acceptance **Pending approval** | **No**; follows E1, independent of E3, but device acceptance/review remain |
 | E2 TaskRunner | Passed; no new finding | No follow-up fix | Passed | Included in packaged application lifecycle smoke only | Not applicable | **No**; PR/review sequence remains |
-| E3 FIG | Passed; startup finalizer issue corrected in follow-up commit | Fixed locally at `4de5211` | Passed on corrected tree | Frozen GUI/OpenGL smoke passed; native FIG export not covered | Native MATLAB/FIG **Pending approval** | **No**; follow-up unavailable remotely and native acceptance pending |
-| E3 Engine manager | Passed; P1 future-finalizer finding fixed | Fixed locally at `4de5211` | Passed on corrected tree | Package excludes MATLAB Engine by design | Native MATLAB process/cancellation acceptance **Pending approval** | **No**; follow-up unavailable remotely and native acceptance pending |
+| E3 FIG | Passed; startup finalizer issue corrected in follow-up commit | Fixed and published in #270 | Passed locally; fresh PR CI pending | Frozen GUI/OpenGL smoke passed; native FIG export not covered | **Blocked** pending license availability verification | **No**; CI and native acceptance remain |
+| E3 Engine manager | Passed; P1 future-finalizer finding fixed | Fixed and published in #270 | Passed locally; fresh PR CI pending | Package excludes MATLAB Engine by design | **Blocked** pending license availability verification | **No**; CI and native acceptance remain |

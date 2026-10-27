@@ -29,7 +29,7 @@ The focused manager and cooperative-shutdown run passed **32 tests** with 3 exis
 
 No additional correctness issue was identified in the reviewed lifecycle paths at this source SHA. E1's CT400 monitor/laser/recording ownership, E2's camera producer/converter retirement and TaskRunner cooperative-stop callers, E3's FIG lease/worker retirement, manager state transitions/disposal ownership, and the shared QObject-context worker-retirement helper were reviewed. Existing lifecycle regressions cover blocked operations, close ordering, repeated shutdown, late signals, and worker retirement; the newly added manager tests cover the identified finalizer gap.
 
-This is a code review conclusion, not evidence of native MATLAB process behavior or physical instrument acceptance. The final local qualification commit has not been published because the GitHub connector's automatic review rejected uploading the two source blobs; see the qualification and merge-readiness reports for the exact block and next step.
+This is a code review conclusion, not evidence of native MATLAB process behavior or physical instrument acceptance. After explicit user authorization, the finalizer correction and qualification package were published as successor draft PR #270. A subsequent native-preflight review tightened the runner's process attribution stop gates locally; that latest runner change still needs publication and fresh CI. Native MATLAB execution remains blocked because online-license availability cannot be checked without a checkout.
 
 ## Comparison with remote phases
 
@@ -38,5 +38,6 @@ This is a code review conclusion, not evidence of native MATLAB process behavior
 | E1 | `87791a2bfdce30e630b35986930854a97ad389a0` | `f63426e0825571ae26c246009b9f50e484738d88` | [#266](https://github.com/simoneferraresi/IOPanel/pull/266) | `main` |
 | E2 | `04cf3f64dbaf4f46402fc3c0fa92cb2d29e5218c` | `d8285f7168c348e7379452c9c0d693abdc5cd5a8` | [#267](https://github.com/simoneferraresi/IOPanel/pull/267) | E1 |
 | E3 | `fae56c9d1fca574c089e0dacccf9d23e0195a6bb` | `c24c26100f928f62970b737bd916e25fea52114f` | [#268](https://github.com/simoneferraresi/IOPanel/pull/268) | E2 |
+| E3 finalizer successor | `3246bd2d8ee7c7ba92bf80cb79cf656e37c703fa` | `b9272cf5dc11e565dcde3f12a071bb1b08b60a33` | [#270](https://github.com/simoneferraresi/IOPanel/pull/270) | #268 |
 
-The E1, E2, and E3 source trees matched their local validated counterparts. The main update observed during qualification was documentation-only and did not overlap Phase E source. Historical GitHub Actions runs attached to the three PR heads passed their reported jobs. No new remote CI exists for the local follow-up because the source publication was rejected. No PR review or inline thread was present in the inspected snapshot.
+The E1, E2, and E3 source trees matched their local validated counterparts. The successor tree exactly matched local commit 4972. The main update observed during qualification was documentation-only and did not overlap Phase E source. Historical GitHub Actions runs attached to #266–#268 passed their reported jobs; #270's initial workflow query returned no runs. The latest runner hardening is local only and needs publication/CI. No PR review or inline thread was present in the inspected snapshot.
