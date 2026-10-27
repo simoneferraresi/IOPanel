@@ -447,7 +447,7 @@ class SimulatedSHGPanel(QWidget):
                     ct400_detector_data=detector_data,
                     completed_at_utc=datetime.now(UTC),
                 )
-                path = archive_simulated_synchronized_capture(capture, self._destination)
+                path = archive_simulated_synchronized_capture(capture, self._destination, milestone="M4-E2B")
                 message = f"Simulated SHG capture archived to {path}"
             except Exception as exc:  # noqa: BLE001 - never report a partial archive as success.
                 success = False
