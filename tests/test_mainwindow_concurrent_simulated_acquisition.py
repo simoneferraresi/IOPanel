@@ -1126,7 +1126,11 @@ def test_shg_simulated_queued_owner_handoff_archives_and_releases(qtbot, monkeyp
         assert not window._is_alignment_operation_authorized()
         with pytest.raises(DeviceBusyError):
             window.device_lease_registry.acquire("calibration", (DeviceResource.CT400,))
-        assert window.ct400_device.external_synchronization_calls[-1] is Enable.ENABLE
+        qtbot.waitUntil(
+            lambda: bool(window.ct400_device.external_synchronization_calls)
+            and window.ct400_device.external_synchronization_calls[-1] is Enable.ENABLE,
+            timeout=2000,
+        )
 
         gate.set()
         qtbot.waitUntil(lambda: result_spy.count() == 1, timeout=6000)
@@ -1158,6 +1162,7 @@ def test_shg_simulated_cancellation_waits_for_owner_cleanup(qtbot, monkeypatch, 
         shg.start_capture(destination_root=tmp_path / "cancelled")
         qtbot.waitUntil(lambda: shg._ct_worker is not None, timeout=4000)
         assert shg.active
+        qtbot.waitUntil(lambda: window.ct400_device._is_scanning, timeout=2000)
         shg.cancel()
         # Native-like wait ends only after Stop (or explicit test gate).
         gate.set()
