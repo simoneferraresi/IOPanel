@@ -233,6 +233,9 @@ def test_global_status_tracks_lifecycle_without_startup_or_hardware_commands(qtb
         (main_window_module.CT400OperationState.ALIGNMENT, "Activity: Aligning"),
         (main_window_module.CT400OperationState.IDLE, "Activity: Idle"),
     ):
+        # Operation transitions must pass through an acknowledged IDLE release.
+        if window._ct400_operation_state is not main_window_module.CT400OperationState.IDLE:
+            window._set_ct400_operation_state(main_window_module.CT400OperationState.IDLE)
         window._set_ct400_operation_state(operation)
         assert window.activity_status_label.text() == expected
 
