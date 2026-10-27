@@ -92,6 +92,7 @@ def test_existing_pm_lease_denies_connect_without_constructing_backend(qtbot):
         panel.request_shutdown()
         qtbot.waitUntil(lambda: panel.shutdown_finished, timeout=5000)
 
+
 def test_failed_pm_close_quarantines_lease_instead_of_freeing_for_sync(qtbot):
     from logic.device_lease_registry import LeaseState
 
