@@ -23,7 +23,7 @@ def _owner(registry: DeviceLeaseRegistry, resource: DeviceResource) -> str | Non
 def test_pm_owner_keeps_lease_during_monitor_pause_and_disconnect(qtbot):
     registry = DeviceLeaseRegistry()
     thread_ids = []
-    
+
     def simulator_factory():
         thread_ids.append(threading.get_ident())
         return DummyPM5020()
@@ -51,7 +51,7 @@ def test_pm_owner_keeps_lease_during_monitor_pause_and_disconnect(qtbot):
         assert _owner(registry, DeviceResource.PM5020) == "pm5020-owner-worker"
         with pytest.raises(DeviceBusyError):
             registry.acquire("shg", (DeviceResource.CT400, DeviceResource.PM5020))
-        
+
         panel.stop_requested.emit()
         qtbot.waitUntil(lambda: not panel._monitor_session, timeout=3000)
         panel.request_disconnect()
