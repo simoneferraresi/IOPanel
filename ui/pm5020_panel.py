@@ -27,8 +27,8 @@ from PySide6.QtWidgets import (
 
 from app_settings import AppSettings
 from hardware.pm5020_types import ChannelConfig, PM5020State, PowerChannel, PowerReading
-from logic.pm5020_monitor import DISPLAY_UNITS, ConfigurationRequest, PM5020MonitorWorker, convert_power, format_power
 from logic.device_lease_registry import DeviceLeaseRegistry
+from logic.pm5020_monitor import DISPLAY_UNITS, ConfigurationRequest, PM5020MonitorWorker, convert_power, format_power
 from logic.task_runner import TaskRunner
 from ui.typography import make_font, pyqtgraph_title_style, style_group_box_title
 
