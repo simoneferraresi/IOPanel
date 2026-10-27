@@ -6,7 +6,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast, override
+from typing import Any, cast, override
 from weakref import ReferenceType, ref
 
 import numpy as np
@@ -850,7 +850,7 @@ class MatlabSaveWorker(QObject):
     ) -> None:
         # The Engine reference was obtained by the GUI before this QThread began.
         # In particular, do not access PlotWidget or Qt manager methods here.
-        eng_to_use: matlab.engine.MatlabEngine | None = self._shared_engine
+        eng_to_use: matlab.engine.MatlabEngine | None = cast(Any, self._shared_engine)
 
         try:
             if eng_to_use is None:
@@ -1341,6 +1341,8 @@ class PlotWidget(QWidget):
         self.detector_legend: pg.LegendItem | None = None
         self._saved_measurement_ref: ReferenceType[ScanMeasurement] | None = None
         self._export_measurement: ScanMeasurement | None = None
+        self.saved_files_list: list[Path] = []
+        self.error_list: list[str] = []
         self.pending_saves = 0
         self._scan_export_lifecycle = ExportTaskLifecycle[ScanExportOutcome](self)
         self._pending_export_widget_close = False

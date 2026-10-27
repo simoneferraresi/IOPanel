@@ -5,6 +5,7 @@ import threading
 import time
 from types import SimpleNamespace
 
+import pytest
 import shiboken6
 from PySide6.QtCore import QCoreApplication, QEvent, QObject, QThread, QTimer, Signal, Slot
 from PySide6.QtTest import QSignalSpy
@@ -196,12 +197,83 @@ def test_start_failure_is_non_modal_and_only_retries_on_explicit_request(qtbot):
     assert len(calls) == 1
 
     manager.request_engine()
+    qtbot.waitUntil(lambda: len(calls) == 2, timeout=1000)
     assert len(calls) == 2
     assert calls == [{"background": True}, {"background": True}]
     futures[1].complete = True
     futures[1].value = FakeEngine()
     qtbot.waitUntil(lambda: manager.state is MatlabEngineState.READY, timeout=1000)
     manager.shutdown()
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_completed_startup_future_is_released_off_gui_thread(qtbot, fails):
+    destroyed = threading.Event()
+    destruction_threads: list[int] = []
+    engine = FakeEngine()
+
+    class FinalizingFuture(FakeFuture):
+        def result(self):
+            if fails:
+                raise RuntimeError("startup failed")
+            return engine
+
+        def __del__(self):
+            destruction_threads.append(threading.get_ident())
+            destroyed.set()
+
+    def start_engine(**_kwargs):
+        future = FinalizingFuture()
+        future.complete = True
+        return future
+
+    gui_thread = threading.get_ident()
+    manager = MatlabEngineManager(available=True, start_engine=start_engine, poll_interval_ms=5)
+    manager.prewarm()
+
+    expected_state = MatlabEngineState.FAILED if fails else MatlabEngineState.READY
+    qtbot.waitUntil(lambda: manager.state is expected_state, timeout=1000)
+    qtbot.waitUntil(destroyed.is_set, timeout=1000)
+    qtbot.waitUntil(lambda: not manager._disposals, timeout=1000)
+
+    assert destruction_threads
+    assert destruction_threads[0] != gui_thread
+    assert (manager.engine is None) is fails
+    manager.shutdown()
+    qtbot.waitUntil(lambda: manager.shutdown_finished, timeout=1000)
+    assert engine.quit_calls == (0 if fails else 1)
+
+
+def test_shutdown_waits_for_completed_future_native_release_before_engine_quit(qtbot):
+    release_started = threading.Event()
+    release_future = threading.Event()
+    engine = FakeEngine()
+
+    class BlockingFinalizerFuture(FakeFuture):
+        def result(self):
+            return engine
+
+        def __del__(self):
+            release_started.set()
+            assert release_future.wait(5), "test did not release fake future destructor"
+
+    def start_engine(**_kwargs):
+        future = BlockingFinalizerFuture()
+        future.complete = True
+        return future
+
+    manager = MatlabEngineManager(available=True, start_engine=start_engine, poll_interval_ms=5)
+    manager.prewarm()
+    qtbot.waitUntil(lambda: manager.state is MatlabEngineState.READY, timeout=1000)
+    qtbot.waitUntil(release_started.is_set, timeout=1000)
+
+    manager.shutdown()
+    assert engine.quit_calls == 0
+    assert not manager.shutdown_finished
+
+    release_future.set()
+    qtbot.waitUntil(lambda: manager.shutdown_finished, timeout=1000)
+    assert engine.quit_calls == 1
 
 
 def test_ready_shutdown_quits_exactly_once(qtbot):
@@ -583,6 +655,7 @@ def test_failed_prewarm_retries_only_for_fig_and_keeps_request(qtbot, monkeypatc
     assert warnings == []
     request = ("payload", "scan.fig", "title", "x", "y")
     widget._queue_matlab_fig(request)
+    qtbot.waitUntil(lambda: len(starts) == 2, timeout=1000)
     assert starts == [{"background": True}, {"background": True}]
     assert widget.matlab_engine_manager.state is MatlabEngineState.STARTING
     assert widget._pending_matlab_fig == request
@@ -623,9 +696,6 @@ def test_failed_explicit_fig_retry_reports_error_and_finishes_pending(qtbot, mon
 
     widget.matlab_engine_manager.prewarm()
     qtbot.waitUntil(lambda: widget.matlab_engine_manager.state is MatlabEngineState.FAILED, timeout=1000)
-    widget.pending_saves = 0
-    widget.saved_files_list = []
-    widget.error_list = []
     widget._completion_reported = False
     widget._queue_matlab_fig(("payload", "scan.fig", "title", "x", "y"))
     qtbot.waitUntil(lambda: widget.pending_saves == 0, timeout=1000)
