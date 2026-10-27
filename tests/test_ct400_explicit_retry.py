@@ -195,4 +195,5 @@ def test_failed_initialization_can_be_retried_to_disconnected_ready(qtbot, monke
     assert not window.histogram_control.is_instrument_connected
 
     window.close()
+    qtbot.waitUntil(lambda: window._shutdown_complete)
     assert calls == ["initialize", "close"]

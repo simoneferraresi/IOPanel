@@ -334,6 +334,8 @@ def test_mainwindow_defers_shutdown_for_active_auto_operation(qtbot, monkeypatch
     assert len(scheduled) == 1
     assert cleanup_events == []
     scheduled[0]()
+    qtbot.waitUntil(lambda: window.histogram_control.shutdown_finished)
+    scheduled[-1]()
     assert cleanup_events == ["camera", "vimba"]
     assert _qt_thread_stopped(histogram_thread)
 
@@ -378,6 +380,8 @@ def test_shutdown_waits_for_recovery_thread_finished_before_camera_and_vimba_cle
     assert len(scheduled) == 1
 
     scheduled[0]()
+    qtbot.waitUntil(lambda: window.histogram_control.shutdown_finished)
+    scheduled[-1]()
     assert cleanup_events == ["camera", "vimba"]
     assert _qt_thread_stopped(histogram_thread)
 

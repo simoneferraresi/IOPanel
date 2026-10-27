@@ -208,6 +208,7 @@ class MainWindow(QMainWindow):
     _piezo_init_task_finished = Signal(object)
     _init_task_thread_finished = Signal(object)
     _camera_recovery_thread_finished = Signal(str, object)
+    shutdown_complete = Signal()
 
     def __init__(self, config: AppConfig, parent=None, settings: AppSettings | None = None):
         """Initializes the MainWindow.
@@ -2820,8 +2821,15 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Shutting down...", 0)
 
         # UI preferences must be saved before camera panels are removed.
-        self._save_ui_preferences()
-        self._cleanup_shutdown_panel_workers()
+        if not getattr(self, "_shutdown_panels_requested", False):
+            self._shutdown_panels_requested = True
+            self._save_ui_preferences()
+            self.histogram_control.shutdown_complete.connect(self._resume_close_after_monitor_retirement)
+            self._cleanup_shutdown_panel_workers()
+        if not self.histogram_control.shutdown_finished:
+            event.ignore()
+            self.statusBar().showMessage("Waiting for power monitor worker retirement…", 0)
+            return
         self._cleanup_cameras()
         self._disconnect_piezos_for_shutdown()
         self._release_ct400_for_shutdown()
@@ -2831,6 +2839,7 @@ class MainWindow(QMainWindow):
         self._finish_shutdown_ui()
         self._shutdown_complete = True
         event.accept()
+        self.shutdown_complete.emit()
         logger.info("MainWindow.closeEvent cleanup returned after %.2f s.", time.perf_counter() - close_started_at)
 
     def _defer_close_for_active_work(self, event: QtGui.QCloseEvent) -> bool:
@@ -2939,6 +2948,11 @@ class MainWindow(QMainWindow):
             return True
 
         return False
+
+    @Slot()
+    def _resume_close_after_monitor_retirement(self):
+        if self._shutdown_requested and not self._shutdown_complete:
+            QTimer.singleShot(0, self.close)
 
     def _cleanup_shutdown_panel_workers(self) -> None:
         """Release panel worker resources before stopping cameras."""

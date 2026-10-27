@@ -582,6 +582,8 @@ def test_close_waits_for_single_piezo_operation_then_runs_normal_cleanup(qtbot, 
     assert window.alignment_tab.alignment_worker is None
 
     scheduled[0][1]()
+    qtbot.waitUntil(lambda: window.histogram_control.shutdown_finished)
+    scheduled[-1][1]()
 
     assert calls == ["alignment", "histogram", "cameras", "vimba"]
     assert window.piezo_left.disconnect_calls == 1
@@ -619,6 +621,8 @@ def test_close_waits_for_all_piezo_operations_and_ignores_stale_completion(qtbot
     assert len(scheduled) == 1
 
     scheduled[0][1]()
+    qtbot.waitUntil(lambda: window.histogram_control.shutdown_finished)
+    scheduled[-1][1]()
     assert calls == ["alignment", "histogram", "cameras", "vimba"]
     assert not window._pending_piezo_operation_close
     assert not window.isVisible()
@@ -712,6 +716,7 @@ def test_shutdown_disconnects_other_piezo_after_failure(
 
     window.show()
     window.close()
+    qtbot.waitUntil(lambda: window._shutdown_complete)
 
     assert not window.isVisible()
     assert (left if failing_side == "right" else right).disconnect_calls == 1
@@ -769,6 +774,7 @@ def test_shutdown_phases_preserve_ui_workers_camera_piezos_ct400_vimba_order(qtb
 
     window.show()
     window.close()
+    qtbot.waitUntil(lambda: window._shutdown_complete)
 
     assert events == [
         "preferences",
