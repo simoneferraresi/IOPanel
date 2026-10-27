@@ -302,8 +302,8 @@ def test_mainwindow_closes_each_panel_once_after_stopping_its_camera(qtbot, monk
     qtbot.waitUntil(lambda: window._shutdown_complete)
 
     assert observed == [
-        (top.camera_identifier, True, True, False),
-        (side.camera_identifier, True, True, False),
+        (top.camera_identifier, True, True, True),
+        (side.camera_identifier, True, True, True),
     ]
     assert not any(camera.is_streaming for camera in cameras.values())
     assert top._conversion_shutdown_complete and side._conversion_shutdown_complete
@@ -371,6 +371,7 @@ def test_camera_cleanup_attempts_peer_after_one_close_failure(qtbot, monkeypatch
     panels = list(window.camera_panels.values())
 
     window._cleanup_cameras()
+    qtbot.waitUntil(lambda: window._camera_cleanup_complete)
 
     assert attempts == [first.identifier, second.identifier]
     assert all(not camera._frame_thread for camera in (first, second))

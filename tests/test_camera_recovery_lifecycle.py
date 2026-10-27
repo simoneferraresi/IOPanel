@@ -320,7 +320,13 @@ def test_mainwindow_defers_shutdown_for_active_auto_operation(qtbot, monkeypatch
     window._connect_camera_signals(panel.camera, panel)
     panel._auto_op_active = True
     cleanup_events = []
-    monkeypatch.setattr(window, "_cleanup_cameras", lambda: cleanup_events.append("camera"))
+    original_cleanup = window._cleanup_cameras
+
+    def record_camera_cleanup():
+        cleanup_events.append("camera")
+        original_cleanup()
+
+    monkeypatch.setattr(window, "_cleanup_cameras", record_camera_cleanup)
     monkeypatch.setattr(window, "_cleanup_vimbasystem", lambda: cleanup_events.append("vimba"))
     scheduled = []
     monkeypatch.setattr(main_window_module.QTimer, "singleShot", lambda _delay, callback: scheduled.append(callback))
@@ -363,7 +369,13 @@ def test_shutdown_waits_for_recovery_thread_finished_before_camera_and_vimba_cle
     window._connect_camera_signals(camera, panel)
     cleanup_events = []
     scheduled = []
-    monkeypatch.setattr(window, "_cleanup_cameras", lambda: cleanup_events.append("camera"))
+    original_cleanup = window._cleanup_cameras
+
+    def record_camera_cleanup():
+        cleanup_events.append("camera")
+        original_cleanup()
+
+    monkeypatch.setattr(window, "_cleanup_cameras", record_camera_cleanup)
     monkeypatch.setattr(window, "_cleanup_vimbasystem", lambda: cleanup_events.append("vimba"))
     monkeypatch.setattr(main_window_module.QTimer, "singleShot", lambda _delay, callback: scheduled.append(callback))
 

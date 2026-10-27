@@ -155,7 +155,13 @@ def _capture_final_cleanup(window, monkeypatch, calls):
 
     monkeypatch.setattr(window.alignment_tab, "cleanup", record_alignment_cleanup)
     monkeypatch.setattr(window.histogram_control, "cleanup_worker_thread", record_histogram_cleanup)
-    monkeypatch.setattr(window, "_cleanup_cameras", lambda: calls.append("cameras"))
+    original_cleanup = window._cleanup_cameras
+
+    def record_camera_cleanup():
+        calls.append("cameras")
+        original_cleanup()
+
+    monkeypatch.setattr(window, "_cleanup_cameras", record_camera_cleanup)
     monkeypatch.setattr(window, "_cleanup_vimbasystem", lambda: calls.append("vimba"))
 
 
@@ -762,7 +768,13 @@ def test_shutdown_phases_preserve_ui_workers_camera_piezos_ct400_vimba_order(qtb
         real_panel_cleanup()
 
     monkeypatch.setattr(window, "_cleanup_shutdown_panel_workers", cleanup_panels)
-    monkeypatch.setattr(window, "_cleanup_cameras", lambda: events.append("cameras"))
+    original_camera_cleanup = window._cleanup_cameras
+
+    def record_camera_cleanup():
+        events.append("cameras")
+        original_camera_cleanup()
+
+    monkeypatch.setattr(window, "_cleanup_cameras", record_camera_cleanup)
     monkeypatch.setattr(window, "_cleanup_vimbasystem", lambda: events.append("vimba"))
     real_ui_finish = window._finish_shutdown_ui
 

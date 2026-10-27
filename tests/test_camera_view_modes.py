@@ -375,6 +375,7 @@ def test_closeevent_conversion_teardown_is_idempotent(qtbot):
 
     panel.close()
     panel.close()
+    qtbot.waitUntil(lambda: panel._conversion_shutdown_complete)
 
     assert not thread.isRunning()
     assert finished.count() == 1
