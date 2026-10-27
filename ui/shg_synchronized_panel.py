@@ -3,6 +3,7 @@
 A PM5020 QThread owns every PM backend call. A dedicated CT400 scan QThread
 owns all CT scan commands. This is NOT physical-trigger qualification.
 """
+
 from __future__ import annotations
 
 import logging
@@ -63,6 +64,7 @@ class SimulatedCT400SyncWorker(QObject):
             self.device.set_sampling_res(settings.resolution_pm)
             selected = set(settings.detectors)
             from hardware.ct400_types import Detector
+
             self.device.set_detector_array(
                 Enable.ENABLE if Detector.DE_2 in selected else Enable.DISABLE,
                 Enable.ENABLE if Detector.DE_3 in selected else Enable.DISABLE,
@@ -144,7 +146,9 @@ class SimulatedSHGPanel(QWidget):
         self._timer.timeout.connect(self._on_timeout)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("SHG synchronized acquisition — SIMULATION ONLY. Physical CT400/PM5020 and EDFA are never operated."))
+        layout.addWidget(
+            QLabel("SHG synchronized acquisition — SIMULATION ONLY. Physical CT400/PM5020 and EDFA are never operated.")
+        )
         layout.addWidget(QLabel("Timing unqualified; PM ticks are raw uint32. Zero-based alignment is provisional."))
         folder = QHBoxLayout()
         self.output_path = QLineEdit(self)
@@ -185,7 +189,9 @@ class SimulatedSHGPanel(QWidget):
             self.output_path.setText(directory)
 
     @Slot()
-    def start_capture(self, *, settings: SimulatedSyncSettings | None = None, destination_root: str | Path | None = None) -> None:
+    def start_capture(
+        self, *, settings: SimulatedSyncSettings | None = None, destination_root: str | Path | None = None
+    ) -> None:
         if self.active or self.host._shutdown_requested:
             return
         panel = self.host.pm5020_panel
@@ -201,6 +207,7 @@ class SimulatedSHGPanel(QWidget):
             self.status_label.setText("Refused: supervised calibration owns CT400.")
             return
         from hardware.edfa_types import EDFAState
+
         if self.host.edfa_panel is not None and self.host.edfa_panel._backend_state is not EDFAState.DISCONNECTED:
             self.status_label.setText("Refused: disconnect EDFA before simulated synchronized acquisition.")
             return
@@ -388,7 +395,13 @@ class SimulatedSHGPanel(QWidget):
 
     def _finalize(self) -> None:
         request = self._request
-        success = bool(not self._failure and not self._cancelled and not self._timed_out and self._pm_data is not None and self._ct_result is not None)
+        success = bool(
+            not self._failure
+            and not self._cancelled
+            and not self._timed_out
+            and self._pm_data is not None
+            and self._ct_result is not None
+        )
         message = self._failure or ("Synchronized simulation completed" if success else "Synchronized run cancelled")
         if request is not None:
             try:
@@ -411,10 +424,16 @@ class SimulatedSHGPanel(QWidget):
                 pulses = parse_ct400_sync_text(sync_text)
                 aligned = align_ct400_burst(pulses, self._pm_data, index_base=0)
                 from datetime import UTC, datetime
+
                 capture = SimulatedSynchronizedCapture(
-                    settings=self._settings, status=status, pm_burst=self._pm_data,
-                    sync_text=sync_text, pulses=pulses, aligned=aligned,
-                    ct400_wavelengths_nm=wavelengths, ct400_detector_data=detector_data,
+                    settings=self._settings,
+                    status=status,
+                    pm_burst=self._pm_data,
+                    sync_text=sync_text,
+                    pulses=pulses,
+                    aligned=aligned,
+                    ct400_wavelengths_nm=wavelengths,
+                    ct400_detector_data=detector_data,
                     completed_at_utc=datetime.now(UTC),
                 )
                 path = archive_simulated_synchronized_capture(capture, self._destination)
