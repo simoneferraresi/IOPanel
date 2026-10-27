@@ -2017,9 +2017,7 @@ class MainWindow(QMainWindow):
             # The approved safe-state confirmation is the only path that may
             # release a quarantined CT400 lease. CmdLaser alone cannot do so.
             if self._ct400_operation_lease is not None:
-                self.device_lease_registry.confirm_recovery(
-                    self._ct400_operation_lease, operator_confirmed=True
-                )
+                self.device_lease_registry.confirm_recovery(self._ct400_operation_lease, operator_confirmed=True)
                 self._ct400_operation_lease = None
             self._ct400_connection_configured = False
             self._ct400_connected_laser_input = None
@@ -2120,9 +2118,7 @@ class MainWindow(QMainWindow):
         lease = self._ct400_operation_lease
         if previous is CT400OperationState.IDLE and state is not CT400OperationState.IDLE:
             if lease is None:
-                lease = self.device_lease_registry.acquire(
-                    f"ct400-{state.name.lower()}", (DeviceResource.CT400,)
-                )
+                lease = self.device_lease_registry.acquire(f"ct400-{state.name.lower()}", (DeviceResource.CT400,))
                 self._ct400_operation_lease = lease
             elif not (self._ct400_scan_state_uncertain and state is CT400OperationState.DISCONNECTING):
                 raise DeviceLeaseError("CT400 is quarantined; only explicit recovery disconnect is permitted")
