@@ -118,8 +118,7 @@ class SynchronizedOwnerLeases:
                 and {OwnerPhase.PM_ARMED, OwnerPhase.CT_READY} <= self._acks
                 and not self.registry.cancellation_requested(request.lease)
                 and not any(
-                    snapshot.lease_sequence == request.lease.sequence
-                    and snapshot.state is LeaseState.UNCERTAIN
+                    snapshot.lease_sequence == request.lease.sequence and snapshot.state is LeaseState.UNCERTAIN
                     for snapshot in self.registry.snapshot()
                 )
             )
