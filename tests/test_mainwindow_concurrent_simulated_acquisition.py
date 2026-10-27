@@ -14,7 +14,7 @@ from hardware.ct400 import CT400
 from hardware.ct400_types import Detector, Enable, LaserInput
 from hardware.dummy_ct400 import DummyCT400
 from hardware.simulated_camera import SimulatedCamera
-from logic.device_lease_registry import DeviceBusyError, DeviceResource
+from logic.device_lease_registry import DeviceBusyError
 from ui import alignment_panel as alignment_panel_module
 from ui import control_panel as control_panel_module
 from ui import main_window as main_window_module
