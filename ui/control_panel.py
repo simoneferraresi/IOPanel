@@ -746,6 +746,7 @@ class BaseControlPanel(QWidget, ABC, metaclass=QABCMeta):
         self.connected_speed_nm_s: int | None = None
         self.ct400_operation_state = "IDLE"
         self._calibration_blocked = False
+        self._lease_start_authorizer: Callable[[], bool] | None = None
 
         # These will be created in _init_base_ui and used by subclasses
         self.main_layout: QVBoxLayout
@@ -850,6 +851,14 @@ class BaseControlPanel(QWidget, ABC, metaclass=QABCMeta):
         if not is_connected and self.is_busy():
             logger.warning(f"Instrument disconnected during operation on '{self.objectName()}'. Forcing stop.")
             self._force_stop()
+
+    def set_lease_start_authorizer(self, authorizer: Callable[[], bool]) -> None:
+        """Fail closed before starting any CT400 worker or laser command."""
+        self._lease_start_authorizer = authorizer
+
+    def _lease_start_allowed(self) -> bool:
+        callback = self._lease_start_authorizer
+        return callback is None or callback()
 
     def set_calibration_blocked(self, blocked: bool) -> None:
         """Block normal UI actions while a supervised calibration owns this panel."""
@@ -1164,7 +1173,8 @@ class CT400ControlPanel(BaseControlPanel):
         if self._calibration_owner is not None and not self._calibration_dispatch_armed:
             logger.warning("Rejected manually requested scan during supervised calibration.")
             return
-        if self.ct400_operation_state != "IDLE":
+        if self.ct400_operation_state != "IDLE" or not self._lease_start_allowed():
+            logger.warning("CT400 scan denied by operation state or lease owner.")
             return
         ct400 = self.ct400
         if self.is_instrument_connected and ct400 is None:
@@ -1678,7 +1688,12 @@ class HistogramControlPanel(BaseControlPanel):
             return False
 
     def _start_monitoring(self):
-        if self._worker_shutdown_requested or self._monitor_stop_pending or self.ct400_operation_state != "IDLE":
+        if (
+            self._worker_shutdown_requested
+            or self._monitor_stop_pending
+            or self.ct400_operation_state != "IDLE"
+            or not self._lease_start_allowed()
+        ):
             return
         ct400 = self.ct400
         if self.is_instrument_connected and ct400 is None:
