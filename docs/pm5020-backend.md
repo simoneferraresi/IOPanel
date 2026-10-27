@@ -15,8 +15,10 @@ epoch. Burst results carry separate CH1 and CH2 arrays with an enforced shared
 sample count.
 
 The physical adapter loads the configured `TLPMX.py` only after an operator
-selects **Connect PM5020**. The backend mode is configured in `[Instruments]`;
-the default is `simulation`. Physical mode never connects during startup. Device calls are serialized. A separate
+selects **Connect PM5020**. The backend mode is configured in `[Instruments]`.
+The portable model fallback remains `simulation`, but the checked-in laboratory
+`config.ini` now explicitly selects `physical`. Physical PM5020 mode never
+connects during startup. Device calls are serialized. A separate
 read-only `PM5020State` (`DISCONNECTED`, `IDLE`, `ARMED`, `RETRIEVING`, or
 `ERROR`) is shared by the simulator and physical adapter. `is_connected()` may
 remain true in `ERROR` while the driver handle exists; `is_ready` is true only
@@ -121,7 +123,7 @@ committed. Redistribution rights have not been established; ask Thorlabs for
 written permission before committing vendor DLLs to a public repository or
 shipping them in installers. Git already ignores `*.dll`.
 
- IOPanel selects `TLPMX_64.dll` or `TLPMX_32.dll` according to the
+IOPanel selects `TLPMX_64.dll` or `TLPMX_32.dll` according to the
 Python process bitness, but the **current physically verified profile is x64
 only**. Use 64-bit CPython and the matching Thorlabs VISA runtime. Missing
 source files, staging failures, architecture problems, and missing native
@@ -135,13 +137,15 @@ paths. Physical mode **requires both** `pm5020_wrapper_path` and
 `pm5020_dll_path` to be configured explicitly, including when the files are
 in separate directories. It never silently falls back to a system-installed
 native DLL.
-The checked-in `config.ini` contains this site's configured resource
-and SDK paths; adjust them for other installations.
-Example laboratory settings:
+The checked-in `config.ini` uses this site's physically qualified, user-local
+replacement DLL path rather than the original system-installed DLL path.
+Adjust resource names and paths for other installations, and confirm the
+required SHA-256 before a supervised physical session.
+Example laboratory settings (replace the Windows user placeholder):
 
 ```ini
 [Instruments]
-pm5020_backend = simulation
+pm5020_backend = physical
 pm5020_resource_name = USB0::0x1313::0x80BB::M01213392::INSTR
 pm5020_wrapper_path = C:/Program Files (x86)/IVI Foundation/VISA/WinNT/TLPMX/Examples/Python/TLPMX.py
 pm5020_dll_path = C:/Users/<LAB_WINDOWS_USER>/AppData/Local/IOPanel/vendor/thorlabs-2025-11-14/TLPMX_64.dll
