@@ -612,12 +612,22 @@ class MainWindow(QMainWindow):
         else:
             panel.clear_hardware()
 
+    def _ct400_lease_available_for_new_operation(self) -> bool:
+        """Preflight the shared CT400 owner before dispatching native work."""
+        return (
+            not self._shutdown_requested
+            and self._ct400_operation_state is CT400OperationState.IDLE
+            and self._ct400_operation_lease is None
+            and not self._ct400_scan_state_uncertain
+            and self.device_lease_registry.snapshot()[0].owner is None
+        )
+
     def _is_alignment_operation_authorized(self) -> bool:
         """Authorize alignment only for simulation or the explicitly connected physical input."""
         dialog = self._ct400_campaign_dialog
         if dialog is not None and dialog.active:
             return False
-        if self._ct400_operation_state is not CT400OperationState.IDLE:
+        if not self._ct400_lease_available_for_new_operation():
             return False
         if self._ct400_scan_state_uncertain or self._ct400_recovery_disconnect_completed:
             return False
@@ -1982,6 +1992,19 @@ class MainWindow(QMainWindow):
                 action.setChecked(self.is_ct400_connected_state)
                 action.setEnabled(False)
             return
+        # A quarantined physical scan permits only the existing explicit
+        # recovery-disconnect route. A synchronized lease never authorizes
+        # ordinary CT400 connect/disconnect dispatch.
+        recovery_disconnect = (
+            not checked
+            and self._ct400_scan_state_uncertain
+            and self._ct400_operation_lease is not None
+        )
+        if not recovery_disconnect and not self._ct400_lease_available_for_new_operation():
+            logger.warning("Rejecting CT400 connection request while device lease is occupied.")
+            if action:
+                action.setChecked(self.is_ct400_connected_state)
+            return
 
         if self._ct400_recovery_disconnect_completed:
             if not checked:
@@ -3136,6 +3159,7 @@ class MainWindow(QMainWindow):
 
         if hasattr(self, "control_panel") and self.control_panel:
             logger.debug("Connecting control_panel signals")
+            self.control_panel.set_lease_start_authorizer(self._ct400_lease_available_for_new_operation)
             self.control_panel.scan_data_ready.connect(self._handle_scan_data)
             self.control_panel.operation_started.connect(self._handle_ct400_scan_started)
             self.control_panel.operation_finished.connect(self._handle_ct400_scan_finished)
@@ -3146,6 +3170,7 @@ class MainWindow(QMainWindow):
 
         if hasattr(self, "histogram_control") and self.histogram_control:
             logger.debug("Connecting histogram_control signals")
+            self.histogram_control.set_lease_start_authorizer(self._ct400_lease_available_for_new_operation)
             self.histogram_control.power_data_ready.connect(self.handle_power_data)
             self.histogram_control.recording_started.connect(self._handle_power_monitor_recording_started)
             self.histogram_control.recording_sample_captured.connect(self._handle_power_monitor_recording_sample)
