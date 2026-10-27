@@ -14,6 +14,7 @@ from hardware.ct400 import CT400
 from hardware.ct400_types import Detector, Enable, LaserInput
 from hardware.dummy_ct400 import DummyCT400
 from hardware.simulated_camera import SimulatedCamera
+from logic.device_lease_registry import DeviceBusyError
 from ui import alignment_panel as alignment_panel_module
 from ui import control_panel as control_panel_module
 from ui import main_window as main_window_module
@@ -279,6 +280,29 @@ def _start_scan_during_stream(qtbot, window, frame_spy):
     return camera_frame_count
 
 
+def test_atomic_sync_reservation_blocks_ordinary_ct400_starts_before_driver_access(qtbot, monkeypatch, tmp_path):
+    window, gate, _spy, _messages = _start_application(qtbot, monkeypatch, tmp_path, include_camera=False)
+    protocol = window.synchronized_owner_leases
+    request = protocol.reserve(ct400_generation=0, pm5020_generation=0)
+    commands = []
+    window.ct400_device.set_scan = lambda *args: commands.append("scan")
+    window.ct400_device.cmd_laser = lambda *args, **kwargs: commands.append("laser")
+    try:
+        assert window.device_lease_registry.snapshot()[0].owner == "synchronized-acquisition"
+        window.control_panel._start_scan()
+        window.histogram_control._start_monitoring()
+        assert not window.control_panel.scanning
+        assert not window.histogram_control.monitoring
+        assert not commands
+    finally:
+        protocol.acknowledge_ct400_complete(request, generation=0)
+        protocol.acknowledge_pm_complete(request, generation=0)
+        protocol.release_after_cleanup(request)
+        gate.set()
+        if window.isVisible():
+            window.close()
+
+
 def test_scan_owns_ct400_and_blocks_monitor_and_detector_writes(qtbot, monkeypatch, tmp_path):
     # CT400 ownership is independent of camera acquisition.
     window, gate, _frame_spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path, include_camera=False)
@@ -294,6 +318,9 @@ def test_scan_owns_ct400_and_blocks_monitor_and_detector_writes(qtbot, monkeypat
         window.ct400_connect_action.setEnabled(True)
         _start_scan(qtbot, window)
         assert window._ct400_operation_state.name == "SCANNING"
+        assert window.device_lease_registry.snapshot()[0].owner == "ct400-scanning"
+        with pytest.raises(DeviceBusyError):
+            window.synchronized_owner_leases.reserve(ct400_generation=1, pm5020_generation=1)
         file_menu = next(action.menu() for action in window.menuBar().actions() if action.text() == "&File")
         open_scan_action = next(action for action in file_menu.actions() if action.objectName() == "openScanAction")
         assert not open_scan_action.isEnabled()
@@ -322,6 +349,7 @@ def test_scan_owns_ct400_and_blocks_monitor_and_detector_writes(qtbot, monkeypat
         gate.set()
         qtbot.waitUntil(lambda: not scan.scanning, timeout=2500)
         qtbot.waitUntil(lambda: window._ct400_operation_state.name == "IDLE", timeout=1000)
+        assert window.device_lease_registry.snapshot()[0].owner is None
         qtbot.waitUntil(lambda: _qt_thread_stopped(scan_thread), timeout=1500)
         assert open_scan_action.isEnabled()
         assert window.plot_widget.load_btn.isEnabled()

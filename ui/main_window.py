@@ -55,7 +55,7 @@ from hardware.edfa_types import EDFAState
 from hardware.piezo import PiezoController
 from hardware.piezo_init_worker import PiezoInitWorker
 from hardware.pm5020_types import PM5020State
-from logic.device_lease_registry import DeviceLeaseRegistry
+from logic.device_lease_registry import DeviceLease, DeviceLeaseError, DeviceLeaseRegistry, DeviceResource
 from logic.matlab_engine_manager import MatlabEngineState
 from logic.scan_import import load_scan
 from logic.scan_import_worker import ScanImportOutcome, ScanImportWorker
@@ -251,6 +251,7 @@ class MainWindow(QMainWindow):
         # feature remains disabled until all Qt/native call sites are lease-aware.
         self.device_lease_registry = DeviceLeaseRegistry()
         self.synchronized_owner_leases = SynchronizedOwnerLeases(self.device_lease_registry)
+        self._ct400_operation_lease: DeviceLease | None = None
 
         # --- CT400 and Piezo hardware will be None until workers finish ---
         self.ct400_device: AbstractCT400 | None = None
@@ -611,12 +612,22 @@ class MainWindow(QMainWindow):
         else:
             panel.clear_hardware()
 
+    def _ct400_lease_available_for_new_operation(self) -> bool:
+        """Preflight the shared CT400 owner before dispatching native work."""
+        return (
+            not self._shutdown_requested
+            and self._ct400_operation_state is CT400OperationState.IDLE
+            and self._ct400_operation_lease is None
+            and not self._ct400_scan_state_uncertain
+            and self.device_lease_registry.snapshot()[0].owner is None
+        )
+
     def _is_alignment_operation_authorized(self) -> bool:
         """Authorize alignment only for simulation or the explicitly connected physical input."""
         dialog = self._ct400_campaign_dialog
         if dialog is not None and dialog.active:
             return False
-        if self._ct400_operation_state is not CT400OperationState.IDLE:
+        if not self._ct400_lease_available_for_new_operation():
             return False
         if self._ct400_scan_state_uncertain or self._ct400_recovery_disconnect_completed:
             return False
@@ -1221,6 +1232,7 @@ class MainWindow(QMainWindow):
             resource_name=self.config.instruments.pm5020_resource_name,
             wrapper_path=self.config.instruments.pm5020_wrapper_path,
             dll_path=self.config.instruments.pm5020_dll_path,
+            lease_registry=self.device_lease_registry,
             settings=self.settings,
         )
         self.pm5020_panel.connection_status_changed.connect(self._on_pm5020_connection_status_changed)
@@ -1980,6 +1992,20 @@ class MainWindow(QMainWindow):
                 action.setChecked(self.is_ct400_connected_state)
                 action.setEnabled(False)
             return
+        # A quarantined physical scan permits only the existing explicit
+        # recovery-disconnect route. A synchronized lease never authorizes
+        # ordinary CT400 connect/disconnect dispatch.
+        recovery_disconnect = (
+            not checked and self._ct400_scan_state_uncertain and self._ct400_operation_lease is not None
+        )
+        if (
+            not (recovery_disconnect or self._ct400_recovery_disconnect_completed)
+            and not self._ct400_lease_available_for_new_operation()
+        ):
+            logger.warning("Rejecting CT400 connection request while device lease is occupied.")
+            if action:
+                action.setChecked(self.is_ct400_connected_state)
+            return
 
         if self._ct400_recovery_disconnect_completed:
             if not checked:
@@ -2012,6 +2038,11 @@ class MainWindow(QMainWindow):
             self._ct400_scan_state_uncertain = False
             self._ct400_recovery_disconnect_completed = False
             self._ct400_recovery_input_matches = True
+            # The approved safe-state confirmation is the only path that may
+            # release a quarantined CT400 lease. CmdLaser alone cannot do so.
+            if self._ct400_operation_lease is not None:
+                self.device_lease_registry.confirm_recovery(self._ct400_operation_lease, operator_confirmed=True)
+                self._ct400_operation_lease = None
             self._ct400_connection_configured = False
             self._ct400_connected_laser_input = None
             self._ct400_cleanup_laser_input = None
@@ -2098,6 +2129,33 @@ class MainWindow(QMainWindow):
         QThreadPool.globalInstance().start(worker)
 
     def _set_ct400_operation_state(self, state: CT400OperationState):
+        """Project CT400 operation ownership into the window-scoped lease registry.
+
+        The operation-start signal is emitted synchronously on the GUI thread,
+        before a scan/monitor/alignment worker is dispatched. Completion signals
+        are emitted only after the relevant worker has completed cleanup.
+        An uncertain physical scan retains its lease for explicit recovery.
+        """
+        previous = self._ct400_operation_state
+        if state is previous:
+            return
+        lease = self._ct400_operation_lease
+        if previous is CT400OperationState.IDLE and state is not CT400OperationState.IDLE:
+            if lease is None:
+                lease = self.device_lease_registry.acquire(f"ct400-{state.name.lower()}", (DeviceResource.CT400,))
+                self._ct400_operation_lease = lease
+            elif not (self._ct400_scan_state_uncertain and state is CT400OperationState.DISCONNECTING):
+                raise DeviceLeaseError("CT400 is quarantined; only explicit recovery disconnect is permitted")
+        elif state is CT400OperationState.IDLE and previous is not CT400OperationState.IDLE:
+            if lease is None:
+                raise DeviceLeaseError("CT400 completion has no matching operation lease")
+            if self._ct400_scan_state_uncertain:
+                self.device_lease_registry.mark_uncertain(lease, "CT400 scan safe-state is not confirmed")
+            else:
+                self.device_lease_registry.release(lease, operations_complete=True)
+                self._ct400_operation_lease = None
+        elif state is not CT400OperationState.IDLE:
+            raise DeviceLeaseError("CT400 must complete its current operation before a new owner may start")
         self._ct400_operation_state = state
         if hasattr(self, "control_panel") and self.control_panel:
             self.control_panel.set_ct400_operation_state(state.name)
@@ -3102,6 +3160,7 @@ class MainWindow(QMainWindow):
 
         if hasattr(self, "control_panel") and self.control_panel:
             logger.debug("Connecting control_panel signals")
+            self.control_panel.set_lease_start_authorizer(self._ct400_lease_available_for_new_operation)
             self.control_panel.scan_data_ready.connect(self._handle_scan_data)
             self.control_panel.operation_started.connect(self._handle_ct400_scan_started)
             self.control_panel.operation_finished.connect(self._handle_ct400_scan_finished)
@@ -3112,6 +3171,7 @@ class MainWindow(QMainWindow):
 
         if hasattr(self, "histogram_control") and self.histogram_control:
             logger.debug("Connecting histogram_control signals")
+            self.histogram_control.set_lease_start_authorizer(self._ct400_lease_available_for_new_operation)
             self.histogram_control.power_data_ready.connect(self.handle_power_data)
             self.histogram_control.recording_started.connect(self._handle_power_monitor_recording_started)
             self.histogram_control.recording_sample_captured.connect(self._handle_power_monitor_recording_sample)
