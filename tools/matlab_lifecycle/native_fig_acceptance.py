@@ -234,8 +234,8 @@ def child_main(scenario: str, evidence: Path, deadline_seconds: float) -> int:
     payload = PreparedMatlabFigPayload(
         wavelengths,
         (
-            PreparedMatlabFigTrace("Det 1", detector_1, (0.0, 0.4470, 0.7410)),
-            PreparedMatlabFigTrace("Det 2", detector_2, (0.8500, 0.3250, 0.0980)),
+            PreparedMatlabFigTrace("Det 1", detector_1, (27 / 255, 158 / 255, 119 / 255)),
+            PreparedMatlabFigTrace("Det 2", detector_2, (217 / 255, 95 / 255, 2 / 255)),
         ),
     )
     request = (payload, str(fig_path), "Native acceptance", "Wavelength (nm)", "Power (mW)")
