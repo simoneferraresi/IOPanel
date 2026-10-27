@@ -145,11 +145,11 @@ class PM5020MonitorWorker(BaseWorker):
             return
         try:
             if self._connection_lease is None:
-                self._connection_lease = self._lease_registry.acquire(
-                    "pm5020-owner-worker", (DeviceResource.PM5020,)
-                )
-            elif any(item.resource is DeviceResource.PM5020 and item.state is LeaseState.UNCERTAIN
-                     for item in self._lease_registry.snapshot()):
+                self._connection_lease = self._lease_registry.acquire("pm5020-owner-worker", (DeviceResource.PM5020,))
+            elif any(
+                item.resource is DeviceResource.PM5020 and item.state is LeaseState.UNCERTAIN
+                for item in self._lease_registry.snapshot()
+            ):
                 raise DeviceRecoveryRequired("PM5020 is quarantined until explicit recovery")
             if mode == "Simulator":
                 self._backend = self._simulator_factory()
@@ -349,8 +349,10 @@ class PM5020MonitorWorker(BaseWorker):
         if self._connection_lease is None:
             self.error_occurred.emit("PM5020 has no owner lease; refusing device access.")
             return None
-        if any(item.resource is DeviceResource.PM5020 and item.state is LeaseState.UNCERTAIN
-               for item in self._lease_registry.snapshot()):
+        if any(
+            item.resource is DeviceResource.PM5020 and item.state is LeaseState.UNCERTAIN
+            for item in self._lease_registry.snapshot()
+        ):
             self.error_occurred.emit("PM5020 ownership is uncertain; refusing device access.")
             return None
         backend = self._backend
