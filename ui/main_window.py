@@ -1251,8 +1251,6 @@ class MainWindow(QMainWindow):
         self.pm5020_panel.shutdown_complete.connect(self._resume_close_after_pm5020)
         self.pm5020_panel.shutdown_timeout.connect(lambda message: self.statusBar().showMessage(message, 0))
         self.tab_widget.addTab(self.pm5020_panel, "Thorlabs PM5020")
-        self.shg_tab = SimulatedSHGPanel(self)
-        self.tab_widget.addTab(self.shg_tab, "SHG (Simulation)")
 
         edfa_options = self.config.instruments
         self.edfa_panel = EDFAReadOnlyPanel(
@@ -1268,6 +1266,8 @@ class MainWindow(QMainWindow):
         self.edfa_panel.connection_status_changed.connect(self._on_edfa_connection_status_changed)
         self.edfa_panel.observations_changed.connect(self._on_edfa_observations_changed)
         self.tab_widget.addTab(self.edfa_panel, "IPG EDFA")
+        self.shg_tab = SimulatedSHGPanel(self)
+        self.tab_widget.addTab(self.shg_tab, "SHG (Simulation)")
 
         self.setStatusBar(QStatusBar())
         self.edfa_observations_status_label = QLabel(
