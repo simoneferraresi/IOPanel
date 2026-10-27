@@ -1221,3 +1221,66 @@ def test_shg_simulated_pm_arm_failure_aborts_without_archive(qtbot, monkeypatch,
         gate.set()
         if window.isVisible():
             window.close()
+
+
+def test_shg_timeout_quarantines_both_resources_without_untrusted_release(qtbot, monkeypatch, tmp_path):
+    from logic.device_lease_registry import LeaseState
+
+    window, gate, _spy, _messages = _start_application(qtbot, monkeypatch, tmp_path, include_camera=False)
+    shg = window.shg_tab
+    finished = QSignalSpy(shg.finished)
+    try:
+        shg.start_capture(destination_root=tmp_path / "timed-out")
+        qtbot.waitUntil(lambda: window.ct400_device._is_scanning, timeout=4000)
+        shg._on_timeout()
+        assert all(entry.state is LeaseState.UNCERTAIN for entry in window.device_lease_registry.snapshot())
+        gate.set()
+        qtbot.waitUntil(lambda: finished.count() == 1, timeout=6000)
+        assert finished.at(0)[0] is False
+        assert all(entry.state is LeaseState.UNCERTAIN for entry in window.device_lease_registry.snapshot())
+        with pytest.raises(DeviceBusyError):
+            window.device_lease_registry.acquire("ordinary", (DeviceResource.CT400,))
+        assert not (tmp_path / "timed-out").exists()
+    finally:
+        gate.set()
+        if window.isVisible():
+            window.close()
+
+
+def test_shg_window_close_cancels_and_awaits_queued_both_owner_cleanup(qtbot, monkeypatch, tmp_path):
+    window, gate, _spy, _messages = _start_application(qtbot, monkeypatch, tmp_path, include_camera=False)
+    shg = window.shg_tab
+    try:
+        shg.start_capture(destination_root=tmp_path / "shutdown")
+        qtbot.waitUntil(lambda: window.ct400_device._is_scanning, timeout=4000)
+        assert not window.close()  # Shutdown is deferred pending both worker acknowledgments.
+        assert window._shutdown_requested
+        gate.set()
+        qtbot.waitUntil(lambda: not shg.active, timeout=7000)
+        qtbot.waitUntil(lambda: window._shutdown_complete, timeout=8000)
+        assert not (tmp_path / "shutdown").exists()
+    finally:
+        gate.set()
+        if window.isVisible():
+            window.close()
+
+
+def test_shg_recoverable_pm_retrieval_failure_frees_after_confirmed_close(qtbot, monkeypatch, tmp_path):
+    from hardware.dummy_pm5020 import DummyPM5020
+
+    window, gate, _spy, _messages = _start_application(qtbot, monkeypatch, tmp_path, include_camera=False)
+    shg = window.shg_tab
+    window.pm5020_panel.worker._simulator_factory = lambda: DummyPM5020(fail_operations={"retrieve_burst"})
+    result = QSignalSpy(shg.finished)
+    try:
+        shg.start_capture(destination_root=tmp_path / "retrieval-failed")
+        qtbot.waitUntil(lambda: window.ct400_device._is_scanning, timeout=4000)
+        gate.set()
+        qtbot.waitUntil(lambda: result.count() == 1, timeout=7000)
+        assert result.at(0)[0] is False
+        assert all(item.owner is None for item in window.device_lease_registry.snapshot())
+        assert not (tmp_path / "retrieval-failed").exists()
+    finally:
+        gate.set()
+        if window.isVisible():
+            window.close()
