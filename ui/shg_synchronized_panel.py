@@ -131,6 +131,7 @@ class SimulatedSHGPanel(QWidget):
         self._ct_error = ""
         self._ct_ack = False
         self._pm_ack = False
+        self._pm_quiesced = False
         self._pm_cleanup_requested = False
         self._pm_data = None
         self._failure = ""
@@ -223,6 +224,7 @@ class SimulatedSHGPanel(QWidget):
         self._ct_error = ""
         self._ct_ack = False
         self._pm_ack = False
+        self._pm_quiesced = False
         self._pm_cleanup_requested = False
         self._pm_data = None
         self._failure = ""
@@ -241,8 +243,13 @@ class SimulatedSHGPanel(QWidget):
     def _on_pm_quiesced(self, token: int, generation: int, ok: bool, reason: str) -> None:
         if not self._matches(token, generation):
             return
-        if not ok or self._cancelled:
-            self._fail(reason or "Cancelled during PM handoff")
+        if not ok:
+            self._failure = f"PM owner handoff not confirmed: {reason}"
+            self._finalize()
+            return
+        self._pm_quiesced = True
+        if self._cancelled:
+            self._fail("Cancelled during PM handoff")
             return
         try:
             if not self.host._ct400_lease_available_for_new_operation():
@@ -250,6 +257,12 @@ class SimulatedSHGPanel(QWidget):
             protocol = self.host.synchronized_owner_leases
             req = protocol.reserve(ct400_generation=token, pm5020_generation=generation)
             self._request = req
+            # Project the combined lease into existing CT controls without
+            # forging a second CT400OperationState/lease.
+            self.host.control_panel.set_ct400_operation_state("SYNCHRONIZED")
+            self.host.histogram_control.set_ct400_operation_state("SYNCHRONIZED")
+            self.host.alignment_tab.set_ct400_operation_state("SYNCHRONIZED")
+            self.host.ct400_connect_action.setEnabled(False)
             protocol.acknowledge_pm_quiesced(req, generation=generation)
             protocol.acknowledge_ct400_ready(req, generation=token)
             self.host.pm5020_panel.sync_arm_requested.emit(token, generation, req.lease, BurstAcquisitionConfig())
@@ -344,6 +357,10 @@ class SimulatedSHGPanel(QWidget):
         if self._ct_worker is not None and not self._ct_thread_stopped:
             self._ct_worker.cancel()
             return
+        if not self._pm_quiesced:
+            # A queued owner-thread close is still outstanding; never send a
+            # competing cleanup request ahead of its acknowledgment.
+            return
         if self._request is not None and not self._ct_ack:
             self.host.synchronized_owner_leases.acknowledge_ct400_complete(
                 self._request, generation=self._request.ct400_generation
@@ -407,6 +424,10 @@ class SimulatedSHGPanel(QWidget):
                 message = f"Archive failed: {exc}"
         self._timer.stop()
         self.host.pm5020_panel.finish_synchronized_handoff()
+        self.host.control_panel.set_ct400_operation_state(self.host._ct400_operation_state.name)
+        self.host.histogram_control.set_ct400_operation_state(self.host._ct400_operation_state.name)
+        self.host.alignment_tab.set_ct400_operation_state(self.host._ct400_operation_state.name)
+        self.host._update_ct400_retry_action()
         self._token = None
         self._pm_generation = None
         self._request = None
