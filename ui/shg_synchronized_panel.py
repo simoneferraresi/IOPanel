@@ -326,9 +326,8 @@ class SimulatedSHGPanel(QWidget):
             return
         self._ct_result = result if isinstance(result, tuple) else None
         self._ct_error = error
-        if "cleanup failed" in error or "sync disable failed" in error:
-            if self._request is not None:
-                self.host.synchronized_owner_leases.quarantine(self._request, error)
+        if ("cleanup failed" in error or "sync disable failed" in error) and self._request is not None:
+            self.host.synchronized_owner_leases.quarantine(self._request, error)
         self._on_ct_completion_ready()
 
     @Slot()
