@@ -306,10 +306,18 @@ class SimulatedSHGPanel(QWidget):
             worker.completed.connect(self._on_ct_result, Qt.ConnectionType.QueuedConnection)
             worker.completed.connect(thread.quit, Qt.ConnectionType.DirectConnection)
             thread.finished.connect(worker.deleteLater)
+            thread.finished.connect(thread.deleteLater)
             thread.finished.connect(self._on_ct_thread_finished, Qt.ConnectionType.QueuedConnection)
             thread.start()
             self.status_label.setText("PM armed; simulated CT400 synchronized scan running…")
         except Exception as exc:  # noqa: BLE001 - dispatch failure is not a successful CT scan.
+            if self._ct_thread is not None and not self._ct_thread.isRunning():
+                self._ct_thread_stopped = True
+                self._ct_thread.deleteLater()
+                self._ct_thread = None
+                if self._ct_worker is not None:
+                    self._ct_worker.deleteLater()
+                self._ct_worker = None
             self._fail(f"CT scan dispatch failed: {exc}")
 
     @Slot(object, str)
@@ -318,6 +326,9 @@ class SimulatedSHGPanel(QWidget):
             return
         self._ct_result = result if isinstance(result, tuple) else None
         self._ct_error = error
+        if "cleanup failed" in error or "sync disable failed" in error:
+            if self._request is not None:
+                self.host.synchronized_owner_leases.quarantine(self._request, error)
         self._on_ct_completion_ready()
 
     @Slot()
