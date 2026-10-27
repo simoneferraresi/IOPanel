@@ -13,7 +13,7 @@ from PySide6.QtCore import QTimer, Signal, Slot
 from hardware.dummy_pm5020 import DummyPM5020
 from hardware.interfaces import AbstractPM5020
 from hardware.pm5020 import TLPMXPM5020
-from hardware.pm5020_types import ChannelConfig, PM5020State, PowerChannel
+from hardware.pm5020_types import BurstAcquisitionConfig, ChannelConfig, PM5020State, PowerChannel
 from logic.device_lease_registry import (
     DeviceLease,
     DeviceLeaseRegistry,
@@ -73,6 +73,10 @@ class PM5020MonitorWorker(BaseWorker):
     configuration_result = Signal(int, int, int, bool, str)
     monitoring_started = Signal(int, int)
     monitor_interval_result = Signal(int, int, int, bool, str)
+    synchronized_quiesced = Signal(int, int, bool, str)
+    synchronized_armed = Signal(int, int, bool, str)
+    synchronized_data = Signal(int, int, object, str)
+    synchronized_cleaned = Signal(int, int, bool, str)
 
     def __init__(
         self,
@@ -99,6 +103,110 @@ class PM5020MonitorWorker(BaseWorker):
         self._channels = (PowerChannel.CH1, PowerChannel.CH2)
         self._connection_generation = 0
         self._monitor_session_id = 0
+        self._sync_token: int | None = None
+        self._sync_generation = 0
+        self._sync_lease: DeviceLease | None = None
+        self._sync_simulation_allowed = False
+
+    def allow_simulated_sync(self) -> None:
+        """Configured before QThread startup; never authorizes a physical PM5020."""
+        if self._timer is not None or self._backend is not None:
+            raise RuntimeError("Synchronized mode must be configured before worker startup")
+        self._sync_simulation_allowed = True
+
+    def _sync_matches(self, token: int, generation: int) -> bool:
+        return self._sync_token == token and self._sync_generation == generation
+
+    @Slot(int, int)
+    def quiesce_for_synchronized(self, token: int, generation: int) -> None:
+        """Queued on the PM owner thread: stop/drain, close and release monitor lease."""
+        if not self._sync_simulation_allowed or self._sync_token is not None:
+            self.synchronized_quiesced.emit(token, generation, False, "PM owner cannot hand off this session")
+            return
+        if generation != self._connection_generation:
+            self.synchronized_quiesced.emit(token, generation, False, "Stale PM connection generation")
+            return
+        try:
+            if self._backend is not None and not isinstance(self._backend, DummyPM5020):
+                raise RuntimeError("Physical PM5020 handoff is prohibited")
+            self._stop_timer()  # Executed after any earlier queued _poll completed.
+            if self._poll_in_progress:
+                raise RuntimeError("PM poll still in progress")
+            if self._backend is not None and self._backend.is_connected():
+                self._backend.close()
+            if self._backend is not None and self._backend.is_connected():
+                raise RuntimeError("PM5020 could not confirm disconnection")
+            self._release_connection_lease()
+            self._backend = None
+            self._sync_token = token
+            self._sync_generation = generation
+            self._publish_state()
+            self.activity_state.emit("Disconnected")
+            self.synchronized_quiesced.emit(token, generation, True, "")
+        except Exception as exc:  # noqa: BLE001 - ambiguous device close must retain ownership.
+            self._quarantine_connection_lease(f"Synchronized PM handoff failed: {exc}")
+            self.synchronized_quiesced.emit(token, generation, False, str(exc))
+
+    @Slot(int, int, object, object)
+    def arm_synchronized(self, token: int, generation: int, lease: DeviceLease, config: BurstAcquisitionConfig) -> None:
+        """Arm ONLY the DummyPM5020 on the permanent PM owner QThread."""
+        if not self._sync_matches(token, generation):
+            self.synchronized_armed.emit(token, generation, False, "Stale synchronized PM request")
+            return
+        try:
+            if not isinstance(config, BurstAcquisitionConfig) or not self._sync_simulation_allowed:
+                raise RuntimeError("Only validated simulated burst configurations are supported")
+            snapshot = self._lease_registry.snapshot()[1]
+            if snapshot.lease_sequence != lease.sequence or snapshot.owner != "synchronized-acquisition":
+                raise RuntimeError("Missing atomic synchronized PM reservation")
+            if self._sync_lease is not None or self._backend is not None:
+                raise RuntimeError("PM synchronized request already owns a backend")
+            self._sync_lease = lease
+            backend = self._simulator_factory()
+            if not isinstance(backend, DummyPM5020):
+                raise TypeError("Simulated synchronized PM backend must be DummyPM5020")
+            self._backend = backend
+            backend.connect(None)
+            backend.configure_burst(config)
+            backend.start_burst()
+            if backend.state is not PM5020State.ARMED:
+                raise RuntimeError("PM5020 arm did not acknowledge ARMED state")
+            self._publish_state()
+            self.synchronized_armed.emit(token, generation, True, "")
+        except Exception as exc:  # noqa: BLE001 - do not interpret unknown PM state as arm success.
+            self.synchronized_armed.emit(token, generation, False, str(exc))
+
+    @Slot(int, int)
+    def retrieve_synchronized(self, token: int, generation: int) -> None:
+        if not self._sync_matches(token, generation) or self._sync_lease is None:
+            self.synchronized_data.emit(token, generation, None, "Stale/unowned PM retrieval")
+            return
+        try:
+            if self._backend is None or not isinstance(self._backend, DummyPM5020):
+                raise RuntimeError("Missing simulated PM backend")
+            data = self._backend.retrieve_burst()
+            self.synchronized_data.emit(token, generation, data, "")
+        except Exception as exc:  # noqa: BLE001 - preserve raw PM exception and reject partial arrays.
+            self.synchronized_data.emit(token, generation, None, str(exc))
+
+    @Slot(int, int)
+    def cleanup_synchronized(self, token: int, generation: int) -> None:
+        if not self._sync_matches(token, generation):
+            return
+        try:
+            self._stop_timer()
+            if self._backend is not None:
+                self._backend.close()
+                if self._backend.is_connected():
+                    raise RuntimeError("PM5020 remains connected after close")
+            self._backend = None
+            self._sync_lease = None  # Only coordinator releases the combined lease.
+            self._sync_token = None
+            self._publish_state()
+            self.activity_state.emit("Disconnected")
+            self.synchronized_cleaned.emit(token, generation, True, "")
+        except Exception as exc:  # noqa: BLE001 - coordinator quarantines BOTH resources.
+            self.synchronized_cleaned.emit(token, generation, False, str(exc))
 
     def bind_lease_registry(self, registry: DeviceLeaseRegistry) -> None:
         """Bind MainWindow registry before starting this owner thread."""
@@ -126,6 +234,9 @@ class PM5020MonitorWorker(BaseWorker):
 
     @Slot(str, str, int)
     def connect_instrument(self, mode: str, resource_name: str, generation: int) -> None:
+        if self._sync_token is not None:
+            self.error_occurred.emit("PM5020 is reserved for synchronized acquisition")
+            return
         self._connection_generation = generation
         self.activity_state.emit("Connecting")
         if self._backend is not None and self._backend.is_connected():
@@ -180,6 +291,8 @@ class PM5020MonitorWorker(BaseWorker):
 
     @Slot(object)
     def configure_channels(self, request: ConfigurationRequest) -> None:
+        if self._sync_token is not None:
+            return
         if request.generation != self._connection_generation:
             return
         backend = self._ready_backend()
@@ -204,10 +317,14 @@ class PM5020MonitorWorker(BaseWorker):
 
     @Slot(object)
     def set_channels(self, channels: Sequence[PowerChannel]) -> None:
+        if self._sync_token is not None:
+            return
         self._channels = tuple(PowerChannel(channel) for channel in channels)
 
     @Slot(int)
     def start_monitoring(self, interval_ms: int) -> None:
+        if self._sync_token is not None:
+            return
         if self._ready_backend() is None or self._timer is None:
             return
         if not self._channels:
@@ -224,6 +341,8 @@ class PM5020MonitorWorker(BaseWorker):
 
     @Slot()
     def pause_monitoring(self) -> None:
+        if self._sync_token is not None:
+            return
         if not self._monitoring or self._timer is None:
             return
         self._timer.stop()
@@ -232,6 +351,8 @@ class PM5020MonitorWorker(BaseWorker):
 
     @Slot(int)
     def resume_monitoring(self, interval_ms: int) -> None:
+        if self._sync_token is not None:
+            return
         if not self._monitoring or not self._paused or self._timer is None:
             return
         if self._ready_backend() is None:
@@ -243,6 +364,8 @@ class PM5020MonitorWorker(BaseWorker):
 
     @Slot(int, int, int, int)
     def update_monitor_interval(self, generation: int, session_id: int, request_id: int, interval_ms: int) -> None:
+        if self._sync_token is not None:
+            return
         """Update the active worker timer without restarting its monitoring session."""
         if not 250 <= interval_ms <= 5000:
             self.monitor_interval_result.emit(
@@ -266,11 +389,15 @@ class PM5020MonitorWorker(BaseWorker):
 
     @Slot()
     def stop_monitoring(self) -> None:
+        if self._sync_token is not None:
+            return
         self._stop_timer()
         self.activity_state.emit(self._activity_for_state())
 
     @Slot(int)
     def disconnect_instrument(self, generation: int) -> None:
+        if self._sync_token is not None:
+            return
         self._connection_generation = generation
         self._stop_timer()
         if self._backend is not None:
@@ -295,6 +422,8 @@ class PM5020MonitorWorker(BaseWorker):
 
     @Slot()
     def shutdown(self) -> None:
+        if self._sync_token is not None:
+            self.cleanup_synchronized(self._sync_token, self._sync_generation)
         self._stop_timer()
         if self._backend is not None:
             try:
