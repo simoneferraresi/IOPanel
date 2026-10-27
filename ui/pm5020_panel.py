@@ -258,6 +258,10 @@ class PM5020Panel(QWidget):
     """PM5020 configuration, measurement, and plotting UI owned by one worker."""
 
     connection_status_changed = Signal(object, str)
+    sync_quiesce_requested = Signal(int, int)
+    sync_arm_requested = Signal(int, int, object, object)
+    sync_retrieve_requested = Signal(int, int)
+    sync_cleanup_requested = Signal(int, int)
     connect_requested = Signal(str, str, int)
     configure_requested = Signal(object)
     channels_requested = Signal(object)
@@ -291,6 +295,7 @@ class PM5020Panel(QWidget):
         self.resource_name = resource_name
         self._connection_request_pending = False
         self._connection_operation_started = False
+        self._sync_active = False
         self._backend_state = PM5020State.DISCONNECTED
         self._activity = "Disconnected"
         self._configuration_applied = False
@@ -327,6 +332,8 @@ class PM5020Panel(QWidget):
         )
         if lease_registry is not None:
             self.worker.bind_lease_registry(lease_registry)
+        if self.backend_mode == "simulation":
+            self.worker.allow_simulated_sync()
         self.task = TaskRunner(self.worker, auto_start_run=False)
         self.task.worker_thread.setObjectName("PM5020-monitor")
         self.task.worker_thread.started.connect(self.worker.initialize)
@@ -609,18 +616,43 @@ class PM5020Panel(QWidget):
         self.stop_requested.connect(self.worker.stop_monitoring)
         self.disconnect_requested.connect(self.worker.disconnect_instrument)
         self.shutdown_requested.connect(self.worker.shutdown)
+        self.sync_quiesce_requested.connect(self.worker.quiesce_for_synchronized, Qt.ConnectionType.QueuedConnection)
+        self.sync_arm_requested.connect(self.worker.arm_synchronized, Qt.ConnectionType.QueuedConnection)
+        self.sync_retrieve_requested.connect(self.worker.retrieve_synchronized, Qt.ConnectionType.QueuedConnection)
+        self.sync_cleanup_requested.connect(self.worker.cleanup_synchronized, Qt.ConnectionType.QueuedConnection)
 
     def _ensure_worker_started(self) -> None:
         if not self.task.worker_thread.isRunning() and not self._shutdown_requested:
             self._thread_started = True
             self.task.start()
 
+    def begin_synchronized_handoff(self, token: int) -> int:
+        """Lock ordinary UI before emitting the queued PM owner request."""
+        if self.backend_mode != "simulation" or self._shutdown_requested or self._sync_active:
+            raise RuntimeError("Synchronized acquisition requires an available simulated PM5020")
+        if self._connection_request_pending or self._activity in {"Connecting", "Disconnecting"}:
+            raise RuntimeError("PM5020 connection transition must finish first")
+        self._sync_active = True
+        self._invalidate_configuration()
+        self._ensure_worker_started()
+        generation = self._connection_generation
+        self.sync_quiesce_requested.emit(token, generation)
+        self._update_controls()
+        return generation
+
+    def finish_synchronized_handoff(self) -> None:
+        self._sync_active = False
+        self._monitor_session = False
+        self._paused = False
+        self._invalidate_configuration()
+        self._update_controls()
+
     @Slot()
     def _connect(self) -> None:
         self.request_connect()
 
     def request_connect(self) -> None:
-        if self._shutdown_requested or self._connection_request_pending:
+        if self._sync_active or self._shutdown_requested or self._connection_request_pending:
             return
         if self._backend_state is not PM5020State.DISCONNECTED or self._activity in {"Connecting", "Disconnecting"}:
             return
@@ -642,7 +674,7 @@ class PM5020Panel(QWidget):
         self.request_disconnect()
 
     def request_disconnect(self) -> None:
-        if self._shutdown_requested or self._connection_request_pending:
+        if self._sync_active or self._shutdown_requested or self._connection_request_pending:
             return
         if self._backend_state is PM5020State.DISCONNECTED or self._activity in {"Connecting", "Disconnecting"}:
             return
@@ -660,7 +692,8 @@ class PM5020Panel(QWidget):
     @Slot()
     def _request_automatic_configuration(self) -> None:
         if (
-            self._shutdown_requested
+            self._sync_active
+            or self._shutdown_requested
             or not self._configuration_dirty
             or self._pending_configuration is not None
             or self._backend_state is not PM5020State.IDLE
@@ -742,7 +775,7 @@ class PM5020Panel(QWidget):
 
     @Slot()
     def _start(self) -> None:
-        if not self.start_button.isEnabled():
+        if self._sync_active or not self.start_button.isEnabled():
             return
         enabled = tuple(channel.channel for channel in (self.ch1, self.ch2) if channel.enabled.isChecked())
         if not enabled:
@@ -760,7 +793,7 @@ class PM5020Panel(QWidget):
 
     @Slot()
     def _toggle_pause_resume(self) -> None:
-        if not self.pause_resume_button.isEnabled():
+        if self._sync_active or not self.pause_resume_button.isEnabled():
             return
         if self._paused:
             self.resume_requested.emit(self._requested_interval_ms)
@@ -938,18 +971,19 @@ class PM5020Panel(QWidget):
                 interval_valid = False
         can_start = (
             ready and self._configuration_applied and interval_valid and not recovering and not self._monitor_session
+            and not self._sync_active
         )
         self.start_button.setEnabled(can_start)
         self.pause_resume_button.setText("Resume" if self._paused else "Pause")
         self.pause_resume_button.setIcon(QIcon(":/icons/play.svg") if self._paused else QIcon(":/icons/pause.svg"))
         self.pause_resume_button.setEnabled(
-            self._monitor_session and not recovering and (not self._paused or interval_valid)
+            self._monitor_session and not recovering and (not self._paused or interval_valid) and not self._sync_active
         )
-        self.stop_button.setEnabled(self._monitor_session or self._paused)
+        self.stop_button.setEnabled((self._monitor_session or self._paused) and not self._sync_active)
         for channel in (self.ch1, self.ch2):
             for widget in (channel.wavelength, channel.auto_range, channel.input_filter, channel.enabled):
-                widget.setEnabled(not self._monitor_session and not self._paused)
-            manual_enabled = not self._monitor_session and not self._paused and not channel.auto_range.isChecked()
+                widget.setEnabled(not self._monitor_session and not self._paused and not self._sync_active)
+            manual_enabled = not self._monitor_session and not self._paused and not channel.auto_range.isChecked() and not self._sync_active
             channel.manual_range.setEnabled(manual_enabled)
             channel.range_unit.setEnabled(manual_enabled)
             channel.unit.setEnabled(True)
