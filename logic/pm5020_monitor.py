@@ -14,7 +14,13 @@ from hardware.dummy_pm5020 import DummyPM5020
 from hardware.interfaces import AbstractPM5020
 from hardware.pm5020 import TLPMXPM5020
 from hardware.pm5020_types import ChannelConfig, PM5020State, PowerChannel
-from logic.device_lease_registry import DeviceLease, DeviceLeaseRegistry, DeviceResource, DeviceRecoveryRequired, LeaseState
+from logic.device_lease_registry import (
+    DeviceLease,
+    DeviceLeaseRegistry,
+    DeviceRecoveryRequired,
+    DeviceResource,
+    LeaseState,
+)
 from logic.task_runner import BaseWorker
 
 logger = logging.getLogger("LabApp.pm5020_monitor")
@@ -165,7 +171,7 @@ class PM5020MonitorWorker(BaseWorker):
                     self._quarantine_connection_lease(f"PM5020 connection failed: {exc}")
             except DeviceRecoveryRequired:
                 pass
-            except Exception:
+            except Exception:  # noqa: BLE001 - cannot trust vendor/native close state
                 self._quarantine_connection_lease("PM5020 connection state could not be verified")
             self._publish_state()
             state = PM5020State.DISCONNECTED if self._backend is None else self._backend.state
@@ -283,7 +289,7 @@ class PM5020MonitorWorker(BaseWorker):
                 self._quarantine_connection_lease("PM5020 disconnect is not confirmed")
         except DeviceRecoveryRequired:
             pass
-        except Exception:
+        except Exception:  # noqa: BLE001 - cannot trust vendor/native close state
             self._quarantine_connection_lease("PM5020 disconnect state could not be verified")
         self.activity_state.emit("Disconnected" if not self._connected() else "Recovery required")
 
