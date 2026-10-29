@@ -1397,32 +1397,18 @@ class PlotWidget(QWidget):
         plot_layout.addWidget(self.plot_widget, 0, 0)
         layout.addWidget(self.plot_container, stretch=1)
 
-        # Keep absolute laser output power in its own view and Y-axis; only
-        # its wavelength (X) axis is linked to the detector plot. The scene
-        # owns this secondary ViewBox for the lifetime of the PlotWidget.
+        # Keep the right axis inert until the user requests the trace.
+        # Baseline MainWindow creation therefore adds no secondary ViewBox.
         plot_item = self.plot_widget.getPlotItem()
         if plot_item is None:
             raise RuntimeError("Scan plot is unavailable during output-power axis initialization")
         self._scan_plot_item = plot_item
-        self.output_power_viewbox = pg.ViewBox(enableMenu=False)
-        self.plot_widget.scene().addItem(self.output_power_viewbox)
-        self.output_power_viewbox.setXLink(plot_item.vb)
-        self.output_power_viewbox.setMouseEnabled(x=False, y=False)
-        self.output_power_viewbox.enableAutoRange(x=False, y=False)
+        self.output_power_viewbox: pg.ViewBox | None = None
+        self.output_power_curve: pg.PlotDataItem | None = None
         self.output_power_axis = plot_item.getAxis("right")
-        self.output_power_axis.linkToView(self.output_power_viewbox)
         self.output_power_axis.setLabel("Laser output power", units="dBm", color=_OUTPUT_POWER_TRACE_COLOR)
         self.output_power_axis.setTextPen(pg.mkPen(_OUTPUT_POWER_TRACE_COLOR))
-        self.output_power_curve = pg.PlotDataItem(
-            pen=pg.mkPen(_OUTPUT_POWER_TRACE_COLOR, width=1.75),
-            autoDownsampleFactor=_SCAN_AUTO_DOWNSAMPLE_FACTOR,
-            skipFiniteCheck=True,
-        )
-        self.output_power_viewbox.addItem(self.output_power_curve)
-        self.plot_widget.getViewBox().sigResized.connect(self._sync_output_power_viewbox_geometry)
         plot_item.hideAxis("right")
-        self.output_power_viewbox.hide()
-        self._sync_output_power_viewbox_geometry()
 
         # --- NEW: Reference Plot Item (The "Frozen" Trace) ---
         # We add this BEFORE the live item so it renders behind it implicitly,
@@ -1587,11 +1573,39 @@ class PlotWidget(QWidget):
 
         logger.info("PlotWidget (PyQtGraph) initialized")
 
+    def _ensure_output_power_viewbox(self) -> tuple[pg.ViewBox, pg.PlotDataItem]:
+        """Allocate the second graphics view only when the operator enables it."""
+        view = self.output_power_viewbox
+        curve = self.output_power_curve
+        if view is None:
+            view = pg.ViewBox(enableMenu=False)
+            self.plot_widget.scene().addItem(view)
+            view.setXLink(self.plot_widget.getViewBox())
+            view.setMouseEnabled(x=False, y=False)
+            view.enableAutoRange(x=False, y=False)
+            curve = pg.PlotDataItem(
+                pen=pg.mkPen(_OUTPUT_POWER_TRACE_COLOR, width=1.75),
+                autoDownsampleFactor=_SCAN_AUTO_DOWNSAMPLE_FACTOR,
+                skipFiniteCheck=True,
+            )
+            view.addItem(curve)
+            self.output_power_axis.linkToView(view)
+            self.output_power_viewbox = view
+            self.output_power_curve = curve
+            self.plot_widget.getViewBox().sigResized.connect(self._sync_output_power_viewbox_geometry)
+            view.hide()
+            self._sync_output_power_viewbox_geometry()
+        assert curve is not None
+        return view, curve
+
     def _sync_output_power_viewbox_geometry(self) -> None:
-        """Keep the secondary view aligned with the detector plot's scene rectangle."""
+        """Align the optional secondary view with the detector plot."""
+        view = self.output_power_viewbox
+        if view is None:
+            return
         main_view = self.plot_widget.getViewBox()
-        self.output_power_viewbox.setGeometry(main_view.sceneBoundingRect())
-        self.output_power_viewbox.linkedViewChanged(main_view, self.output_power_viewbox.XAxis)
+        view.setGeometry(main_view.sceneBoundingRect())
+        view.linkedViewChanged(main_view, view.XAxis)
 
     def _refresh_output_power_display(self, _checked: bool = False) -> None:
         """Toggle only the current scan's laser reference, never its detector data."""
@@ -1609,19 +1623,20 @@ class PlotWidget(QWidget):
 
         show = available and self.output_power_btn.isChecked()
         if show and values is not None and wavelengths is not None and finite is not None:
-            self.output_power_curve.setData(wavelengths[finite], values[finite])
+            view, curve = self._ensure_output_power_viewbox()
+            curve.setData(wavelengths[finite], values[finite])
             visible_values = values[finite]
-            self.output_power_viewbox.setYRange(
-                float(np.min(visible_values)), float(np.max(visible_values)), padding=0.05
-            )
-            self.output_power_curve.show()
+            view.setYRange(float(np.min(visible_values)), float(np.max(visible_values)), padding=0.05)
+            curve.show()
             self._scan_plot_item.showAxis("right")
-            self.output_power_viewbox.show()
+            view.show()
             self._sync_output_power_viewbox_geometry()
         else:
-            self.output_power_curve.setData([], [])
-            self.output_power_curve.hide()
-            self.output_power_viewbox.hide()
+            if self.output_power_curve is not None:
+                self.output_power_curve.setData([], [])
+                self.output_power_curve.hide()
+            if self.output_power_viewbox is not None:
+                self.output_power_viewbox.hide()
             self._scan_plot_item.hideAxis("right")
         self._last_crosshair_text = None
 
@@ -2098,7 +2113,7 @@ class PlotWidget(QWidget):
         overlay_items = [item for overlay in self.scan_overlays for item in overlay.items.values()]
         for item in (
             self.plot_data_item,
-            self.output_power_curve,
+            *([self.output_power_curve] if self.output_power_curve is not None else []),
             *self.detector_plot_items.values(),
             *self.reference_detector_plot_items.values(),
             *overlay_items,
@@ -2725,9 +2740,10 @@ class PlotWidget(QWidget):
         self._cleaned_up = True
         self._crosshair_refresh_timer.stop()
         self._latest_mouse_position = None
-        self.plot_widget.getViewBox().sigResized.disconnect(self._sync_output_power_viewbox_geometry)
-        self.output_power_curve.setData([], [])
-        self.output_power_viewbox.hide()
+        if self.output_power_viewbox is not None and self.output_power_curve is not None:
+            self.plot_widget.getViewBox().sigResized.disconnect(self._sync_output_power_viewbox_geometry)
+            self.output_power_curve.setData([], [])
+            self.output_power_viewbox.hide()
         logger.debug("PlotWidget cleanup: Cleaning up resources.")
         self._status_clear_timer.stop()
         thread = self.matlab_save_thread
