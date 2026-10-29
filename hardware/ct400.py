@@ -456,7 +456,7 @@ class CT400(AbstractCT400):
     def get_output_power_resampled(self, num_points: int) -> np.ndarray:
         """Retrieve the CT400's scan-resampled 'Power out' channel.
 
-        The native values are returned unchanged. The current dB label is
+        The native values are returned unchanged. The current dBm label is
         provisional pending verification on the laboratory instrument.
         """
         if self.handle is None:

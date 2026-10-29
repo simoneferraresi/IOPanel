@@ -23,7 +23,7 @@ _CSV_COLUMNS = (
     "Transfer_function_Det_3_[dB]",
     "Transfer_function_Det_4_[dB]",
 )
-_CSV_COLUMNS_WITH_OUTPUT_POWER = (*_CSV_COLUMNS, "Laser_output_power_[dB]")
+_CSV_COLUMNS_WITH_OUTPUT_POWER = (*_CSV_COLUMNS, "Laser_output_power_[dBm]")
 _MAT_TRACE_KEYS = tuple(f"transfer_function_det_{i}_dB" for i in range(1, 5))
 
 
@@ -53,14 +53,14 @@ class ImportedScan:
     result_kind: CT400ScanResultKind
     raw_result_code: int
     final_pout: float | None
-    laser_output_power_db: np.ndarray | None = None
+    laser_output_power_dbm: np.ndarray | None = None
 
     def __post_init__(self) -> None:
         wavelengths = np.array(self.wavelengths_nm, dtype=float, copy=True)
         values = np.array(self.detector_data, dtype=float, copy=True)
         if wavelengths.ndim != 1 or values.shape != (len(self.detectors), len(wavelengths)):
             raise ValueError("Imported scan arrays have inconsistent dimensions")
-        power_trace = self.laser_output_power_db
+        power_trace = self.laser_output_power_dbm
         if power_trace is not None:
             power_trace = np.array(power_trace, dtype=float, copy=True)
             if power_trace.ndim != 1 or power_trace.shape != wavelengths.shape:
@@ -70,7 +70,7 @@ class ImportedScan:
         values.setflags(write=False)
         object.__setattr__(self, "wavelengths_nm", wavelengths)
         object.__setattr__(self, "detector_data", values)
-        object.__setattr__(self, "laser_output_power_db", power_trace)
+        object.__setattr__(self, "laser_output_power_dbm", power_trace)
 
 
 def load_scan(path: Path | str) -> ImportedScan:
@@ -223,7 +223,7 @@ def _load_csv(path: Path) -> dict[str, Any]:
         metadata = _metadata(meta)
         data = _read_csv_numeric_data(stream, column_count=len(columns))
     power_trace = data[:, 5] if len(columns) == len(_CSV_COLUMNS_WITH_OUTPUT_POWER) else None
-    return _assemble(data[:, 0], data[:, 1:5].T, metadata, laser_output_power_db=power_trace)
+    return _assemble(data[:, 0], data[:, 1:5].T, metadata, laser_output_power_dbm=power_trace)
 
 
 def _read_csv_numeric_data(stream: TextIO, *, column_count: int) -> np.ndarray:
@@ -336,11 +336,11 @@ def _load_mat(path: Path) -> dict[str, Any]:
         raise ScanImportError("Detector arrays must each contain exactly one sample per wavelength.")
     detector_rows = np.vstack(detector_vectors)
     power_trace = (
-        _vector(raw["laser_output_power_dB"], "laser_output_power_dB") if "laser_output_power_dB" in raw else None
+        _vector(raw["laser_output_power_dBm"], "laser_output_power_dBm") if "laser_output_power_dBm" in raw else None
     )
     if power_trace is not None and power_trace.size != wavelengths.size:
         raise ScanImportError("Output power must contain exactly one sample per wavelength.")
-    return _assemble(wavelengths, detector_rows, metadata, laser_output_power_db=power_trace)
+    return _assemble(wavelengths, detector_rows, metadata, laser_output_power_dbm=power_trace)
 
 
 def _assemble(
@@ -348,7 +348,7 @@ def _assemble(
     all_rows: np.ndarray,
     metadata: dict[str, Any],
     *,
-    laser_output_power_db: np.ndarray | None = None,
+    laser_output_power_dbm: np.ndarray | None = None,
 ) -> dict[str, Any]:
     if wavelengths.ndim != 1 or wavelengths.size == 0:
         raise ScanImportError("Wavelength samples must be a non-empty vector.")
@@ -359,7 +359,7 @@ def _assemble(
         **metadata,
         "wavelengths_nm": wavelengths,
         "detector_data": all_rows[active_rows],
-        "laser_output_power_db": laser_output_power_db,
+        "laser_output_power_dbm": laser_output_power_dbm,
     }
 
 

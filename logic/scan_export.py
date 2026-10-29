@@ -23,7 +23,7 @@ CSV_COLUMNS = (
     "Transfer_function_Det_3_[dB]",
     "Transfer_function_Det_4_[dB]",
 )
-OUTPUT_POWER_COLUMN = "Laser_output_power_[dB]"
+OUTPUT_POWER_COLUMN = "Laser_output_power_[dBm]"
 CSV_COLUMNS_WITH_OUTPUT_POWER = (*CSV_COLUMNS, OUTPUT_POWER_COLUMN)
 
 
@@ -54,7 +54,7 @@ def build_scan_export_v2(measurement: ScanMeasurement, *, comment: str = "") -> 
     for row_index, detector in enumerate(measurement.detectors):
         optical_data[detector] = measurement.detector_data[row_index]
 
-    power_trace = measurement.laser_output_power_db
+    power_trace = measurement.laser_output_power_dbm
     csv_columns = CSV_COLUMNS_WITH_OUTPUT_POWER if power_trace is not None else CSV_COLUMNS
     rows = [wavelengths, *(optical_data[detector] for detector in OPTICAL_EXPORT_DETECTORS)]
     if power_trace is not None:
@@ -114,6 +114,6 @@ def build_scan_export_v2(measurement: ScanMeasurement, *, comment: str = "") -> 
     if measurement.final_pout is not None:
         mat_data["pout_dBm"] = measurement.final_pout
     if power_trace is not None:
-        mat_data["laser_output_power_dB"] = power_trace
+        mat_data["laser_output_power_dBm"] = power_trace
 
     return ScanExportPayload(csv_data=csv_data, csv_header=csv_header, mat_data=mat_data)

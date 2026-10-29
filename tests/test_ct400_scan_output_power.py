@@ -103,7 +103,7 @@ def _measurement(power_trace):
         backend="test.backend",
         simulated=True,
         completed_at_utc=datetime(2026, 10, 29, tzinfo=UTC),
-        laser_output_power_db=power_trace,
+        laser_output_power_dbm=power_trace,
     )
 
 
@@ -120,7 +120,7 @@ def test_power_trace_round_trip_is_wavelength_aligned_and_distinct_from_final_po
     assert payload.csv_data.shape == (3, 6)
     assert payload.csv_header.endswith("# " + ", ".join(CSV_COLUMNS_WITH_OUTPUT_POWER))
     np.testing.assert_array_equal(payload.csv_data[:, 5], [0.12, -0.34, 0.56])
-    np.testing.assert_array_equal(payload.mat_data["laser_output_power_dB"], [0.12, -0.34, 0.56])
+    np.testing.assert_array_equal(payload.mat_data["laser_output_power_dBm"], [0.12, -0.34, 0.56])
     assert payload.mat_data["pout_dBm"] == -0.1
     path = tmp_path / ("power.csv" if format == "csv" else "power.mat")
     if format == "csv":
@@ -128,10 +128,10 @@ def test_power_trace_round_trip_is_wavelength_aligned_and_distinct_from_final_po
     else:
         savemat(path, payload.mat_data)
     imported = load_scan(path)
-    np.testing.assert_array_equal(imported.laser_output_power_db, [0.12, -0.34, 0.56])
+    np.testing.assert_array_equal(imported.laser_output_power_dbm, [0.12, -0.34, 0.56])
     np.testing.assert_array_equal(imported.detector_data, measurement.detector_data)
     assert imported.final_pout == -0.1
-    assert not imported.laser_output_power_db.flags.writeable
+    assert not imported.laser_output_power_dbm.flags.writeable
 
 
 @pytest.mark.parametrize("format", ["csv", "mat"])
@@ -139,24 +139,24 @@ def test_legacy_five_column_export_still_loads_without_power_trace(tmp_path, for
     payload = build_scan_export_v2(_measurement(None))
     assert payload.csv_data.shape == (3, 5)
     assert payload.csv_header.endswith("# " + ", ".join(CSV_COLUMNS))
-    assert "laser_output_power_dB" not in payload.mat_data
+    assert "laser_output_power_dBm" not in payload.mat_data
     path = tmp_path / ("legacy.csv" if format == "csv" else "legacy.mat")
     if format == "csv":
         _write_csv(path, payload)
     else:
         savemat(path, payload.mat_data)
     imported = load_scan(path)
-    assert imported.laser_output_power_db is None
+    assert imported.laser_output_power_dbm is None
 
 
 def test_power_trace_measurement_is_defensively_copied_and_shape_checked():
     raw = np.array([1.0, 2.0, 3.0])
     measurement = _measurement(raw)
     raw[0] = 900
-    np.testing.assert_array_equal(measurement.laser_output_power_db, [1, 2, 3])
+    np.testing.assert_array_equal(measurement.laser_output_power_dbm, [1, 2, 3])
     with pytest.raises(ValueError):
-        measurement.laser_output_power_db[0] = 5
-    with pytest.raises(ValueError, match="laser_output_power_db must have shape"):
+        measurement.laser_output_power_dbm[0] = 5
+    with pytest.raises(ValueError, match="laser_output_power_dbm must have shape"):
         _measurement([1, 2])
 
 
@@ -170,7 +170,7 @@ def test_malformed_extended_csv_is_rejected(tmp_path):
 
 def test_malformed_extended_mat_is_rejected(tmp_path):
     payload = build_scan_export_v2(_measurement([1.0, 2.0, 3.0]))
-    payload.mat_data["laser_output_power_dB"] = np.array([1.0, 2.0])
+    payload.mat_data["laser_output_power_dBm"] = np.array([1.0, 2.0])
     path = tmp_path / "bad.mat"
     savemat(path, payload.mat_data)
     with pytest.raises(ScanImportError, match="Output power must contain exactly one sample"):
@@ -189,7 +189,7 @@ def test_scan_worker_captures_synthetic_power_without_extra_laser_commands(monke
     assert not errors
     assert len(measurements) == 1
     expected = device.get_output_power_resampled(11)
-    np.testing.assert_array_equal(measurements[0].laser_output_power_db, expected)
+    np.testing.assert_array_equal(measurements[0].laser_output_power_dbm, expected)
     assert len(device.cmd_laser_calls) == 2
     assert not worker.recovery_required
 
@@ -209,7 +209,7 @@ def test_optional_power_error_preserves_completed_detector_acquisition(monkeypat
     worker.do_scan()
     assert not errors
     assert len(measurements) == 1
-    assert measurements[0].laser_output_power_db is None
+    assert measurements[0].laser_output_power_dbm is None
     assert measurements[0].detector_data.shape == (1, 11)
     assert not worker.recovery_required
     assert len(device.cmd_laser_calls) == 2

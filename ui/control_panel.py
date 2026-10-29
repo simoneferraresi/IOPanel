@@ -542,11 +542,11 @@ class ScanWorker(QtCore.QObject):
             len(wavelengths),
             powers_scan_data.shape,
         )
-        laser_output_power_db = None
+        laser_output_power_dbm = None
         if len(wavelengths):
             started_at = time.perf_counter()
             try:
-                laser_output_power_db = self.ct400.get_output_power_resampled(len(wavelengths))
+                laser_output_power_dbm = self.ct400.get_output_power_resampled(len(wavelengths))
             except Exception:  # Optional channel must not discard valid detector data.
                 logger.exception("ScanWorker: Could not retrieve wavelength-resolved CT400 output power.")
             finally:
@@ -572,7 +572,7 @@ class ScanWorker(QtCore.QObject):
             simulated=isinstance(self.ct400, DummyCT400),
             completed_at_utc=datetime.now(UTC),
             scan_id=self.scan_id,
-            laser_output_power_db=laser_output_power_db,
+            laser_output_power_dbm=laser_output_power_dbm,
         )
         self.measurement_ready.emit(measurement)
         self._timing_outcome = "warning" if kind == CT400ScanResultKind.WARNING else "success"
