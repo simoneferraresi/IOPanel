@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 from scipy.io import loadmat
 
-import logic.export_file_io as export_file_io
+from logic import export_file_io
 from logic.export_file_io import derive_export_targets
 from logic.power_monitor_export_worker import _write_staged_power_monitor_format
 from logic.scan_export_worker import _write_staged_format
