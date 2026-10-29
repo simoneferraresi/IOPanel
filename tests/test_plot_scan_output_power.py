@@ -50,14 +50,14 @@ def test_power_toggle_is_disabled_without_data_and_hidden_by_default(qtbot):
     assert not widget.output_power_btn.isChecked()
     assert not widget.output_power_btn.isEnabled()
     assert not widget.output_power_axis.isVisible()
-    assert not widget.output_power_viewbox.isVisible()
+    assert widget.output_power_viewbox is None
 
     scan = _scan()
     widget.set_measurement(scan)
     assert widget.output_power_btn.isEnabled()
     assert not widget.output_power_btn.isChecked()
     assert not widget.output_power_axis.isVisible()
-    assert not widget.output_power_viewbox.isVisible()
+    assert widget.output_power_viewbox is None
     assert widget.output_power_axis.labelUnits == "dBm"
     assert widget.output_power_axis.labelText == "Laser output power"
     np.testing.assert_array_equal(scan.laser_output_power_dbm, [0.5, 0.8, 0.6])
@@ -79,6 +79,8 @@ def test_toggle_uses_independent_right_y_axis_and_linked_x_without_changing_dete
 
     assert widget.output_power_btn.isChecked()
     assert widget.output_power_axis.isVisible()
+    assert widget.output_power_viewbox is not None
+    assert widget.output_power_curve is not None
     assert widget.output_power_viewbox.isVisible()
     np.testing.assert_array_equal(widget.output_power_curve.xData, [1550.0, 1550.1, 1550.2])
     np.testing.assert_array_equal(widget.output_power_curve.yData, [0.5, 0.8, 0.6])
@@ -96,7 +98,8 @@ def test_toggle_uses_independent_right_y_axis_and_linked_x_without_changing_dete
     for _ in range(3):
         widget.output_power_btn.click()
         assert not widget.output_power_axis.isVisible()
-        assert not widget.output_power_viewbox.isVisible()
+        assert widget.output_power_viewbox is not None
+    assert not widget.output_power_viewbox.isVisible()
         assert widget.output_power_curve.xData is None or len(widget.output_power_curve.xData) == 0
         widget.output_power_btn.click()
         assert widget.output_power_axis.isVisible()
@@ -143,6 +146,8 @@ def test_imported_scan_uses_same_toggle_and_legacy_scan_disables_it(qtbot, tmp_p
     assert widget.output_power_btn.isEnabled()
     assert not widget.save_btn.isEnabled()
     widget.output_power_btn.click()
+    assert widget.output_power_curve is not None
+    assert widget.output_power_viewbox is not None
     np.testing.assert_array_equal(widget.output_power_curve.yData, [0.1, 0.2, 0.3])
     assert "Laser output: 0.20 dBm" in _cursor(widget, 1550.1)
 
@@ -152,6 +157,7 @@ def test_imported_scan_uses_same_toggle_and_legacy_scan_disables_it(qtbot, tmp_p
     assert not widget.output_power_btn.isEnabled()
     assert not widget.output_power_btn.isChecked()
     assert not widget.output_power_axis.isVisible()
+    assert widget.output_power_viewbox is not None
     assert not widget.output_power_viewbox.isVisible()
     assert not any("Laser output" in line for line in _cursor(widget, 1550.1))
 
@@ -162,6 +168,7 @@ def test_missing_or_nonfinite_output_power_is_safe_and_does_not_mutate_acquisiti
     data = _scan(values=(np.nan, 0.5, np.inf))
     widget.set_measurement(data)
     widget.output_power_btn.click()
+    assert widget.output_power_curve is not None
     np.testing.assert_array_equal(widget.output_power_curve.xData, [1550.1])
     np.testing.assert_array_equal(widget.output_power_curve.yData, [0.5])
     assert "Laser output: n/a" in _cursor(widget, 1550.0)
@@ -185,6 +192,7 @@ def test_missing_or_nonfinite_output_power_is_safe_and_does_not_mutate_acquisiti
     widget.set_measurement(data)
     widget.output_power_btn.click()
     widget.clear_plot()
+    assert widget.output_power_curve is not None
     assert not widget.output_power_axis.isVisible()
     assert not widget.output_power_btn.isEnabled()
     assert not widget.output_power_btn.isChecked()
@@ -202,6 +210,7 @@ def test_toggle_preserves_user_visibility_across_powered_scans_and_leaves_frozen
     widget.set_measurement(second)
 
     assert widget.output_power_btn.isChecked()
+    assert widget.output_power_curve is not None
     np.testing.assert_array_equal(widget.output_power_curve.yData, [0.4, 0.5, 0.6])
     assert widget.reference_measurement is first
     assert set(widget.reference_detector_plot_items) == {Detector.DE_1}
