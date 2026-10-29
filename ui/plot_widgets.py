@@ -1419,7 +1419,7 @@ class PlotWidget(QWidget):
             skipFiniteCheck=True,
         )
         self.output_power_viewbox.addItem(self.output_power_curve)
-        plot_item.vb.sigResized.connect(self._sync_output_power_viewbox_geometry)
+        self.plot_widget.getViewBox().sigResized.connect(self._sync_output_power_viewbox_geometry)
         plot_item.hideAxis("right")
         self.output_power_viewbox.hide()
         self._sync_output_power_viewbox_geometry()
