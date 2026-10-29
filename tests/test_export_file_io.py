@@ -215,9 +215,7 @@ def test_virtual_windows_drive_exports_without_hard_links(tmp_path, monkeypatch,
 
     assert calls == ["rename"]
     if format_name == "CSV":
-        np.testing.assert_array_equal(
-            np.loadtxt(destination, delimiter=",", comments="#"), payload.csv_data
-        )
+        np.testing.assert_array_equal(np.loadtxt(destination, delimiter=",", comments="#"), payload.csv_data)
     else:
         result = loadmat(destination, simplify_cells=True)
         np.testing.assert_array_equal(result["measurements"], payload.mat_data["measurements"])
@@ -244,9 +242,7 @@ def test_virtual_windows_drive_race_never_overwrites(tmp_path, monkeypatch, writ
 
 @pytest.mark.parametrize("writer", [_write_staged_format, _write_staged_power_monitor_format])
 @pytest.mark.parametrize("format_name", ["CSV", "MAT"])
-def test_virtual_windows_drive_confirmed_overwrites_still_use_replace(
-    tmp_path, monkeypatch, writer, format_name
-):
+def test_virtual_windows_drive_confirmed_overwrites_still_use_replace(tmp_path, monkeypatch, writer, format_name):
     calls = _emulate_virtual_windows_drive(monkeypatch)
     destination = tmp_path / f"measurement.{format_name.lower()}"
     destination.write_bytes(b"previous measurement")
