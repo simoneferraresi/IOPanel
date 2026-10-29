@@ -547,7 +547,7 @@ class ScanWorker(QtCore.QObject):
             started_at = time.perf_counter()
             try:
                 laser_output_power_db = self.ct400.get_output_power_resampled(len(wavelengths))
-            except Exception:  # noqa: BLE001  # Optional channel must not discard valid detector data.
+            except Exception:  # Optional channel must not discard valid detector data.
                 logger.exception("ScanWorker: Could not retrieve wavelength-resolved CT400 output power.")
             finally:
                 self._stage_timings_seconds["get_output_power_resampled_seconds"] = round(
