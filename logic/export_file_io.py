@@ -46,6 +46,22 @@ class CsvMatPayload(Protocol):
     def mat_data(self) -> dict[str, object]: ...
 
 
+def _publish_staged_file(stage: Path, destination: Path, *, overwrite_confirmed: bool) -> None:
+    """Publish a fully written stage without silently overwriting a raced-in file.
+
+    Windows rename refuses an existing destination and works on virtual drives
+    that do not implement hard links (e.g. Google Drive for desktop). POSIX
+    rename would overwrite, so retain exclusive hard-link publication there.
+    Confirmed overwrites continue to use replace on either platform.
+    """
+    if overwrite_confirmed:
+        os.replace(stage, destination)
+    elif os.name == "nt":
+        os.rename(stage, destination)
+    else:
+        os.link(stage, destination)
+
+
 def write_staged_csv_mat(
     name: str,
     destination: Path,
@@ -57,9 +73,9 @@ def write_staged_csv_mat(
 ) -> None:
     """Publish a complete file on the destination filesystem.
 
-    A confirmed replacement uses atomic os.replace. For unconfirmed paths,
-    os.link performs exclusive create-if-absent publication, including when
-    another process creates the destination while we are writing.
+    Confirmed replacements use os.replace. For previously absent paths,
+    publication is no-clobber: os.rename on Windows and os.link on POSIX.
+    Windows rename supports virtual filesystems that cannot create hard links.
     """
     fd, staged_name = tempfile.mkstemp(prefix=temp_prefix, suffix=".tmp", dir=destination.parent)
     stage = Path(staged_name)
@@ -89,10 +105,7 @@ def write_staged_csv_mat(
             else:
                 raise ValueError(f"Unsupported {error_context} export format: {name}")
 
-        if overwrite_confirmed:
-            os.replace(stage, destination)
-        else:
-            os.link(stage, destination)
+        _publish_staged_file(stage, destination, overwrite_confirmed=overwrite_confirmed)
     finally:
         stage.unlink(missing_ok=True)
 
