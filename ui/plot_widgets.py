@@ -83,6 +83,7 @@ logger = logging.getLogger("LabApp.plot_widgets")
 
 _GENERIC_SCAN_Y_LABEL = "Power (dB)"
 _MEASUREMENT_SCAN_Y_LABEL = "Transfer function (dB)"
+_OUTPUT_POWER_TRACE_COLOR = "#b45519"
 MAX_OVERLAY_SCANS = 8
 _OVERLAY_LINE_STYLES = (Qt.PenStyle.DashLine, Qt.PenStyle.DotLine, Qt.PenStyle.DashDotLine, Qt.PenStyle.DashDotDotLine)
 _OVERLAY_CUSTOM_DASH_PATTERNS = ((8, 3), (2, 2, 1, 2), (10, 2, 1, 2, 1, 2), (1, 2, 1, 2, 5, 2, 1, 2))
@@ -1396,6 +1397,30 @@ class PlotWidget(QWidget):
         plot_layout.addWidget(self.plot_widget, 0, 0)
         layout.addWidget(self.plot_container, stretch=1)
 
+        # Keep absolute laser output power in its own view and Y-axis; only
+        # its wavelength (X) axis is linked to the detector plot. The scene
+        # owns this secondary ViewBox for the lifetime of the PlotWidget.
+        plot_item = self.plot_widget.getPlotItem()
+        self.output_power_viewbox = pg.ViewBox(enableMenu=False)
+        self.plot_widget.scene().addItem(self.output_power_viewbox)
+        self.output_power_viewbox.setXLink(plot_item.vb)
+        self.output_power_viewbox.setMouseEnabled(x=False, y=False)
+        self.output_power_viewbox.enableAutoRange(x=False, y=False)
+        self.output_power_axis = plot_item.getAxis("right")
+        self.output_power_axis.linkToView(self.output_power_viewbox)
+        self.output_power_axis.setLabel("Laser output power", units="dBm", color=_OUTPUT_POWER_TRACE_COLOR)
+        self.output_power_axis.setTextPen(pg.mkPen(_OUTPUT_POWER_TRACE_COLOR))
+        self.output_power_curve = pg.PlotDataItem(
+            pen=pg.mkPen(_OUTPUT_POWER_TRACE_COLOR, width=1.75),
+            autoDownsampleFactor=_SCAN_AUTO_DOWNSAMPLE_FACTOR,
+            skipFiniteCheck=True,
+        )
+        self.output_power_viewbox.addItem(self.output_power_curve)
+        plot_item.vb.sigResized.connect(self._sync_output_power_viewbox_geometry)
+        plot_item.hideAxis("right")
+        self.output_power_viewbox.hide()
+        self._sync_output_power_viewbox_geometry()
+
         # --- NEW: Reference Plot Item (The "Frozen" Trace) ---
         # We add this BEFORE the live item so it renders behind it implicitly,
         # but we will also set ZValue to be sure.
@@ -1437,6 +1462,17 @@ class PlotWidget(QWidget):
         self.freeze_btn.clicked.connect(self.freeze_current_trace)
         self.freeze_btn.setEnabled(False)
 
+        self.output_power_btn = QToolButton()
+        self.output_power_btn.setIcon(QIcon(":/icons/laser.svg"))
+        self.output_power_btn.setToolTip("Show CT400 laser output power (dBm) on the right axis")
+        self.output_power_btn.setAccessibleName("Show CT400 laser output power trace")
+        self.output_power_btn.setObjectName("scanPlotOutputPowerButton")
+        self.output_power_btn.setAutoRaise(True)
+        self.output_power_btn.setFixedSize(28, 28)
+        self.output_power_btn.setCheckable(True)
+        self.output_power_btn.setEnabled(False)
+        self.output_power_btn.toggled.connect(self._refresh_output_power_display)
+
         self.load_btn = QToolButton()
         self.load_btn.setIcon(QIcon(":/icons/folder-open.svg"))
         self.load_btn.setToolTip("Open saved scan (CSV/MAT)")
@@ -1458,6 +1494,7 @@ class PlotWidget(QWidget):
 
         self.plot_widget.setLabel("left", _GENERIC_SCAN_Y_LABEL, **label_style)
         self.plot_widget.getAxis("left").setTickFont(tick_font)
+        self.output_power_axis.setTickFont(tick_font)
         self.plot_widget.setLabel("bottom", "Wavelength (nm)", **label_style)
         self.plot_widget.getAxis("bottom").setTickFont(tick_font)
         self.set_plot_title("Wavelength Scan")
@@ -1524,6 +1561,7 @@ class PlotWidget(QWidget):
         controls_layout.setSpacing(2)
         controls_layout.addWidget(self.clear_btn)
         controls_layout.addWidget(self.freeze_btn)
+        controls_layout.addWidget(self.output_power_btn)
         controls_layout.addWidget(self.load_btn)
         controls_layout.addWidget(self.save_btn)
         controls_layout.addWidget(self.screenshot_btn)
@@ -1545,6 +1583,42 @@ class PlotWidget(QWidget):
         self.matlab_status_label.raise_()
 
         logger.info("PlotWidget (PyQtGraph) initialized")
+
+    def _sync_output_power_viewbox_geometry(self) -> None:
+        """Keep the secondary view aligned with the detector plot's scene rectangle."""
+        main_view = self.plot_widget.getViewBox()
+        self.output_power_viewbox.setGeometry(main_view.sceneBoundingRect())
+        self.output_power_viewbox.linkedViewChanged(main_view, self.output_power_viewbox.XAxis)
+
+    def _refresh_output_power_display(self, _checked: bool = False) -> None:
+        """Toggle only the current scan's laser reference, never its detector data."""
+        measurement = self.current_measurement
+        values = measurement.laser_output_power_dbm if measurement is not None else None
+        wavelengths = measurement.wavelengths_nm if measurement is not None else None
+        finite = np.isfinite(wavelengths) & np.isfinite(values) if values is not None and wavelengths is not None else None
+        available = finite is not None and bool(np.any(finite))
+        self.output_power_btn.setEnabled(available)
+        if not available:
+            with QtCore.QSignalBlocker(self.output_power_btn):
+                self.output_power_btn.setChecked(False)
+
+        show = available and self.output_power_btn.isChecked()
+        if show and values is not None and wavelengths is not None and finite is not None:
+            self.output_power_curve.setData(wavelengths[finite], values[finite])
+            visible_values = values[finite]
+            self.output_power_viewbox.setYRange(
+                float(np.min(visible_values)), float(np.max(visible_values)), padding=0.05
+            )
+            self.output_power_curve.show()
+            self.plot_widget.getPlotItem().showAxis("right")
+            self.output_power_viewbox.show()
+            self._sync_output_power_viewbox_geometry()
+        else:
+            self.output_power_curve.setData([], [])
+            self.output_power_curve.hide()
+            self.output_power_viewbox.hide()
+            self.plot_widget.getPlotItem().hideAxis("right")
+        self._last_crosshair_text = None
 
     def set_plot_title(self, text: str, *, color: str = "black") -> None:
         """Set a scan title using the shared 12 pt bold Geist policy."""
@@ -1675,6 +1749,12 @@ class PlotWidget(QWidget):
                         label_lines.append(f"Det {detector.value}: {value:.2f} dB")
                     else:
                         label_lines.append(f"Det {detector.value}: n/a")
+
+                if self.output_power_btn.isChecked() and measurement.laser_output_power_dbm is not None:
+                    output = measurement.laser_output_power_dbm[idx]
+                    label_lines.append(
+                        f"Laser output: {float(output):.2f} dBm" if np.isfinite(output) else "Laser output: n/a"
+                    )
 
                 if reference is not None:
                     reference_lookup = self._reference_wavelength_lookup
@@ -1911,6 +1991,7 @@ class PlotWidget(QWidget):
         self.plot_widget.setLabel("left", _GENERIC_SCAN_Y_LABEL)
         self.current_measurement = None
         self.current_imported_scan = None
+        self._refresh_output_power_display()
         self._clear_detector_live_items()
         if self.detector_legend is not None:
             for item in self.detector_plot_items.values():
@@ -2012,6 +2093,7 @@ class PlotWidget(QWidget):
         overlay_items = [item for overlay in self.scan_overlays for item in overlay.items.values()]
         for item in (
             self.plot_data_item,
+            self.output_power_curve,
             *self.detector_plot_items.values(),
             *self.reference_detector_plot_items.values(),
             *overlay_items,
@@ -2263,6 +2345,7 @@ class PlotWidget(QWidget):
                 finite_live_items.append(item)
 
         self._refresh_scan_legend()
+        self._refresh_output_power_display()
 
         if finite_live_items:
             self.plot_widget.getViewBox().autoRange(items=finite_live_items)
@@ -2344,6 +2427,7 @@ class PlotWidget(QWidget):
         self.reference_measurement = None
         self._current_wavelength_lookup = _build_wavelength_lookup(None)
         self._reference_wavelength_lookup = _build_wavelength_lookup(None)
+        self._refresh_output_power_display()
 
         # 3. Reset UI state
         self.set_plot_title("Wavelength Scan (Cleared)")
@@ -2636,6 +2720,9 @@ class PlotWidget(QWidget):
         self._cleaned_up = True
         self._crosshair_refresh_timer.stop()
         self._latest_mouse_position = None
+        self.plot_widget.getViewBox().sigResized.disconnect(self._sync_output_power_viewbox_geometry)
+        self.output_power_curve.setData([], [])
+        self.output_power_viewbox.hide()
         logger.debug("PlotWidget cleanup: Cleaning up resources.")
         self._status_clear_timer.stop()
         thread = self.matlab_save_thread
