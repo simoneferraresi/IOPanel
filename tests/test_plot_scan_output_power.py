@@ -1,7 +1,6 @@
 """Native Qt regression tests for the optional CT400 laser output-power overlay."""
 
 import io
-from dataclasses import replace
 from datetime import UTC, datetime
 
 import numpy as np
