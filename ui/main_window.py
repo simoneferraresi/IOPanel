@@ -91,6 +91,7 @@ except ImportError:
 from hardware.camera import VIMBA_AVAILABLE, VimbaCam, VmbCameraError, VmbSystem, VmbSystemError  # pyright: ignore[reportAttributeAccessIssue] - optional VmbPy exports.
 from hardware.camera_init_worker import CameraInitWorker
 from hardware.camera_recovery_worker import CameraRecoveryWorker
+from hardware.vimba_system_init_worker import VimbaSystemInitOutcome, VimbaSystemInitWorker
 from hardware.ct400 import CT400
 from hardware.ct400_types import Enable, LaserInput
 from hardware.interfaces import AbstractCT400
@@ -211,6 +212,7 @@ class MainWindow(QMainWindow):
     _ct400_attempt_status = Signal(int, str, str)
     _piezo_init_task_finished = Signal(object)
     _init_task_thread_finished = Signal(object)
+    _vimba_init_thread_finished = Signal(object, object)
     _camera_recovery_thread_finished = Signal(str, object)
     shutdown_complete = Signal()
 
@@ -237,6 +239,7 @@ class MainWindow(QMainWindow):
         self._camera_cleanup_requested = False
         self._camera_shutdown_panels: list[CameraPanel] = []
         self._init_tasks: set[TaskRunner] = set()
+        self._vimba_init_task: TaskRunner | None = None
         self._camera_recovery_tasks: dict[str, TaskRunner] = {}
         self._scan_import_task: TaskRunner | None = None
         self._owned_scan_import_tasks: dict[int, TaskRunner] = {}
@@ -318,6 +321,7 @@ class MainWindow(QMainWindow):
         self._ct400_attempt_status.connect(self._on_ct400_attempt_status_updated)
         self._piezo_init_task_finished.connect(self._on_piezo_init_task_finished)
         self._init_task_thread_finished.connect(self._on_init_task_thread_finished)
+        self._vimba_init_thread_finished.connect(self._on_vimba_init_thread_finished)
         self._camera_recovery_thread_finished.connect(self._on_camera_recovery_thread_finished)
 
         # Start slow hardware initializations after the main event loop has started.
@@ -878,10 +882,11 @@ class MainWindow(QMainWindow):
         # and remain available on driver-free development machines.
         needs_vimba = any(cam.enabled and cam.backend == "vimba" for cam in self.config.cameras.values())
         if needs_vimba:
+            # SDK startup can take seconds and MUST NOT run on the Qt GUI thread.
+            # Camera workers start only after the startup worker has fully retired.
             self._start_vimbasystem()
-            if not self.vmb_instance:
-                logger.error("VimbaSystem not active; physical camera initialization will report unavailable.")
-        self._init_cameras_lazy()
+        else:
+            self._init_cameras_lazy()
 
     def _init_ct400_lazy(self):
         """Start one owned CT400 initialization attempt on a background thread."""
@@ -1080,41 +1085,64 @@ class MainWindow(QMainWindow):
             self.piezo_task = None
 
     def _start_vimbasystem(self):
-        """Initializes and enters the main VimbaSystem context.
+        """Start the proprietary Vimba SDK off the GUI thread.
 
-        This must be done once before any camera operations can occur.
+        A Vimba context is published to MainWindow only at the final QThread
+        boundary, never while native startup/discovery is still in progress.
         """
-        if self.vmb_instance is not None:
-            logger.info("VmbSystem already active.")
+        if self._shutdown_requested or self._pending_init_close:
+            return
+        if self.vmb_instance is not None or self._vimba_init_task is not None:
+            logger.info("VmbSystem already active or startup in progress.")
             return
         if not VIMBA_AVAILABLE:
-            logger.warning("Vimba camera support is not installed; camera initialization is disabled.")
-            self.vmb_instance = None
+            logger.warning("Vimba camera support is not installed; physical cameras are unavailable.")
+            self._init_cameras_lazy()
             return
-        try:
-            logger.info("Attempting to start VmbSystem...")
-            self.vmb_instance = VmbSystem.get_instance()
-            instance = self.vmb_instance
-            if instance is None:
-                raise RuntimeError("Vimba SDK did not return a system instance")
-            instance.__enter__()
-            logger.info("VmbSystem entered successfully.")
-        except VmbSystemError as e:
-            logger.exception("Failed to enter VmbSystem")
-            self.vmb_instance = None
-            QMessageBox.critical(
-                self,
-                "Vimba System Error",
-                f"Could not initialize Vimba API: {e}\nCameras will be unavailable.",
-            )
-        except Exception as e:
-            logger.critical(f"Unexpected error starting VmbSystem: {e}", exc_info=True)
-            self.vmb_instance = None
-            QMessageBox.critical(
-                self,
-                "Vimba System Error",
-                f"An unexpected error occurred while starting Vimba API: {e}\nCameras will be unavailable.",
-            )
+
+        logger.info("Scheduling asynchronous VmbSystem startup...")
+        worker = VimbaSystemInitWorker(VmbSystem.get_instance)
+        outcome_holder: list[VimbaSystemInitOutcome | None] = [None]
+        # Collect the immutable result synchronously on the emitting thread.
+        # A queued result callback may otherwise be processed after finished,
+        # racing closeEvent's native-resource cleanup.
+        worker.initialization_completed.connect(
+            lambda outcome: outcome_holder.__setitem__(0, outcome),
+            Qt.ConnectionType.DirectConnection,
+        )
+        task = TaskRunner(worker)
+        self._vimba_init_task = task
+        # This task has a dedicated terminal handler: it must adopt the native
+        # context BEFORE removing the task from the close-defer ownership set.
+        self._init_tasks.add(task)
+        task.worker_thread.finished.connect(
+            lambda task=task, holder=outcome_holder: self._vimba_init_thread_finished.emit(task, holder[0])
+        )
+        task.start()
+
+    @Slot(object, object)
+    def _on_vimba_init_thread_finished(self, task: TaskRunner, outcome: VimbaSystemInitOutcome | None):
+        """Adopt an initialized SDK context only after the worker thread exits."""
+        if task is not self._vimba_init_task:
+            logger.warning("Ignoring stale VmbSystem initialization result.")
+            return
+        self._vimba_init_task = None
+        if outcome is not None and outcome.instance is not None:
+            self.vmb_instance = outcome.instance
+            logger.info("VmbSystem startup completed; system context is active.")
+        else:
+            message = outcome.error if outcome is not None else "Startup worker returned no result"
+            logger.error("VmbSystem unavailable: %s", message)
+            self.statusBar().showMessage("Vimba X startup failed; physical cameras are unavailable.", 10000)
+
+        # Do not remove this ownership guard earlier: a close requested during
+        # the native SDK call must still defer camera and VmbSystem teardown.
+        self._init_tasks.discard(task)
+        if self._shutdown_requested or self._pending_init_close:
+            if self._pending_init_close and not self._init_tasks:
+                QTimer.singleShot(0, self, self.close)
+            return
+        self._init_cameras_lazy()
 
     def _cleanup_vimbasystem(self):
         """Exits the VimbaSystem context cleanly."""
