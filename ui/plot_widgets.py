@@ -1595,7 +1595,9 @@ class PlotWidget(QWidget):
         measurement = self.current_measurement
         values = measurement.laser_output_power_dbm if measurement is not None else None
         wavelengths = measurement.wavelengths_nm if measurement is not None else None
-        finite = np.isfinite(wavelengths) & np.isfinite(values) if values is not None and wavelengths is not None else None
+        finite = (
+            np.isfinite(wavelengths) & np.isfinite(values) if values is not None and wavelengths is not None else None
+        )
         available = finite is not None and bool(np.any(finite))
         self.output_power_btn.setEnabled(available)
         if not available:
