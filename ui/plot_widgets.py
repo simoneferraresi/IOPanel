@@ -1401,6 +1401,9 @@ class PlotWidget(QWidget):
         # its wavelength (X) axis is linked to the detector plot. The scene
         # owns this secondary ViewBox for the lifetime of the PlotWidget.
         plot_item = self.plot_widget.getPlotItem()
+        if plot_item is None:
+            raise RuntimeError("Scan plot is unavailable during output-power axis initialization")
+        self._scan_plot_item = plot_item
         self.output_power_viewbox = pg.ViewBox(enableMenu=False)
         self.plot_widget.scene().addItem(self.output_power_viewbox)
         self.output_power_viewbox.setXLink(plot_item.vb)
@@ -1612,14 +1615,14 @@ class PlotWidget(QWidget):
                 float(np.min(visible_values)), float(np.max(visible_values)), padding=0.05
             )
             self.output_power_curve.show()
-            self.plot_widget.getPlotItem().showAxis("right")
+            self._scan_plot_item.showAxis("right")
             self.output_power_viewbox.show()
             self._sync_output_power_viewbox_geometry()
         else:
             self.output_power_curve.setData([], [])
             self.output_power_curve.hide()
             self.output_power_viewbox.hide()
-            self.plot_widget.getPlotItem().hideAxis("right")
+            self._scan_plot_item.hideAxis("right")
         self._last_crosshair_text = None
 
     def set_plot_title(self, text: str, *, color: str = "black") -> None:
