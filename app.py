@@ -397,7 +397,8 @@ def main() -> int:
 
         def create_main_window(window_type) -> None:
             window = window_type(
-                config=app_config, settings=create_application_settings(smoke_test=args.smoke_test, log_file=log_file_path)
+                config=app_config,
+                settings=create_application_settings(smoke_test=args.smoke_test, log_file=log_file_path),
             )
             window.log_console.log_file = log_file_path
             window.show()
