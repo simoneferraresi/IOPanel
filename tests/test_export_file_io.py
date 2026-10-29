@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import io
+import os
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 from scipy.io import loadmat
 
+import logic.export_file_io as export_file_io
 from logic.export_file_io import derive_export_targets
 from logic.power_monitor_export_worker import _write_staged_power_monitor_format
 from logic.scan_export_worker import _write_staged_format
@@ -158,3 +160,128 @@ def test_shared_target_derivation_preserves_selection_order_and_no_format_case()
     assert {name: path.name for name, path in actual.items()} == {"MAT": "scan.mat", "FIG": "scan.fig"}
     assert list(actual) == ["MAT", "FIG"]
     assert derive_export_targets("scan.csv", formats={}, recognized_suffixes=frozenset({".csv"})) == {}
+
+
+def _emulate_virtual_windows_drive(monkeypatch, *, before_rename=None):
+    """A virtual drive rejects hard links but accepts Windows no-clobber rename."""
+    real_os = export_file_io.os
+    calls = []
+
+    def rename(stage, destination):
+        calls.append("rename")
+        if before_rename is not None:
+            before_rename(stage, destination)
+        if destination.exists():
+            raise FileExistsError(f"Destination was created during export: {destination}")
+        real_os.rename(stage, destination)
+
+    def replace(stage, destination):
+        calls.append("replace")
+        real_os.replace(stage, destination)
+
+    def link(stage, destination):
+        raise OSError(1, "Incorrect function: hard links unsupported")
+
+    # Replace only this module's os binding, never os.name process-wide.
+    monkeypatch.setattr(
+        export_file_io,
+        "os",
+        SimpleNamespace(
+            name="nt",
+            fdopen=real_os.fdopen,
+            fsync=real_os.fsync,
+            rename=rename,
+            replace=replace,
+            link=link,
+        ),
+    )
+    return calls
+
+
+@pytest.mark.parametrize(
+    ("writer", "temp_prefix"),
+    [
+        (_write_staged_format, ".iopanel-scan-"),
+        (_write_staged_power_monitor_format, ".iopanel-monitor-"),
+    ],
+)
+@pytest.mark.parametrize("format_name", ["CSV", "MAT"])
+def test_virtual_windows_drive_exports_without_hard_links(tmp_path, monkeypatch, writer, temp_prefix, format_name):
+    calls = _emulate_virtual_windows_drive(monkeypatch)
+    destination = tmp_path / f"measurement.{format_name.lower()}"
+    payload = _payload()
+
+    writer(format_name, destination, payload, overwrite_confirmed=False)
+
+    assert calls == ["rename"]
+    if format_name == "CSV":
+        np.testing.assert_array_equal(
+            np.loadtxt(destination, delimiter=",", comments="#"), payload.csv_data
+        )
+    else:
+        result = loadmat(destination, simplify_cells=True)
+        np.testing.assert_array_equal(result["measurements"], payload.mat_data["measurements"])
+    assert list(tmp_path.iterdir()) == [destination]
+    assert not list(tmp_path.glob(temp_prefix + "*"))
+
+
+@pytest.mark.parametrize("writer", [_write_staged_format, _write_staged_power_monitor_format])
+@pytest.mark.parametrize("format_name", ["CSV", "MAT"])
+def test_virtual_windows_drive_race_never_overwrites(tmp_path, monkeypatch, writer, format_name):
+    def concurrent_creator(_stage, destination):
+        destination.write_bytes(b"created by another process")
+
+    calls = _emulate_virtual_windows_drive(monkeypatch, before_rename=concurrent_creator)
+    destination = tmp_path / f"measurement.{format_name.lower()}"
+
+    with pytest.raises(FileExistsError):
+        writer(format_name, destination, _payload(), overwrite_confirmed=False)
+
+    assert calls == ["rename"]
+    assert destination.read_bytes() == b"created by another process"
+    assert set(tmp_path.iterdir()) == {destination}
+
+
+@pytest.mark.parametrize("writer", [_write_staged_format, _write_staged_power_monitor_format])
+@pytest.mark.parametrize("format_name", ["CSV", "MAT"])
+def test_virtual_windows_drive_confirmed_overwrites_still_use_replace(
+    tmp_path, monkeypatch, writer, format_name
+):
+    calls = _emulate_virtual_windows_drive(monkeypatch)
+    destination = tmp_path / f"measurement.{format_name.lower()}"
+    destination.write_bytes(b"previous measurement")
+
+    writer(format_name, destination, _payload(), overwrite_confirmed=True)
+
+    assert calls == ["replace"]
+    assert destination.read_bytes() != b"previous measurement"
+    assert set(tmp_path.iterdir()) == {destination}
+
+
+@pytest.mark.parametrize("writer", [_write_staged_format, _write_staged_power_monitor_format])
+def test_virtual_windows_rename_failure_is_reported_without_partial_target(tmp_path, monkeypatch, writer):
+    def refuse_rename(_stage, _destination):
+        raise OSError(1, "Incorrect function: rename unsupported")
+
+    calls = _emulate_virtual_windows_drive(monkeypatch, before_rename=refuse_rename)
+    destination = tmp_path / "measurement.csv"
+
+    with pytest.raises(OSError, match="rename unsupported"):
+        writer("CSV", destination, _payload(), overwrite_confirmed=False)
+
+    assert calls == ["rename"]
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows no-overwrite rename semantics")
+def test_native_windows_rename_preserves_unconfirmed_destination(tmp_path):
+    stage = tmp_path / "stage.tmp"
+    destination = tmp_path / "measurement.csv"
+    stage.write_bytes(b"new measurement")
+    destination.write_bytes(b"existing measurement")
+
+    with pytest.raises(FileExistsError):
+        export_file_io._publish_staged_file(stage, destination, overwrite_confirmed=False)
+
+    assert destination.read_bytes() == b"existing measurement"
+    assert stage.read_bytes() == b"new measurement"
