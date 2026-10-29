@@ -23,6 +23,7 @@ def timed_worker(monkeypatch):
         "start_scan": 0.05,
         "scan_wait_end": 0.06,
         "get_data_points": 0.07,
+        "get_output_power_resampled": 0.055,
         "get_all_powers": 0.08,
     }
 
@@ -124,7 +125,7 @@ def test_timing_summary_measures_stages_and_preserves_scan_result(
         assert measurements[0].scan_id == summary["scan_id"]
     assert "DummyCT400" in summary["backend"]
     assert summary["known_stabilization_delay_seconds"] == 0.15
-    expected_worker_duration = 0.45 if not measurement_count else 0.60
+    expected_worker_duration = 0.45 if not measurement_count else 0.655
     assert summary["worker_duration_seconds"] == pytest.approx(expected_worker_duration)
     assert summary["failed_stages"] == []
     expected_stages = {
@@ -138,7 +139,13 @@ def test_timing_summary_measures_stages_and_preserves_scan_result(
         "final_laser_disable_seconds": 0.09,
     }
     if measurement_count:
-        expected_stages.update({"get_data_points_seconds": 0.07, "get_all_powers_seconds": 0.08})
+        expected_stages.update(
+            {
+                "get_data_points_seconds": 0.07,
+                "get_output_power_resampled_seconds": 0.055,
+                "get_all_powers_seconds": 0.08,
+            }
+        )
     assert stages == pytest.approx(expected_stages)
     assert events == [
         "initial_laser_disable",
@@ -148,7 +155,7 @@ def test_timing_summary_measures_stages_and_preserves_scan_result(
         "set_detector_array",
         "start_scan",
         "scan_wait_end",
-        *(["get_data_points", "get_all_powers"] if measurement_count else []),
+        *(["get_data_points", "get_output_power_resampled", "get_all_powers"] if measurement_count else []),
         "final_laser_disable",
     ]
     assert len(measurements) == measurement_count

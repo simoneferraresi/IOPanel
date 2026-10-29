@@ -42,6 +42,7 @@ class ScanMeasurement:
     completed_at_utc: datetime
     detector_unit: str | None = None  # Vendor dB/dBm meaning remains unverified.
     scan_id: str | None = None
+    laser_output_power_dbm: np.ndarray | None = None  # Provisional dBm assumption (vendor: 'Power out').
 
     def __post_init__(self):
         if self.completed_at_utc.utcoffset() is None:
@@ -59,10 +60,17 @@ class ScanMeasurement:
         expected_shape = (len(detectors), len(wavelengths))
         if detector_data.shape != expected_shape:
             raise ValueError(f"detector_data must have shape {expected_shape}, got {detector_data.shape}")
+        power_trace = self.laser_output_power_dbm
+        if power_trace is not None:
+            power_trace = np.array(power_trace, dtype=float, copy=True)
+            if power_trace.ndim != 1 or power_trace.shape != wavelengths.shape:
+                raise ValueError(f"laser_output_power_dbm must have shape {wavelengths.shape}, got {power_trace.shape}")
+            power_trace.setflags(write=False)
         wavelengths.setflags(write=False)
         detector_data.setflags(write=False)
         object.__setattr__(self, "wavelengths_nm", wavelengths)
         object.__setattr__(self, "detector_data", detector_data)
+        object.__setattr__(self, "laser_output_power_dbm", power_trace)
 
 
 def _normalize_detectors(detectors: Iterable[Detector]) -> tuple[Detector, ...]:
