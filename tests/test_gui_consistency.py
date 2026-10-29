@@ -22,21 +22,33 @@ def test_wavelength_scan_actions_are_compact_top_right_plot_overlays(qtbot):
     qtbot.waitExposed(widget)
     qtbot.wait(20)
 
-    buttons = (widget.clear_btn, widget.freeze_btn, widget.load_btn, widget.save_btn, widget.screenshot_btn)
+    buttons = (
+        widget.clear_btn,
+        widget.freeze_btn,
+        widget.output_power_btn,
+        widget.load_btn,
+        widget.save_btn,
+        widget.screenshot_btn,
+    )
     assert all(isinstance(button, QToolButton) for button in buttons)
     assert all(button.parentWidget() is widget.overlay_controls for button in buttons)
     assert widget.overlay_controls.parentWidget() is widget.plot_container
     assert all(button.icon().isNull() is False for button in buttons)
     assert all(button.autoRaise() for button in buttons)
     assert all(button.width() <= 32 and button.height() <= 32 for button in buttons)
-    assert [widget.overlay_controls.layout().itemAt(index).widget() for index in range(5)] == list(buttons)
+    assert [widget.overlay_controls.layout().itemAt(index).widget() for index in range(len(buttons))] == list(buttons)
     assert [button.objectName() for button in buttons] == [
         "scanPlotClearButton",
         "scanPlotFreezeButton",
+        "scanPlotOutputPowerButton",
         "scanPlotLoadButton",
         "scanPlotSaveButton",
         "scanPlotExportImageButton",
     ]
+    assert widget.output_power_btn.isCheckable()
+    assert not widget.output_power_btn.isChecked()
+    assert not widget.output_power_btn.isEnabled()
+    assert widget.output_power_btn.accessibleName() == "Show CT400 laser output power trace"
     assert widget.load_btn.toolTip() == "Open saved scan (CSV/MAT)"
     assert widget.load_btn.accessibleName() == "Open wavelength scan data"
     assert widget.load_btn.width() == widget.save_btn.width() == 28
