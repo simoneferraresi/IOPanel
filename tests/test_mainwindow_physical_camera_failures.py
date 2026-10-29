@@ -33,6 +33,7 @@ def _start_with_config(qtbot, monkeypatch, tmp_path, camera_sections):
     # Physical-camera startup is replaced with a guard. CameraInitWorker still
     # follows its production path, but no Vimba system context can be entered.
     vimba_start_attempts = []
+
     def guarded_vimba_start(window):
         # The real startup worker is tested separately. Preserve the
         # asynchronous success/failure continuation without entering any SDK.

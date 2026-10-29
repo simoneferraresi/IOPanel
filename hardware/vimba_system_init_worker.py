@@ -48,8 +48,6 @@ class VimbaSystemInitWorker(BaseWorker):
             self.initialization_completed.emit(VimbaSystemInitOutcome(instance))
         except Exception as exc:
             logger.exception("Failed to enter VmbSystem")
-            self.initialization_completed.emit(
-                VimbaSystemInitOutcome(None, f"{type(exc).__name__}: {exc}")
-            )
+            self.initialization_completed.emit(VimbaSystemInitOutcome(None, f"{type(exc).__name__}: {exc}"))
         finally:
             self.finished.emit()

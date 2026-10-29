@@ -12,6 +12,7 @@ from ui import main_window as main_window_module
 
 def _window(qtbot, monkeypatch, system):
     """Build a physical-config GUI without calling any native camera SDK."""
+
     class FakeVmbSystem:
         @staticmethod
         def get_instance():
@@ -23,9 +24,7 @@ def _window(qtbot, monkeypatch, system):
     config = AppConfig(
         instruments={"ct400_backend": "simulation"},
         cameras={
-            "camera-1": CameraConfig(
-                identifier="camera-1", enabled=True, name="Physical fixture", backend="vimba"
-            )
+            "camera-1": CameraConfig(identifier="camera-1", enabled=True, name="Physical fixture", backend="vimba")
         },
     )
     window = main_window_module.MainWindow(config)
@@ -57,7 +56,7 @@ def test_vimba_native_startup_does_not_block_gui_and_gates_camera_workers(qtbot,
     try:
         window._begin_lazy_init()
         qtbot.waitUntil(entered.is_set, timeout=2000)
-        assert enter_threads == [enter_threads[0]]
+        assert len(enter_threads) == 1
         assert enter_threads[0] != gui_thread_id
         assert window._vimba_init_task is not None
         assert window.vmb_instance is None
