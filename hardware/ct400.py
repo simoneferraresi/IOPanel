@@ -186,6 +186,11 @@ class CT400(AbstractCT400):
                 c_int32,
                 [c_uint64, c_int32, POINTER(c_double), c_int32],
             ),
+            (
+                "CT400_ScanGetPowerResampledArray",
+                c_int32,
+                [c_uint64, POINTER(c_double), c_int32],
+            ),
             ("CT400_Close", c_int32, [c_uint64]),
             (
                 "CT400_ScanSaveWavelengthSyncFile",
@@ -446,6 +451,28 @@ class CT400(AbstractCT400):
             # Important: Copy the data from the buffer immediately.
             det_pows[i, :] = np.ctypeslib.as_array(pow_buffer).copy()
         return wavelengths, det_pows
+
+    @override
+    def get_output_power_resampled(self, num_points: int) -> np.ndarray:
+        """Retrieve the CT400's scan-resampled 'Power out' channel.
+
+        The native values are returned unchanged. The current dB label is
+        provisional pending verification on the laboratory instrument.
+        """
+        if self.handle is None:
+            raise CT400CommunicationError("Cannot retrieve output power without an initialized CT400 handle.")
+        if num_points < 0:
+            raise ValueError("num_points must be non-negative")
+        if num_points == 0:
+            return np.empty(0, dtype=float)
+        buffer = (c_double * num_points)()
+        returned = self.dll.CT400_ScanGetPowerResampledArray(self.handle, buffer, num_points)
+        self._check_rc(returned, "Failed to retrieve resampled CT400 output power")
+        if returned != num_points:
+            raise CT400CommunicationError(
+                f"CT400_ScanGetPowerResampledArray returned {returned} points, expected {num_points}."
+            )
+        return np.ctypeslib.as_array(buffer).copy()
 
     @override
     def get_all_powers(self) -> PowerData:

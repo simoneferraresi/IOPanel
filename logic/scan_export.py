@@ -23,6 +23,8 @@ CSV_COLUMNS = (
     "Transfer_function_Det_3_[dB]",
     "Transfer_function_Det_4_[dB]",
 )
+OUTPUT_POWER_COLUMN = "Laser_output_power_[dB]"
+CSV_COLUMNS_WITH_OUTPUT_POWER = (*CSV_COLUMNS, OUTPUT_POWER_COLUMN)
 
 
 @dataclass(frozen=True)
@@ -52,7 +54,12 @@ def build_scan_export_v2(measurement: ScanMeasurement, *, comment: str = "") -> 
     for row_index, detector in enumerate(measurement.detectors):
         optical_data[detector] = measurement.detector_data[row_index]
 
-    csv_data = np.column_stack((wavelengths, *(optical_data[detector] for detector in OPTICAL_EXPORT_DETECTORS)))
+    power_trace = measurement.laser_output_power_db
+    csv_columns = CSV_COLUMNS_WITH_OUTPUT_POWER if power_trace is not None else CSV_COLUMNS
+    rows = [wavelengths, *(optical_data[detector] for detector in OPTICAL_EXPORT_DETECTORS)]
+    if power_trace is not None:
+        rows.append(power_trace)
+    csv_data = np.column_stack(rows)
     settings = measurement.settings
     active_names = ",".join(detector.name for detector in measurement.detectors)
     active_ids = np.asarray([int(detector) for detector in measurement.detectors], dtype=np.int64)
@@ -80,7 +87,7 @@ def build_scan_export_v2(measurement: ScanMeasurement, *, comment: str = "") -> 
         metadata.append(f"# Pout(dBm): {measurement.final_pout:.3f}")
     normalized_comment = comment.replace("\r\n", "\n").replace("\r", "\n")
     metadata.append(f"# Comment: {json.dumps(normalized_comment, ensure_ascii=False)}")
-    csv_header = "\n".join((*metadata, "# " + ", ".join(CSV_COLUMNS)))
+    csv_header = "\n".join((*metadata, "# " + ", ".join(csv_columns)))
 
     mat_data: dict[str, object] = {
         "schema_version": SCAN_EXPORT_SCHEMA_VERSION,
@@ -106,5 +113,7 @@ def build_scan_export_v2(measurement: ScanMeasurement, *, comment: str = "") -> 
     }
     if measurement.final_pout is not None:
         mat_data["pout_dBm"] = measurement.final_pout
+    if power_trace is not None:
+        mat_data["laser_output_power_dB"] = power_trace
 
     return ScanExportPayload(csv_data=csv_data, csv_header=csv_header, mat_data=mat_data)

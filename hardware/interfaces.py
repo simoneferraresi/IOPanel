@@ -88,6 +88,14 @@ class AbstractCT400(ABC):
     @abstractmethod
     def get_data_points(self, dets_used: list[Detector]) -> tuple[np.ndarray, np.ndarray]: ...
 
+    def get_output_power_resampled(self, num_points: int) -> np.ndarray | None:
+        """Wavelength-aligned CT400 laser-path output power, if supported.
+
+        None means that this backend cannot supply the channel; it is not
+        interchangeable with the instantaneous final Pout reading.
+        """
+        return None
+
     @abstractmethod
     def get_all_powers(self) -> PowerData: ...
 

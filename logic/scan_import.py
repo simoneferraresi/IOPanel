@@ -23,6 +23,7 @@ _CSV_COLUMNS = (
     "Transfer_function_Det_3_[dB]",
     "Transfer_function_Det_4_[dB]",
 )
+_CSV_COLUMNS_WITH_OUTPUT_POWER = (*_CSV_COLUMNS, "Laser_output_power_[dB]")
 _MAT_TRACE_KEYS = tuple(f"transfer_function_det_{i}_dB" for i in range(1, 5))
 
 
@@ -52,16 +53,24 @@ class ImportedScan:
     result_kind: CT400ScanResultKind
     raw_result_code: int
     final_pout: float | None
+    laser_output_power_db: np.ndarray | None = None
 
     def __post_init__(self) -> None:
         wavelengths = np.array(self.wavelengths_nm, dtype=float, copy=True)
         values = np.array(self.detector_data, dtype=float, copy=True)
         if wavelengths.ndim != 1 or values.shape != (len(self.detectors), len(wavelengths)):
             raise ValueError("Imported scan arrays have inconsistent dimensions")
+        power_trace = self.laser_output_power_db
+        if power_trace is not None:
+            power_trace = np.array(power_trace, dtype=float, copy=True)
+            if power_trace.ndim != 1 or power_trace.shape != wavelengths.shape:
+                raise ValueError("Imported output power must have one sample per wavelength")
+            power_trace.setflags(write=False)
         wavelengths.setflags(write=False)
         values.setflags(write=False)
         object.__setattr__(self, "wavelengths_nm", wavelengths)
         object.__setattr__(self, "detector_data", values)
+        object.__setattr__(self, "laser_output_power_db", power_trace)
 
 
 def load_scan(path: Path | str) -> ImportedScan:
@@ -200,7 +209,8 @@ def _load_csv(path: Path) -> dict[str, Any]:
                 continue
             content = line[1:].strip()
             if content.startswith("WL_[nm]"):
-                if tuple(value.strip() for value in content.split(",")) != _CSV_COLUMNS:
+                columns = tuple(value.strip() for value in content.split(","))
+                if columns not in (_CSV_COLUMNS, _CSV_COLUMNS_WITH_OUTPUT_POWER):
                     raise ScanImportError("CSV column header does not match the IOPanel schema-v2 columns.")
                 break
             if ":" in content:
@@ -211,14 +221,15 @@ def _load_csv(path: Path) -> dict[str, Any]:
                 meta[key] = value.strip()
 
         metadata = _metadata(meta)
-        data = _read_csv_numeric_data(stream)
-    return _assemble(data[:, 0], data[:, 1:].T, metadata)
+        data = _read_csv_numeric_data(stream, column_count=len(columns))
+    power_trace = data[:, 5] if len(columns) == len(_CSV_COLUMNS_WITH_OUTPUT_POWER) else None
+    return _assemble(data[:, 0], data[:, 1:5].T, metadata, laser_output_power_db=power_trace)
 
 
-def _read_csv_numeric_data(stream: TextIO) -> np.ndarray:
+def _read_csv_numeric_data(stream: TextIO, *, column_count: int) -> np.ndarray:
     """Use NumPy's fast numeric parser, retaining the legacy CSV dialect on fallback.
 
-    Standard IOPanel exports have five unquoted numeric columns; NumPy parses
+    IOPanel exports have five or six unquoted numeric columns; NumPy parses
     these in native code. The original csv.reader implementation remains the
     authoritative path for blank comma records, unusual quoting, malformed
     rows and their existing user-facing error messages.
@@ -228,7 +239,7 @@ def _read_csv_numeric_data(stream: TextIO) -> np.ndarray:
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", message="loadtxt: input contained no data", category=UserWarning)
             data = np.loadtxt(stream, delimiter=",", comments=None, quotechar='"', dtype=float, ndmin=2)
-        if data.shape[0] > 0 and data.shape[1] == len(_CSV_COLUMNS):
+        if data.shape[0] > 0 and data.shape[1] == column_count:
             return data
     except ValueError:
         # Reparse from the numeric start to preserve the original CSV semantics.
@@ -242,7 +253,7 @@ def _read_csv_numeric_data(stream: TextIO) -> np.ndarray:
         for row in csv.reader(stream):
             if not row or not any(cell.strip() for cell in row):
                 continue
-            if len(row) != len(_CSV_COLUMNS):
+            if len(row) != column_count:
                 raise ScanImportError("CSV contains a truncated row or a row with an unexpected number of columns.")
             sample_count += 1
             try:
@@ -253,7 +264,7 @@ def _read_csv_numeric_data(stream: TextIO) -> np.ndarray:
     flat = np.fromiter(numeric_values(), dtype=float)
     if sample_count == 0:
         raise ScanImportError("CSV contains no wavelength samples.")
-    return flat.reshape(sample_count, len(_CSV_COLUMNS))
+    return flat.reshape(sample_count, column_count)
 
 
 def _mat_string(value: Any, name: str) -> str:
@@ -324,16 +335,30 @@ def _load_mat(path: Path) -> dict[str, Any]:
     if any(values.size != wavelengths.size for values in detector_vectors):
         raise ScanImportError("Detector arrays must each contain exactly one sample per wavelength.")
     detector_rows = np.vstack(detector_vectors)
-    return _assemble(wavelengths, detector_rows, metadata)
+    power_trace = _vector(raw["laser_output_power_dB"], "laser_output_power_dB") if "laser_output_power_dB" in raw else None
+    if power_trace is not None and power_trace.size != wavelengths.size:
+        raise ScanImportError("Output power must contain exactly one sample per wavelength.")
+    return _assemble(wavelengths, detector_rows, metadata, laser_output_power_db=power_trace)
 
 
-def _assemble(wavelengths: np.ndarray, all_rows: np.ndarray, metadata: dict[str, Any]) -> dict[str, Any]:
+def _assemble(
+    wavelengths: np.ndarray,
+    all_rows: np.ndarray,
+    metadata: dict[str, Any],
+    *,
+    laser_output_power_db: np.ndarray | None = None,
+) -> dict[str, Any]:
     if wavelengths.ndim != 1 or wavelengths.size == 0:
         raise ScanImportError("Wavelength samples must be a non-empty vector.")
     if all_rows.shape != (4, wavelengths.size):
         raise ScanImportError("Detector arrays must each contain exactly one sample per wavelength.")
     active_rows = [detector.value - 1 for detector in metadata["detectors"]]
-    return {**metadata, "wavelengths_nm": wavelengths, "detector_data": all_rows[active_rows]}
+    return {
+        **metadata,
+        "wavelengths_nm": wavelengths,
+        "detector_data": all_rows[active_rows],
+        "laser_output_power_db": laser_output_power_db,
+    }
 
 
 def _vector(value: Any, name: str, *, integer: bool = False) -> np.ndarray:

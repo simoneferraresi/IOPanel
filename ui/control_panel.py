@@ -542,6 +542,17 @@ class ScanWorker(QtCore.QObject):
             len(wavelengths),
             powers_scan_data.shape,
         )
+        laser_output_power_db = None
+        if len(wavelengths):
+            started_at = time.perf_counter()
+            try:
+                laser_output_power_db = self.ct400.get_output_power_resampled(len(wavelengths))
+            except Exception:  # noqa: BLE001  # Optional channel must not discard valid detector data.
+                logger.exception("ScanWorker: Could not retrieve wavelength-resolved CT400 output power.")
+            finally:
+                self._stage_timings_seconds["get_output_power_resampled_seconds"] = round(
+                    max(0.0, time.perf_counter() - started_at), 6
+                )
         final_pout = None
         try:
             final_power_reading = self._timed_call("get_all_powers_seconds", self.ct400.get_all_powers)
@@ -561,6 +572,7 @@ class ScanWorker(QtCore.QObject):
             simulated=isinstance(self.ct400, DummyCT400),
             completed_at_utc=datetime.now(UTC),
             scan_id=self.scan_id,
+            laser_output_power_db=laser_output_power_db,
         )
         self.measurement_ready.emit(measurement)
         self._timing_outcome = "warning" if kind == CT400ScanResultKind.WARNING else "success"

@@ -198,6 +198,13 @@ class DummyCT400(AbstractCT400):
         return wavelengths, power_array
 
     @override
+    def get_output_power_resampled(self, num_points: int) -> np.ndarray:
+        """Synthetic dB-labeled laser-path trace, distinct from detector traces."""
+        if num_points < 0:
+            raise ValueError("num_points must be non-negative")
+        return -0.25 + 0.01 * np.arange(num_points, dtype=float)
+
+    @override
     def get_all_powers(self) -> PowerData:
         # Stable plausible readings keep simulated acquisition repeatable.
         pout = -20.0
