@@ -7,6 +7,7 @@ import threading
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QMainWindow
+from shiboken6 import isValid
 
 from logic.startup_coordinator import MainWindowStartupCoordinator
 
@@ -54,7 +55,7 @@ def test_startup_shell_pumps_qt_events_while_full_ui_import_is_blocked(qtbot):
         assert startup.shell.isVisible()
         release.set()
         qtbot.waitUntil(lambda: bool(built), timeout=3000)
-        assert not startup.shell.isVisible()
+        assert not isValid(startup.shell) or not startup.shell.isVisible()
         assert not failures
         assert application.quitOnLastWindowClosed()
     finally:
