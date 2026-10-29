@@ -73,9 +73,9 @@ def test_toggle_uses_independent_right_y_axis_and_linked_x_without_changing_dete
     left_view = widget.plot_widget.getViewBox()
     before_y = left_view.viewRange()[1][:]
     detector_values = widget.detector_plot_items[Detector.DE_1].yData.copy()
-    scene_item_count = len(widget.plot_widget.scene().items())
-
+    # First activation allocates the optional view; later toggles reuse it.
     widget.output_power_btn.click()
+    scene_item_count = len(widget.plot_widget.scene().items())
 
     assert widget.output_power_btn.isChecked()
     assert widget.output_power_axis.isVisible()
