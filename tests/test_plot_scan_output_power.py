@@ -99,7 +99,8 @@ def test_toggle_uses_independent_right_y_axis_and_linked_x_without_changing_dete
         widget.output_power_btn.click()
         assert not widget.output_power_axis.isVisible()
         assert widget.output_power_viewbox is not None
-    assert not widget.output_power_viewbox.isVisible()
+        assert not widget.output_power_viewbox.isVisible()
+        assert widget.output_power_curve is not None
         assert widget.output_power_curve.xData is None or len(widget.output_power_curve.xData) == 0
         widget.output_power_btn.click()
         assert widget.output_power_axis.isVisible()
