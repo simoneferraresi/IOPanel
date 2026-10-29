@@ -91,11 +91,11 @@ except ImportError:
 from hardware.camera import VIMBA_AVAILABLE, VimbaCam, VmbCameraError, VmbSystem, VmbSystemError  # pyright: ignore[reportAttributeAccessIssue] - optional VmbPy exports.
 from hardware.camera_init_worker import CameraInitWorker
 from hardware.camera_recovery_worker import CameraRecoveryWorker
-from hardware.vimba_system_init_worker import VimbaSystemInitOutcome, VimbaSystemInitWorker
 from hardware.ct400 import CT400
 from hardware.ct400_types import Enable, LaserInput
 from hardware.interfaces import AbstractCT400
 from hardware.simulated_camera import SimulatedCamera
+from hardware.vimba_system_init_worker import VimbaSystemInitOutcome, VimbaSystemInitWorker
 from logic.power_monitor_recording import (
     PowerMonitorAcquisitionSettings,
     PowerMonitorRecording,
