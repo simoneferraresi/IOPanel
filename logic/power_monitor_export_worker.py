@@ -12,8 +12,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Signal, Slot
 
-from logic.export_file_io import export_selected_formats, write_staged_csv_mat
-from logic.power_monitor_export import PowerMonitorExportPayload
+from logic.export_file_io import CsvMatPayload, export_selected_formats, write_staged_csv_mat
 from logic.task_runner import BaseWorker
 
 logger = logging.getLogger("LabApp.power_monitor_export_worker")
@@ -26,7 +25,7 @@ class PowerMonitorExportOutcome:
 
 
 def _write_staged_power_monitor_format(
-    name: str, destination: Path, payload: PowerMonitorExportPayload, *, overwrite_confirmed: bool
+    name: str, destination: Path, payload: CsvMatPayload, *, overwrite_confirmed: bool
 ) -> None:
     """Keep the monitor worker entry point and its existing file-format policy."""
     write_staged_csv_mat(
@@ -46,7 +45,7 @@ class PowerMonitorExportWorker(BaseWorker):
 
     def __init__(
         self,
-        payload: PowerMonitorExportPayload,
+        payload: CsvMatPayload,
         targets: dict[str, Path],
         confirmed_overwrites: frozenset[Path],
     ) -> None:

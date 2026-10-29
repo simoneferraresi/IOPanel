@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import logging
 from collections import deque
-from datetime import datetime
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import override
 
 import pyqtgraph as pg
@@ -18,6 +19,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QSizePolicy,
     QToolButton,
@@ -28,8 +30,17 @@ from PySide6.QtWidgets import (
 from app_settings import AppSettings
 from hardware.pm5020_types import ChannelConfig, PM5020State, PowerChannel, PowerReading
 from logic.device_lease_registry import DeviceLeaseRegistry
+from logic.export_task_lifecycle import ExportTaskLifecycle
 from logic.pm5020_monitor import DISPLAY_UNITS, ConfigurationRequest, PM5020MonitorWorker, convert_power, format_power
+from logic.pm5020_trace_export import (
+    PM5020TraceRecording,
+    build_pm5020_trace_export_v1,
+    default_pm5020_trace_export_name,
+    derive_pm5020_trace_export_targets,
+)
+from logic.power_monitor_export_worker import PowerMonitorExportOutcome, PowerMonitorExportWorker
 from logic.task_runner import TaskRunner
+from ui.power_monitor_export_dialog import PowerMonitorExportDialog
 from ui.typography import make_font, pyqtgraph_title_style, style_group_box_title
 
 logger = logging.getLogger("LabApp.pm5020_panel")
@@ -155,7 +166,6 @@ class PM5020ChannelControls(QGroupBox):
         actions_layout = QHBoxLayout(self.plot_actions)
         actions_layout.setContentsMargins(0, 0, 0, 0)
         actions_layout.setSpacing(2)
-        actions_layout.addWidget(self.input_filter)
         self.clear_button = QToolButton(self.plot_host)
         self.clear_button.setObjectName(f"pm5020Ch{channel.value}ClearPlotButton")
         self.clear_button.setIcon(QIcon(":/icons/eraser.svg"))
@@ -164,8 +174,18 @@ class PM5020ChannelControls(QGroupBox):
         self.clear_button.setAutoRaise(True)
         self.clear_button.setFixedSize(28, 28)
         actions_layout.addWidget(self.clear_button)
+        actions_layout.addWidget(self.input_filter)
+        self.save_traces_button = QToolButton(self.plot_host)
+        self.save_traces_button.setObjectName(f"pm5020Ch{channel.value}SaveTracesButton")
+        self.save_traces_button.setIcon(QIcon(":/icons/save.svg"))
+        self.save_traces_button.setToolTip("Save complete PM5020 recording (CH1 and CH2), not only this plot")
+        self.save_traces_button.setAccessibleName(f"Save PM5020 CH1 and CH2 traces from channel {channel.value} plot")
+        self.save_traces_button.setAutoRaise(True)
+        self.save_traces_button.setFixedSize(28, 28)
+        self.save_traces_button.setEnabled(False)
+        actions_layout.addWidget(self.save_traces_button)
         plot_layout.addWidget(self.plot_actions, 0, 0, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight)
-        self.clear_button.raise_()
+        self.plot_actions.raise_()
         self.unit.currentTextChanged.connect(self.refresh_reading)
         self._latest_power_w: float | None = None
         self._latest_timestamp: datetime | None = None
@@ -313,6 +333,18 @@ class PM5020Panel(QWidget):
         self._monitor_session = False
         self._paused = False
         self._last_elapsed = 0.0
+        # The plot deques are bounded; this independent buffer retains every
+        # acquired reading (including data hidden by plot clearing/windowing).
+        self._trace_samples: list[tuple[PowerReading, float]] = []
+        self._trace_configs: tuple[tuple[PowerChannel, ChannelConfig], ...] = ()
+        self._pending_start_configs: tuple[tuple[PowerChannel, ChannelConfig], ...] = ()
+        self._trace_started_at_utc: datetime | None = None
+        self._trace_completed_at_utc: datetime | None = None
+        self._trace_recording_active = False
+        self._trace_initial_poll_ms = 1000
+        self._trace_final_poll_ms = 1000
+        self._trace_export_lifecycle = ExportTaskLifecycle[PowerMonitorExportOutcome](self)
+        self._pm_owner_retired = False
         self._shutdown_requested = False
         self._shutdown_complete = False
         self._thread_started = False
@@ -449,6 +481,8 @@ class PM5020Panel(QWidget):
         self.start_button.clicked.connect(self._start)
         self.pause_resume_button.clicked.connect(self._toggle_pause_resume)
         self.stop_button.clicked.connect(self.stop_requested)
+        self.ch1.save_traces_button.clicked.connect(self._save_traces)
+        self.ch2.save_traces_button.clicked.connect(self._save_traces)
         self.ch1.clear_button.clicked.connect(lambda: self._clear_channel(self.ch1))
         self.ch2.clear_button.clicked.connect(lambda: self._clear_channel(self.ch2))
         self.history.currentIndexChanged.connect(self._redraw)
@@ -766,6 +800,7 @@ class PM5020Panel(QWidget):
         self._pending_interval_request = None
         if success and generation == self._connection_generation and session_id == self._monitor_session_id:
             self._acknowledged_interval_ms = self._requested_interval_ms
+            self._trace_final_poll_ms = self._acknowledged_interval_ms
             self.interval.setToolTip(
                 f"Active interval confirmed at {self._acknowledged_interval_ms} ms; "
                 "actual acquisition rate depends on USB/instrument latency"
@@ -783,6 +818,15 @@ class PM5020Panel(QWidget):
             return
         try:
             interval_ms = self._interval_ms()
+        except ValueError as exc:
+            self._show_error(str(exc))
+            return
+        try:
+            self._pending_start_configs = tuple(
+                (channel.channel, channel.channel_config())
+                for channel in (self.ch1, self.ch2)
+                if channel.enabled.isChecked()
+            )
         except ValueError as exc:
             self._show_error(str(exc))
             return
@@ -848,6 +892,7 @@ class PM5020Panel(QWidget):
         if state is PM5020State.DISCONNECTED or state is PM5020State.ERROR:
             self._invalidate_configuration()
         if state is PM5020State.ERROR:
+            self._finish_trace_recording()
             self._activity = "Recovery required"
             self._monitor_session = False
             self._paused = False
@@ -877,7 +922,9 @@ class PM5020Panel(QWidget):
             self._paused = False
             if was_paused:
                 self._acknowledged_interval_ms = self._requested_interval_ms
+                self._trace_final_poll_ms = self._acknowledged_interval_ms
         elif activity in {"Connected / idle", "Disconnected", "Recovery required"}:
+            self._finish_trace_recording()
             self._monitor_session = False
             self._paused = False
         self._update_controls()
@@ -890,6 +937,8 @@ class PM5020Panel(QWidget):
 
     @Slot(object, float)
     def _on_reading(self, reading: PowerReading, elapsed_s: float) -> None:
+        if self._trace_recording_active:
+            self._trace_samples.append((reading, elapsed_s))
         (self.ch1 if reading.channel is PowerChannel.CH1 else self.ch2).set_reading(reading, elapsed_s)
         self._last_elapsed = max(self._last_elapsed, elapsed_s)
         self._redraw()
@@ -945,6 +994,18 @@ class PM5020Panel(QWidget):
         if generation != self._connection_generation:
             return
         self._clear_history()
+        self._trace_samples = []
+        self._trace_configs = self._pending_start_configs or tuple(
+            (channel.channel, channel.channel_config())
+            for channel in (self.ch1, self.ch2)
+            if channel.enabled.isChecked()
+        )
+        self._pending_start_configs = ()
+        self._trace_started_at_utc = datetime.now(UTC)
+        self._trace_completed_at_utc = None
+        self._trace_initial_poll_ms = self._starting_interval_ms
+        self._trace_final_poll_ms = self._starting_interval_ms
+        self._trace_recording_active = True
         self._monitor_session_id = session_id
         self._monitor_session = True
         self._paused = False
@@ -984,7 +1045,16 @@ class PM5020Panel(QWidget):
             self._monitor_session and not recovering and (not self._paused or interval_valid) and not self._sync_active
         )
         self.stop_button.setEnabled((self._monitor_session or self._paused) and not self._sync_active)
+        can_save_traces = (
+            bool(self._trace_samples)
+            and not self._trace_recording_active
+            and not self._monitor_session
+            and not self._sync_active
+            and not self._shutdown_requested
+            and not self._trace_export_lifecycle.busy
+        )
         for channel in (self.ch1, self.ch2):
+            channel.save_traces_button.setEnabled(can_save_traces)
             for widget in (channel.wavelength, channel.auto_range, channel.input_filter, channel.enabled):
                 widget.setEnabled(not self._monitor_session and not self._paused and not self._sync_active)
             manual_enabled = (
@@ -997,14 +1067,133 @@ class PM5020Panel(QWidget):
             channel.range_unit.setEnabled(manual_enabled)
             channel.unit.setEnabled(True)
 
+    def _finish_trace_recording(self) -> None:
+        """Complete the current session without changing displayed history."""
+        if self._trace_recording_active:
+            self._trace_recording_active = False
+            self._trace_completed_at_utc = datetime.now(UTC)
+
+    @Slot()
+    def _save_traces(self) -> None:
+        if (
+            self._trace_recording_active
+            or self._monitor_session
+            or self._sync_active
+            or self._trace_export_lifecycle.busy
+            or not self._trace_samples
+        ):
+            return
+        if self._trace_started_at_utc is None or self._trace_completed_at_utc is None:
+            return
+        try:
+            snapshot = PM5020TraceRecording(
+                samples=tuple(self._trace_samples),
+                channel_configs=self._trace_configs,
+                started_at_utc=self._trace_started_at_utc,
+                completed_at_utc=self._trace_completed_at_utc,
+                backend=self.backend_mode,
+                initial_poll_interval_ms=self._trace_initial_poll_ms,
+                final_poll_interval_ms=self._trace_final_poll_ms,
+            )
+        except ValueError as exc:
+            QMessageBox.warning(self, "Save PM5020 Traces", str(exc))
+            return
+
+        directory = self.settings.pm5020_trace_export_directory() if self.settings else Path.cwd()
+        formats = self.settings.pm5020_trace_export_formats() if self.settings else (True, True)
+        dialog = PowerMonitorExportDialog(
+            directory,
+            default_pm5020_trace_export_name(snapshot),
+            formats,
+            self,
+            title="Save PM5020 Channel Traces",
+        )
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        request = dialog.export_request
+        if request is None or not (request.csv or request.mat):
+            return
+        targets = derive_pm5020_trace_export_targets(
+            request.directory / request.base_name,
+            include_csv=request.csv,
+            include_mat=request.mat,
+        )
+        conflicts = frozenset(path for path in targets.values() if path.exists())
+        if conflicts:
+            response = QMessageBox.question(
+                self,
+                "Overwrite Existing Files?",
+                "The following export targets already exist:\n"
+                + "\n".join(str(path) for path in sorted(conflicts))
+                + "\n\nOverwrite all listed files?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if response != QMessageBox.StandardButton.Yes:
+                return
+        try:
+            payload = build_pm5020_trace_export_v1(snapshot, comment=request.comment)
+        except (ValueError, TypeError) as exc:
+            QMessageBox.warning(self, "Save PM5020 Traces", str(exc))
+            return
+        if self.settings:
+            self.settings.set_pm5020_trace_export_directory(request.directory)
+            self.settings.set_pm5020_trace_export_formats(csv=request.csv, mat=request.mat)
+            self.settings.sync()
+        self._trace_export_lifecycle.start(
+            PowerMonitorExportWorker(payload, targets, conflicts),
+            on_outcome=self._on_trace_export_outcome,
+            on_thread_finished=self._on_trace_export_thread_finished,
+            on_destroyed=self._on_trace_export_task_destroyed,
+        )
+        self._update_controls()
+
+    @Slot(object)
+    def _on_trace_export_outcome(self, outcome: PowerMonitorExportOutcome) -> None:
+        self._trace_export_lifecycle.set_outcome(outcome)
+        self._finish_trace_export_if_ready()
+
+    @Slot()
+    def _on_trace_export_thread_finished(self) -> None:
+        self._trace_export_lifecycle.set_thread_finished()
+        self._finish_trace_export_if_ready()
+
+    def _finish_trace_export_if_ready(self) -> None:
+        result = self._trace_export_lifecycle.take_ready_result()
+        if result is not None and not self._shutdown_requested:
+            files = "\n".join(str(path) for path in result.saved)
+            if result.errors:
+                QMessageBox.warning(
+                    self,
+                    "PM5020 Export Issues",
+                    "Files saved:\n" + files + "\n\nErrors:\n" + "\n".join(result.errors),
+                )
+            elif result.saved:
+                QMessageBox.information(self, "PM5020 Export Complete", "Saved:\n" + files)
+        self._notify_trace_export_idle()
+
+    def _on_trace_export_task_destroyed(self, task_id: int) -> None:
+        self._trace_export_lifecycle.release_destroyed(task_id)
+        self._notify_trace_export_idle()
+
+    def _notify_trace_export_idle(self) -> None:
+        if self._trace_export_lifecycle.take_idle_notification():
+            self._update_controls()
+            self._complete_shutdown_if_ready()
+
+    def _complete_shutdown_if_ready(self) -> None:
+        if self._shutdown_complete or not self._pm_owner_retired or self._trace_export_lifecycle.busy:
+            return
+        self._shutdown_complete = True
+        self.connection_status_changed.emit(self._backend_state, "Disconnected")
+        self.shutdown_complete.emit()
+
     @Slot()
     def _on_thread_finished(self) -> None:
         if self._shutdown_complete:
             return
         self._shutdown_timer.stop()
-        self._shutdown_complete = True
-        self.connection_status_changed.emit(self._backend_state, "Disconnected")
-        self.shutdown_complete.emit()
+        self._pm_owner_retired = True
+        self._complete_shutdown_if_ready()
 
     @Slot()
     def _on_shutdown_timeout(self) -> None:
@@ -1030,12 +1219,12 @@ class PM5020Panel(QWidget):
             self._shutdown_timer.start()
             self.shutdown_requested.emit()
         else:
-            self._shutdown_complete = True
-            self.shutdown_complete.emit()
+            self._pm_owner_retired = True
+            self._complete_shutdown_if_ready()
 
     @property
     def shutdown_finished(self) -> bool:
-        return self._shutdown_complete or not self._thread_started
+        return (self._shutdown_complete or not self._thread_started) and not self._trace_export_lifecycle.busy
 
     @override
     def closeEvent(self, event: QCloseEvent) -> None:
