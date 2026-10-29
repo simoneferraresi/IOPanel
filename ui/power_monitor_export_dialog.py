@@ -18,9 +18,17 @@ class PowerMonitorExportRequest:
 class PowerMonitorExportDialog(ExportDialogBase):
     """Collect a validated folder, logical basename, formats and save-time comment."""
 
-    def __init__(self, directory: Path, base_name: str, formats: tuple[bool, bool], parent=None) -> None:
+    def __init__(
+        self,
+        directory: Path,
+        base_name: str,
+        formats: tuple[bool, bool],
+        parent=None,
+        *,
+        title: str = "Save Power Monitor Recording",
+    ) -> None:
         super().__init__(
-            title="Save Power Monitor Recording",
+            title=title,
             directory=directory,
             base_name=base_name,
             csv=formats[0],

@@ -240,9 +240,57 @@ from accumulating. The GUI receives readings and states through Qt signals.
 Application shutdown queues an orderly close and waits asynchronously for the
 worker thread to finish; a blocked native call cannot be interrupted safely.
 
+## PM5020 monitoring trace export (draft)
+
+Each PM5020 channel plot has a top-right overlay toolbar, ordered
+**Clear → Input filter → Save**, with the same 28-pixel save glyph and
+auto-raise styling as the CT400 scan and Power Monitor plots. The Save icon
+becomes available after a stopped acquisition containing at least one reading.
+Both channel-plot save icons invoke the same export of **CH1 and CH2 together**,
+including when only one channel was enabled for a particular recording.
+Saving is also possible after a disconnect or recoverable measurement error.
+The export contains **the complete
+session**, not only the visible time window or the per-channel 2,400-point plot
+buffers. Clearing one or both plots only changes presentation; it does not
+delete captured samples. Starting a new session replaces the previous
+in-memory recording; export a session before starting another if it must be
+retained. For very long acquisitions the full-session memory buffer grows with
+the sample count; continuous disk streaming is not part of this feature.
+
+A CSV and/or MATLAB `.mat` file can be created with a user-selected folder,
+basename and optional experiment comment, using the shared background,
+durable/atomic exporter. The dialog asks before replacing existing files.
+PM5020 export location and format preferences are independent of CT400.
+The GUI creates an immutable snapshot before the export thread starts.
+Application shutdown waits for both the PM5020 owner thread and any
+in-flight export thread to retire without terminating either.
+
+The schema-v1 CSV has four numeric columns:
+
+```text
+Elapsed_time_[s], Acquired_at_UNIX_[s], CH1_Power_[W], CH2_Power_[W]
+```
+
+**One row is one actual sensor reading.** Because the worker polls channels
+sequentially, CH1 and CH2 readings have distinct elapsed/UTC timestamps;
+the non-sampled channel is represented by NaN, not zero or an interpolated
+value. A real measured zero is exported as zero. Powers always retain original
+watts; changing display units does not affect saved data. Elapsed time comes
+from the worker's monotonic clock; the UTC time column contains floating-point
+UNIX seconds from the sample timestamp. CSV uses the shared 17-significant-
+digit float64 policy. MAT additionally includes a sample-channel identifier.
+Metadata identifies active channels, their wavelength/range/filter settings,
+initial and final requested polling intervals, per-channel counts, backend,
+UTC start/completion, and the comment. Intermediate polling-interval changes
+are reflected in sample times but are not separately event-logged.
+
+This schema covers ordinary **polled monitoring**, not the synchronized
+triggered burst mode (whose instrument timestamp ticks have a different,
+currently uncalibrated time base). A laboratory qualification is still needed
+for physical-device error/recovery and shutdown-with-export scenarios.
+
 The simulator path, unit conversion, UI, and worker lifecycle are covered by
 automated tests. Physical connection, sensor compatibility, vendor-side range
 validation, and physical sampling rate have not been exercised by this panel
 change. Hardware-triggered burst acquisition and synchronized SHG workflows
-remain future milestones. Recording/export and persistent panel settings are
-also deferred.
+are separate from ordinary polled monitoring trace export.

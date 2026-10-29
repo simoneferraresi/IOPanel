@@ -345,6 +345,24 @@ class AppSettings:
         self._write("Export/power_monitor_formats/csv", bool(csv))
         self._write("Export/power_monitor_formats/mat", bool(mat))
 
+    def pm5020_trace_export_directory(self) -> Path:
+        """Keep PM5020 trace export destinations separate from CT400."""
+        return self.directory("Paths/pm5020_trace_export")
+
+    def set_pm5020_trace_export_directory(self, directory: Path | str) -> None:
+        self.set_directory("Paths/pm5020_trace_export", directory)
+
+    def pm5020_trace_export_formats(self) -> tuple[bool, bool]:
+        values = tuple(self._read(f"Export/pm5020_trace_formats/{name}", True) for name in ("csv", "mat"))
+        return (
+            values[0] if isinstance(values[0], bool) else True,
+            values[1] if isinstance(values[1], bool) else True,
+        )
+
+    def set_pm5020_trace_export_formats(self, *, csv: bool, mat: bool) -> None:
+        self._write("Export/pm5020_trace_formats/csv", bool(csv))
+        self._write("Export/pm5020_trace_formats/mat", bool(mat))
+
     def plot_image_directory(self) -> Path:
         return self.directory("Paths/plot_image")
 
