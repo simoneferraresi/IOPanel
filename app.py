@@ -395,7 +395,13 @@ def main() -> int:
         # then load the large UI module graph on a one-shot worker thread.
         from PySide6.QtCore import QTimer
 
+        # Keep a Python owner for the top-level QWidget throughout app.exec().
+        # Otherwise the local window can be destroyed as soon as the asynchronous
+        # on_loaded callback returns, even though its native widget was shown.
+        window = None
+
         def create_main_window(window_type) -> None:
+            nonlocal window
             window = window_type(
                 config=app_config,
                 settings=create_application_settings(smoke_test=args.smoke_test, log_file=log_file_path),
