@@ -90,13 +90,11 @@ def test_vendor_power_requires_handle_and_nonnegative_count():
 
 def _measurement(power_trace):
     detectors = (Detector.DE_3, Detector.DE_1)
-    settings = ScanAcquisitionSettings(
-        1500.0, 1502.0, 10, "5", "1", "mW", 1.0, LaserInput.LI_1, detectors
-    )
+    settings = ScanAcquisitionSettings(1500.0, 1502.0, 10, "5", "1", "mW", 1.0, LaserInput.LI_1, detectors)
     return ScanMeasurement(
         settings=settings,
         wavelengths_nm=np.array([1500.0, 1501.0, 1502.0]),
-        detector_data=np.array([[-30., -31., -32.], [-10., -11., -12.]]),
+        detector_data=np.array([[-30.0, -31.0, -32.0], [-10.0, -11.0, -12.0]]),
         detectors=detectors,
         final_pout=-0.1,
         result_kind=CT400ScanResultKind.SUCCESS,

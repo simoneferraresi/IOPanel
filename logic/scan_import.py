@@ -335,7 +335,9 @@ def _load_mat(path: Path) -> dict[str, Any]:
     if any(values.size != wavelengths.size for values in detector_vectors):
         raise ScanImportError("Detector arrays must each contain exactly one sample per wavelength.")
     detector_rows = np.vstack(detector_vectors)
-    power_trace = _vector(raw["laser_output_power_dB"], "laser_output_power_dB") if "laser_output_power_dB" in raw else None
+    power_trace = (
+        _vector(raw["laser_output_power_dB"], "laser_output_power_dB") if "laser_output_power_dB" in raw else None
+    )
     if power_trace is not None and power_trace.size != wavelengths.size:
         raise ScanImportError("Output power must contain exactly one sample per wavelength.")
     return _assemble(wavelengths, detector_rows, metadata, laser_output_power_db=power_trace)

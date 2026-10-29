@@ -64,9 +64,7 @@ class ScanMeasurement:
         if power_trace is not None:
             power_trace = np.array(power_trace, dtype=float, copy=True)
             if power_trace.ndim != 1 or power_trace.shape != wavelengths.shape:
-                raise ValueError(
-                    f"laser_output_power_db must have shape {wavelengths.shape}, got {power_trace.shape}"
-                )
+                raise ValueError(f"laser_output_power_db must have shape {wavelengths.shape}, got {power_trace.shape}")
             power_trace.setflags(write=False)
         wavelengths.setflags(write=False)
         detector_data.setflags(write=False)
