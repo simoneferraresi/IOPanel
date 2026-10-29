@@ -17,6 +17,9 @@ the current completed scan's CT400 output-power trace (provisionally dBm).
 - Hidden/visible state never changes the acquired arrays or exported data.
   No new hardware calls occur when clicking the control.
 
+The secondary ViewBox and curve are created lazily on the first operator
+activation, so ordinary MainWindow startup does not add extra graphics objects.
+
 The control reuses the existing `:/icons/laser.svg` resource; no new
 compiled Qt resources or external dependencies are required.
 
