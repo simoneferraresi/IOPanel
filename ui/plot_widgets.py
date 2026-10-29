@@ -2528,6 +2528,9 @@ class PlotWidget(QWidget):
         logger.info(f"Saving scan data. Points: {len(wavelengths)}. Pout: {pout}")
         default_filename = f"scan_{wavelengths[0]:.0f}nm_{wavelengths[-1]:.0f}nm"
         formats = self.settings.scan_export_formats() if self.settings is not None else (True, True, False)
+        # FIG is checked on every new dialog only after asynchronous MATLAB startup finishes.
+        # Keep CSV/MAT preferences, and allow manual FIG selection while MATLAB is still starting.
+        formats = (formats[0], formats[1], self.matlab_engine_manager.state is MatlabEngineState.READY)
         dialog = ScanExportDialog(self.last_scan_save_dir, default_filename, formats, MATLAB_ENGINE_AVAILABLE, self)
         if dialog.exec() != dialog.DialogCode.Accepted:
             logger.info("Save Scan dialog cancelled by user.")

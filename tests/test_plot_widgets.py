@@ -1574,6 +1574,61 @@ def _silence_export_messages(monkeypatch):
     monkeypatch.setattr(plot_widgets.QMessageBox, "warning", lambda *_args: None)
 
 
+@pytest.mark.parametrize("saved_fig_preference", [False, True])
+@pytest.mark.parametrize(
+    ("engine_state", "binding_available"),
+    [
+        (plot_widgets.MatlabEngineState.UNAVAILABLE, False),
+        (plot_widgets.MatlabEngineState.IDLE, True),
+        (plot_widgets.MatlabEngineState.STARTING, True),
+        (plot_widgets.MatlabEngineState.FAILED, True),
+        (plot_widgets.MatlabEngineState.SHUTTING_DOWN, True),
+        (plot_widgets.MatlabEngineState.READY, True),
+    ],
+)
+def test_each_scan_save_dialog_checks_fig_by_engine_readiness_not_saved_preference(
+    qtbot, monkeypatch, tmp_path, engine_state, binding_available, saved_fig_preference
+):
+    from PySide6.QtCore import QSettings
+
+    from app_settings import AppSettings
+    from ui.scan_export_dialog import ScanExportDialog
+
+    monkeypatch.setattr(plot_widgets, "MATLAB_ENGINE_AVAILABLE", binding_available)
+    settings = AppSettings(QSettings(str(tmp_path / "prefs.ini"), QSettings.Format.IniFormat))
+    settings.set_scan_export_formats(csv=True, mat=True, fig=saved_fig_preference)
+    widget = _prepare_export_widget(qtbot, settings)
+    widget.matlab_engine_manager._set_state(engine_state)
+    dialogs = []
+
+    class CancelledDialog(ScanExportDialog):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            dialogs.append(self)
+
+        def exec(self):
+            return self.DialogCode.Rejected
+
+    monkeypatch.setattr(plot_widgets, "ScanExportDialog", CancelledDialog)
+
+    widget.save_scan_data()
+    first = dialogs[-1]
+    expected_checked = engine_state is plot_widgets.MatlabEngineState.READY
+    assert first.fig_checkbox.isChecked() is expected_checked
+    assert first.fig_checkbox.isEnabled() is binding_available
+
+    # A deliberate change in a cancelled dialog must not alter the next default.
+    first.fig_checkbox.setChecked(not expected_checked)
+    widget.save_scan_data()
+    second = dialogs[-1]
+    assert len(dialogs) == 2
+    assert second.fig_checkbox.isChecked() is expected_checked
+    assert second.fig_checkbox.isEnabled() is binding_available
+    assert settings.scan_export_formats() == (True, True, saved_fig_preference)
+    first.close()
+    second.close()
+
+
 @pytest.mark.parametrize(
     ("formats", "expected_files"),
     [
