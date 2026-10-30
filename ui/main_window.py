@@ -3304,7 +3304,14 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _resume_close_after_monitor_retirement(self):
-        if self._shutdown_requested and not self._shutdown_complete:
+        # The persistent MATLAB manager can finish synchronously at the very
+        # start of closeEvent. Do not schedule an extra close until active
+        # hardware/scan tasks have passed the original defer-close gate.
+        if (
+            self._shutdown_requested
+            and not self._shutdown_complete
+            and getattr(self, "_shutdown_panels_requested", False)
+        ):
             QTimer.singleShot(0, self, self.close)
 
     @Slot(str)
