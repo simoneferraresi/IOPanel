@@ -1506,8 +1506,11 @@ class MainWindow(QMainWindow):
             current = self.tab_widget.currentIndex()
             label = self.tab_widget.tabText(index)
             with QSignalBlocker(self.tab_widget):
-                self.tab_widget.removeTab(index)
+                # Insert before removing the selected placeholder. Removing it
+                # first briefly activates the neighboring tab and can trigger
+                # expensive OpenGL viewer initialization on its showEvent.
                 self.tab_widget.insertTab(index, panel, label)
+                self.tab_widget.removeTab(index + 1)
                 self.tab_widget.setCurrentIndex(current)
             self._lazy_tab_placeholders.pop(index)
             placeholder.deleteLater()
