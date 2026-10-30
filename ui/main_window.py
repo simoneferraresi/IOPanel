@@ -1506,10 +1506,13 @@ class MainWindow(QMainWindow):
             current = self.tab_widget.currentIndex()
             label = self.tab_widget.tabText(index)
             with QSignalBlocker(self.tab_widget):
-                # Insert before removing the selected placeholder. Removing it
-                # first briefly activates the neighboring tab and can trigger
-                # expensive OpenGL viewer initialization on its showEvent.
+                # Qt can select the next page when removing the current tab,
+                # even if currentChanged is blocked. Select the replacement
+                # *before* removing the placeholder to avoid a transient
+                # alignment/OpenGL showEvent on a neighboring tab.
                 self.tab_widget.insertTab(index, panel, label)
+                if current == index:
+                    self.tab_widget.setCurrentIndex(index)
                 self.tab_widget.removeTab(index + 1)
                 self.tab_widget.setCurrentIndex(current)
             self._lazy_tab_placeholders.pop(index)
