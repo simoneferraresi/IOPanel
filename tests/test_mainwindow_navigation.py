@@ -32,26 +32,63 @@ def test_fresh_window_uses_monitor_scan_alignment_order(qtbot, monkeypatch, tmp_
     assert window.tab_widget.currentIndex() == 0
     assert window.tab_widget.widget(0) is window.second_tab
     assert window.tab_widget.widget(1) is window.first_tab
-    assert window.tab_widget.widget(2) is window.alignment_tab
-    assert window.tab_widget.widget(3) is window.pm5020_panel
+    assert all(window.tab_widget.widget(index).objectName() == f"DeferredTab{index}" for index in range(2, 6))
+    assert window._alignment_tab is None
+    assert window._pm5020_panel is None
+    assert window._edfa_panel is None
+    assert window._shg_tab is None
+    window.tab_widget.setCurrentIndex(4)
     assert window.tab_widget.widget(4) is window.edfa_panel
-    assert window.tab_widget.widget(5) is window.shg_tab
     assert not window.edfa_panel.task.worker_thread.isRunning()
+    window.tab_widget.setCurrentIndex(0)
+    assert window.tab_widget.widget(4) is window.edfa_panel
     window.close()
 
 
-@pytest.mark.parametrize(("legacy_index", "expected_index"), [(0, 1), (1, 0), (2, 2)])
-def test_restored_legacy_tab_selects_same_logical_page(qtbot, monkeypatch, tmp_path, legacy_index, expected_index):
+@pytest.mark.parametrize("legacy_index", [0, 1, 2])
+def test_saved_legacy_tab_never_overrides_monitor_startup(qtbot, monkeypatch, tmp_path, legacy_index):
     backend = QSettings(str(tmp_path / "previous.ini"), QSettings.Format.IniFormat)
     backend.setValue("MainWindow/active_tab", legacy_index)
+    backend.setValue("MainWindow/active_tab_id", "auto_alignment")
     settings = AppSettings(backend)
     window = _make_window(qtbot, monkeypatch, settings)
-    assert window.tab_widget.currentIndex() == expected_index
+    assert window.tab_widget.currentIndex() == 0
+    assert window._alignment_tab is None
     window.close()
     settings.sync()
-    reloaded = AppSettings(QSettings(str(tmp_path / "previous.ini"), QSettings.Format.IniFormat))
-    assert reloaded.active_tab(4) == expected_index
-    assert reloaded._settings.value("MainWindow/active_tab_id") == AppSettings.ACTIVE_TAB_IDS[expected_index]
+    assert backend.value("MainWindow/active_tab") == legacy_index
+    assert backend.value("MainWindow/active_tab_id") == "auto_alignment"
+
+
+def test_deferred_panels_initialize_once_and_reuse_same_instance(qtbot, monkeypatch, tmp_path):
+    settings = AppSettings(QSettings(str(tmp_path / "lazy-tabs.ini"), QSettings.Format.IniFormat))
+    window = _make_window(qtbot, monkeypatch, settings)
+    assert window.tab_widget.currentIndex() == 0
+    for index, attr in ((2, "_alignment_tab"), (3, "_pm5020_panel"), (4, "_edfa_panel"), (5, "_shg_tab")):
+        assert getattr(window, attr) is None
+        placeholder = window.tab_widget.widget(index)
+        window.tab_widget.setCurrentIndex(index)
+        actual = getattr(window, attr)
+        assert actual is not None and actual is window.tab_widget.widget(index)
+        assert actual is not placeholder
+        window.tab_widget.setCurrentIndex(0)
+        window.tab_widget.setCurrentIndex(index)
+        assert getattr(window, attr) is actual
+    window.close()
+
+
+def test_shg_lazily_brings_up_only_its_pm5020_dependency(qtbot, monkeypatch, tmp_path):
+    settings = AppSettings(QSettings(str(tmp_path / "shg-dependency.ini"), QSettings.Format.IniFormat))
+    window = _make_window(qtbot, monkeypatch, settings)
+    assert window._pm5020_panel is None
+    assert window._shg_tab is None
+    window.tab_widget.setCurrentIndex(5)
+    assert window._shg_tab is window.tab_widget.widget(5)
+    assert window._pm5020_panel is window.tab_widget.widget(3)
+    assert window._alignment_tab is None
+    assert window._edfa_panel is None
+    assert not window._pm5020_panel.task.worker_thread.isRunning()
+    window.close()
 
 
 def test_menu_order_and_action_placement(qtbot, monkeypatch, tmp_path):

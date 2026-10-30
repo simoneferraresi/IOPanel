@@ -26,7 +26,7 @@ from enum import Enum, auto
 from typing import override
 
 from PySide6 import QtGui, QtWidgets
-from PySide6.QtCore import QObject, QRunnable, QSize, Qt, QThreadPool, QTimer, Signal, Slot
+from PySide6.QtCore import QObject, QRunnable, QSignalBlocker, QSize, Qt, QThreadPool, QTimer, Signal, Slot
 from PySide6.QtGui import QAction, QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication,
@@ -297,9 +297,13 @@ class MainWindow(QMainWindow):
         self._shutdown_requested = False
         self._shutdown_complete = False
         self.power_monitor_trace_widget: PowerMonitorTraceWidget | None = None
-        self.pm5020_panel: PM5020Panel | None = None
+        self._pm5020_panel: PM5020Panel | None = None
         self._pending_pm5020_close = False
-        self.edfa_panel: EDFAReadOnlyPanel | None = None
+        self._edfa_panel: EDFAReadOnlyPanel | None = None
+        self._alignment_tab: AlignmentPanel | None = None
+        self._shg_tab: SimulatedSHGPanel | None = None
+        self._lazy_tab_placeholders: dict[int, QWidget] = {}
+        self._constructing_lazy_tab = False
         self._pending_edfa_close = False
         self._ct400_error_reset_timer = QTimer(self)
         self._ct400_error_reset_timer.setSingleShot(True)
@@ -340,9 +344,8 @@ class MainWindow(QMainWindow):
         saved_sizes = self.settings.splitter_sizes(self.main_splitter.count())
         if saved_sizes is not None:
             self.main_splitter.setSizes(saved_sizes)
-        self.tab_widget.setCurrentIndex(
-            self.settings.active_tab(self.tab_widget.count(), self.tab_widget.currentIndex())
-        )
+        # The laboratory workflow always begins with Power Monitor.
+        # Ignore stored tab selection, including older legacy QSettings keys.
         saved_detectors = set(self.settings.scan_detectors())
         for detector, checkbox in self.control_panel.scan_detector_cbs.items():
             checkbox.setChecked(detector.value in saved_detectors)
@@ -507,9 +510,11 @@ class MainWindow(QMainWindow):
         action = getattr(self, "pm5020_connect_action", None)
         if action is None:
             return
-        panel = getattr(self, "pm5020_panel", None)
+        panel = getattr(self, "_pm5020_panel", None)
         if panel is None:
-            text, icon, enabled, checked = "PM5020 Unavailable", ":/icons/connect.svg", False, False
+            # Deferred construction is not device unavailability. The explicit
+            # Instruments action may instantiate the panel and connect later.
+            text, icon, enabled, checked = "Connect PM5020", ":/icons/connect.svg", True, False
         else:
             state = panel._backend_state
             activity = panel._activity
@@ -552,7 +557,7 @@ class MainWindow(QMainWindow):
         """Independent, persistent left-hand status widget; do not steal showMessage."""
         label = self.edfa_observations_status_label
         label.setText(observation)
-        panel = self.edfa_panel
+        panel = self._edfa_panel
         identity = panel._identity_text if panel is not None else ""
         resource = panel.resource_name if panel is not None and panel.backend_mode == "physical" else ""
         context = [f"Instrument: {identity}" if identity else "", f"GPIB: {resource}" if resource else ""]
@@ -563,9 +568,9 @@ class MainWindow(QMainWindow):
         action = getattr(self, "edfa_connect_action", None)
         if action is None:
             return
-        panel = self.edfa_panel
+        panel = self._edfa_panel
         if panel is None:
-            text, icon, enabled, checked = "EDFA Unavailable", ":/icons/connect.svg", False, False
+            text, icon, enabled, checked = "Connect EDFA", ":/icons/connect.svg", True, False
         else:
             state = panel._backend_state
             activity = panel._activity
@@ -587,7 +592,7 @@ class MainWindow(QMainWindow):
         action.setEnabled(enabled)
 
     def _alignment_hardware_transition_blocked(self) -> bool:
-        panel = getattr(self, "alignment_tab", None)
+        panel = getattr(self, "_alignment_tab", None)
         return bool(
             self._ct400_operation_state is CT400OperationState.ALIGNMENT
             or (panel is not None and (panel._active_mode is not None or panel._ct400_operation_state == "ALIGNMENT"))
@@ -595,7 +600,7 @@ class MainWindow(QMainWindow):
 
     def _sync_alignment_hardware(self):
         """Keep the alignment panel bound only to currently usable hardware."""
-        panel = getattr(self, "alignment_tab", None)
+        panel = getattr(self, "_alignment_tab", None)
         if panel is None:
             return
         panel.set_start_authorizer(self._is_alignment_operation_authorized)
@@ -683,7 +688,8 @@ class MainWindow(QMainWindow):
             self._piezo_operations_in_flight.remove(side)
         self._update_piezo_action(side)
         if self._pending_piezo_operation_close:
-            self.alignment_tab.clear_hardware()
+            if self._alignment_tab is not None:
+                self._alignment_tab.clear_hardware()
             if was_in_flight:
                 self._resume_close_after_piezo_operation()
         else:
@@ -982,8 +988,7 @@ class MainWindow(QMainWindow):
     def _ct400_device_is_owned(self, device: CT400) -> bool:
         if device is self.ct400_device or device is self._pending_ct400_device_replacement:
             return True
-        for panel_name in ("control_panel", "histogram_control", "alignment_tab"):
-            panel = getattr(self, panel_name, None)
+        for panel in (self.control_panel, self.histogram_control, self._alignment_tab):
             if panel is not None and getattr(panel, "ct400", None) is device:
                 return True
         return False
@@ -1263,43 +1268,25 @@ class MainWindow(QMainWindow):
         self.tab_widget.addTab(self.second_tab, "Power Monitor")
         self.tab_widget.addTab(self.first_tab, "Wavelength Scan")
 
-        self.alignment_tab = AlignmentPanel(None, None, None, self)
-        self.tab_widget.addTab(self.alignment_tab, "Auto Alignment")
-        self.pm5020_panel = PM5020Panel(
-            self,
-            backend_mode=self.config.instruments.pm5020_backend,
-            resource_name=self.config.instruments.pm5020_resource_name,
-            wrapper_path=self.config.instruments.pm5020_wrapper_path,
-            dll_path=self.config.instruments.pm5020_dll_path,
-            lease_registry=self.device_lease_registry,
-            settings=self.settings,
-        )
-        self.pm5020_panel.connection_status_changed.connect(self._on_pm5020_connection_status_changed)
-        self._update_pm5020_action()
-        self.pm5020_panel.shutdown_complete.connect(self._resume_close_after_pm5020)
-        self.pm5020_panel.shutdown_timeout.connect(lambda message: self.statusBar().showMessage(message, 0))
-        self.tab_widget.addTab(self.pm5020_panel, "Thorlabs PM5020")
-
-        edfa_options = self.config.instruments
-        self.edfa_panel = EDFAReadOnlyPanel(
-            self,
-            backend_mode=edfa_options.edfa_backend,
-            resource_name=edfa_options.edfa_gpib_resource_name,
-            timeout_ms=edfa_options.edfa_gpib_timeout_ms,
-            write_termination=edfa_options.edfa_gpib_write_termination,
-            read_termination=edfa_options.edfa_gpib_read_termination,
-        )
-        self.edfa_panel.shutdown_complete.connect(self._resume_close_after_edfa)
-        self.edfa_panel.shutdown_timeout.connect(lambda message: self.statusBar().showMessage(message, 0))
-        self.edfa_panel.connection_status_changed.connect(self._on_edfa_connection_status_changed)
-        self.edfa_panel.observations_changed.connect(self._on_edfa_observations_changed)
-        self.tab_widget.addTab(self.edfa_panel, "IPG EDFA")
-        self.shg_tab = SimulatedSHGPanel(self)
-        self.tab_widget.addTab(self.shg_tab, "SHG (Simulation)")
+        # Keep tab indices and labels stable; build inactive views on first use.
+        # The active Power Monitor and the scan/FIG lifecycle remain unchanged.
+        for label in ("Auto Alignment", "Thorlabs PM5020", "IPG EDFA", "SHG (Simulation)"):
+            index = self.tab_widget.count()
+            placeholder = QWidget(self.tab_widget)
+            placeholder.setObjectName(f"DeferredTab{index}")
+            placeholder_layout = QVBoxLayout(placeholder)
+            loading = QLabel(f"Select {label} to initialize this view", placeholder)
+            loading.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            placeholder_layout.addWidget(loading)
+            self._lazy_tab_placeholders[index] = placeholder
+            self.tab_widget.addTab(placeholder, label)
+        self.tab_widget.setCurrentIndex(0)
 
         self.setStatusBar(QStatusBar())
         self.edfa_observations_status_label = QLabel(
-            "EDFA [SIM]: Disconnected" if self.edfa_panel.backend_mode == "simulation" else "EDFA [GPIB]: Disconnected"
+            "EDFA [SIM]: Disconnected"
+            if self.config.instruments.edfa_backend == "simulation"
+            else "EDFA [GPIB]: Disconnected"
         )
         self.edfa_observations_status_label.setObjectName("edfaObservationsStatusLabel")
         self.edfa_observations_status_label.setToolTip(self.edfa_observations_status_label.text())
@@ -1352,7 +1339,129 @@ class MainWindow(QMainWindow):
 
         self._update_ct400_visuals(state=CT400Status.UNKNOWN, message="Initializing...")
         self._refresh_global_status()
+        self.tab_widget.currentChanged.connect(self._on_lazy_tab_selected)
         logger.debug("UI Initialization finished.")
+
+    @property
+    def alignment_tab(self) -> AlignmentPanel:
+        self._ensure_lazy_tab(2)
+        assert self._alignment_tab is not None
+        return self._alignment_tab
+
+    @property
+    def pm5020_panel(self) -> PM5020Panel:
+        self._ensure_lazy_tab(3)
+        assert self._pm5020_panel is not None
+        return self._pm5020_panel
+
+    @property
+    def edfa_panel(self) -> EDFAReadOnlyPanel:
+        self._ensure_lazy_tab(4)
+        assert self._edfa_panel is not None
+        return self._edfa_panel
+
+    @property
+    def shg_tab(self) -> SimulatedSHGPanel:
+        self._ensure_lazy_tab(5)
+        assert self._shg_tab is not None
+        return self._shg_tab
+
+    @Slot(int)
+    def _on_lazy_tab_selected(self, index: int) -> None:
+        if index in self._lazy_tab_placeholders and not self._shutdown_requested:
+            self._ensure_lazy_tab(index)
+
+    def _ensure_lazy_tab(self, index: int) -> None:
+        """Construct an inactive panel once on the GUI thread when requested.
+
+        Replacing the placeholder never changes tab indices. Qt signals are
+        blocked only during tab replacement, avoiding recursive initialization.
+        Shared hardware owners remain on MainWindow and are not recreated.
+        """
+        if index not in self._lazy_tab_placeholders or self._constructing_lazy_tab:
+            return
+        if self._shutdown_requested:
+            return
+        # SHG's existing simulation owner uses the PM5020 worker. Initialize
+        # that dependency on demand *before* entering the construction guard;
+        # otherwise the nested property access would find no PM5020 panel.
+        if index == 5 and self._pm5020_panel is None:
+            self._ensure_lazy_tab(3)
+        self._constructing_lazy_tab = True
+        placeholder = self._lazy_tab_placeholders[index]
+        panel = None
+        try:
+            if index == 2:
+                panel = AlignmentPanel(None, None, None, self)
+            elif index == 3:
+                panel = PM5020Panel(
+                    self,
+                    backend_mode=self.config.instruments.pm5020_backend,
+                    resource_name=self.config.instruments.pm5020_resource_name,
+                    wrapper_path=self.config.instruments.pm5020_wrapper_path,
+                    dll_path=self.config.instruments.pm5020_dll_path,
+                    lease_registry=self.device_lease_registry,
+                    settings=self.settings,
+                )
+                panel.connection_status_changed.connect(self._on_pm5020_connection_status_changed)
+                panel.shutdown_complete.connect(self._resume_close_after_pm5020)
+                panel.shutdown_timeout.connect(lambda message: self.statusBar().showMessage(message, 0))
+            elif index == 4:
+                edfa_options = self.config.instruments
+                panel = EDFAReadOnlyPanel(
+                    self,
+                    backend_mode=edfa_options.edfa_backend,
+                    resource_name=edfa_options.edfa_gpib_resource_name,
+                    timeout_ms=edfa_options.edfa_gpib_timeout_ms,
+                    write_termination=edfa_options.edfa_gpib_write_termination,
+                    read_termination=edfa_options.edfa_gpib_read_termination,
+                )
+                panel.shutdown_complete.connect(self._resume_close_after_edfa)
+                panel.shutdown_timeout.connect(lambda message: self.statusBar().showMessage(message, 0))
+                panel.connection_status_changed.connect(self._on_edfa_connection_status_changed)
+                panel.observations_changed.connect(self._on_edfa_observations_changed)
+            elif index == 5:
+                panel = SimulatedSHGPanel(self)
+            else:
+                return
+            # Keep the widget inactive until fully constructed and registered.
+            current = self.tab_widget.currentIndex()
+            label = self.tab_widget.tabText(index)
+            with QSignalBlocker(self.tab_widget):
+                self.tab_widget.removeTab(index)
+                self.tab_widget.insertTab(index, panel, label)
+                self.tab_widget.setCurrentIndex(current)
+            self._lazy_tab_placeholders.pop(index)
+            placeholder.deleteLater()
+            if isinstance(panel, AlignmentPanel):
+                self._alignment_tab = panel
+                panel.operation_started.connect(self._handle_alignment_operation_started)
+                panel.operation_finished.connect(self._handle_alignment_operation_finished)
+                panel.set_ct400_operation_state(self._ct400_operation_state.name)
+                self._sync_alignment_hardware()
+            elif isinstance(panel, PM5020Panel):
+                self._pm5020_panel = panel
+                self._update_pm5020_action()
+                self._refresh_global_status()
+            elif isinstance(panel, EDFAReadOnlyPanel):
+                self._edfa_panel = panel
+                self._update_edfa_action()
+            else:
+                assert isinstance(panel, SimulatedSHGPanel)
+                self._shg_tab = panel
+        except Exception:
+            logger.exception("Could not construct deferred tab %d", index)
+            # A constructor failure leaves the placeholder selected, and a
+            # later tab switch can retry. Never report a half-built panel ready.
+            if panel is not None:
+                panel.deleteLater()
+            if index in self._lazy_tab_placeholders:
+                loading = placeholder.findChild(QLabel)
+                if loading is not None:
+                    loading.setText("View initialization failed; switch away and back to retry")
+            raise
+        finally:
+            self._constructing_lazy_tab = False
 
     def _set_application_icon(self, icon_id: str) -> None:
         """Apply the chosen icon to this window and Qt's application default."""
@@ -1500,7 +1609,7 @@ class MainWindow(QMainWindow):
             timeout = 5000 if state in [CT400Status.CONNECTED, CT400Status.DISCONNECTED, CT400Status.ERROR] else 0
             self.statusBar().showMessage(message, timeout)
 
-        alignment_panel = getattr(self, "alignment_tab", None)
+        alignment_panel = getattr(self, "_alignment_tab", None)
         if alignment_panel is not None:
             alignment_panel._update_control_availability()
 
@@ -1561,17 +1670,25 @@ class MainWindow(QMainWindow):
             else:
                 camera_states.append(CameraStatus.UNAVAILABLE)
         self._render_status_label(self.cameras_status_label, format_cameras_status(camera_states))
-        panel = getattr(self, "pm5020_panel", None)
+        panel = self._pm5020_panel
         if panel is not None:
-            self._render_status_label(
-                self.pm5020_status_label,
-                format_pm5020_status(
-                    panel._backend_state,
-                    activity=panel._activity,
-                    simulated=panel.backend_mode == "simulation",
-                    resource=panel.resource_name,
-                ),
+            state, activity, simulated, resource = (
+                panel._backend_state,
+                panel._activity,
+                panel.backend_mode == "simulation",
+                panel.resource_name,
             )
+        else:
+            state, activity, simulated, resource = (
+                PM5020State.DISCONNECTED,
+                "",
+                self.config.instruments.pm5020_backend == "simulation",
+                self.config.instruments.pm5020_resource_name,
+            )
+        self._render_status_label(
+            self.pm5020_status_label,
+            format_pm5020_status(state, activity=activity, simulated=simulated, resource=resource),
+        )
         self._render_status_label(
             self.matlab_status_label, format_matlab_status(self.plot_widget.matlab_engine_manager.state)
         )
@@ -2202,7 +2319,7 @@ class MainWindow(QMainWindow):
             self.control_panel.set_ct400_operation_state(state.name)
         if hasattr(self, "histogram_control") and self.histogram_control:
             self.histogram_control.set_ct400_operation_state(state.name)
-        if hasattr(self, "alignment_tab") and self.alignment_tab:
+        if self._alignment_tab:
             self.alignment_tab.set_ct400_operation_state(state.name)
         action = getattr(self, "ct400_connect_action", None)
         if action is not None:
@@ -2965,20 +3082,20 @@ class MainWindow(QMainWindow):
 
     def _defer_close_for_active_work(self, event: QtGui.QCloseEvent) -> bool:
         """Defer native cleanup until owners and active tasks finish, in original priority."""
-        shg = getattr(self, "shg_tab", None)
+        shg = getattr(self, "_shg_tab", None)
         if shg is not None and shg.active:
             event.ignore()
             self.statusBar().showMessage("Cancelling synchronized simulation; waiting for both owner cleanups…", 0)
             shg.request_shutdown()
             return True
-        edfa_panel = getattr(self, "edfa_panel", None)
+        edfa_panel = getattr(self, "_edfa_panel", None)
         if edfa_panel is not None and not edfa_panel.shutdown_finished:
             event.ignore()
             self._pending_edfa_close = True
             self.statusBar().showMessage("Releasing EDFA session before application shutdown…", 0)
             edfa_panel.request_shutdown()
             return True
-        pm5020_panel = getattr(self, "pm5020_panel", None)
+        pm5020_panel = getattr(self, "_pm5020_panel", None)
         if pm5020_panel is not None and not pm5020_panel.shutdown_finished:
             event.ignore()
             self._pending_pm5020_close = True
@@ -3087,7 +3204,7 @@ class MainWindow(QMainWindow):
 
     def _cleanup_shutdown_panel_workers(self) -> None:
         """Release panel worker resources before stopping cameras."""
-        if hasattr(self, "alignment_tab") and self.alignment_tab:
+        if self._alignment_tab:
             self.alignment_tab.cleanup()
 
         if hasattr(self, "histogram_control") and self.histogram_control:
@@ -3150,7 +3267,7 @@ class MainWindow(QMainWindow):
             self.settings.set_geometry(self.saveGeometry())
         if self.control_container.isVisible():
             self.settings.set_splitter_sizes(self.main_splitter.sizes())
-        self.settings.set_active_tab(self.tab_widget.currentIndex())
+        # Selected tab intentionally not persisted: next launch opens Power Monitor.
         self.settings.set_log_console_visible(self.log_console_dock.isVisible())
         self.settings.set_log_console_state(self.saveState())
         self.settings.set_log_console_layout_version(2)
@@ -3158,7 +3275,7 @@ class MainWindow(QMainWindow):
             self.settings.set_log_console_geometry(self.log_console_dock.saveGeometry())
         self.settings.set_log_console_level(self.log_console.level_filter.currentText())
         self.settings.set_scan_detectors([detector.value for detector in self.control_panel._selected_scan_detectors()])
-        pm5020_panel = getattr(self, "pm5020_panel", None)
+        pm5020_panel = getattr(self, "_pm5020_panel", None)
         if pm5020_panel is not None:
             pm5020_panel.save_preferences(self.settings)
         for camera_id, panel in self.camera_panels.items():
@@ -3229,6 +3346,6 @@ class MainWindow(QMainWindow):
         else:
             logger.warning("Histogram Control Panel not initialized, skipping signal connection.")
 
-        if hasattr(self, "alignment_tab") and self.alignment_tab:
+        if self._alignment_tab:
             self.alignment_tab.operation_started.connect(self._handle_alignment_operation_started)
             self.alignment_tab.operation_finished.connect(self._handle_alignment_operation_finished)

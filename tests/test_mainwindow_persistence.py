@@ -63,7 +63,7 @@ def test_mainwindow_restores_and_saves_preferences_without_hardware_operations(t
     splitter = Splitter()
     window = SimpleNamespace(
         settings=settings,
-        pm5020_panel=SimpleNamespace(save_preferences=lambda target: pm5020_save_calls.append(target)),
+        _pm5020_panel=SimpleNamespace(save_preferences=lambda target: pm5020_save_calls.append(target)),
         main_splitter=splitter,
         tab_widget=tabs,
         control_panel=SimpleNamespace(
@@ -89,13 +89,13 @@ def test_mainwindow_restores_and_saves_preferences_without_hardware_operations(t
     main_window_module.MainWindow._restore_ui_preferences(window)
     assert window.restored_geometry == QByteArray(b"saved-geometry")
     assert splitter.restored_sizes == [600, 400]
-    assert tabs.currentIndex() == 2
+    assert tabs.currentIndex() == 0
     assert [checkboxes[detector].checked for detector in scan_detectors] == [True, False, True, True]
 
     main_window_module.MainWindow._save_ui_preferences(window)
     assert pm5020_save_calls == [settings]
     assert settings.geometry() == QByteArray(b"new-geometry")
-    assert settings.active_tab(3) == 2
+    assert settings.active_tab(3) == 2  # Legacy setting left untouched; it is no longer updated.
     assert settings.splitter_sizes(2) == [600, 400]
     assert settings.scan_detectors() == [1, 3, 4]
     assert settings.camera_controls_visible("CAM-A") is True

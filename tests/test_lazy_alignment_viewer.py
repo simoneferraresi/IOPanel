@@ -87,11 +87,14 @@ def test_window_defers_alignment_viewer_until_selected_and_reuses_it(qtbot, tmp_
     window.close()
 
 
-def test_restored_alignment_tab_creates_viewer_on_first_show(qtbot, tmp_path, monkeypatch):
+def test_previous_alignment_tab_does_not_load_viewer_until_selected(qtbot, tmp_path, monkeypatch):
     window = _make_window(qtbot, tmp_path, monkeypatch, active_tab=2)
-    assert window.tab_widget.currentIndex() == 2
+    assert window.tab_widget.currentIndex() == 0
     assert window.alignment_tab._plot3d_widget is None
     window.show()
+    qtbot.wait(30)
+    assert window.alignment_tab._plot3d_widget is None
+    window.tab_widget.setCurrentIndex(2)
     qtbot.waitUntil(lambda: window.alignment_tab._plot3d_widget is not None)
     assert window.alignment_tab._plot3d_widget.thread() == window.thread()
     window.close()
