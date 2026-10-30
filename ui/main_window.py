@@ -1239,7 +1239,14 @@ class MainWindow(QMainWindow):
         )
         if simulated:
             panel.on_instrument_connected(True)
-        panel.set_ct400_operation_state(self._ct400_operation_state.name)
+        panel.set_ct400_operation_state(self._current_ct400_display_operation())
+
+    def _current_ct400_display_operation(self) -> str:
+        """Reflect an active synchronized reservation in views opened later."""
+        shg = self._shg_tab
+        if shg is not None and shg._request is not None:
+            return "SYNCHRONIZED"
+        return self._ct400_operation_state.name
 
     def _connect_scan_signals(self) -> None:
         """Connect scan signals only once, after deferred widget construction."""
@@ -1459,16 +1466,17 @@ class MainWindow(QMainWindow):
         try:
             if index == 1:
                 container = QWidget(self.tab_widget)
+                panel = container
                 layout = QHBoxLayout(container)
-                scan_panel = CT400ControlPanel(self.shared_scan_settings, None, self.config)
+                scan_panel = CT400ControlPanel(self.shared_scan_settings, None, self.config, parent=container)
                 scan_plot = PlotWidget(
                     self.shared_scan_settings,
+                    parent=container,
                     settings=self.settings,
                     matlab_engine_manager=self.matlab_engine_manager,
                 )
                 layout.addWidget(scan_panel, stretch=0)
                 layout.addWidget(scan_plot, stretch=1)
-                panel = container
             elif index == 2:
                 panel = AlignmentPanel(None, None, None, self)
             elif index == 3:
@@ -1502,6 +1510,18 @@ class MainWindow(QMainWindow):
                 panel = SimulatedSHGPanel(self)
             else:
                 return
+
+            if index == 1:
+                # Fully initialize the scan graph while it is still owned by
+                # this temporary container and the placeholder remains intact.
+                self._first_tab = container
+                self._control_panel = scan_panel
+                self._plot_widget = scan_plot
+                self._load_scan_defaults_from_config()
+                self._connect_scan_signals()
+                self._synchronize_new_scan_panel()
+                self._update_scan_import_actions()
+
             # Keep the widget inactive until fully constructed and registered.
             current = self.tab_widget.currentIndex()
             label = self.tab_widget.tabText(index)
@@ -1517,19 +1537,11 @@ class MainWindow(QMainWindow):
                 self.tab_widget.setCurrentIndex(current)
             self._lazy_tab_placeholders.pop(index)
             placeholder.deleteLater()
-            if index == 1:
-                self._first_tab = container
-                self._control_panel = scan_panel
-                self._plot_widget = scan_plot
-                self._load_scan_defaults_from_config()
-                self._connect_scan_signals()
-                self._synchronize_new_scan_panel()
-                self._update_scan_import_actions()
-            elif isinstance(panel, AlignmentPanel):
+            if isinstance(panel, AlignmentPanel):
                 self._alignment_tab = panel
                 panel.operation_started.connect(self._handle_alignment_operation_started)
                 panel.operation_finished.connect(self._handle_alignment_operation_finished)
-                panel.set_ct400_operation_state(self._ct400_operation_state.name)
+                panel.set_ct400_operation_state(self._current_ct400_display_operation())
                 self._sync_alignment_hardware()
             elif isinstance(panel, PM5020Panel):
                 self._pm5020_panel = panel
@@ -1538,13 +1550,17 @@ class MainWindow(QMainWindow):
             elif isinstance(panel, EDFAReadOnlyPanel):
                 self._edfa_panel = panel
                 self._update_edfa_action()
-            else:
+            elif index == 5:
                 assert isinstance(panel, SimulatedSHGPanel)
                 self._shg_tab = panel
         except Exception:
             logger.exception("Could not construct deferred tab %d", index)
             # A constructor failure leaves the placeholder selected, and a
             # later tab switch can retry. Never report a half-built panel ready.
+            if index == 1:
+                self._first_tab = None
+                self._control_panel = None
+                self._plot_widget = None
             if panel is not None:
                 panel.deleteLater()
             if index in self._lazy_tab_placeholders:
