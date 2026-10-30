@@ -31,7 +31,10 @@ def test_fresh_window_uses_monitor_scan_alignment_order(qtbot, monkeypatch, tmp_
     ]
     assert window.tab_widget.currentIndex() == 0
     assert window.tab_widget.widget(0) is window.second_tab
-    assert window.tab_widget.widget(1) is window.first_tab
+    assert window.tab_widget.widget(1).objectName() == "DeferredTab1"
+    assert window.first_tab is None
+    assert window._scan_control_panel is None
+    assert window._scan_plot_widget is None
     assert all(window.tab_widget.widget(index).objectName() == f"DeferredTab{index}" for index in range(2, 6))
     assert window._alignment_tab is None
     assert window._pm5020_panel is None
@@ -420,3 +423,37 @@ def test_mainwindow_owns_single_matlab_engine_manager(qtbot, monkeypatch, tmp_pa
     assert window.matlab_engine_manager.parent() is window
     assert window.tab_widget.currentIndex() == 0
     window.close()
+
+
+def test_wavelength_scan_first_activation_reuses_scan_and_single_matlab_manager(qtbot, monkeypatch, tmp_path):
+    settings = AppSettings(QSettings(str(tmp_path / "scan-lazy.ini"), QSettings.Format.IniFormat))
+    window = _make_window(qtbot, monkeypatch, settings)
+    assert window.tab_widget.currentIndex() == 0
+    assert window._scan_plot_widget is None
+    assert window._scan_control_panel is None
+    manager = window.matlab_engine_manager
+
+    # Scheduling background MATLAB prewarm must not construct Wavelength Scan.
+    manager.schedule_prewarm()
+    assert window._scan_plot_widget is None
+    window.tab_widget.setCurrentIndex(1)
+    plot = window.plot_widget
+    controls = window.control_panel
+    assert plot.matlab_engine_manager is manager
+    assert window.tab_widget.widget(1) is window.first_tab
+    assert plot.parent() is not None
+    window.tab_widget.setCurrentIndex(0)
+    window.tab_widget.setCurrentIndex(1)
+    assert window.plot_widget is plot
+    assert window.control_panel is controls
+    window.close()
+
+
+def test_close_before_opening_scan_does_not_construct_scan_view(qtbot, monkeypatch, tmp_path):
+    settings = AppSettings(QSettings(str(tmp_path / "scan-not-visited.ini"), QSettings.Format.IniFormat))
+    window = _make_window(qtbot, monkeypatch, settings)
+    window.matlab_engine_manager.schedule_prewarm()
+    assert window._scan_plot_widget is None
+    window.close()
+    assert window._scan_plot_widget is None
+    assert window.matlab_engine_manager.shutdown_finished

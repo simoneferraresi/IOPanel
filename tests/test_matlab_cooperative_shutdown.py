@@ -240,7 +240,8 @@ def test_mainwindow_defers_during_startup_or_blocked_engine_quit(qtbot, monkeypa
     monkeypatch.setattr(module.MainWindow, "_begin_lazy_init", lambda _self: None)
     window = module.MainWindow(AppConfig(instruments={"ct400_backend": "simulation"}))
     qtbot.addWidget(window)
-    manager = window.plot_widget.matlab_engine_manager
+    manager = window.matlab_engine_manager
+    assert window._scan_plot_widget is None
     entered, release = Event(), Event()
     calls = []
 
@@ -279,10 +280,11 @@ def test_mainwindow_defers_during_startup_or_blocked_engine_quit(qtbot, monkeypa
         manager.startup_failed.emit("late startup signal")
         manager.request_engine()
         assert calls == (["start"] if starting else [])
-        assert window.plot_widget.matlab_save_thread is None
+        assert window._scan_plot_widget is None
     finally:
         release.set()
         qtbot.waitUntil(lambda: window._shutdown_complete)
+    assert window._scan_plot_widget is None
     assert calls == (["start", "quit"] if starting else ["quit"])
 
 

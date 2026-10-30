@@ -266,9 +266,11 @@ class SimulatedSHGPanel(QWidget):
             self._request = req
             # Project the combined lease into existing CT controls without
             # forging a second CT400OperationState/lease.
-            self.host.control_panel.set_ct400_operation_state("SYNCHRONIZED")
+            if self.host._scan_control_panel is not None:
+                self.host._scan_control_panel.set_ct400_operation_state("SYNCHRONIZED")
             self.host.histogram_control.set_ct400_operation_state("SYNCHRONIZED")
-            self.host.alignment_tab.set_ct400_operation_state("SYNCHRONIZED")
+            if self.host._alignment_tab is not None:
+                self.host._alignment_tab.set_ct400_operation_state("SYNCHRONIZED")
             self.host.ct400_connect_action.setEnabled(False)
             protocol.acknowledge_pm_quiesced(req, generation=generation)
             protocol.acknowledge_ct400_ready(req, generation=token)
@@ -453,9 +455,11 @@ class SimulatedSHGPanel(QWidget):
                 message = f"Archive failed: {exc}"
         self._timer.stop()
         self.host.pm5020_panel.finish_synchronized_handoff()
-        self.host.control_panel.set_ct400_operation_state(self.host._ct400_operation_state.name)
+        if self.host._scan_control_panel is not None:
+            self.host._scan_control_panel.set_ct400_operation_state(self.host._ct400_operation_state.name)
         self.host.histogram_control.set_ct400_operation_state(self.host._ct400_operation_state.name)
-        self.host.alignment_tab.set_ct400_operation_state(self.host._ct400_operation_state.name)
+        if self.host._alignment_tab is not None:
+            self.host._alignment_tab.set_ct400_operation_state(self.host._ct400_operation_state.name)
         self.host._update_ct400_retry_action()
         self._token = None
         self._pm_generation = None
