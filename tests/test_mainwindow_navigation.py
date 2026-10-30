@@ -122,8 +122,8 @@ def test_unvisited_scan_tab_does_not_construct_on_close(qtbot, monkeypatch, tmp_
 
 
 def test_scan_created_after_ct400_discovery_inherits_device_and_detectors(qtbot, monkeypatch, tmp_path):
-    from hardware.dummy_ct400 import DummyCT400
     from hardware.ct400_types import Detector
+    from hardware.dummy_ct400 import DummyCT400
 
     settings = AppSettings(QSettings(str(tmp_path / "late-scan.ini"), QSettings.Format.IniFormat))
     settings.set_scan_detectors([1, 3])
