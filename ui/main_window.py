@@ -26,7 +26,7 @@ from enum import Enum, auto
 from typing import override
 
 from PySide6 import QtGui, QtWidgets
-from PySide6.QtCore import QObject, QRunnable, QSize, Qt, QSignalBlocker, QThreadPool, QTimer, Signal, Slot
+from PySide6.QtCore import QObject, QRunnable, QSignalBlocker, QSize, Qt, QThreadPool, QTimer, Signal, Slot
 from PySide6.QtGui import QAction, QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication,
