@@ -512,7 +512,9 @@ class MainWindow(QMainWindow):
             return
         panel = getattr(self, "_pm5020_panel", None)
         if panel is None:
-            text, icon, enabled, checked = "PM5020 Unavailable", ":/icons/connect.svg", False, False
+            # Deferred construction is not device unavailability. The explicit
+            # Instruments action may instantiate the panel and connect later.
+            text, icon, enabled, checked = "Connect PM5020", ":/icons/connect.svg", True, False
         else:
             state = panel._backend_state
             activity = panel._activity
@@ -568,7 +570,7 @@ class MainWindow(QMainWindow):
             return
         panel = self._edfa_panel
         if panel is None:
-            text, icon, enabled, checked = "EDFA Unavailable", ":/icons/connect.svg", False, False
+            text, icon, enabled, checked = "Connect EDFA", ":/icons/connect.svg", True, False
         else:
             state = panel._backend_state
             activity = panel._activity
