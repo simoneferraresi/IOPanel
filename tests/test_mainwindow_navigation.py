@@ -121,6 +121,29 @@ def test_unvisited_scan_tab_does_not_construct_on_close(qtbot, monkeypatch, tmp_
     assert window._control_panel is None
 
 
+def test_scan_created_after_ct400_discovery_inherits_device_and_detectors(qtbot, monkeypatch, tmp_path):
+    from hardware.dummy_ct400 import DummyCT400
+    from hardware.ct400_types import Detector
+
+    settings = AppSettings(QSettings(str(tmp_path / "late-scan.ini"), QSettings.Format.IniFormat))
+    settings.set_scan_detectors([1, 3])
+    window = _make_window(qtbot, monkeypatch, settings)
+    dummy = DummyCT400(scan_duration=0)
+    window._on_ct400_initialized(dummy)
+    assert window._control_panel is None
+    assert window.tab_widget.currentIndex() == 0
+    window.tab_widget.setCurrentIndex(1)
+    panel = window.control_panel
+    assert panel.ct400 is dummy
+    assert panel.is_simulated
+    assert panel.is_instrument_connected
+    assert {detector for detector, checkbox in panel.scan_detector_cbs.items() if checkbox.isChecked()} == {
+        Detector.DE_1,
+        Detector.DE_3,
+    }
+    window.close()
+
+
 def test_menu_order_and_action_placement(qtbot, monkeypatch, tmp_path):
     settings = AppSettings(QSettings(str(tmp_path / "menus.ini"), QSettings.Format.IniFormat))
     window = _make_window(qtbot, monkeypatch, settings)
