@@ -1232,15 +1232,15 @@ class MainWindow(QMainWindow):
         panel = self._control_panel
         if panel is None:
             return
+        simulated = self._ct400_is_configured_simulation() and isinstance(self.ct400_device, DummyCT400)
         if self.ct400_device is not None:
-            simulated = self._ct400_is_configured_simulation() and isinstance(self.ct400_device, DummyCT400)
             panel.set_instrument(self.ct400_device, simulated=simulated)
-            if simulated:
-                panel.on_instrument_connected(True)
         panel.set_connected_laser_input(
             self._ct400_connected_laser_input,
             configured_speed_nm_s=self._ct400_connected_speed_nm_s,
         )
+        if simulated:
+            panel.on_instrument_connected(True)
         panel.set_ct400_operation_state(self._ct400_operation_state.name)
 
     def _connect_scan_signals(self) -> None:
