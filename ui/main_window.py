@@ -2533,9 +2533,7 @@ class MainWindow(QMainWindow):
         self._ct400_connection_configured = True
         self._ct400_recovery_input_matches = True
         self._update_ct400_visuals(state=CT400Status.CONNECTED, message=message)
-        self._set_scan_connected_laser_input(
-            laser_input, configured_speed_nm_s=self._ct400_connected_speed_nm_s
-        )
+        self._set_scan_connected_laser_input(laser_input, configured_speed_nm_s=self._ct400_connected_speed_nm_s)
         self.histogram_control.set_connected_laser_input(laser_input)
 
     @Slot(str, int, object)
@@ -3369,7 +3367,9 @@ class MainWindow(QMainWindow):
             self.settings.set_log_console_geometry(self.log_console_dock.saveGeometry())
         self.settings.set_log_console_level(self.log_console.level_filter.currentText())
         if self._control_panel is not None:
-            self.settings.set_scan_detectors([detector.value for detector in self._control_panel._selected_scan_detectors()])
+            self.settings.set_scan_detectors(
+                [detector.value for detector in self._control_panel._selected_scan_detectors()]
+            )
         pm5020_panel = getattr(self, "_pm5020_panel", None)
         if pm5020_panel is not None:
             pm5020_panel.save_preferences(self.settings)
