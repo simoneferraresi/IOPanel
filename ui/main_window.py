@@ -2123,6 +2123,7 @@ class MainWindow(QMainWindow):
         return any(
             bool(getattr(self, name, False))
             for name in (
+                "_shutdown_requested",
                 "_pending_scan_close",
                 "_pending_scan_import_close",
                 "_pending_scan_export_close",
