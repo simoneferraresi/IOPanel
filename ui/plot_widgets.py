@@ -1294,7 +1294,13 @@ class PlotWidget(QWidget):
     shutdown_complete = Signal()
     shutdown_failed = Signal(str)
 
-    def __init__(self, shared_settings, parent: QWidget | None = None, settings: AppSettings | None = None):
+    def __init__(
+        self,
+        shared_settings,
+        parent: QWidget | None = None,
+        settings: AppSettings | None = None,
+        matlab_engine_manager: MatlabEngineManager | None = None,
+    ):
         super().__init__(parent)
         if not isinstance(shared_settings, ScanSettings):
             logger.warning("PlotWidget needs a valid ScanSettings object for metadata.")
@@ -1335,7 +1341,9 @@ class PlotWidget(QWidget):
         self._fig_engine_lease: QThread | None = None
         # --- End Worker Thread Setup ---
 
-        self.matlab_engine_manager = MatlabEngineManager(
+        # The MainWindow supplies its persistent manager before the scan view
+        # exists. Standalone PlotWidget instances still own their own manager.
+        self.matlab_engine_manager = matlab_engine_manager or MatlabEngineManager(
             available=MATLAB_ENGINE_AVAILABLE,
             start_engine=_start_matlab_for_plot if MATLAB_ENGINE_AVAILABLE else None,
             parent=self,

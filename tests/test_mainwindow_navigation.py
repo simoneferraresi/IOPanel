@@ -411,3 +411,12 @@ def test_loading_defaults_error_uses_qt_status_bar(qtbot, monkeypatch, tmp_path)
 
     assert window.statusBar().currentMessage() == "Error loading defaults from config"
     window.close()
+
+
+def test_mainwindow_owns_single_matlab_engine_manager(qtbot, monkeypatch, tmp_path):
+    settings = AppSettings(QSettings(str(tmp_path / "shared-matlab.ini"), QSettings.Format.IniFormat))
+    window = _make_window(qtbot, monkeypatch, settings)
+    assert window.plot_widget.matlab_engine_manager is window.matlab_engine_manager
+    assert window.matlab_engine_manager.parent() is window
+    assert window.tab_widget.currentIndex() == 0
+    window.close()

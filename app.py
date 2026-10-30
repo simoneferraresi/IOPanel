@@ -413,7 +413,7 @@ def main() -> int:
 
             QTimer.singleShot(100, close_when_initialized)
         else:
-            window.plot_widget.schedule_matlab_prewarm()
+            window.matlab_engine_manager.schedule_prewarm()
 
         about_to_quit_at: float | None = None
 
