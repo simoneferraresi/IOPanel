@@ -44,7 +44,7 @@ def start_matlab_with_deferred_import(*, background: bool = True) -> Future[Any]
             # A native Future must be waited on and dropped on this same
             # background thread; never transfer its ownership to Qt.
             engine = native_future.result()
-        except Exception as error:  # noqa: BLE001 - MATLAB raises vendor-specific errors.
+        except Exception as error:
             logger.exception("Deferred MATLAB Engine import/start failed.")
             # Do not attach a native exception traceback to the long-lived
             # Future: it may keep SDK wrappers alive on the GUI thread.
