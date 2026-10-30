@@ -1383,6 +1383,11 @@ class MainWindow(QMainWindow):
             return
         if self._shutdown_requested:
             return
+        # SHG's existing simulation owner uses the PM5020 worker. Initialize
+        # that dependency on demand *before* entering the construction guard;
+        # otherwise the nested property access would find no PM5020 panel.
+        if index == 5 and self._pm5020_panel is None:
+            self._ensure_lazy_tab(3)
         self._constructing_lazy_tab = True
         placeholder = self._lazy_tab_placeholders[index]
         panel = None

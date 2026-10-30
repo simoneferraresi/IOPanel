@@ -77,6 +77,20 @@ def test_deferred_panels_initialize_once_and_reuse_same_instance(qtbot, monkeypa
     window.close()
 
 
+def test_shg_lazily_brings_up_only_its_pm5020_dependency(qtbot, monkeypatch, tmp_path):
+    settings = AppSettings(QSettings(str(tmp_path / "shg-dependency.ini"), QSettings.Format.IniFormat))
+    window = _make_window(qtbot, monkeypatch, settings)
+    assert window._pm5020_panel is None
+    assert window._shg_tab is None
+    window.tab_widget.setCurrentIndex(5)
+    assert window._shg_tab is window.tab_widget.widget(5)
+    assert window._pm5020_panel is window.tab_widget.widget(3)
+    assert window._alignment_tab is None
+    assert window._edfa_panel is None
+    assert not window._pm5020_panel.task.worker_thread.isRunning()
+    window.close()
+
+
 def test_menu_order_and_action_placement(qtbot, monkeypatch, tmp_path):
     settings = AppSettings(QSettings(str(tmp_path / "menus.ini"), QSettings.Format.IniFormat))
     window = _make_window(qtbot, monkeypatch, settings)
