@@ -31,8 +31,11 @@ def test_fresh_window_uses_monitor_scan_alignment_order(qtbot, monkeypatch, tmp_
     ]
     assert window.tab_widget.currentIndex() == 0
     assert window.tab_widget.widget(0) is window.second_tab
-    assert window.tab_widget.widget(1) is window.first_tab
-    assert all(window.tab_widget.widget(index).objectName() == f"DeferredTab{index}" for index in range(2, 6))
+    assert all(window.tab_widget.widget(index).objectName() == f"DeferredTab{index}" for index in range(1, 6))
+    assert window._first_tab is None
+    assert window._control_panel is None
+    assert window._plot_widget is None
+    assert window.matlab_engine_manager.parent() is window
     assert window._alignment_tab is None
     assert window._pm5020_panel is None
     assert window._edfa_panel is None
@@ -89,6 +92,33 @@ def test_shg_lazily_brings_up_only_its_pm5020_dependency(qtbot, monkeypatch, tmp
     assert window._edfa_panel is None
     assert not window._pm5020_panel.task.worker_thread.isRunning()
     window.close()
+
+
+def test_scan_tab_constructs_once_and_shares_matlab_manager(qtbot, monkeypatch, tmp_path):
+    settings = AppSettings(QSettings(str(tmp_path / "scan-on-demand.ini"), QSettings.Format.IniFormat))
+    window = _make_window(qtbot, monkeypatch, settings)
+    manager = window.matlab_engine_manager
+    assert window._plot_widget is None
+    assert window._control_panel is None
+    window.tab_widget.setCurrentIndex(1)
+    assert window._plot_widget is window.plot_widget
+    assert window._control_panel is window.control_panel
+    assert window.plot_widget.matlab_engine_manager is manager
+    assert window.tab_widget.widget(1) is window.first_tab
+    scan = window.plot_widget
+    window.tab_widget.setCurrentIndex(0)
+    window.tab_widget.setCurrentIndex(1)
+    assert window.plot_widget is scan
+    window.close()
+
+
+def test_unvisited_scan_tab_does_not_construct_on_close(qtbot, monkeypatch, tmp_path):
+    settings = AppSettings(QSettings(str(tmp_path / "never-scan.ini"), QSettings.Format.IniFormat))
+    window = _make_window(qtbot, monkeypatch, settings)
+    assert window._plot_widget is None
+    window.close()
+    assert window._plot_widget is None
+    assert window._control_panel is None
 
 
 def test_menu_order_and_action_placement(qtbot, monkeypatch, tmp_path):
