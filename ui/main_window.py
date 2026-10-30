@@ -363,9 +363,7 @@ class MainWindow(QMainWindow):
             self.main_splitter.setSizes(saved_sizes)
         # The laboratory workflow always begins with Power Monitor.
         # Ignore stored tab selection, including older legacy QSettings keys.
-        saved_detectors = set(self.settings.scan_detectors())
-        for detector, checkbox in self.control_panel.scan_detector_cbs.items():
-            checkbox.setChecked(detector.value in saved_detectors)
+        # Apply scan detector choices only when the scan view is constructed.
 
     def _restore_log_console_preferences(self) -> None:
         layout_version = self.settings.log_console_layout_version()
@@ -1184,21 +1182,8 @@ class MainWindow(QMainWindow):
         """Load default values from config into UI elements."""
         logger.debug("Loading UI defaults from configuration...")
         try:
-            if hasattr(self, "control_panel") and self.control_panel:
-                scan_defaults = self.config.scan_defaults
-                self.control_panel.initial_wl.setText(str(scan_defaults.start_wavelength_nm))
-                self.control_panel.final_wl.setText(str(scan_defaults.end_wavelength_nm))
-                self.control_panel.resolution.setText(str(scan_defaults.resolution_pm))
-                self.control_panel.motor_speed.setText(str(scan_defaults.speed_nm_s))
-                self.control_panel.laser_power.setText(str(scan_defaults.laser_power))
-                power_unit_idx = self.control_panel.power_unit.findText(scan_defaults.power_unit)
-                if power_unit_idx != -1:
-                    self.control_panel.power_unit.setCurrentIndex(power_unit_idx)
-                for i in range(self.control_panel.input_port.count()):
-                    if self.control_panel.input_port.itemData(i).value == scan_defaults.input_port:
-                        self.control_panel.input_port.setCurrentIndex(i)
-                        break
-
+            if self._control_panel is not None:
+                self._load_scan_defaults_from_config()
             if hasattr(self, "histogram_control") and self.histogram_control:
                 hist_defaults = self.config.histogram_defaults
                 self.histogram_control.wavelength_input.setText(str(hist_defaults.wavelength_nm))
@@ -1217,6 +1202,63 @@ class MainWindow(QMainWindow):
         except Exception:
             logger.exception("Error loading defaults from config")
             self.statusBar().showMessage("Error loading defaults from config", 5000)
+
+    def _load_scan_defaults_from_config(self) -> None:
+        """Populate scan-only defaults without resetting the monitor UI."""
+        panel = self._control_panel
+        if panel is None:
+            return
+        defaults = self.config.scan_defaults
+        panel.initial_wl.setText(str(defaults.start_wavelength_nm))
+        panel.final_wl.setText(str(defaults.end_wavelength_nm))
+        panel.resolution.setText(str(defaults.resolution_pm))
+        panel.motor_speed.setText(str(defaults.speed_nm_s))
+        panel.laser_power.setText(str(defaults.laser_power))
+        unit_idx = panel.power_unit.findText(defaults.power_unit)
+        if unit_idx != -1:
+            panel.power_unit.setCurrentIndex(unit_idx)
+        for i in range(panel.input_port.count()):
+            if panel.input_port.itemData(i).value == defaults.input_port:
+                panel.input_port.setCurrentIndex(i)
+                break
+        enabled = set(self.settings.scan_detectors())
+        for detector, checkbox in panel.scan_detector_cbs.items():
+            checkbox.setChecked(detector.value in enabled)
+
+    def _synchronize_new_scan_panel(self) -> None:
+        """Replay passive CT400 state when a scan view is opened later."""
+        panel = self._control_panel
+        if panel is None:
+            return
+        if self.ct400_device is not None:
+            simulated = self._ct400_is_configured_simulation() and isinstance(self.ct400_device, DummyCT400)
+            panel.set_instrument(self.ct400_device, simulated=simulated)
+            if simulated:
+                panel.on_instrument_connected(True)
+        panel.set_connected_laser_input(
+            self._ct400_connected_laser_input,
+            configured_speed_nm_s=self._ct400_connected_speed_nm_s,
+        )
+        panel.set_ct400_operation_state(self._ct400_operation_state.name)
+
+    def _connect_scan_signals(self) -> None:
+        """Connect scan signals only once, after deferred widget construction."""
+        plot, panel = self._plot_widget, self._control_panel
+        if plot is None or panel is None:
+            return
+        plot.open_scan_requested.connect(self._open_scan_file)
+        plot.add_scan_requested.connect(self._add_scan_to_plot)
+        plot.scan_export_idle.connect(self._resume_close_after_scan_export)
+        panel.set_lease_start_authorizer(self._ct400_lease_available_for_new_operation)
+        panel.scan_data_ready.connect(self._handle_scan_data)
+        panel.operation_started.connect(self._handle_ct400_scan_started)
+        panel.operation_finished.connect(self._handle_ct400_scan_finished)
+        panel.scan_safety_uncertain.connect(self._handle_ct400_scan_safety_uncertain)
+        panel.scan_warning.connect(lambda message: self.statusBar().showMessage(message, 10000))
+
+    def _set_scan_connected_laser_input(self, laser_input: LaserInput | None, **kwargs) -> None:
+        if self._control_panel is not None:
+            self._control_panel.set_connected_laser_input(laser_input, **kwargs)
 
     def _init_ui(self):
         """Constructs the main user interface of the application."""
@@ -1260,20 +1302,6 @@ class MainWindow(QMainWindow):
         splitter.setSizes([initial_cam_height, self.height() - initial_cam_height])
         main_layout.addWidget(splitter)
 
-        # --- IMPORTANT: Pass None for ct400_device initially ---
-        self.first_tab = QWidget()
-        first_tab_layout = QHBoxLayout(self.first_tab)
-        self.control_panel = CT400ControlPanel(self.shared_scan_settings, None, self.config)
-        self.plot_widget = PlotWidget(
-            self.shared_scan_settings,
-            settings=self.settings,
-            matlab_engine_manager=self.matlab_engine_manager,
-        )
-        first_tab_layout.addWidget(self.control_panel, stretch=0)
-        first_tab_layout.addWidget(self.plot_widget, stretch=1)
-        # The scan widgets are constructed first for dependency compatibility,
-        # but monitoring is the first step of the usual laboratory workflow.
-
         self.second_tab = QWidget()
         second_tab_layout = QHBoxLayout(self.second_tab)
         self.histogram_control = HistogramControlPanel(None, self.config)
@@ -1287,11 +1315,10 @@ class MainWindow(QMainWindow):
         second_tab_layout.addWidget(self.histogram_control, stretch=0)
         second_tab_layout.addWidget(self.histogram_plot_container, stretch=1)
         self.tab_widget.addTab(self.second_tab, "Power Monitor")
-        self.tab_widget.addTab(self.first_tab, "Wavelength Scan")
 
-        # Keep tab indices and labels stable; build inactive views on first use.
-        # The active Power Monitor and the scan/FIG lifecycle remain unchanged.
-        for label in ("Auto Alignment", "Thorlabs PM5020", "IPG EDFA", "SHG (Simulation)"):
+        # Keep real Power Monitor usable without constructing inactive views.
+        # MATLAB is owned by MainWindow and prewarms independently.
+        for label in ("Wavelength Scan", "Auto Alignment", "Thorlabs PM5020", "IPG EDFA", "SHG (Simulation)"):
             index = self.tab_widget.count()
             placeholder = QWidget(self.tab_widget)
             placeholder.setObjectName(f"DeferredTab{index}")
@@ -1364,6 +1391,24 @@ class MainWindow(QMainWindow):
         logger.debug("UI Initialization finished.")
 
     @property
+    def first_tab(self) -> QWidget:
+        self._ensure_lazy_tab(1)
+        assert self._first_tab is not None
+        return self._first_tab
+
+    @property
+    def control_panel(self) -> CT400ControlPanel:
+        self._ensure_lazy_tab(1)
+        assert self._control_panel is not None
+        return self._control_panel
+
+    @property
+    def plot_widget(self) -> PlotWidget:
+        self._ensure_lazy_tab(1)
+        assert self._plot_widget is not None
+        return self._plot_widget
+
+    @property
     def alignment_tab(self) -> AlignmentPanel:
         self._ensure_lazy_tab(2)
         assert self._alignment_tab is not None
@@ -1412,7 +1457,19 @@ class MainWindow(QMainWindow):
         placeholder = self._lazy_tab_placeholders[index]
         panel = None
         try:
-            if index == 2:
+            if index == 1:
+                container = QWidget(self.tab_widget)
+                layout = QHBoxLayout(container)
+                scan_panel = CT400ControlPanel(self.shared_scan_settings, None, self.config)
+                scan_plot = PlotWidget(
+                    self.shared_scan_settings,
+                    settings=self.settings,
+                    matlab_engine_manager=self.matlab_engine_manager,
+                )
+                layout.addWidget(scan_panel, stretch=0)
+                layout.addWidget(scan_plot, stretch=1)
+                panel = container
+            elif index == 2:
                 panel = AlignmentPanel(None, None, None, self)
             elif index == 3:
                 panel = PM5020Panel(
@@ -1454,7 +1511,15 @@ class MainWindow(QMainWindow):
                 self.tab_widget.setCurrentIndex(current)
             self._lazy_tab_placeholders.pop(index)
             placeholder.deleteLater()
-            if isinstance(panel, AlignmentPanel):
+            if index == 1:
+                self._first_tab = container
+                self._control_panel = scan_panel
+                self._plot_widget = scan_plot
+                self._load_scan_defaults_from_config()
+                self._connect_scan_signals()
+                self._synchronize_new_scan_panel()
+                self._update_scan_import_actions()
+            elif isinstance(panel, AlignmentPanel):
                 self._alignment_tab = panel
                 panel.operation_started.connect(self._handle_alignment_operation_started)
                 panel.operation_finished.connect(self._handle_alignment_operation_finished)
