@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib
+import importlib.util
 import json
 import logging
 import time
@@ -40,6 +42,7 @@ from app_settings import AppSettings
 from hardware.ct400_types import Detector
 from logic.export_file_io import derive_export_targets
 from logic.export_task_lifecycle import ExportTaskLifecycle
+from logic.matlab_deferred_start import start_matlab_with_deferred_import
 from logic.matlab_engine_manager import MatlabEngineManager, MatlabEngineState
 from logic.power_monitor_display import DEFAULT_DISPLAY_POINT_LIMIT, PowerMonitorDisplayHistory
 from logic.power_monitor_export import (
@@ -64,20 +67,28 @@ from ui.power_monitor_export_dialog import PowerMonitorExportDialog
 from ui.scan_export_dialog import ScanExportDialog
 from ui.typography import make_font, pyqtgraph_title_style
 
+# Module discovery is cheap compared with importing matlab.engine, which can
+# take seconds on the Windows lab PC. find_spec on a child may import the
+# lightweight parent 'matlab' package but never executes matlab.engine itself.
+# Keep this public compatibility flag for FIG dialogs and existing integrations.
 try:
-    import matlab.engine  # pyright: ignore[reportMissingImports] - optional vendor SDK absent from CI.
+    MATLAB_ENGINE_AVAILABLE = importlib.util.find_spec("matlab.engine") is not None
+except (ImportError, AttributeError, ValueError) as error:
+    logging.getLogger("LabApp.gui_panels").warning("MATLAB Engine discovery failed: %s", error)
+    MATLAB_ENGINE_AVAILABLE = False
 
-    MATLAB_ENGINE_AVAILABLE = True
-except ImportError:
-    logging.getLogger("LabApp.gui_panels").warning(
-        "MATLAB Engine for Python not found. Saving to .fig format will be disabled."
-    )
-    MATLAB_ENGINE_AVAILABLE = False
-except Exception as e:  # noqa: BLE001  # Preserve optional MATLAB and export fallbacks.
-    logging.getLogger("LabApp.gui_panels").error(
-        f"Error importing MATLAB Engine: {e}. Saving to .fig format will be disabled."
-    )
-    MATLAB_ENGINE_AVAILABLE = False
+# Existing tests inject an in-memory MATLAB module here. Production only loads
+# the real package in the dedicated startup worker or an already-ready FIG worker.
+matlab: Any | None = None
+
+
+def _start_matlab_for_plot(**kwargs: Any) -> Any:
+    """Never import MATLAB on the Qt thread when running with the real SDK."""
+    if matlab is not None:
+        # Compatibility with injected test doubles; real production startup
+        # uses the deferred implementation, including subsequent retries.
+        return matlab.engine.start_matlab(**kwargs)
+    return start_matlab_with_deferred_import(**kwargs)
 
 logger = logging.getLogger("LabApp.plot_widgets")
 
@@ -851,7 +862,7 @@ class MatlabSaveWorker(QObject):
     ) -> None:
         # The Engine reference was obtained by the GUI before this QThread began.
         # In particular, do not access PlotWidget or Qt manager methods here.
-        eng_to_use: matlab.engine.MatlabEngine | None = cast(Any, self._shared_engine)
+        eng_to_use: Any | None = cast(Any, self._shared_engine)
 
         try:
             if eng_to_use is None:
@@ -868,7 +879,8 @@ class MatlabSaveWorker(QObject):
                 self.engine_unhealthy.emit(str(error))
                 return
 
-            wavelengths_mat = matlab.double(wavelengths_list)
+            matlab_package = matlab if matlab is not None else importlib.import_module("matlab")
+            wavelengths_mat = matlab_package.double(wavelengths_list)
 
             h_fig = None
             try:
@@ -878,10 +890,10 @@ class MatlabSaveWorker(QObject):
                     return
                 eng_to_use.hold("on", nargout=0)
                 for label, values, rgb in traces:
-                    rgb_mat = matlab.double(rgb)
+                    rgb_mat = matlab_package.double(rgb)
                     eng_to_use.plot(
                         wavelengths_mat,
-                        matlab.double(values),
+                        matlab_package.double(values),
                         "Color",
                         rgb_mat,
                         "DisplayName",
@@ -1358,7 +1370,7 @@ class PlotWidget(QWidget):
 
         self.matlab_engine_manager = MatlabEngineManager(
             available=MATLAB_ENGINE_AVAILABLE,
-            start_engine=(lambda **kwargs: matlab.engine.start_matlab(**kwargs)) if MATLAB_ENGINE_AVAILABLE else None,
+            start_engine=_start_matlab_for_plot if MATLAB_ENGINE_AVAILABLE else None,
             parent=self,
         )
         self.matlab_engine_manager.ready.connect(self._on_matlab_engine_ready)
@@ -2733,7 +2745,7 @@ class PlotWidget(QWidget):
     def _clear_matlab_status(self) -> None:
         self._set_matlab_status("")
 
-    def get_matlab_engine(self) -> matlab.engine.MatlabEngine | None:
+    def get_matlab_engine(self) -> Any | None:
         return self.matlab_engine_manager.engine
 
     def cleanup(self):

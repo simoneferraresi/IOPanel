@@ -69,3 +69,30 @@ def test_application_import_defers_opengl_until_3d_widget_creation():
         check=False,
     )
     assert result.returncode == 0, result.stderr[-4000:]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Lab SDK startup boundary validated in Windows CI")
+def test_matlab_engine_is_not_imported_with_regular_app_module():
+    """MATLAB remains optional and is not loaded before first GUI paint."""
+    code = (
+        "import sys\n"
+        "import app\n"
+        "assert 'matlab.engine' not in sys.modules, "
+        "'MATLAB Engine imported eagerly during app import'\n"
+        "from ui.plot_widgets import PlotWidget\n"
+        "assert PlotWidget\n"
+        "assert 'matlab.engine' not in sys.modules, "
+        "'MATLAB Engine imported eagerly during PlotWidget module import'\n"
+    )
+    env = os.environ.copy()
+    env["QT_QPA_PLATFORM"] = "offscreen"
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=45,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr[-4000:]
