@@ -3431,6 +3431,8 @@ class MainWindow(QMainWindow):
         """Connects signals between different components of the application."""
         # Scan connections are installed when the Wavelength Scan view is first built.
         self.matlab_engine_manager.state_changed.connect(self._refresh_global_status)
+        self.matlab_engine_manager.shutdown_complete.connect(self._resume_close_after_monitor_retirement)
+        self.matlab_engine_manager.shutdown_failed.connect(self._report_matlab_shutdown_failure)
         self._refresh_global_status()
 
         if hasattr(self, "histogram_control") and self.histogram_control:
