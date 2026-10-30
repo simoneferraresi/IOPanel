@@ -3115,7 +3115,12 @@ class MainWindow(QMainWindow):
         if self._shutdown_complete:
             event.accept()
             return
-        self.plot_widget.prepare_shutdown()
+        plot = self._plot_widget
+        if plot is not None:
+            plot.prepare_shutdown()
+        else:
+            # A window that never opened Wavelength Scan still owns MATLAB.
+            self.matlab_engine_manager.shutdown()
         # A paused/checkpoint campaign still owns the scan panel even if no scan
         # thread exists. Defer all native cleanup until its final record is
         # committed and the CT400 reservation is released.
@@ -3138,16 +3143,17 @@ class MainWindow(QMainWindow):
             self._shutdown_panels_requested = True
             self._save_ui_preferences()
             self.histogram_control.shutdown_complete.connect(self._resume_close_after_monitor_retirement)
-            self.plot_widget.shutdown_complete.connect(self._resume_close_after_monitor_retirement)
-            self.plot_widget.shutdown_failed.connect(self._report_matlab_shutdown_failure)
+            if plot is not None:
+                plot.shutdown_complete.connect(self._resume_close_after_monitor_retirement)
             self._cleanup_shutdown_panel_workers()
         if not self.histogram_control.shutdown_finished:
             event.ignore()
             self.statusBar().showMessage("Waiting for power monitor worker retirement…", 0)
             return
-        if not self.plot_widget.shutdown_finished:
+        scan_retired = plot.shutdown_finished if plot is not None else self.matlab_engine_manager.shutdown_finished
+        if not scan_retired:
             event.ignore()
-            if self.plot_widget.matlab_engine_manager.state is MatlabEngineState.SHUTDOWN_FAILED:
+            if self.matlab_engine_manager.state is MatlabEngineState.SHUTDOWN_FAILED:
                 self.statusBar().showMessage("MATLAB shutdown failed; native ownership is retained.", 0)
             else:
                 self.statusBar().showMessage("Waiting for MATLAB export/startup and Engine cleanup…", 0)
