@@ -116,13 +116,7 @@ from ui.control_panel import (
     ScanSafetyIssue,
 )
 from ui.log_console import LogConsole
-from ui.plot_widgets import (
-    MATLAB_ENGINE_AVAILABLE,
-    HistogramWidget,
-    PlotWidget,
-    PowerMonitorTraceWidget,
-    _start_matlab_for_plot,
-)
+from ui.plot_widgets import HistogramWidget, PlotWidget, PowerMonitorTraceWidget
 from ui.pm5020_panel import PM5020Panel
 from ui.shg_synchronized_panel import SimulatedSHGPanel
 
@@ -306,9 +300,14 @@ class MainWindow(QMainWindow):
         self._control_panel: CT400ControlPanel | None = None
         self._plot_widget: PlotWidget | None = None
         self._first_tab: QWidget | None = None
+        # Read the current module capability at runtime (also honored by test
+        # doubles) rather than freezing it during main_window import.
+        from ui import plot_widgets as scan_plot_module
+
+        matlab_available = scan_plot_module.MATLAB_ENGINE_AVAILABLE
         self.matlab_engine_manager = MatlabEngineManager(
-            available=MATLAB_ENGINE_AVAILABLE,
-            start_engine=_start_matlab_for_plot if MATLAB_ENGINE_AVAILABLE else None,
+            available=matlab_available,
+            start_engine=scan_plot_module._start_matlab_for_plot if matlab_available else None,
             parent=self,
         )
         self.matlab_engine_manager.state_changed.connect(self._refresh_global_status)
