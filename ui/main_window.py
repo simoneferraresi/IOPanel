@@ -1429,20 +1429,21 @@ class MainWindow(QMainWindow):
                 self.tab_widget.setCurrentIndex(current)
             self._lazy_tab_placeholders.pop(index)
             placeholder.deleteLater()
-            if index == 2:
+            if isinstance(panel, AlignmentPanel):
                 self._alignment_tab = panel
                 panel.operation_started.connect(self._handle_alignment_operation_started)
                 panel.operation_finished.connect(self._handle_alignment_operation_finished)
                 panel.set_ct400_operation_state(self._ct400_operation_state.name)
                 self._sync_alignment_hardware()
-            elif index == 3:
+            elif isinstance(panel, PM5020Panel):
                 self._pm5020_panel = panel
                 self._update_pm5020_action()
                 self._refresh_global_status()
-            elif index == 4:
+            elif isinstance(panel, EDFAReadOnlyPanel):
                 self._edfa_panel = panel
                 self._update_edfa_action()
             else:
+                assert isinstance(panel, SimulatedSHGPanel)
                 self._shg_tab = panel
         except Exception:
             logger.exception("Could not construct deferred tab %d", index)
