@@ -27,7 +27,7 @@ from hardware.alignment_worker import AlignmentSettings, AlignmentWorker, Mappin
 from hardware.interfaces import AbstractCT400
 from hardware.piezo import PiezoController
 from logic.qt_worker_lifecycle import retire_worker_on_thread_finish
-from ui.plot_widgets import ColorBarWidget
+from ui.alignment_colorbar import ColorBarWidget
 from ui.typography import make_font, style_group_box_title
 
 logger = logging.getLogger("LabApp.AlignmentPanel")

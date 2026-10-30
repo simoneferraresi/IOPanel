@@ -96,3 +96,30 @@ def test_matlab_engine_is_not_imported_with_regular_app_module():
         check=False,
     )
     assert result.returncode == 0, result.stderr[-4000:]
+
+
+def test_alignment_module_import_does_not_force_scan_plotting_dependencies():
+    """The inactive alignment tab must not preload the Wavelength Scan module."""
+    code = (
+        "import sys\n"
+        "from ui.alignment_panel import AlignmentPanel\n"
+        "assert AlignmentPanel is not None\n"
+        "assert 'ui.plot_widgets' not in sys.modules, "
+        "'AlignmentPanel still eagerly imports scan plotting'\n"
+        "assert 'pyqtgraph' not in sys.modules, "
+        "'AlignmentPanel still eagerly imports PyQtGraph'\n"
+        "assert 'matlab.engine' not in sys.modules\n"
+        "assert 'pyqtgraph.opengl' not in sys.modules\n"
+    )
+    env = os.environ.copy()
+    env["QT_QPA_PLATFORM"] = "offscreen"
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=45,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr[-4000:]

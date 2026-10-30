@@ -63,6 +63,7 @@ from logic.scan_import import ImportedScan
 from logic.scan_measurement import ScanMeasurement
 from logic.scan_settings import ScanSettings
 from logic.task_runner import TaskRunner
+from ui.alignment_colorbar import ColorBarWidget  # Backward-compatible public re-export.
 from ui.power_monitor_export_dialog import PowerMonitorExportDialog
 from ui.scan_export_dialog import ScanExportDialog
 from ui.typography import make_font, pyqtgraph_title_style
@@ -700,41 +701,6 @@ class PowerMonitorTraceWidget(QWidget):
     def _set_status(self, message: str) -> None:
         self.status_label.setText(message)
         self.status_label.setVisible(bool(message))
-
-
-class ColorBarWidget(QWidget):
-    """A custom widget to display a color bar with min/max labels."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setMaximumWidth(100)  # Keep it narrow
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(5, 10, 5, 10)
-
-        self.max_label = QLabel("Max")
-        self.max_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        self.gradient_widget = pg.GradientWidget(orientation="right")
-
-        self.min_label = QLabel("Min")
-        self.min_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        layout.addWidget(self.max_label)
-        layout.addWidget(self.gradient_widget)
-        layout.addWidget(self.min_label)
-
-    @Slot(object, float, float)
-    def update_colormap(self, cmap, min_val, max_val):
-        """Updates the gradient and labels."""
-        if cmap:
-            self.gradient_widget.setColorMap(cmap)
-            self.gradient_widget.setVisible(True)
-        else:
-            # If no colormap (flat surface), hide the gradient
-            self.gradient_widget.setVisible(False)
-
-        self.max_label.setText(f"{max_val:.3f} mW")
-        self.min_label.setText(f"{min_val:.3f} mW")
 
 
 ###############################################################################
