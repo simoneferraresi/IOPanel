@@ -555,7 +555,7 @@ class MainWindow(QMainWindow):
         """Independent, persistent left-hand status widget; do not steal showMessage."""
         label = self.edfa_observations_status_label
         label.setText(observation)
-        panel = self.edfa_panel
+        panel = self._edfa_panel
         identity = panel._identity_text if panel is not None else ""
         resource = panel.resource_name if panel is not None and panel.backend_mode == "physical" else ""
         context = [f"Instrument: {identity}" if identity else "", f"GPIB: {resource}" if resource else ""]
@@ -566,7 +566,7 @@ class MainWindow(QMainWindow):
         action = getattr(self, "edfa_connect_action", None)
         if action is None:
             return
-        panel = self.edfa_panel
+        panel = self._edfa_panel
         if panel is None:
             text, icon, enabled, checked = "EDFA Unavailable", ":/icons/connect.svg", False, False
         else:
@@ -686,7 +686,8 @@ class MainWindow(QMainWindow):
             self._piezo_operations_in_flight.remove(side)
         self._update_piezo_action(side)
         if self._pending_piezo_operation_close:
-            self.alignment_tab.clear_hardware()
+            if self._alignment_tab is not None:
+                self._alignment_tab.clear_hardware()
             if was_in_flight:
                 self._resume_close_after_piezo_operation()
         else:
