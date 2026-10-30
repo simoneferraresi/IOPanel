@@ -90,6 +90,7 @@ def _start_matlab_for_plot(**kwargs: Any) -> Any:
         return matlab.engine.start_matlab(**kwargs)
     return start_matlab_with_deferred_import(**kwargs)
 
+
 logger = logging.getLogger("LabApp.plot_widgets")
 
 _GENERIC_SCAN_Y_LABEL = "Power (dB)"
