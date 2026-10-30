@@ -2550,9 +2550,7 @@ class MainWindow(QMainWindow):
         self._ct400_connection_configured = True
         self._ct400_recovery_input_matches = True
         self._update_ct400_visuals(state=CT400Status.CONNECTED, message=message)
-        self._update_scan_connected_laser_input(
-            laser_input, configured_speed_nm_s=self._ct400_connected_speed_nm_s
-        )
+        self._update_scan_connected_laser_input(laser_input, configured_speed_nm_s=self._ct400_connected_speed_nm_s)
         self.histogram_control.set_connected_laser_input(laser_input)
 
     @Slot(str, int, object)
