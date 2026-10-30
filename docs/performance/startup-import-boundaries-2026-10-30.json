@@ -1,0 +1,1054 @@
+{
+  "baseline_sha": "972dcfba9b796a9ab0cf7e2ae73614cdfa3b6322",
+  "implementation_sha": "306db73c4eaf75514ae79ccbcbe6825f41f0a923",
+  "python": "3.12.8 x64",
+  "qt": "6.12.0",
+  "uv": "0.13.4",
+  "warmups_per_case": 1,
+  "samples_per_case": 7,
+  "physical_hardware": false,
+  "importtime": {
+    "before": {
+      "app": {
+        "cumulative_samples_s": [
+          1.774383,
+          1.765469,
+          1.889067,
+          1.74331,
+          1.942383,
+          1.954107,
+          1.853345
+        ],
+        "self_samples_s": [
+          0.009977,
+          0.009334,
+          0.010057,
+          0.009439,
+          0.010704,
+          0.010784,
+          0.009473
+        ]
+      },
+      "ui.main_window": {
+        "cumulative_samples_s": [
+          1.111476,
+          1.105986,
+          1.255486,
+          1.116906,
+          1.108547,
+          1.205073,
+          1.189743
+        ],
+        "self_samples_s": [
+          0.03238,
+          0.034471,
+          0.035102,
+          0.033426,
+          0.035081,
+          0.033861,
+          0.040099
+        ]
+      },
+      "ui.plot_widgets": {
+        "cumulative_samples_s": [
+          0.568863,
+          0.586653,
+          0.642785,
+          0.590369,
+          0.584662,
+          0.679946,
+          0.639476
+        ],
+        "self_samples_s": [
+          0.016767,
+          0.016921,
+          0.01877,
+          0.016727,
+          0.015587,
+          0.016183,
+          0.016485
+        ]
+      },
+      "pyqtgraph": {
+        "cumulative_samples_s": [
+          0.524029,
+          0.542874,
+          0.588892,
+          0.545607,
+          0.542279,
+          0.635694,
+          0.594589
+        ],
+        "self_samples_s": [
+          0.046356,
+          0.051277,
+          0.048334,
+          0.049084,
+          0.048197,
+          0.074101,
+          0.05501
+        ]
+      },
+      "numpy": {
+        "cumulative_samples_s": [
+          0.252879,
+          0.222191,
+          0.297926,
+          0.22005,
+          0.220781,
+          0.229467,
+          0.229297
+        ],
+        "self_samples_s": [
+          0.015229,
+          0.014629,
+          0.016019,
+          0.015116,
+          0.015234,
+          0.016926,
+          0.015074
+        ]
+      },
+      "cv2": {
+        "cumulative_samples_s": [
+          0.047016,
+          0.047789,
+          0.047839,
+          0.054474,
+          0.048871,
+          0.050459,
+          0.050936
+        ],
+        "self_samples_s": [
+          0.038615,
+          0.039111,
+          0.039388,
+          0.045424,
+          0.039987,
+          0.04076,
+          0.041957
+        ]
+      },
+      "pydantic": {
+        "cumulative_samples_s": [
+          0.070085,
+          0.077502,
+          0.069422,
+          0.071044,
+          0.086172,
+          0.073127,
+          0.072216
+        ],
+        "self_samples_s": [
+          0.002027,
+          0.001922,
+          0.002052,
+          0.001954,
+          0.003002,
+          0.002089,
+          0.001945
+        ]
+      }
+    },
+    "after": {
+      "app": {
+        "cumulative_samples_s": [
+          1.833763,
+          1.719332,
+          1.818399,
+          1.705997,
+          1.814736,
+          1.703744,
+          1.734612
+        ],
+        "self_samples_s": [
+          0.009963,
+          0.009971,
+          0.010905,
+          0.009563,
+          0.009728,
+          0.009495,
+          0.009588
+        ]
+      },
+      "ui.main_window": {
+        "cumulative_samples_s": [
+          1.036976,
+          1.04177,
+          1.04612,
+          1.07272,
+          1.11937,
+          1.047718,
+          1.062737
+        ],
+        "self_samples_s": [
+          0.026252,
+          0.02799,
+          0.02719,
+          0.032779,
+          0.027554,
+          0.025263,
+          0.028252
+        ]
+      },
+      "ui.plot_widgets": {
+        "cumulative_samples_s": [
+          0.583472,
+          0.604518,
+          0.610354,
+          0.593755,
+          0.675565,
+          0.594794,
+          0.615747
+        ],
+        "self_samples_s": [
+          0.01617,
+          0.015613,
+          0.015726,
+          0.015734,
+          0.015638,
+          0.015434,
+          0.015104
+        ]
+      },
+      "pyqtgraph": {
+        "cumulative_samples_s": [
+          0.537535,
+          0.561303,
+          0.565677,
+          0.549408,
+          0.628577,
+          0.550224,
+          0.571949
+        ],
+        "self_samples_s": [
+          0.047033,
+          0.049058,
+          0.050711,
+          0.047974,
+          0.062526,
+          0.04862,
+          0.050557
+        ]
+      },
+      "numpy": {
+        "cumulative_samples_s": [
+          0.247935,
+          0.219482,
+          0.224119,
+          0.236535,
+          0.226509,
+          0.243204,
+          0.223651
+        ],
+        "self_samples_s": [
+          0.01807,
+          0.015274,
+          0.01466,
+          0.015812,
+          0.015348,
+          0.017759,
+          0.016518
+        ]
+      },
+      "cv2": {
+        "cumulative_samples_s": [
+          0.047675,
+          0.050322,
+          0.052568,
+          0.048723,
+          0.049499,
+          0.047719,
+          0.050155
+        ],
+        "self_samples_s": [
+          0.039399,
+          0.040933,
+          0.04325,
+          0.040199,
+          0.040433,
+          0.039055,
+          0.040848
+        ]
+      },
+      "pydantic": {
+        "cumulative_samples_s": [
+          0.092688,
+          0.075364,
+          0.090186,
+          0.075622,
+          0.071984,
+          0.071003,
+          0.072214
+        ],
+        "self_samples_s": [
+          0.002327,
+          0.002596,
+          0.002502,
+          0.002337,
+          0.002134,
+          0.001997,
+          0.001978
+        ]
+      }
+    }
+  },
+  "startup_deferred_hardware_suppressed": {
+    "before": {
+      "runs": [
+        {
+          "scenario": "main_window_deferred_hardware_suppressed",
+          "qt_platform": "windows",
+          "window_system": "win32",
+          "vmbpy_import_available": false,
+          "matlab_engine_import_available": false,
+          "request_to_child_probe_s": 0.3016747000074247,
+          "request_to_app_import_complete_s": 2.0047984000120778,
+          "request_to_mainwindow_constructed_s": 2.966399299999466,
+          "request_to_show_return_s": 2.982720700005302,
+          "request_to_first_qt_callback_s": 2.9847875999985263,
+          "request_to_first_paint_event_s": 2.9875430000101915,
+          "request_to_post_paint_callback_s": 3.014326800010167,
+          "request_to_deferred_init_callback_s": 3.075828300003195,
+          "app_module_import_s": 1.703123700004653,
+          "probe_post_app_import_s": 3.499999002087861e-05,
+          "qapplication_create_s": 0.05218460000469349,
+          "qt_configure_s": 0.014917799999238923,
+          "mainwindow_construct_s": 0.8719306999992114,
+          "show_call_s": 0.016308999998727813,
+          "entry_to_app_import_complete_s": 1.703123700004653,
+          "entry_to_mainwindow_constructed_s": 2.6647245999920415,
+          "entry_to_show_return_s": 2.6810459999978775,
+          "entry_to_first_qt_callback_s": 2.6831128999911016,
+          "entry_to_first_paint_event_s": 2.6858683000027668,
+          "entry_to_post_paint_callback_s": 2.7126521000027424,
+          "entry_to_deferred_init_callback_s": 2.7741535999957705,
+          "event_loop_enter_to_first_qt_callback_s": 0.001998799998546019,
+          "event_loop_enter_to_post_paint_callback_s": 0.031538000010186806
+        },
+        {
+          "scenario": "main_window_deferred_hardware_suppressed",
+          "qt_platform": "windows",
+          "window_system": "win32",
+          "vmbpy_import_available": false,
+          "matlab_engine_import_available": false,
+          "request_to_child_probe_s": 0.32050629999139346,
+          "request_to_app_import_complete_s": 2.332232999993721,
+          "request_to_mainwindow_constructed_s": 3.2476402999891434,
+          "request_to_show_return_s": 3.2640815999911865,
+          "request_to_first_qt_callback_s": 3.2660699999978533,
+          "request_to_first_paint_event_s": 3.2688308999931905,
+          "request_to_post_paint_callback_s": 3.297363299992867,
+          "request_to_deferred_init_callback_s": 3.3520209999987856,
+          "app_module_import_s": 2.0117267000023276,
+          "probe_post_app_import_s": 7.769999501761049e-05,
+          "qapplication_create_s": 0.12969600000360515,
+          "qt_configure_s": 0.015368899999884889,
+          "mainwindow_construct_s": 0.7470447999949101,
+          "show_call_s": 0.016427499998826534,
+          "entry_to_app_import_complete_s": 2.0117267000023276,
+          "entry_to_mainwindow_constructed_s": 2.92713399999775,
+          "entry_to_show_return_s": 2.943575299999793,
+          "entry_to_first_qt_callback_s": 2.94556370000646,
+          "entry_to_first_paint_event_s": 2.948324600001797,
+          "entry_to_post_paint_callback_s": 2.9768570000014734,
+          "entry_to_deferred_init_callback_s": 3.031514700007392,
+          "event_loop_enter_to_first_qt_callback_s": 0.001924900003359653,
+          "event_loop_enter_to_post_paint_callback_s": 0.033218199998373166
+        },
+        {
+          "scenario": "main_window_deferred_hardware_suppressed",
+          "qt_platform": "windows",
+          "window_system": "win32",
+          "vmbpy_import_available": false,
+          "matlab_engine_import_available": false,
+          "request_to_child_probe_s": 0.3128212000010535,
+          "request_to_app_import_complete_s": 1.9283288000005996,
+          "request_to_mainwindow_constructed_s": 2.7742369000043254,
+          "request_to_show_return_s": 2.7900201000011293,
+          "request_to_first_qt_callback_s": 2.7920233000040753,
+          "request_to_first_paint_event_s": 2.794898700012709,
+          "request_to_post_paint_callback_s": 2.821657899999991,
+          "request_to_deferred_init_callback_s": 2.8832256000023335,
+          "app_module_import_s": 1.615507599999546,
+          "probe_post_app_import_s": 2.9700007871724665e-05,
+          "qapplication_create_s": 0.05099719999998342,
+          "qt_configure_s": 0.016066800002590753,
+          "mainwindow_construct_s": 0.7634365999983856,
+          "show_call_s": 0.01577079998969566,
+          "entry_to_app_import_complete_s": 1.615507599999546,
+          "entry_to_mainwindow_constructed_s": 2.461415700003272,
+          "entry_to_show_return_s": 2.477198900000076,
+          "entry_to_first_qt_callback_s": 2.4792021000030218,
+          "entry_to_first_paint_event_s": 2.4820775000116555,
+          "entry_to_post_paint_callback_s": 2.5088366999989375,
+          "entry_to_deferred_init_callback_s": 2.57040440000128,
+          "event_loop_enter_to_first_qt_callback_s": 0.001939399997354485,
+          "event_loop_enter_to_post_paint_callback_s": 0.03157399999327026
+        },
+        {
+          "scenario": "main_window_deferred_hardware_suppressed",
+          "qt_platform": "windows",
+          "window_system": "win32",
+          "vmbpy_import_available": false,
+          "matlab_engine_import_available": false,
+          "request_to_child_probe_s": 0.28635760000906885,
+          "request_to_app_import_complete_s": 1.8970090000075288,
+          "request_to_mainwindow_constructed_s": 2.7480907999997726,
+          "request_to_show_return_s": 2.7652379000064684,
+          "request_to_first_qt_callback_s": 2.767320300001302,
+          "request_to_first_paint_event_s": 2.7702159000036772,
+          "request_to_post_paint_callback_s": 2.798736500000814,
+          "request_to_deferred_init_callback_s": 2.852423500007717,
+          "app_module_import_s": 1.61065139999846,
+          "probe_post_app_import_s": 2.989999484270811e-05,
+          "qapplication_create_s": 0.052827999999863096,
+          "qt_configure_s": 0.014836200003628619,
+          "mainwindow_construct_s": 0.7614541999937501,
+          "show_call_s": 0.01713500000187196,
+          "entry_to_app_import_complete_s": 1.61065139999846,
+          "entry_to_mainwindow_constructed_s": 2.4617331999907037,
+          "entry_to_show_return_s": 2.4788802999973996,
+          "entry_to_first_qt_callback_s": 2.480962699992233,
+          "entry_to_first_paint_event_s": 2.4838582999946084,
+          "entry_to_post_paint_callback_s": 2.512378899991745,
+          "entry_to_deferred_init_callback_s": 2.566065899998648,
+          "event_loop_enter_to_first_qt_callback_s": 0.0020111999911023304,
+          "event_loop_enter_to_post_paint_callback_s": 0.033427399990614504
+        },
+        {
+          "scenario": "main_window_deferred_hardware_suppressed",
+          "qt_platform": "windows",
+          "window_system": "win32",
+          "vmbpy_import_available": false,
+          "matlab_engine_import_available": false,
+          "request_to_child_probe_s": 0.2923404000030132,
+          "request_to_app_import_complete_s": 2.001996799997869,
+          "request_to_mainwindow_constructed_s": 2.8754666000022553,
+          "request_to_show_return_s": 2.891600799994194,
+          "request_to_first_qt_callback_s": 2.8936506000027293,
+          "request_to_first_paint_event_s": 2.896352800002205,
+          "request_to_post_paint_callback_s": 2.923185299994657,
+          "request_to_deferred_init_callback_s": 2.9818699000024935,
+          "app_module_import_s": 1.7096563999948557,
+          "probe_post_app_import_s": 3.579999611247331e-05,
+          "qapplication_create_s": 0.05397850000008475,
+          "qt_configure_s": 0.014976800011936575,
+          "mainwindow_construct_s": 0.7832863000076031,
+          "show_call_s": 0.016120000000228174,
+          "entry_to_app_import_complete_s": 1.7096563999948557,
+          "entry_to_mainwindow_constructed_s": 2.583126199999242,
+          "entry_to_show_return_s": 2.5992603999911807,
+          "entry_to_first_qt_callback_s": 2.601310199999716,
+          "entry_to_first_paint_event_s": 2.604012399999192,
+          "entry_to_post_paint_callback_s": 2.6308448999916436,
+          "entry_to_deferred_init_callback_s": 2.6895294999994803,
+          "event_loop_enter_to_first_qt_callback_s": 0.0019847000075969845,
+          "event_loop_enter_to_post_paint_callback_s": 0.03151939999952447
+        },
+        {
+          "scenario": "main_window_deferred_hardware_suppressed",
+          "qt_platform": "windows",
+          "window_system": "win32",
+          "vmbpy_import_available": false,
+          "matlab_engine_import_available": false,
+          "request_to_child_probe_s": 0.282039600002463,
+          "request_to_app_import_complete_s": 1.8779414000018733,
+          "request_to_mainwindow_constructed_s": 2.7312529000046197,
+          "request_to_show_return_s": 2.7474199999996927,
+          "request_to_first_qt_callback_s": 2.749529499997152,
+          "request_to_first_paint_event_s": 2.75270250000176,
+          "request_to_post_paint_callback_s": 2.7797403000004124,
+          "request_to_deferred_init_callback_s": 2.8279331999947317,
+          "app_module_import_s": 1.5959017999994103,
+          "probe_post_app_import_s": 3.169999399688095e-05,
+          "qapplication_create_s": 0.05407969999941997,
+          "qt_configure_s": 0.015155100001720712,
+          "mainwindow_construct_s": 0.7624367000098573,
+          "show_call_s": 0.01615450000099372,
+          "entry_to_app_import_complete_s": 1.5959017999994103,
+          "entry_to_mainwindow_constructed_s": 2.4492133000021568,
+          "entry_to_show_return_s": 2.4653803999972297,
+          "entry_to_first_qt_callback_s": 2.467489899994689,
+          "entry_to_first_paint_event_s": 2.4706628999992972,
+          "entry_to_post_paint_callback_s": 2.4977006999979494,
+          "entry_to_deferred_init_callback_s": 2.5458935999922687,
+          "event_loop_enter_to_first_qt_callback_s": 0.0020363999938126653,
+          "event_loop_enter_to_post_paint_callback_s": 0.03224719999707304
+        },
+        {
+          "scenario": "main_window_deferred_hardware_suppressed",
+          "qt_platform": "windows",
+          "window_system": "win32",
+          "vmbpy_import_available": false,
+          "matlab_engine_import_available": false,
+          "request_to_child_probe_s": 0.286327000008896,
+          "request_to_app_import_complete_s": 1.9314977000030922,
+          "request_to_mainwindow_constructed_s": 2.7828335000085644,
+          "request_to_show_return_s": 2.8020484000007855,
+          "request_to_first_qt_callback_s": 2.8048597000015434,
+          "request_to_first_paint_event_s": 2.808096500011743,
+          "request_to_post_paint_callback_s": 2.8358715000067605,
+          "request_to_deferred_init_callback_s": 2.893212900002254,
+          "app_module_import_s": 1.6451706999941962,
+          "probe_post_app_import_s": 3.060000017285347e-05,
+          "qapplication_create_s": 0.051843499997630715,
+          "qt_configure_s": 0.016700899999705143,
+          "mainwindow_construct_s": 0.7596123999974225,
+          "show_call_s": 0.0192005999997491,
+          "entry_to_app_import_complete_s": 1.6451706999941962,
+          "entry_to_mainwindow_constructed_s": 2.4965064999996684,
+          "entry_to_show_return_s": 2.5157213999918895,
+          "entry_to_first_qt_callback_s": 2.5185326999926474,
+          "entry_to_first_paint_event_s": 2.521769500002847,
+          "entry_to_post_paint_callback_s": 2.5495444999978645,
+          "entry_to_deferred_init_callback_s": 2.606885899993358,
+          "event_loop_enter_to_first_qt_callback_s": 0.002706899991608225,
+          "event_loop_enter_to_post_paint_callback_s": 0.03371869999682531
+        }
+      ]
+    },
+    "after": {
+      "runs": [
+        {
+          "scenario": "main_window_deferred_hardware_suppressed",
+          "qt_platform": "windows",
+          "window_system": "win32",
+          "vmbpy_import_available": false,
+          "matlab_engine_import_available": false,
+          "request_to_child_probe_s": 0.2861145999922883,
+          "request_to_app_import_complete_s": 1.9280543999921065,
+          "request_to_mainwindow_constructed_s": 2.7771085999993375,
+          "request_to_show_return_s": 2.796914399994421,
+          "request_to_first_qt_callback_s": 2.7991935999889392,
+          "request_to_first_paint_event_s": 2.8026109999918845,
+          "request_to_post_paint_callback_s": 2.834480599995004,
+          "request_to_deferred_init_callback_s": 2.8928785999887623,
+          "app_module_import_s": 1.6419397999998182,
+          "probe_post_app_import_s": 3.5600009141489863e-05,
+          "qapplication_create_s": 0.07050679999520071,
+          "qt_configure_s": 0.014933300000848249,
+          "mainwindow_construct_s": 0.7485000000015134,
+          "show_call_s": 0.01978909999888856,
+          "entry_to_app_import_complete_s": 1.6419397999998182,
+          "entry_to_mainwindow_constructed_s": 2.490994000007049,
+          "entry_to_show_return_s": 2.5107998000021325,
+          "entry_to_first_qt_callback_s": 2.513078999996651,
+          "entry_to_first_paint_event_s": 2.516496399999596,
+          "entry_to_post_paint_callback_s": 2.5483660000027157,
+          "entry_to_deferred_init_callback_s": 2.606763999996474,
+          "event_loop_enter_to_first_qt_callback_s": 0.0022018999879946932,
+          "event_loop_enter_to_post_paint_callback_s": 0.037488899994059466
+        },
+        {
+          "scenario": "main_window_deferred_hardware_suppressed",
+          "qt_platform": "windows",
+          "window_system": "win32",
+          "vmbpy_import_available": false,
+          "matlab_engine_import_available": false,
+          "request_to_child_probe_s": 0.29886359999363776,
+          "request_to_app_import_complete_s": 2.116071700002067,
+          "request_to_mainwindow_constructed_s": 3.0043007000058424,
+          "request_to_show_return_s": 3.021707799998694,
+          "request_to_first_qt_callback_s": 3.0239695999916876,
+          "request_to_first_paint_event_s": 3.027020299996366,
+          "request_to_post_paint_callback_s": 3.0548084000038216,
+          "request_to_deferred_init_callback_s": 3.1079305000021122,
+          "app_module_import_s": 1.817208100008429,
+          "probe_post_app_import_s": 3.229999856557697e-05,
+          "qapplication_create_s": 0.05665539999608882,
+          "qt_configure_s": 0.015341499994974583,
+          "mainwindow_construct_s": 0.8015512000129092,
+          "show_call_s": 0.017394800001056865,
+          "entry_to_app_import_complete_s": 1.817208100008429,
+          "entry_to_mainwindow_constructed_s": 2.7054371000122046,
+          "entry_to_show_return_s": 2.7228442000050563,
+          "entry_to_first_qt_callback_s": 2.72510599999805,
+          "entry_to_first_paint_event_s": 2.728156700002728,
+          "entry_to_post_paint_callback_s": 2.755944800010184,
+          "entry_to_deferred_init_callback_s": 2.8090669000084745,
+          "event_loop_enter_to_first_qt_callback_s": 0.0021902999869780615,
+          "event_loop_enter_to_post_paint_callback_s": 0.03302909999911208
+        },
+        {
+          "scenario": "main_window_deferred_hardware_suppressed",
+          "qt_platform": "windows",
+          "window_system": "win32",
+          "vmbpy_import_available": false,
+          "matlab_engine_import_available": false,
+          "request_to_child_probe_s": 0.2939016000018455,
+          "request_to_app_import_complete_s": 1.8913387000065995,
+          "request_to_mainwindow_constructed_s": 2.8070393000089098,
+          "request_to_show_return_s": 2.8232801999984076,
+          "request_to_first_qt_callback_s": 2.8252083000115817,
+          "request_to_first_paint_event_s": 2.827811199997086,
+          "request_to_post_paint_callback_s": 2.8575156000006245,
+          "request_to_deferred_init_callback_s": 2.91691919999721,
+          "app_module_import_s": 1.597437100004754,
+          "probe_post_app_import_s": 3.0199997127056122e-05,
+          "qapplication_create_s": 0.1361521999933757,
+          "qt_configure_s": 0.015308500005630776,
+          "mainwindow_construct_s": 0.7471496000071056,
+          "show_call_s": 0.016228899999987334,
+          "entry_to_app_import_complete_s": 1.597437100004754,
+          "entry_to_mainwindow_constructed_s": 2.5131377000070643,
+          "entry_to_show_return_s": 2.529378599996562,
+          "entry_to_first_qt_callback_s": 2.5313067000097362,
+          "entry_to_first_paint_event_s": 2.5339095999952406,
+          "entry_to_post_paint_callback_s": 2.563613999998779,
+          "entry_to_deferred_init_callback_s": 2.6230175999953644,
+          "event_loop_enter_to_first_qt_callback_s": 0.0018645000091055408,
+          "event_loop_enter_to_post_paint_callback_s": 0.034171799998148344
+        },
+        {
+          "scenario": "main_window_deferred_hardware_suppressed",
+          "qt_platform": "windows",
+          "window_system": "win32",
+          "vmbpy_import_available": false,
+          "matlab_engine_import_available": false,
+          "request_to_child_probe_s": 0.3159914999996545,
+          "request_to_app_import_complete_s": 1.8986667999997735,
+          "request_to_mainwindow_constructed_s": 2.751552299989271,
+          "request_to_show_return_s": 2.767453899999964,
+          "request_to_first_qt_callback_s": 2.76948239999183,
+          "request_to_first_paint_event_s": 2.7721807999914745,
+          "request_to_post_paint_callback_s": 2.7993611999991117,
+          "request_to_deferred_init_callback_s": 2.8582315999956336,
+          "app_module_import_s": 1.582675300000119,
+          "probe_post_app_import_s": 3.029999788850546e-05,
+          "qapplication_create_s": 0.054207399996812455,
+          "qt_configure_s": 0.014796400006162003,
+          "mainwindow_construct_s": 0.7664685999916401,
+          "show_call_s": 0.01588880000053905,
+          "entry_to_app_import_complete_s": 1.582675300000119,
+          "entry_to_mainwindow_constructed_s": 2.4355607999896165,
+          "entry_to_show_return_s": 2.4514624000003096,
+          "entry_to_first_qt_callback_s": 2.4534908999921754,
+          "entry_to_first_paint_event_s": 2.45618929999182,
+          "entry_to_post_paint_callback_s": 2.4833696999994572,
+          "entry_to_deferred_init_callback_s": 2.542240099995979,
+          "event_loop_enter_to_first_qt_callback_s": 0.001965199990081601,
+          "event_loop_enter_to_post_paint_callback_s": 0.031843999997363426
+        },
+        {
+          "scenario": "main_window_deferred_hardware_suppressed",
+          "qt_platform": "windows",
+          "window_system": "win32",
+          "vmbpy_import_available": false,
+          "matlab_engine_import_available": false,
+          "request_to_child_probe_s": 0.2977221999899484,
+          "request_to_app_import_complete_s": 2.1613730999961263,
+          "request_to_mainwindow_constructed_s": 3.028303799990681,
+          "request_to_show_return_s": 3.0435522999905515,
+          "request_to_first_qt_callback_s": 3.0456242999935057,
+          "request_to_first_paint_event_s": 3.0482790999958524,
+          "request_to_post_paint_callback_s": 3.0785102999943774,
+          "request_to_deferred_init_callback_s": 3.1238727000018116,
+          "app_module_import_s": 1.8636509000061778,
+          "probe_post_app_import_s": 3.0499999411404133e-05,
+          "qapplication_create_s": 0.05621379999502096,
+          "qt_configure_s": 0.015413000000989996,
+          "mainwindow_construct_s": 0.7818830999894999,
+          "show_call_s": 0.015236499995808117,
+          "entry_to_app_import_complete_s": 1.8636509000061778,
+          "entry_to_mainwindow_constructed_s": 2.7305816000007326,
+          "entry_to_show_return_s": 2.745830100000603,
+          "entry_to_first_qt_callback_s": 2.7479021000035573,
+          "entry_to_first_paint_event_s": 2.750556900005904,
+          "entry_to_post_paint_callback_s": 2.780788100004429,
+          "entry_to_deferred_init_callback_s": 2.826150500011863,
+          "event_loop_enter_to_first_qt_callback_s": 0.002005200003623031,
+          "event_loop_enter_to_post_paint_callback_s": 0.03489120000449475
+        },
+        {
+          "scenario": "main_window_deferred_hardware_suppressed",
+          "qt_platform": "windows",
+          "window_system": "win32",
+          "vmbpy_import_available": false,
+          "matlab_engine_import_available": false,
+          "request_to_child_probe_s": 0.3650682000006782,
+          "request_to_app_import_complete_s": 1.9451616999867838,
+          "request_to_mainwindow_constructed_s": 2.775565399992047,
+          "request_to_show_return_s": 2.7919523999880766,
+          "request_to_first_qt_callback_s": 2.794000699999742,
+          "request_to_first_paint_event_s": 2.796728399989661,
+          "request_to_post_paint_callback_s": 2.82363020000048,
+          "request_to_deferred_init_callback_s": 2.8775672999909148,
+          "app_module_import_s": 1.5800934999861056,
+          "probe_post_app_import_s": 3.020001167897135e-05,
+          "qapplication_create_s": 0.0514268999977503,
+          "qt_configure_s": 0.014803800004301593,
+          "mainwindow_construct_s": 0.7519252999918535,
+          "show_call_s": 0.016360099994926713,
+          "entry_to_app_import_complete_s": 1.5800934999861056,
+          "entry_to_mainwindow_constructed_s": 2.4104971999913687,
+          "entry_to_show_return_s": 2.4268841999873985,
+          "entry_to_first_qt_callback_s": 2.428932499999064,
+          "entry_to_first_paint_event_s": 2.4316601999889826,
+          "entry_to_post_paint_callback_s": 2.4585619999998016,
+          "entry_to_deferred_init_callback_s": 2.5124990999902366,
+          "event_loop_enter_to_first_qt_callback_s": 0.001989800002775155,
+          "event_loop_enter_to_post_paint_callback_s": 0.03161930000351276
+        },
+        {
+          "scenario": "main_window_deferred_hardware_suppressed",
+          "qt_platform": "windows",
+          "window_system": "win32",
+          "vmbpy_import_available": false,
+          "matlab_engine_import_available": false,
+          "request_to_child_probe_s": 0.30319500000041444,
+          "request_to_app_import_complete_s": 1.8780695000023115,
+          "request_to_mainwindow_constructed_s": 2.725613600006909,
+          "request_to_show_return_s": 2.744243599998299,
+          "request_to_first_qt_callback_s": 2.7463143000059063,
+          "request_to_first_paint_event_s": 2.7490976999979466,
+          "request_to_post_paint_callback_s": 2.7784290999989025,
+          "request_to_deferred_init_callback_s": 2.8201339000079315,
+          "app_module_import_s": 1.574874500001897,
+          "probe_post_app_import_s": 3.029999788850546e-05,
+          "qapplication_create_s": 0.05157510000572074,
+          "qt_configure_s": 0.015116299997316673,
+          "mainwindow_construct_s": 0.7684251000027871,
+          "show_call_s": 0.018616799992742017,
+          "entry_to_app_import_complete_s": 1.574874500001897,
+          "entry_to_mainwindow_constructed_s": 2.4224186000064947,
+          "entry_to_show_return_s": 2.4410485999978846,
+          "entry_to_first_qt_callback_s": 2.443119300005492,
+          "entry_to_first_paint_event_s": 2.445902699997532,
+          "entry_to_post_paint_callback_s": 2.475234099998488,
+          "entry_to_deferred_init_callback_s": 2.516938900007517,
+          "event_loop_enter_to_first_qt_callback_s": 0.0020065999997314066,
+          "event_loop_enter_to_post_paint_callback_s": 0.034121399992727675
+        }
+      ]
+    }
+  },
+  "simulation_smoke": {
+    "before": {
+      "warmups": 1,
+      "runs": [
+        {
+          "app_import_s": 1.711107000010088,
+          "first_mainwindow_paint_s": 2.6156514000031166,
+          "camera_initialized_s": 2.8311825999990106,
+          "camera_frame_displayed_s": 2.83317640000314,
+          "shutdown_complete_s": 2.8602616999996826,
+          "returncode": 0
+        },
+        {
+          "app_import_s": 1.721933099994203,
+          "first_mainwindow_paint_s": 2.672100199997658,
+          "camera_initialized_s": 2.9074440999975195,
+          "camera_frame_displayed_s": 2.9096218000049703,
+          "shutdown_complete_s": 2.9359728999988874,
+          "returncode": 0
+        },
+        {
+          "app_import_s": 1.7029576999921119,
+          "first_mainwindow_paint_s": 2.641032899991842,
+          "camera_initialized_s": 2.8471996000007493,
+          "camera_frame_displayed_s": 2.8492246999958297,
+          "shutdown_complete_s": 2.8737849999888567,
+          "returncode": 0
+        },
+        {
+          "app_import_s": 1.694956599996658,
+          "first_mainwindow_paint_s": 2.632226099987747,
+          "camera_initialized_s": 2.850716899993131,
+          "camera_frame_displayed_s": 2.85265139999683,
+          "shutdown_complete_s": 2.879061899991939,
+          "returncode": 0
+        },
+        {
+          "app_import_s": 1.7172609999979613,
+          "first_mainwindow_paint_s": 2.7216708999912953,
+          "camera_initialized_s": 2.9322581000014907,
+          "camera_frame_displayed_s": 2.9344232000003103,
+          "shutdown_complete_s": 2.9656008000019938,
+          "returncode": 0
+        },
+        {
+          "app_import_s": 1.782258200008073,
+          "first_mainwindow_paint_s": 2.776637800008757,
+          "camera_initialized_s": 2.993166000000201,
+          "camera_frame_displayed_s": 2.995576000001165,
+          "shutdown_complete_s": 3.028010699999868,
+          "returncode": 0
+        },
+        {
+          "app_import_s": 1.7900340000051074,
+          "first_mainwindow_paint_s": 2.7341730000043754,
+          "camera_initialized_s": 2.955793300003279,
+          "camera_frame_displayed_s": 2.9586028000048827,
+          "shutdown_complete_s": 2.9857610000035493,
+          "returncode": 0
+        }
+      ],
+      "medians": {
+        "app_import_s": 1.7172609999979613,
+        "first_mainwindow_paint_s": 2.672100199997658,
+        "camera_initialized_s": 2.9074440999975195,
+        "camera_frame_displayed_s": 2.9096218000049703,
+        "shutdown_complete_s": 2.9359728999988874
+      }
+    },
+    "after": {
+      "warmups": 1,
+      "runs": [
+        {
+          "app_import_s": 1.6240871000045445,
+          "first_mainwindow_paint_s": 2.6223180999950273,
+          "camera_initialized_s": 2.8093948000023374,
+          "camera_frame_displayed_s": 2.811186799997813,
+          "shutdown_complete_s": 2.8280896000069333,
+          "returncode": 0
+        },
+        {
+          "app_import_s": 1.6493770999950357,
+          "first_mainwindow_paint_s": 2.5814816000056453,
+          "camera_initialized_s": 2.7847669000038877,
+          "camera_frame_displayed_s": 2.7913819999957923,
+          "shutdown_complete_s": 2.8311726999963867,
+          "returncode": 0
+        },
+        {
+          "app_import_s": 1.6753002000041306,
+          "first_mainwindow_paint_s": 2.6326822000119137,
+          "camera_initialized_s": 2.730309100006707,
+          "camera_frame_displayed_s": 2.843436399998609,
+          "shutdown_complete_s": 2.874992500001099,
+          "returncode": 0
+        },
+        {
+          "app_import_s": 1.7147507000045152,
+          "first_mainwindow_paint_s": 2.6571374000050128,
+          "camera_initialized_s": 2.865692000006675,
+          "camera_frame_displayed_s": 2.8675243000034243,
+          "shutdown_complete_s": 2.887728400004562,
+          "returncode": 0
+        },
+        {
+          "app_import_s": 1.6332199000025867,
+          "first_mainwindow_paint_s": 2.588098699998227,
+          "camera_initialized_s": 2.798755900003016,
+          "camera_frame_displayed_s": 2.8070670000015525,
+          "shutdown_complete_s": 2.8855915000021923,
+          "returncode": 0
+        },
+        {
+          "app_import_s": 1.6779387999995379,
+          "first_mainwindow_paint_s": 2.626662700000452,
+          "camera_initialized_s": 2.8405435000022408,
+          "camera_frame_displayed_s": 2.8429258999967715,
+          "shutdown_complete_s": 2.8656021999922814,
+          "returncode": 0
+        },
+        {
+          "app_import_s": 1.6504467000049772,
+          "first_mainwindow_paint_s": 2.560219599996344,
+          "camera_initialized_s": 2.764109700001427,
+          "camera_frame_displayed_s": 2.7713808999978937,
+          "shutdown_complete_s": 2.8322848999960115,
+          "returncode": 0
+        }
+      ],
+      "medians": {
+        "app_import_s": 1.6504467000049772,
+        "first_mainwindow_paint_s": 2.6223180999950273,
+        "camera_initialized_s": 2.798755900003016,
+        "camera_frame_displayed_s": 2.811186799997813,
+        "shutdown_complete_s": 2.8656021999922814
+      }
+    }
+  },
+  "modules_removed_from_import": [
+    "_blake2",
+    "_hashlib",
+    "_statistics",
+    "hardware.alignment_worker",
+    "hardware.dummy_edfa",
+    "hardware.dummy_pm5020",
+    "hardware.edfa_gpib",
+    "hardware.ipg_ead2kc",
+    "hardware.pm5020",
+    "hashlib",
+    "logic.ct400_calibration",
+    "logic.edfa_monitor",
+    "logic.pm5020_monitor",
+    "logic.pm5020_trace_export",
+    "logic.simulated_synchronized_acquisition",
+    "logic.simulated_synchronized_archive",
+    "logic.trigger_sync_alignment",
+    "statistics",
+    "ui.alignment_panel",
+    "ui.appearance_dialog",
+    "ui.ct400_calibration_campaign",
+    "ui.ct400_calibration_dialog",
+    "ui.discovery_dialog",
+    "ui.edfa_panel",
+    "ui.pm5020_panel",
+    "ui.shg_synchronized_panel"
+  ],
+  "ui_modules_before": [
+    "ui.alignment_colorbar",
+    "ui.alignment_panel",
+    "ui.appearance_dialog",
+    "ui.application_icons",
+    "ui.camera_widgets",
+    "ui.constants",
+    "ui.control_panel",
+    "ui.ct400_calibration_campaign",
+    "ui.ct400_calibration_dialog",
+    "ui.discovery_dialog",
+    "ui.edfa_panel",
+    "ui.export_dialog_base",
+    "ui.global_status",
+    "ui.log_console",
+    "ui.main_window",
+    "ui.plot_widgets",
+    "ui.pm5020_panel",
+    "ui.power_monitor_export_dialog",
+    "ui.scan_export_dialog",
+    "ui.shg_synchronized_panel",
+    "ui.typography"
+  ],
+  "ui_modules_after": [
+    "ui.alignment_colorbar",
+    "ui.application_icons",
+    "ui.camera_widgets",
+    "ui.constants",
+    "ui.control_panel",
+    "ui.export_dialog_base",
+    "ui.global_status",
+    "ui.log_console",
+    "ui.main_window",
+    "ui.plot_widgets",
+    "ui.power_monitor_export_dialog",
+    "ui.scan_export_dialog",
+    "ui.typography"
+  ],
+  "validation": {
+    "collection": {
+      "total": 1723,
+      "core": 1164,
+      "camera": 223,
+      "plot": 336
+    },
+    "native_campaign": {
+      "complete": true,
+      "exit_code": 0,
+      "stress_cycles": 10,
+      "runs": [
+        {
+          "group": "stress",
+          "number": 1,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "======================== 1 passed, 1 warning in 7.67s =========================",
+          "passed": true
+        },
+        {
+          "group": "core",
+          "number": 1,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "========== 1163 passed, 1 skipped, 225 warnings in 182.24s (0:03:02) ==========",
+          "passed": true
+        },
+        {
+          "group": "camera",
+          "number": 1,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 223 passed, 24 warnings in 43.29s ======================",
+          "passed": true
+        },
+        {
+          "group": "plot",
+          "number": 1,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 336 passed, 14 warnings in 42.28s ======================",
+          "passed": true
+        },
+        {
+          "group": "core",
+          "number": 2,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "========== 1163 passed, 1 skipped, 225 warnings in 165.73s (0:02:45) ==========",
+          "passed": true
+        },
+        {
+          "group": "camera",
+          "number": 2,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 223 passed, 24 warnings in 42.69s ======================",
+          "passed": true
+        },
+        {
+          "group": "plot",
+          "number": 2,
+          "supervisor_returncode": 0,
+          "child_returncode": 0,
+          "timed_out": false,
+          "last_progress": "====================== 336 passed, 14 warnings in 40.60s ======================",
+          "passed": true
+        }
+      ]
+    },
+    "frozen_build_exit": 0,
+    "frozen_cases": [
+      {
+        "case": "simulation",
+        "QT_OPENGL": null,
+        "returncode": 0
+      },
+      {
+        "case": "opengl-auto",
+        "QT_OPENGL": null,
+        "returncode": 0,
+        "render_result": "rendered"
+      },
+      {
+        "case": "opengl-desktop",
+        "QT_OPENGL": "desktop",
+        "returncode": 0,
+        "render_result": "rendered"
+      },
+      {
+        "case": "version",
+        "QT_OPENGL": null,
+        "returncode": 0
+      },
+      {
+        "case": "help",
+        "QT_OPENGL": null,
+        "returncode": 0
+      }
+    ],
+    "sandbox_attempt": {
+      "exit_code": 1,
+      "passed": false,
+      "reason": "CIM identity inspection denied; pytest temporary directory denied before test execution",
+      "manifest_written": false
+    },
+    "static": {
+      "ruff_check_exit": 0,
+      "ruff_format_exit": 0,
+      "pyright_isolated_environment_exit": 0,
+      "git_diff_check_exit": 0
+    }
+  },
+  "local_instrumentation_sha256": {
+    "measure_imports.py": "6274c7114b2b32e82d67944e65eef5fc69be1717e67d851b2b6a4f4d2ef2bf05",
+    "measure_simulation.py": "900473c0fc3156e0f1ecb6186065c144d2bb6cfcc2a892496def5686ac4638a7"
+  }
+}
