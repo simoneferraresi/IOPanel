@@ -788,7 +788,8 @@ class MainWindow(QMainWindow):
 
         # Now that the device exists, pass it to the control panels
         is_configured_simulation = self._ct400_is_configured_simulation() and isinstance(self.ct400_device, DummyCT400)
-        self.control_panel.set_instrument(self.ct400_device, simulated=is_configured_simulation)
+        if self._scan_control_panel is not None:
+            self._scan_control_panel.set_instrument(self.ct400_device, simulated=is_configured_simulation)
         self.histogram_control.set_instrument(self.ct400_device, simulated=is_configured_simulation)
 
         # Update UI visuals based on whether the device is real or dummy
@@ -797,10 +798,11 @@ class MainWindow(QMainWindow):
         # DummyCT400 exposes the same scan interface and is safe to operate in
         # development mode. Keep it unavailable to connection controls, but
         # allow scans and label their results as simulated below.
-        self.control_panel.set_connected_laser_input(None)
+        self._update_scan_connected_laser_input(None)
         self.histogram_control.set_connected_laser_input(None)
         if is_simulated_ct400:
-            self.control_panel.on_instrument_connected(True)
+            if self._scan_control_panel is not None:
+                self._scan_control_panel.on_instrument_connected(True)
             self.histogram_control.on_instrument_connected(True)
 
         if old_device is not None and old_device is not device and isinstance(old_device, CT400):
@@ -843,7 +845,7 @@ class MainWindow(QMainWindow):
         if self._ct400_operation_state is CT400OperationState.IDLE:
             self._ct400_connection_operation_token += 1
             self._ct400_connected_laser_input = None
-            self.control_panel.set_connected_laser_input(None)
+            self._update_scan_connected_laser_input(None)
             self.histogram_control.set_connected_laser_input(None)
             if self._ct400_scan_state_uncertain:
                 if self._ct400_recovery_disconnect_completed:
@@ -1010,7 +1012,7 @@ class MainWindow(QMainWindow):
     def _ct400_device_is_owned(self, device: CT400) -> bool:
         if device is self.ct400_device or device is self._pending_ct400_device_replacement:
             return True
-        for panel in (self.control_panel, self.histogram_control, self._alignment_tab):
+        for panel in (self._scan_control_panel, self.histogram_control, self._alignment_tab):
             if panel is not None and getattr(panel, "ct400", None) is device:
                 return True
         return False
@@ -1189,20 +1191,8 @@ class MainWindow(QMainWindow):
         """Load default values from config into UI elements."""
         logger.debug("Loading UI defaults from configuration...")
         try:
-            if hasattr(self, "control_panel") and self.control_panel:
-                scan_defaults = self.config.scan_defaults
-                self.control_panel.initial_wl.setText(str(scan_defaults.start_wavelength_nm))
-                self.control_panel.final_wl.setText(str(scan_defaults.end_wavelength_nm))
-                self.control_panel.resolution.setText(str(scan_defaults.resolution_pm))
-                self.control_panel.motor_speed.setText(str(scan_defaults.speed_nm_s))
-                self.control_panel.laser_power.setText(str(scan_defaults.laser_power))
-                power_unit_idx = self.control_panel.power_unit.findText(scan_defaults.power_unit)
-                if power_unit_idx != -1:
-                    self.control_panel.power_unit.setCurrentIndex(power_unit_idx)
-                for i in range(self.control_panel.input_port.count()):
-                    if self.control_panel.input_port.itemData(i).value == scan_defaults.input_port:
-                        self.control_panel.input_port.setCurrentIndex(i)
-                        break
+            if self._scan_control_panel is not None:
+                self._load_scan_defaults_from_config()
 
             if hasattr(self, "histogram_control") and self.histogram_control:
                 hist_defaults = self.config.histogram_defaults
@@ -1222,6 +1212,24 @@ class MainWindow(QMainWindow):
         except Exception:
             logger.exception("Error loading defaults from config")
             self.statusBar().showMessage("Error loading defaults from config", 5000)
+
+    def _load_scan_defaults_from_config(self) -> None:
+        panel = self._scan_control_panel
+        if panel is None:
+            return
+        scan_defaults = self.config.scan_defaults
+        panel.initial_wl.setText(str(scan_defaults.start_wavelength_nm))
+        panel.final_wl.setText(str(scan_defaults.end_wavelength_nm))
+        panel.resolution.setText(str(scan_defaults.resolution_pm))
+        panel.motor_speed.setText(str(scan_defaults.speed_nm_s))
+        panel.laser_power.setText(str(scan_defaults.laser_power))
+        power_unit_idx = panel.power_unit.findText(scan_defaults.power_unit)
+        if power_unit_idx != -1:
+            panel.power_unit.setCurrentIndex(power_unit_idx)
+        for i in range(panel.input_port.count()):
+            if panel.input_port.itemData(i).value == scan_defaults.input_port:
+                panel.input_port.setCurrentIndex(i)
+                break
 
     def _init_ui(self):
         """Constructs the main user interface of the application."""
@@ -1536,6 +1544,16 @@ class MainWindow(QMainWindow):
             )
         else:
             panel.set_connected_laser_input(None)
+
+    def _update_scan_connected_laser_input(
+        self,
+        laser_input: LaserInput | None,
+        *,
+        configured_speed_nm_s: int | None = None,
+    ) -> None:
+        panel = self._scan_control_panel
+        if panel is not None:
+            panel.set_connected_laser_input(laser_input, configured_speed_nm_s=configured_speed_nm_s)
 
     def _connect_scan_signals(self) -> None:
         panel = self._scan_control_panel
@@ -2097,7 +2115,7 @@ class MainWindow(QMainWindow):
 
     def _scan_import_is_blocked(self) -> bool:
         """Keep imports blocked until the scan worker lifecycle has fully unwound."""
-        panel = getattr(self, "control_panel", None)
+        panel = self._scan_control_panel
         return (
             getattr(self, "_ct400_operation_state", None) is CT400OperationState.SCANNING
             or bool(getattr(panel, "scanning", False))
@@ -2116,7 +2134,7 @@ class MainWindow(QMainWindow):
         action = getattr(self, "add_scan_action", None)
         if action is not None:
             action.setEnabled(enabled)
-        plot_widget = getattr(self, "plot_widget", None)
+        plot_widget = self._scan_plot_widget
         if plot_widget is not None and hasattr(plot_widget, "load_btn"):
             plot_widget.load_btn.setEnabled(enabled)
 
@@ -2291,7 +2309,7 @@ class MainWindow(QMainWindow):
             self._ct400_connection_configured = False
             self._ct400_connected_laser_input = None
             self._ct400_cleanup_laser_input = None
-            self.control_panel.set_connected_laser_input(None)
+            self._update_scan_connected_laser_input(None)
             self.histogram_control.set_connected_laser_input(None)
             self._update_ct400_visuals(
                 CT400Status.DISCONNECTED,
@@ -2402,8 +2420,8 @@ class MainWindow(QMainWindow):
         elif state is not CT400OperationState.IDLE:
             raise DeviceLeaseError("CT400 must complete its current operation before a new owner may start")
         self._ct400_operation_state = state
-        if hasattr(self, "control_panel") and self.control_panel:
-            self.control_panel.set_ct400_operation_state(state.name)
+        if self._scan_control_panel is not None:
+            self._scan_control_panel.set_ct400_operation_state(state.name)
         if hasattr(self, "histogram_control") and self.histogram_control:
             self.histogram_control.set_ct400_operation_state(state.name)
         if self._alignment_tab:
@@ -2532,7 +2550,7 @@ class MainWindow(QMainWindow):
         self._ct400_connection_configured = True
         self._ct400_recovery_input_matches = True
         self._update_ct400_visuals(state=CT400Status.CONNECTED, message=message)
-        self.control_panel.set_connected_laser_input(
+        self._update_scan_connected_laser_input(
             laser_input, configured_speed_nm_s=self._ct400_connected_speed_nm_s
         )
         self.histogram_control.set_connected_laser_input(laser_input)
@@ -2550,7 +2568,7 @@ class MainWindow(QMainWindow):
         # successfully configured input separately for shutdown cleanup.
         self._ct400_connected_laser_input = None
         self._ct400_connected_speed_nm_s = None
-        self.control_panel.set_connected_laser_input(None)
+        self._update_scan_connected_laser_input(None)
         self.histogram_control.set_connected_laser_input(None)
 
     @Slot(str, int, object)
@@ -2563,7 +2581,7 @@ class MainWindow(QMainWindow):
             return
         self._ct400_connected_laser_input = None
         self._ct400_connected_speed_nm_s = None
-        self.control_panel.set_connected_laser_input(None)
+        self._update_scan_connected_laser_input(None)
         self.histogram_control.set_connected_laser_input(None)
         state = (
             CT400Status.SCAN_STATE_UNCERTAIN if self._ct400_scan_state_uncertain else CT400Status.DISCONNECT_UNCONFIRMED
@@ -2587,7 +2605,7 @@ class MainWindow(QMainWindow):
         if was_scan_uncertain:
             self._ct400_connected_laser_input = None
             self._ct400_recovery_disconnect_completed = True
-            self.control_panel.set_connected_laser_input(None)
+            self._update_scan_connected_laser_input(None)
             self.histogram_control.set_connected_laser_input(None)
             self._update_ct400_visuals(
                 CT400Status.RECOVERY_CONFIRMATION_REQUIRED,
@@ -2604,7 +2622,7 @@ class MainWindow(QMainWindow):
         self._ct400_recovery_disconnect_completed = False
         status_message = message
         self._update_ct400_visuals(state=CT400Status.DISCONNECTED, message=status_message)
-        self.control_panel.set_connected_laser_input(None)
+        self._update_scan_connected_laser_input(None)
         self.histogram_control.set_connected_laser_input(None)
         self._apply_pending_ct400_device_replacement()
 
@@ -2619,7 +2637,7 @@ class MainWindow(QMainWindow):
         self._ct400_connected_speed_nm_s = None
         captured_input = self._ct400_cleanup_laser_input
         self._ct400_recovery_input_matches = captured_input is not None and captured_input is issue.laser_input
-        self.control_panel.set_connected_laser_input(None)
+        self._update_scan_connected_laser_input(None)
         self.histogram_control.set_connected_laser_input(None)
         if captured_input is None:
             input_detail = "The Connect input is unknown; use the approved laboratory safe-state procedure."
@@ -3114,7 +3132,10 @@ class MainWindow(QMainWindow):
         if self._shutdown_complete:
             event.accept()
             return
-        self.plot_widget.prepare_shutdown()
+        if self._scan_plot_widget is not None:
+            self._scan_plot_widget.prepare_shutdown()
+        else:
+            self.matlab_engine_manager.shutdown()
         # A paused/checkpoint campaign still owns the scan panel even if no scan
         # thread exists. Defer all native cleanup until its final record is
         # committed and the CT400 reservation is released.
@@ -3137,16 +3158,19 @@ class MainWindow(QMainWindow):
             self._shutdown_panels_requested = True
             self._save_ui_preferences()
             self.histogram_control.shutdown_complete.connect(self._resume_close_after_monitor_retirement)
-            self.plot_widget.shutdown_complete.connect(self._resume_close_after_monitor_retirement)
-            self.plot_widget.shutdown_failed.connect(self._report_matlab_shutdown_failure)
+            if self._scan_plot_widget is not None:
+                self._scan_plot_widget.shutdown_complete.connect(self._resume_close_after_monitor_retirement)
+                self._scan_plot_widget.shutdown_failed.connect(self._report_matlab_shutdown_failure)
             self._cleanup_shutdown_panel_workers()
         if not self.histogram_control.shutdown_finished:
             event.ignore()
             self.statusBar().showMessage("Waiting for power monitor worker retirement…", 0)
             return
-        if not self.plot_widget.shutdown_finished:
+        if not self.matlab_engine_manager.shutdown_finished or (
+            self._scan_plot_widget is not None and not self._scan_plot_widget.shutdown_finished
+        ):
             event.ignore()
-            if self.plot_widget.matlab_engine_manager.state is MatlabEngineState.SHUTDOWN_FAILED:
+            if self.matlab_engine_manager.state is MatlabEngineState.SHUTDOWN_FAILED:
                 self.statusBar().showMessage("MATLAB shutdown failed; native ownership is retained.", 0)
             else:
                 self.statusBar().showMessage("Waiting for MATLAB export/startup and Engine cleanup…", 0)
@@ -3215,10 +3239,10 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Waiting for the scan file reader to finish before closing…", 0)
             return True
 
-        if self.plot_widget.scan_export_busy:
+        if self._scan_plot_widget is not None and self._scan_plot_widget.scan_export_busy:
             event.ignore()
             self._pending_scan_export_close = True
-            self.plot_widget.request_scan_export_close()
+            self._scan_plot_widget.request_scan_export_close()
             self.statusBar().showMessage("Waiting for scan data file writing to complete before closing…", 0)
             return True
 
@@ -3297,8 +3321,8 @@ class MainWindow(QMainWindow):
         if hasattr(self, "histogram_control") and self.histogram_control:
             self.histogram_control.cleanup_worker_thread()
 
-        if hasattr(self, "plot_widget") and self.plot_widget:
-            self.plot_widget.cleanup()
+        if self._scan_plot_widget is not None:
+            self._scan_plot_widget.cleanup()
 
     def _disconnect_piezos_for_shutdown(self) -> None:
         """Best-effort piezo cleanup with independent failure boundaries."""
@@ -3361,7 +3385,10 @@ class MainWindow(QMainWindow):
         if self.log_console_dock.isFloating():
             self.settings.set_log_console_geometry(self.log_console_dock.saveGeometry())
         self.settings.set_log_console_level(self.log_console.level_filter.currentText())
-        self.settings.set_scan_detectors([detector.value for detector in self.control_panel._selected_scan_detectors()])
+        if self._scan_control_panel is not None:
+            self.settings.set_scan_detectors(
+                [detector.value for detector in self._scan_control_panel._selected_scan_detectors()]
+            )
         pm5020_panel = getattr(self, "_pm5020_panel", None)
         if pm5020_panel is not None:
             pm5020_panel.save_preferences(self.settings)
@@ -3402,23 +3429,9 @@ class MainWindow(QMainWindow):
 
     def _connect_signals(self):
         """Connects signals between different components of the application."""
-        if getattr(self, "plot_widget", None) is not None:
-            self.plot_widget.open_scan_requested.connect(self._open_scan_file)
-            self.plot_widget.add_scan_requested.connect(self._add_scan_to_plot)
-            self.plot_widget.scan_export_idle.connect(self._resume_close_after_scan_export)
-            self.matlab_engine_manager.state_changed.connect(self._refresh_global_status)
-            self._refresh_global_status()
-
-        if hasattr(self, "control_panel") and self.control_panel:
-            logger.debug("Connecting control_panel signals")
-            self.control_panel.set_lease_start_authorizer(self._ct400_lease_available_for_new_operation)
-            self.control_panel.scan_data_ready.connect(self._handle_scan_data)
-            self.control_panel.operation_started.connect(self._handle_ct400_scan_started)
-            self.control_panel.operation_finished.connect(self._handle_ct400_scan_finished)
-            self.control_panel.scan_safety_uncertain.connect(self._handle_ct400_scan_safety_uncertain)
-            self.control_panel.scan_warning.connect(lambda message: self.statusBar().showMessage(message, 10000))
-        else:
-            logger.warning("CT400 Control Panel not initialized, skipping signal connection.")
+        # Scan connections are installed when the Wavelength Scan view is first built.
+        self.matlab_engine_manager.state_changed.connect(self._refresh_global_status)
+        self._refresh_global_status()
 
         if hasattr(self, "histogram_control") and self.histogram_control:
             logger.debug("Connecting histogram_control signals")
