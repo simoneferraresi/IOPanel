@@ -63,7 +63,7 @@ from logic.scan_import import ImportedScan
 from logic.scan_measurement import ScanMeasurement
 from logic.scan_settings import ScanSettings
 from logic.task_runner import TaskRunner
-from ui.alignment_colorbar import ColorBarWidget  # Backward-compatible public re-export.
+from ui.alignment_colorbar import ColorBarWidget as ColorBarWidget  # Public compatibility re-export.
 from ui.power_monitor_export_dialog import PowerMonitorExportDialog
 from ui.scan_export_dialog import ScanExportDialog
 from ui.typography import make_font, pyqtgraph_title_style

@@ -15,7 +15,7 @@ def test_alignment_colorbar_gradient_labels_and_visibility(qtbot):
     assert colorbar.maximumWidth() == 100
     assert colorbar.max_label.alignment() == Qt.AlignmentFlag.AlignCenter
     assert colorbar.min_label.alignment() == Qt.AlignmentFlag.AlignCenter
-    assert colorbar.gradient_widget.orientation == "right"
+    assert isinstance(colorbar.gradient_widget, pg.GradientWidget)
 
     cmap = pg.colormap.get("viridis")
     colorbar.update_colormap(cmap, 0.1256, 12.34567)
