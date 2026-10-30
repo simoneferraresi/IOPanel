@@ -362,7 +362,7 @@ class MainWindow(QMainWindow):
             self.main_splitter.setSizes(saved_sizes)
         # The laboratory workflow always begins with Power Monitor.
         # Ignore stored tab selection, including older legacy QSettings keys.
-        self._restore_scan_detectors_if_constructed()
+        MainWindow._restore_scan_detectors_if_constructed(self)
 
     def _restore_scan_detectors_if_constructed(self) -> None:
         panel = getattr(self, "_scan_control_panel", None)
@@ -1481,8 +1481,12 @@ class MainWindow(QMainWindow):
             current = self.tab_widget.currentIndex()
             label = self.tab_widget.tabText(index)
             with QSignalBlocker(self.tab_widget):
-                self.tab_widget.removeTab(index)
+                # Inserting before removal avoids briefly activating the next
+                # inactive tab (whose showEvent might initialize 3D OpenGL).
                 self.tab_widget.insertTab(index, panel, label)
+                if current == index:
+                    self.tab_widget.setCurrentIndex(index)
+                self.tab_widget.removeTab(index + 1)
                 self.tab_widget.setCurrentIndex(current)
             self._lazy_tab_placeholders.pop(index)
             placeholder.deleteLater()
