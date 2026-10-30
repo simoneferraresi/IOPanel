@@ -365,7 +365,7 @@ class MainWindow(QMainWindow):
         self._restore_scan_detectors_if_constructed()
 
     def _restore_scan_detectors_if_constructed(self) -> None:
-        panel = self._scan_control_panel
+        panel = getattr(self, "_scan_control_panel", None)
         if panel is None:
             return
         saved_detectors = set(self.settings.scan_detectors())
@@ -2959,7 +2959,7 @@ class MainWindow(QMainWindow):
     def _handle_scan_data(self, measurement):
         logger.debug(f"Received scan measurement. Wavelength points: {len(measurement.wavelengths_nm)}")
 
-        if self.plot_widget and hasattr(self.plot_widget, "set_measurement"):
+        if self._scan_plot_widget is not None and hasattr(self._scan_plot_widget, "set_measurement"):
             try:
                 self.plot_widget.set_measurement(measurement)
                 if isinstance(self.ct400_device, DummyCT400):
@@ -3213,7 +3213,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Closing PM5020 safely before application shutdown…", 0)
             pm5020_panel.request_shutdown()
             return True
-        scan_panel = getattr(self, "control_panel", None)
+        scan_panel = self._scan_control_panel
         scan_thread = getattr(scan_panel, "scan_thread", None)
         try:
             scan_active = scan_thread is not None and scan_thread.isRunning()

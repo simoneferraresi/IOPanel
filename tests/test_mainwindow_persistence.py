@@ -66,7 +66,7 @@ def test_mainwindow_restores_and_saves_preferences_without_hardware_operations(t
         _pm5020_panel=SimpleNamespace(save_preferences=lambda target: pm5020_save_calls.append(target)),
         main_splitter=splitter,
         tab_widget=tabs,
-        control_panel=SimpleNamespace(
+        _scan_control_panel=SimpleNamespace(
             scan_detector_cbs=checkboxes,
             _selected_scan_detectors=lambda: [Detector.DE_1, Detector.DE_3, Detector.DE_4],
         ),
@@ -141,7 +141,7 @@ def test_mainwindow_restore_preferences_falls_back_for_invalid_tab_and_splitter(
         settings=settings,
         main_splitter=splitter,
         tab_widget=tabs,
-        control_panel=SimpleNamespace(scan_detector_cbs=checkboxes),
+        _scan_control_panel=SimpleNamespace(scan_detector_cbs=checkboxes),
         restored_geometry=None,
         restoreGeometry=lambda geometry: setattr(window, "restored_geometry", geometry) or False,
     )
