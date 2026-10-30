@@ -118,6 +118,9 @@ def test_mainwindow_edfa_tab_does_not_autoconnect_even_if_configured_physical(qt
     settings = AppSettings(QSettings(str(tmp_path / "prefs.ini"), QSettings.Format.IniFormat))
     window = MainWindow(config, settings=settings)
     qtbot.addWidget(window)
+    assert window._edfa_panel is None
+    assert window.tab_widget.widget(4).objectName() == "DeferredTab4"
+    window.tab_widget.setCurrentIndex(4)
     assert window.tab_widget.widget(4) is window.edfa_panel
     assert window.tab_widget.tabText(4) == "IPG EDFA"
     assert window.edfa_panel.backend_mode == "physical"

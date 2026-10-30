@@ -63,7 +63,7 @@ def test_mainwindow_restores_and_saves_preferences_without_hardware_operations(t
     splitter = Splitter()
     window = SimpleNamespace(
         settings=settings,
-        pm5020_panel=SimpleNamespace(save_preferences=lambda target: pm5020_save_calls.append(target)),
+        _pm5020_panel=SimpleNamespace(save_preferences=lambda target: pm5020_save_calls.append(target)),
         main_splitter=splitter,
         tab_widget=tabs,
         control_panel=SimpleNamespace(

@@ -988,8 +988,7 @@ class MainWindow(QMainWindow):
     def _ct400_device_is_owned(self, device: CT400) -> bool:
         if device is self.ct400_device or device is self._pending_ct400_device_replacement:
             return True
-        for panel_name in ("control_panel", "histogram_control", "alignment_tab"):
-            panel = getattr(self, panel_name, None)
+        for panel in (self.control_panel, self.histogram_control, self._alignment_tab):
             if panel is not None and getattr(panel, "ct400", None) is device:
                 return True
         return False
@@ -1671,17 +1670,25 @@ class MainWindow(QMainWindow):
             else:
                 camera_states.append(CameraStatus.UNAVAILABLE)
         self._render_status_label(self.cameras_status_label, format_cameras_status(camera_states))
-        panel = getattr(self, "_pm5020_panel", None)
+        panel = self._pm5020_panel
         if panel is not None:
-            self._render_status_label(
-                self.pm5020_status_label,
-                format_pm5020_status(
-                    panel._backend_state,
-                    activity=panel._activity,
-                    simulated=panel.backend_mode == "simulation",
-                    resource=panel.resource_name,
-                ),
+            state, activity, simulated, resource = (
+                panel._backend_state,
+                panel._activity,
+                panel.backend_mode == "simulation",
+                panel.resource_name,
             )
+        else:
+            state, activity, simulated, resource = (
+                PM5020State.DISCONNECTED,
+                "",
+                self.config.instruments.pm5020_backend == "simulation",
+                self.config.instruments.pm5020_resource_name,
+            )
+        self._render_status_label(
+            self.pm5020_status_label,
+            format_pm5020_status(state, activity=activity, simulated=simulated, resource=resource),
+        )
         self._render_status_label(
             self.matlab_status_label, format_matlab_status(self.plot_widget.matlab_engine_manager.state)
         )
