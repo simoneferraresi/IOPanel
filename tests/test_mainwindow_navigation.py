@@ -77,7 +77,6 @@ def test_deferred_panels_initialize_once_and_reuse_same_instance(qtbot, monkeypa
     window.close()
 
 
-
 def test_menu_order_and_action_placement(qtbot, monkeypatch, tmp_path):
     settings = AppSettings(QSettings(str(tmp_path / "menus.ini"), QSettings.Format.IniFormat))
     window = _make_window(qtbot, monkeypatch, settings)
