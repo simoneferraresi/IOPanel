@@ -312,7 +312,6 @@ class MainWindow(QMainWindow):
             parent=self,
         )
         self.matlab_engine_manager.state_changed.connect(self._refresh_global_status)
-        self.matlab_engine_manager.shutdown_complete.connect(self._resume_close_after_monitor_retirement)
         self.matlab_engine_manager.shutdown_failed.connect(self._report_matlab_shutdown_failure)
         self._pm5020_panel: PM5020Panel | None = None
         self._pending_pm5020_close = False
@@ -3143,6 +3142,11 @@ class MainWindow(QMainWindow):
             self.histogram_control.shutdown_complete.connect(self._resume_close_after_monitor_retirement)
             if plot is not None:
                 plot.shutdown_complete.connect(self._resume_close_after_monitor_retirement)
+            else:
+                # Install only after deferrals (camera recovery, active hardware,
+                # etc.) have completed. An early synchronous MATLAB completion
+                # must not queue a redundant close during another owner.
+                self.matlab_engine_manager.shutdown_complete.connect(self._resume_close_after_monitor_retirement)
             self._cleanup_shutdown_panel_workers()
         if not self.histogram_control.shutdown_finished:
             event.ignore()
