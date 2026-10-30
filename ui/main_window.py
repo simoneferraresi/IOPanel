@@ -1704,9 +1704,7 @@ class MainWindow(QMainWindow):
             self.pm5020_status_label,
             format_pm5020_status(state, activity=activity, simulated=simulated, resource=resource),
         )
-        self._render_status_label(
-            self.matlab_status_label, format_matlab_status(self.matlab_engine_manager.state)
-        )
+        self._render_status_label(self.matlab_status_label, format_matlab_status(self.matlab_engine_manager.state))
         self._render_status_label(self.activity_status_label, format_activity_status(self._ct400_operation_state))
 
     @Slot()
