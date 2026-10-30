@@ -56,7 +56,7 @@ from hardware.piezo import PiezoController
 from hardware.piezo_init_worker import PiezoInitWorker
 from hardware.pm5020_types import PM5020State
 from logic.device_lease_registry import DeviceLease, DeviceLeaseError, DeviceLeaseRegistry, DeviceResource
-from logic.matlab_engine_manager import MatlabEngineState
+from logic.matlab_engine_manager import MatlabEngineManager, MatlabEngineState
 from logic.scan_import import load_scan
 from logic.scan_import_worker import ScanImportOutcome, ScanImportWorker
 from logic.scan_settings import ScanSettings
@@ -116,7 +116,13 @@ from ui.control_panel import (
     ScanSafetyIssue,
 )
 from ui.log_console import LogConsole
-from ui.plot_widgets import HistogramWidget, PlotWidget, PowerMonitorTraceWidget
+from ui.plot_widgets import (
+    MATLAB_ENGINE_AVAILABLE,
+    HistogramWidget,
+    PlotWidget,
+    PowerMonitorTraceWidget,
+    _start_matlab_for_plot,
+)
 from ui.pm5020_panel import PM5020Panel
 from ui.shg_synchronized_panel import SimulatedSHGPanel
 
@@ -304,6 +310,13 @@ class MainWindow(QMainWindow):
         self._shg_tab: SimulatedSHGPanel | None = None
         self._lazy_tab_placeholders: dict[int, QWidget] = {}
         self._constructing_lazy_tab = False
+        # MATLAB prewarm belongs to the window lifecycle, independently of
+        # whether Wavelength Scan is currently selected or even constructed.
+        self.matlab_engine_manager = MatlabEngineManager(
+            available=MATLAB_ENGINE_AVAILABLE,
+            start_engine=_start_matlab_for_plot if MATLAB_ENGINE_AVAILABLE else None,
+            parent=self,
+        )
         self._pending_edfa_close = False
         self._ct400_error_reset_timer = QTimer(self)
         self._ct400_error_reset_timer.setSingleShot(True)
@@ -1247,7 +1260,9 @@ class MainWindow(QMainWindow):
         self.first_tab = QWidget()
         first_tab_layout = QHBoxLayout(self.first_tab)
         self.control_panel = CT400ControlPanel(self.shared_scan_settings, None, self.config)
-        self.plot_widget = PlotWidget(self.shared_scan_settings, settings=self.settings)
+        self.plot_widget = PlotWidget(
+            self.shared_scan_settings, settings=self.settings, matlab_engine_manager=self.matlab_engine_manager
+        )
         first_tab_layout.addWidget(self.control_panel, stretch=0)
         first_tab_layout.addWidget(self.plot_widget, stretch=1)
         # The scan widgets are constructed first for dependency compatibility,
@@ -1690,7 +1705,7 @@ class MainWindow(QMainWindow):
             format_pm5020_status(state, activity=activity, simulated=simulated, resource=resource),
         )
         self._render_status_label(
-            self.matlab_status_label, format_matlab_status(self.plot_widget.matlab_engine_manager.state)
+            self.matlab_status_label, format_matlab_status(self.matlab_engine_manager.state)
         )
         self._render_status_label(self.activity_status_label, format_activity_status(self._ct400_operation_state))
 
@@ -3255,7 +3270,7 @@ class MainWindow(QMainWindow):
         self._pending_camera_lifecycle_close = False
         self._pending_piezo_operation_close = False
         try:
-            self.plot_widget.matlab_engine_manager.state_changed.disconnect(self._refresh_global_status)
+            self.matlab_engine_manager.state_changed.disconnect(self._refresh_global_status)
         except (AttributeError, RuntimeError, TypeError):
             pass
         self.log_console.stop_updates()
@@ -3319,7 +3334,7 @@ class MainWindow(QMainWindow):
             self.plot_widget.open_scan_requested.connect(self._open_scan_file)
             self.plot_widget.add_scan_requested.connect(self._add_scan_to_plot)
             self.plot_widget.scan_export_idle.connect(self._resume_close_after_scan_export)
-            self.plot_widget.matlab_engine_manager.state_changed.connect(self._refresh_global_status)
+            self.matlab_engine_manager.state_changed.connect(self._refresh_global_status)
             self._refresh_global_status()
 
         if hasattr(self, "control_panel") and self.control_panel:
