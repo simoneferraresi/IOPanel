@@ -62,6 +62,7 @@ from logic.scan_import_worker import ScanImportOutcome, ScanImportWorker
 from logic.scan_settings import ScanSettings
 from logic.synchronized_owner_leases import SynchronizedOwnerLeases
 from logic.task_runner import TaskRunner
+from ui import plot_widgets as scan_plots
 from ui.alignment_panel import AlignmentPanel
 from ui.appearance_dialog import AppearanceDialog
 from ui.application_icons import application_icon
@@ -117,7 +118,6 @@ from ui.control_panel import (
 )
 from ui.log_console import LogConsole
 from ui.plot_widgets import (
-    MATLAB_ENGINE_AVAILABLE,
     HistogramWidget,
     PlotWidget,
     PowerMonitorTraceWidget,
@@ -313,8 +313,8 @@ class MainWindow(QMainWindow):
         # MATLAB prewarm belongs to the window lifecycle, independently of
         # whether Wavelength Scan is currently selected or even constructed.
         self.matlab_engine_manager = MatlabEngineManager(
-            available=MATLAB_ENGINE_AVAILABLE,
-            start_engine=_start_matlab_for_plot if MATLAB_ENGINE_AVAILABLE else None,
+            available=scan_plots.MATLAB_ENGINE_AVAILABLE,
+            start_engine=_start_matlab_for_plot if scan_plots.MATLAB_ENGINE_AVAILABLE else None,
             parent=self,
         )
         self._pending_edfa_close = False
