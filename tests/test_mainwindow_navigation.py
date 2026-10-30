@@ -94,6 +94,65 @@ def test_shg_lazily_brings_up_only_its_pm5020_dependency(qtbot, monkeypatch, tmp
     window.close()
 
 
+@pytest.mark.parametrize(
+    "index,module_name,attribute",
+    [
+        (2, "ui.alignment_panel", "_alignment_tab"),
+        (3, "ui.pm5020_panel", "_pm5020_panel"),
+        (4, "ui.edfa_panel", "_edfa_panel"),
+        (5, "ui.shg_synchronized_panel", "_shg_tab"),
+    ],
+)
+def test_deferred_panel_import_failure_can_retry(qtbot, monkeypatch, tmp_path, index, module_name, attribute):
+    import builtins
+
+    window = _make_window(
+        qtbot, monkeypatch, AppSettings(QSettings(str(tmp_path / "retry.ini"), QSettings.Format.IniFormat))
+    )
+    placeholder = window.tab_widget.widget(index)
+    original_import = builtins.__import__
+
+    def fail_import(name, *args, **kwargs):
+        if name == module_name:
+            raise ImportError("injected deferred import failure")
+        return original_import(name, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(builtins, "__import__", fail_import)
+        with pytest.raises(ImportError, match="injected deferred import failure"):
+            window._ensure_lazy_tab(index)
+    assert window.tab_widget.widget(index) is placeholder
+    assert getattr(window, attribute) is None
+    assert not window._constructing_lazy_tab
+    window._ensure_lazy_tab(index)
+    panel = getattr(window, attribute)
+    assert panel is not None and panel is window.tab_widget.widget(index)
+    window._ensure_lazy_tab(index)
+    assert getattr(window, attribute) is panel
+    window.close()
+
+
+def test_shutdown_does_not_import_unvisited_panels(qtbot, monkeypatch, tmp_path):
+    import builtins
+
+    window = _make_window(
+        qtbot, monkeypatch, AppSettings(QSettings(str(tmp_path / "closed.ini"), QSettings.Format.IniFormat))
+    )
+    window.close()
+    assert window._shutdown_requested
+    original_import = builtins.__import__
+
+    def forbid_panel_import(name, *args, **kwargs):
+        if name in {"ui.alignment_panel", "ui.pm5020_panel", "ui.edfa_panel", "ui.shg_synchronized_panel"}:
+            pytest.fail(f"Panel imported during shutdown: {name}")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", forbid_panel_import)
+    for index in range(1, 6):
+        window._ensure_lazy_tab(index)
+    assert window._alignment_tab is window._pm5020_panel is window._edfa_panel is window._shg_tab is None
+
+
 def test_scan_tab_constructs_once_and_shares_matlab_manager(qtbot, monkeypatch, tmp_path):
     settings = AppSettings(QSettings(str(tmp_path / "scan-on-demand.ini"), QSettings.Format.IniFormat))
     window = _make_window(qtbot, monkeypatch, settings)

@@ -23,7 +23,7 @@ import sys
 import time
 import weakref
 from enum import Enum, auto
-from typing import override
+from typing import TYPE_CHECKING, cast, override
 
 from PySide6 import QtGui, QtWidgets
 from PySide6.QtCore import QObject, QRunnable, QSignalBlocker, QSize, Qt, QThreadPool, QTimer, Signal, Slot
@@ -62,13 +62,7 @@ from logic.scan_import_worker import ScanImportOutcome, ScanImportWorker
 from logic.scan_settings import ScanSettings
 from logic.synchronized_owner_leases import SynchronizedOwnerLeases
 from logic.task_runner import TaskRunner
-from ui.alignment_panel import AlignmentPanel
-from ui.appearance_dialog import AppearanceDialog
 from ui.application_icons import application_icon
-from ui.ct400_calibration_campaign import CT400SupervisedCampaignDialog
-from ui.ct400_calibration_dialog import CT400CalibrationDialog
-from ui.discovery_dialog import CameraDiscoveryDialog
-from ui.edfa_panel import EDFAReadOnlyPanel
 from ui.global_status import (
     CameraStatus,
     format_activity_status,
@@ -117,8 +111,13 @@ from ui.control_panel import (
 )
 from ui.log_console import LogConsole
 from ui.plot_widgets import HistogramWidget, PlotWidget, PowerMonitorTraceWidget
-from ui.pm5020_panel import PM5020Panel
-from ui.shg_synchronized_panel import SimulatedSHGPanel
+
+if TYPE_CHECKING:
+    from ui.alignment_panel import AlignmentPanel
+    from ui.ct400_calibration_campaign import CT400SupervisedCampaignDialog
+    from ui.edfa_panel import EDFAReadOnlyPanel
+    from ui.pm5020_panel import PM5020Panel
+    from ui.shg_synchronized_panel import SimulatedSHGPanel
 
 logger = logging.getLogger("LabApp.main_window")
 
@@ -1443,6 +1442,8 @@ class MainWindow(QMainWindow):
         Replacing the placeholder never changes tab indices. Qt signals are
         blocked only during tab replacement, avoiding recursive initialization.
         Shared hardware owners remain on MainWindow and are not recreated.
+        Imports follow the same per-tab boundary; dispatch by index below so
+        registering one panel never needs to import its inactive siblings.
         """
         if index not in self._lazy_tab_placeholders or self._constructing_lazy_tab:
             return
@@ -1470,8 +1471,12 @@ class MainWindow(QMainWindow):
                 layout.addWidget(scan_plot, stretch=1)
                 panel = container
             elif index == 2:
+                from ui.alignment_panel import AlignmentPanel
+
                 panel = AlignmentPanel(None, None, None, self)
             elif index == 3:
+                from ui.pm5020_panel import PM5020Panel
+
                 panel = PM5020Panel(
                     self,
                     backend_mode=self.config.instruments.pm5020_backend,
@@ -1485,6 +1490,8 @@ class MainWindow(QMainWindow):
                 panel.shutdown_complete.connect(self._resume_close_after_pm5020)
                 panel.shutdown_timeout.connect(lambda message: self.statusBar().showMessage(message, 0))
             elif index == 4:
+                from ui.edfa_panel import EDFAReadOnlyPanel
+
                 edfa_options = self.config.instruments
                 panel = EDFAReadOnlyPanel(
                     self,
@@ -1499,6 +1506,8 @@ class MainWindow(QMainWindow):
                 panel.connection_status_changed.connect(self._on_edfa_connection_status_changed)
                 panel.observations_changed.connect(self._on_edfa_observations_changed)
             elif index == 5:
+                from ui.shg_synchronized_panel import SimulatedSHGPanel
+
                 panel = SimulatedSHGPanel(self)
             else:
                 return
@@ -1525,22 +1534,22 @@ class MainWindow(QMainWindow):
                 self._connect_scan_signals()
                 self._synchronize_new_scan_panel()
                 self._update_scan_import_actions()
-            elif isinstance(panel, AlignmentPanel):
-                self._alignment_tab = panel
-                panel.operation_started.connect(self._handle_alignment_operation_started)
-                panel.operation_finished.connect(self._handle_alignment_operation_finished)
-                panel.set_ct400_operation_state(self._ct400_operation_state.name)
+            elif index == 2:
+                alignment_panel = cast("AlignmentPanel", panel)
+                self._alignment_tab = alignment_panel
+                alignment_panel.operation_started.connect(self._handle_alignment_operation_started)
+                alignment_panel.operation_finished.connect(self._handle_alignment_operation_finished)
+                alignment_panel.set_ct400_operation_state(self._ct400_operation_state.name)
                 self._sync_alignment_hardware()
-            elif isinstance(panel, PM5020Panel):
-                self._pm5020_panel = panel
+            elif index == 3:
+                self._pm5020_panel = cast("PM5020Panel", panel)
                 self._update_pm5020_action()
                 self._refresh_global_status()
-            elif isinstance(panel, EDFAReadOnlyPanel):
-                self._edfa_panel = panel
+            elif index == 4:
+                self._edfa_panel = cast("EDFAReadOnlyPanel", panel)
                 self._update_edfa_action()
             else:
-                assert isinstance(panel, SimulatedSHGPanel)
-                self._shg_tab = panel
+                self._shg_tab = cast("SimulatedSHGPanel", panel)
         except Exception:
             logger.exception("Could not construct deferred tab %d", index)
             # A constructor failure leaves the placeholder selected, and a
@@ -1576,6 +1585,8 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _show_appearance_dialog(self) -> None:
+        from ui.appearance_dialog import AppearanceDialog
+
         dialog = AppearanceDialog(self._application_icon_id, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._select_application_icon(dialog.selected_icon_id)
@@ -1919,6 +1930,8 @@ class MainWindow(QMainWindow):
     @Slot()
     def _show_ct400_calibration(self) -> None:
         """Open calibration planning without claiming or operating the instrument."""
+        from ui.ct400_calibration_dialog import CT400CalibrationDialog
+
         enabled_detectors = tuple(
             detector.name for detector, checkbox in self.control_panel.scan_detector_cbs.items() if checkbox.isChecked()
         )
@@ -1934,6 +1947,8 @@ class MainWindow(QMainWindow):
             dialog.raise_()
             dialog.activateWindow()
             return
+        from ui.ct400_calibration_campaign import CT400SupervisedCampaignDialog
+
         dialog = CT400SupervisedCampaignDialog(self)
         self._ct400_campaign_dialog = dialog
         dialog.finished.connect(lambda _result: self._on_ct400_supervised_campaign_closed(dialog))
@@ -2205,6 +2220,8 @@ class MainWindow(QMainWindow):
             return
 
         try:
+            from ui.discovery_dialog import CameraDiscoveryDialog
+
             dialog = CameraDiscoveryDialog(self)
             dialog.exec()
         except Exception as e:
