@@ -1505,7 +1505,7 @@ class MainWindow(QMainWindow):
                 self._alignment_tab = panel
                 panel.operation_started.connect(self._handle_alignment_operation_started)
                 panel.operation_finished.connect(self._handle_alignment_operation_finished)
-                panel.set_ct400_operation_state(self._ct400_operation_state.name)
+                panel.set_ct400_operation_state(self._current_ct400_display_operation())
                 self._sync_alignment_hardware()
             elif isinstance(panel, PM5020Panel):
                 self._pm5020_panel = panel
@@ -1531,6 +1531,13 @@ class MainWindow(QMainWindow):
         finally:
             self._constructing_lazy_tab = False
 
+    def _current_ct400_display_operation(self) -> str:
+        """Reflect an already reserved synchronized simulation in late-built views."""
+        shg = self._shg_tab
+        if shg is not None and shg._request is not None:
+            return "SYNCHRONIZED"
+        return self._ct400_operation_state.name
+
     def _bind_existing_scan_hardware(self) -> None:
         """Replay hardware state without issuing any instrument commands."""
         panel = self._scan_control_panel
@@ -1538,7 +1545,7 @@ class MainWindow(QMainWindow):
             return
         simulated = self._ct400_is_configured_simulation() and isinstance(self.ct400_device, DummyCT400)
         panel.set_instrument(self.ct400_device, simulated=simulated)
-        panel.set_ct400_operation_state(self._ct400_operation_state.name)
+        panel.set_ct400_operation_state(self._current_ct400_display_operation())
         if simulated:
             panel.on_instrument_connected(True)
         elif self.is_ct400_connected_state and self._ct400_connected_laser_input is not None:
