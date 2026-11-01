@@ -20,9 +20,12 @@ def test_application_import_does_not_eagerly_load_scipy_io():
         "'SciPy MAT IO imported during app import'\n"
         "assert 'TLPMX' not in sys.modules, "
         "'Thorlabs wrapper imported during app import'\n"
-        "assert 'logic.scan_import' in sys.modules\n"
-        "assert 'logic.scan_export_worker' in sys.modules\n"
-        "assert 'logic.power_monitor_export_worker' in sys.modules\n"
+        "assert 'ui.main_window' not in sys.modules\n"
+        "assert 'ui.plot_widgets' not in sys.modules\n"
+        "assert 'pyqtgraph' not in sys.modules\n"
+        "assert 'numpy' not in sys.modules\n"
+        "assert 'matlab.engine' not in sys.modules\n"
+        "assert 'logic.scan_import' not in sys.modules\n"
     )
     env = os.environ.copy()
     env["QT_QPA_PLATFORM"] = "offscreen"

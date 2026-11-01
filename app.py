@@ -30,7 +30,6 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from app_settings import AppSettings
 from config_model import AppConfig, ConfigSemanticError
 from ui.log_console import install_log_handler
-from ui.main_window import MainWindow
 from ui.typography import install_application_fonts
 
 # Application Metadata
@@ -38,6 +37,27 @@ APP_NAME = "IOPanel"
 APP_VERSION = "0.3.0"
 DEFAULT_LOG_FILE = Path("lab_app.log")
 DEFAULT_CONFIG_FILE = Path("config.ini")
+
+
+def _get_main_window_type():
+    """Resolve the full GUI only when startup actually needs it.
+
+    The guarded legacy app.MainWindow attribute remains accessible to existing
+    benchmarks and tooling, but the normal app import cannot pull in PyQtGraph,
+    NumPy or the optional vendor SDKs before the first startup window.
+    """
+    patched = globals().get("MainWindow")
+    if patched is not None:
+        return patched
+    from ui.main_window import MainWindow
+
+    return MainWindow
+
+
+def __getattr__(name: str):
+    if name == "MainWindow":
+        return _get_main_window_type()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def is_frozen() -> bool:
@@ -370,25 +390,37 @@ def main() -> int:
         if args.smoke_opengl_test:
             return run_frozen_opengl_smoke(app, log_file_path, logger)
 
-        window = MainWindow(
-            config=app_config, settings=create_application_settings(smoke_test=args.smoke_test, log_file=log_file_path)
-        )
-        window.log_console.log_file = log_file_path
-        window.show()
-        if args.smoke_test:
+        # Only the simulator smoke path creates the full GUI synchronously.
+        # Ordinary launches display a lightweight, responsive Qt window first,
+        # then load the large UI module graph on a one-shot worker thread.
+        from PySide6.QtCore import QTimer
 
-            def close_smoke_with_code(code: int) -> None:
-                # app.exit() must follow accepted asynchronous window close;
-                # otherwise its event loop abandons worker retirement callbacks.
-                app.setQuitOnLastWindowClosed(False)
-                window.shutdown_complete.connect(lambda: QTimer.singleShot(0, lambda: app.exit(code)))
-                window.close()
+        # Keep a Python owner for the top-level QWidget throughout app.exec().
+        # Otherwise the local window can be destroyed as soon as the asynchronous
+        # on_loaded callback returns, even though its native widget was shown.
+        window = None
 
-            def close_when_initialized():
-                if not window._lazy_init_started or window._init_tasks:
-                    QTimer.singleShot(100, close_when_initialized)
-                    return
-                else:
+        def create_main_window(window_type) -> None:
+            nonlocal window
+            window = window_type(
+                config=app_config,
+                settings=create_application_settings(smoke_test=args.smoke_test, log_file=log_file_path),
+            )
+            window.log_console.log_file = log_file_path
+            window.show()
+            if args.smoke_test:
+
+                def close_smoke_with_code(code: int) -> None:
+                    # app.exit() must follow accepted asynchronous window close;
+                    # otherwise its event loop abandons worker retirement callbacks.
+                    app.setQuitOnLastWindowClosed(False)
+                    window.shutdown_complete.connect(lambda: QTimer.singleShot(0, lambda: app.exit(code)))
+                    window.close()
+
+                def close_when_initialized():
+                    if not window._lazy_init_started or window._init_tasks:
+                        QTimer.singleShot(100, close_when_initialized)
+                        return
                     expected_cameras = sum(cam.enabled for cam in app_config.cameras.values())
                     actual_cameras = len(window.cameras)
                     logger.info("SMOKE_SIMULATION_READY cameras=%d/%d", actual_cameras, expected_cameras)
@@ -411,9 +443,29 @@ def main() -> int:
                             return
                     window.close()
 
-            QTimer.singleShot(100, close_when_initialized)
+                QTimer.singleShot(100, close_when_initialized)
+            else:
+                window.plot_widget.schedule_matlab_prewarm()
+
+        startup = None
+        if args.smoke_test:
+            create_main_window(_get_main_window_type())
         else:
-            window.plot_widget.schedule_matlab_prewarm()
+            from logic.startup_coordinator import MainWindowStartupCoordinator
+
+            def startup_failed(message: str) -> None:
+                logger.critical("Startup could not construct MainWindow: %s", message)
+                QMessageBox.critical(None, "IOPanel Startup Error", message)
+                app.exit(1)
+
+            startup = MainWindowStartupCoordinator(
+                app,
+                importer=_get_main_window_type,
+                on_loaded=create_main_window,
+                on_failure=startup_failed,
+                logger=logger,
+            )
+            startup.start()
 
         about_to_quit_at: float | None = None
 
