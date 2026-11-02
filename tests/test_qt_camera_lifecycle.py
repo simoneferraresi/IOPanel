@@ -107,6 +107,7 @@ def test_stopped_worker_does_not_replay_queued_hardware_commands_on_gui(qtbot, q
 
 def test_feedback_callback_is_cancelled_by_native_panel_destruction(qtbot, monkeypatch):
     panel = CameraPanel(None, "Feedback", CameraConfig(identifier="feedback", name="Feedback"))
+    qtbot.addWidget(panel)
     original = QTimer.singleShot
     # Advance only the feedback deadline, retaining Qt's real context and
     # queued callback behavior; no wall-clock sleep or fake callable delivery.

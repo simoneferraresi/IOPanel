@@ -1286,3 +1286,112 @@ def test_shg_recoverable_pm_retrieval_failure_frees_after_confirmed_close(qtbot,
         gate.set()
         if window.isVisible():
             window.close()
+
+
+@pytest.mark.parametrize("outcome", ["success", "cancel", "shutdown", "scan-error"])
+def test_shg_worker_returns_tree_discards_callbacks_and_destroys_on_gui(qapp, qtbot, monkeypatch, tmp_path, outcome):
+    import shiboken6
+    from PySide6.QtCore import QMetaObject, QObject, QTimer, Slot
+
+    from ui import shg_synchronized_panel as shg_module
+
+    gui_ident = threading.get_ident()
+    events = []
+
+    class PendingCallback(QObject):
+        @Slot()
+        def late_callback(self):
+            events.append(("late-callback", threading.get_ident()))
+
+    original_worker = shg_module.SimulatedCT400SyncWorker
+
+    def observed_worker(*args):
+        worker = original_worker(*args)
+        worker.child_timer = QTimer(worker)
+        worker.child_timer.start(60000)
+        worker.pending_probe = PendingCallback(worker)
+        worker.completed.connect(
+            lambda: QMetaObject.invokeMethod(worker.pending_probe, "late_callback", Qt.ConnectionType.QueuedConnection),
+            Qt.ConnectionType.DirectConnection,
+        )
+        worker.destroyed.connect(lambda: events.append(("worker-destroyed", threading.get_ident())))
+        worker.child_timer.destroyed.connect(lambda: events.append(("child-destroyed", threading.get_ident())))
+        return worker
+
+    monkeypatch.setattr(shg_module, "SimulatedCT400SyncWorker", observed_worker)
+    window, gate, _spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path, include_camera=False)
+    shg = window.shg_tab
+    finished = QSignalSpy(shg.finished)
+    if outcome == "scan-error":
+        window.ct400_device.get_data_points = lambda *_args: (_ for _ in ()).throw(
+            RuntimeError("simulated data failure")
+        )
+    try:
+        shg.start_capture(destination_root=tmp_path / "retirement")
+        qtbot.waitUntil(lambda: window.ct400_device._is_scanning, timeout=4000)
+        worker, native_thread = shg._ct_worker, shg._ct_thread
+        child = worker.child_timer
+
+        def observe_return():
+            events.append(
+                ("returned", worker.thread() == qapp.thread(), child.thread() == qapp.thread(), child.isActive())
+            )
+
+        native_thread.finished.connect(observe_return, Qt.ConnectionType.DirectConnection)
+        native_thread.destroyed.connect(lambda: events.append(("thread-destroyed", threading.get_ident())))
+        assert worker.thread() == native_thread
+        assert all(item.owner == "synchronized-acquisition" for item in window.device_lease_registry.snapshot())
+        if outcome == "cancel":
+            shg.cancel()
+            shg.cancel()
+        elif outcome == "shutdown":
+            assert not window.close()
+            assert not window.close()
+            assert shg.active and not window._shutdown_complete
+        gate.set()
+        qtbot.waitUntil(lambda: finished.count() == 1, timeout=7000)
+        qtbot.waitUntil(lambda: not shiboken6.isValid(worker) and not shiboken6.isValid(native_thread), timeout=3000)
+        assert not shiboken6.isValid(child)
+        assert ("returned", True, True, False) in events
+        assert ("worker-destroyed", gui_ident) in events
+        assert ("child-destroyed", gui_ident) in events
+        assert ("thread-destroyed", gui_ident) in events
+        assert not any(event[0] == "late-callback" for event in events)
+        assert finished.at(0)[0] is (outcome == "success")
+        assert all(item.owner is None for item in window.device_lease_registry.snapshot())
+        if outcome == "shutdown":
+            qtbot.waitUntil(lambda: window._shutdown_complete, timeout=7000)
+            assert window.close()
+    finally:
+        gate.set()
+        window.close()
+
+
+def test_shg_dispatch_setup_failure_keeps_unstarted_worker_gui_owned(qapp, qtbot, monkeypatch, tmp_path):
+    import shiboken6
+
+    from ui import shg_synchronized_panel as shg_module
+
+    window, gate, _spy, _dialogs = _start_application(qtbot, monkeypatch, tmp_path, include_camera=False)
+    shg = window.shg_tab
+    finished = QSignalSpy(shg.finished)
+    observed = []
+
+    def fail_retirement_setup(thread, worker):
+        observed.append((worker, thread, worker.thread() == qapp.thread(), worker.parent() is thread))
+        raise RuntimeError("injected dispatch setup failure")
+
+    monkeypatch.setattr(shg_module, "retire_worker_on_thread_finish", fail_retirement_setup)
+    try:
+        shg.start_capture(destination_root=tmp_path / "not-started")
+        qtbot.waitUntil(lambda: finished.count() == 1, timeout=7000)
+        assert finished.at(0)[0] is False
+        worker, native_thread, gui_owned, parented = observed[0]
+        assert gui_owned and parented
+        qtbot.waitUntil(lambda: not shiboken6.isValid(worker) and not shiboken6.isValid(native_thread), timeout=3000)
+        assert shg._ct_worker is None and shg._ct_thread is None
+        assert all(item.owner is None for item in window.device_lease_registry.snapshot())
+        assert not window.ct400_device.external_synchronization_calls
+    finally:
+        gate.set()
+        window.close()
