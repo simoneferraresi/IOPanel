@@ -130,6 +130,20 @@ def test_unvisited_scan_tab_does_not_construct_on_close(qtbot, monkeypatch, tmp_
     assert window._control_panel is None
 
 
+def test_scan_view_replays_existing_matlab_ready_state(qtbot, monkeypatch, tmp_path):
+    settings = AppSettings(QSettings(str(tmp_path / "matlab-ready-replay.ini"), QSettings.Format.IniFormat))
+    window = _make_window(qtbot, monkeypatch, settings)
+    manager = window.matlab_engine_manager
+    manager._set_state(main_window_module.MatlabEngineState.READY)
+    assert window._plot_widget is None
+
+    window.tab_widget.setCurrentIndex(1)
+
+    assert window.plot_widget.matlab_engine_manager is manager
+    assert window.plot_widget.matlab_status_label.text() == "MATLAB Ready"
+    window.close()
+
+
 def test_new_scan_and_alignment_views_replay_active_synchronized_reservation(qtbot, monkeypatch, tmp_path):
     settings = AppSettings(QSettings(str(tmp_path / "sync-state-replay.ini"), QSettings.Format.IniFormat))
     window = _make_window(qtbot, monkeypatch, settings)

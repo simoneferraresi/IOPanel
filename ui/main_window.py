@@ -1520,6 +1520,8 @@ class MainWindow(QMainWindow):
                 self._load_scan_defaults_from_config()
                 self._connect_scan_signals()
                 self._synchronize_new_scan_panel()
+                if self.matlab_engine_manager.state is MatlabEngineState.READY:
+                    scan_plot._on_matlab_engine_ready()
                 self._update_scan_import_actions()
 
             # Keep the widget inactive until fully constructed and registered.
