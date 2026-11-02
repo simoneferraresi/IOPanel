@@ -154,13 +154,17 @@ def test_new_scan_and_alignment_views_replay_active_synchronized_reservation(qtb
         window.close()
 
 
-def test_failed_scan_construction_retires_partial_widget_graph(qtbot, monkeypatch, tmp_path):
+@pytest.mark.parametrize("failure_stage", ["plot", "state_replay"])
+def test_failed_scan_construction_retires_partial_widget_graph(qtbot, monkeypatch, tmp_path, failure_stage):
     settings = AppSettings(QSettings(str(tmp_path / "failed-scan-construction.ini"), QSettings.Format.IniFormat))
     window = _make_window(qtbot, monkeypatch, settings)
     real_control_panel = main_window_module.CT400ControlPanel
     real_plot_widget = main_window_module.PlotWidget
     created_controls = []
     created_plots = []
+    manager = window.matlab_engine_manager
+    placeholder = window.tab_widget.widget(1)
+    real_synchronize = window._synchronize_new_scan_panel
 
     def create_control_panel(*args, **kwargs):
         control = real_control_panel(*args, **kwargs)
@@ -168,13 +172,22 @@ def test_failed_scan_construction_retires_partial_widget_graph(qtbot, monkeypatc
         return control
 
     def fail_plot_widget(*args, **kwargs):
-        created_plots.append(real_plot_widget(*args, **kwargs))
-        raise RuntimeError("injected deferred PlotWidget construction failure")
+        plot = real_plot_widget(*args, **kwargs)
+        created_plots.append(plot)
+        if failure_stage == "plot":
+            raise RuntimeError("injected deferred Scan construction failure")
+        return plot
+
+    def fail_state_replay():
+        real_synchronize()
+        raise RuntimeError("injected deferred Scan construction failure")
 
     monkeypatch.setattr(main_window_module, "CT400ControlPanel", create_control_panel)
     monkeypatch.setattr(main_window_module, "PlotWidget", fail_plot_widget)
+    if failure_stage == "state_replay":
+        monkeypatch.setattr(window, "_synchronize_new_scan_panel", fail_state_replay)
     try:
-        with pytest.raises(RuntimeError, match="injected deferred PlotWidget construction failure"):
+        with pytest.raises(RuntimeError, match="injected deferred Scan construction failure"):
             window._ensure_lazy_tab(1)
 
         partial_control = created_controls[0]
@@ -188,13 +201,21 @@ def test_failed_scan_construction_retires_partial_widget_graph(qtbot, monkeypatc
         assert not shiboken6.isValid(partial_container)
         assert window._control_panel is None
         assert window._plot_widget is None
+        assert window._first_tab is None
         assert 1 in window._lazy_tab_placeholders
+        assert window.tab_widget.widget(1) is placeholder
+        assert window.findChildren(main_window_module.MatlabEngineManager) == [manager]
+        assert not manager.shutdown_finished
+        assert all(item.owner is None for item in window.device_lease_registry.snapshot())
 
         monkeypatch.setattr(main_window_module, "PlotWidget", real_plot_widget)
+        monkeypatch.setattr(window, "_synchronize_new_scan_panel", real_synchronize)
         window._ensure_lazy_tab(1)
         assert window._control_panel is created_controls[-1]
         assert window._plot_widget is not None
         assert window._first_tab is window.tab_widget.widget(1)
+        assert window._plot_widget.matlab_engine_manager is manager
+        assert window.findChildren(main_window_module.MatlabEngineManager) == [manager]
     finally:
         for widget in (*created_controls, *created_plots):
             if shiboken6.isValid(widget) and widget.parent() is None:
