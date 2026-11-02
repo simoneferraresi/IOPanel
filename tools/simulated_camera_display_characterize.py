@@ -248,6 +248,14 @@ def characterize(*, camera_count: int, duration: float, width: int, height: int,
             camera.close()
         for panel in panels:
             panel.close()
+        # isRunning() can already be false while QThread.finished callbacks
+        # are acquiring Python thread state. Join native completion before
+        # removing allocator hooks; a GUI event pass alone is not a barrier.
+        # This simulation diagnostic runs in a bounded supervised process.
+        for panel in panels:
+            thread = panel.conversion_thread
+            if thread is not None:
+                thread.wait()
         app.processEvents()
         result["cleanup"] = {
             "cameras_closed": all(not camera.is_streaming for camera in cameras),
