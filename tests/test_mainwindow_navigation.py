@@ -432,7 +432,7 @@ def test_physical_pm5020_is_never_connected_automatically_or_replaced_by_simulat
             "Instruments": {
                 "ct400_backend": "simulation",
                 "pm5020_backend": "physical",
-                "pm5020_resource_name": "USB0::0x1313::0x80BB::M01213392::INSTR",
+                "pm5020_resource_name": "USB0::TEST::INSTR",
             }
         }
     )
