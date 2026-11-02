@@ -11,6 +11,7 @@ from PySide6.QtCore import QCoreApplication, QEvent, QObject, QThread, QTimer, S
 from PySide6.QtTest import QSignalSpy
 
 from logic.matlab_engine_manager import MatlabEngineManager, MatlabEngineState
+from logic.qt_worker_lifecycle import retire_worker_on_thread_finish
 from ui import plot_widgets
 from ui.control_panel import ScanSettings
 from ui.plot_widgets import PlotWidget
@@ -299,7 +300,7 @@ def test_plotwidget_clears_finished_thread_refs_and_starts_later_fig_thread(qtbo
     widget.matlab_save_thread = thread
     widget.matlab_save_worker = worker
     worker.moveToThread(thread)
-    worker.finished_saving.connect(worker.deleteLater)
+    retire_worker_on_thread_finish(thread, worker)
     worker.finished_saving.connect(thread.quit)
     thread.started.connect(worker.run)
     thread.finished.connect(
@@ -388,8 +389,6 @@ def test_plotwidget_cleanup_tolerates_deleted_qthread_and_always_shuts_manager(q
 
 
 def test_plotwidget_cleanup_retains_active_thread_until_retirement(qtbot):
-    from logic.qt_worker_lifecycle import retire_worker_on_thread_finish
-
     widget = PlotWidget(ScanSettings())
     qtbot.addWidget(widget)
     thread = QThread(widget)

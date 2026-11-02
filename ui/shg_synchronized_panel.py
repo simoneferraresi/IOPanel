@@ -17,6 +17,7 @@ from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QLabel, QLineEdit, QPush
 from hardware.ct400_types import CT400ScanResultKind, Enable
 from hardware.dummy_ct400 import DummyCT400
 from hardware.pm5020_types import BurstAcquisitionConfig
+from logic.qt_worker_lifecycle import retire_worker_on_thread_finish
 from logic.simulated_synchronized_acquisition import (
     SimulatedSynchronizedCapture,
     SimulatedSyncSettings,
@@ -301,13 +302,20 @@ class SimulatedSHGPanel(QWidget):
             self._ct_worker = worker
             self._ct_thread = thread
             self._ct_thread_stopped = False
-            worker.moveToThread(thread)
+            # Until dispatch wiring succeeds, an unstarted worker has no
+            # execution event loop. Keep its native tree GUI-owned.
+            worker.setParent(thread)
             thread.started.connect(worker.run)
             worker.completed.connect(self._on_ct_result, Qt.ConnectionType.QueuedConnection)
             worker.completed.connect(thread.quit, Qt.ConnectionType.DirectConnection)
-            thread.finished.connect(worker.deleteLater)
-            thread.finished.connect(thread.deleteLater)
+            # Register first: return affinity and discard pending commands in
+            # the finishing thread, then join/parent/delete on the GUI thread
+            # before the owner consumes completion or drops its references.
+            retire_worker_on_thread_finish(thread, worker)
             thread.finished.connect(self._on_ct_thread_finished, Qt.ConnectionType.QueuedConnection)
+            thread.finished.connect(thread.deleteLater)
+            worker.setParent(None)
+            worker.moveToThread(thread)
             thread.start()
             self.status_label.setText("PM armed; simulated CT400 synchronized scan running…")
         except Exception as exc:  # noqa: BLE001 - dispatch failure is not a successful CT scan.
