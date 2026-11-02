@@ -124,6 +124,7 @@ def test_mainwindow_keeps_simulated_camera_when_physical_initialization_fails(qt
     frame_thread = camera._frame_thread
     window.close()
     qtbot.waitUntil(lambda: not frame_thread.is_alive(), timeout=1500)
+    qtbot.waitUntil(lambda: window._shutdown_complete, timeout=5000)
     assert not window.cameras
 
 
