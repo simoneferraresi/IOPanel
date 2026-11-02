@@ -867,6 +867,81 @@ def test_simulated_display_capture_reports_pipeline_and_memory(qtbot, tmp_path, 
     assert report["cleanup"] == {"cameras_closed": True, "conversion_threads_stopped": True}
 
 
+def test_simulated_tracing_waits_for_native_finished_callbacks(qtbot, tmp_path, monkeypatch):
+    from threading import Event
+
+    import shiboken6
+    from PySide6.QtCore import Qt
+
+    from tools import simulated_camera_display_characterize as diagnostic
+    from ui import camera_widgets
+
+    entered, release = Event(), Event()
+    threads = []
+    stop_boundaries = []
+    original_retire = camera_widgets.retire_worker_on_thread_finish
+    original_panel = diagnostic.MeasuredCameraPanel
+    original_stop = diagnostic.tracemalloc.stop
+    tracing_before = diagnostic.tracemalloc.is_tracing()
+
+    def gate_retirement(thread, worker):
+        # Reproduce a native finish callback still in progress after Qt has
+        # cleared isRunning, before the helper has returned affinity/queued its
+        # GUI join. No allocator hooks are removed at the unsafe boundary.
+        def finishing():
+            entered.set()
+            assert release.wait(5), "test failed to release native finish callback"
+
+        thread.finished.connect(finishing, Qt.ConnectionType.DirectConnection)
+        native_wait = thread.wait
+
+        def join(*args):
+            release.set()
+            return native_wait(*args)
+
+        thread.wait = join
+        threads.append((thread, native_wait))
+        original_retire(thread, worker)
+
+    def make_panel(*args, **kwargs):
+        panel = original_panel(*args, **kwargs)
+        qtbot.addWidget(panel)
+        close = panel.close
+
+        def close_at_finish():
+            accepted = close()
+            assert entered.wait(3), "conversion thread did not reach native finish"
+            return accepted
+
+        panel.close = close_at_finish
+        return panel
+
+    def checked_stop():
+        # wait(0), unlike isRunning(), includes callbacks and native TLS cleanup.
+        joined = all(native_wait(0) for _thread, native_wait in threads)
+        stop_boundaries.append(joined)
+        if not joined:
+            release.set()
+            for _thread, native_wait in threads:
+                assert native_wait(3000)
+        assert joined, "tracemalloc stopped before native QThread retirement"
+        original_stop()
+
+    monkeypatch.setattr(camera_widgets, "retire_worker_on_thread_finish", gate_retirement)
+    monkeypatch.setattr(diagnostic, "MeasuredCameraPanel", make_panel)
+    monkeypatch.setattr(diagnostic.tracemalloc, "stop", checked_stop)
+    try:
+        diagnostic.characterize(camera_count=1, duration=0.05, width=8, height=6, output=tmp_path / "native-join.json")
+        assert stop_boundaries == [True]
+    finally:
+        release.set()
+        for thread, native_wait in threads:
+            if shiboken6.isValid(thread):
+                assert native_wait(3000)
+        if not tracing_before and diagnostic.tracemalloc.is_tracing():
+            original_stop()
+
+
 @pytest.mark.parametrize("fail_metrics", [False, True])
 def test_simulated_tracing_stops_only_after_native_workers(qtbot, tmp_path, monkeypatch, fail_metrics):
     from tools import simulated_camera_display_characterize as diagnostic
