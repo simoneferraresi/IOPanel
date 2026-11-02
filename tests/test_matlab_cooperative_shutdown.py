@@ -240,12 +240,21 @@ def test_mainwindow_defers_during_startup_or_blocked_engine_quit(qtbot, monkeypa
     monkeypatch.setattr(module.MainWindow, "_begin_lazy_init", lambda _self: None)
     window = module.MainWindow(AppConfig(instruments={"ct400_backend": "simulation"}))
     qtbot.addWidget(window)
-    manager = window.plot_widget.matlab_engine_manager
+    manager = window.matlab_engine_manager
+    assert window._plot_widget is None
+    assert window._control_panel is None
+    assert window.findChildren(MatlabEngineManager) == [manager]
     entered, release = Event(), Event()
     calls = []
+    engines = []
 
     class Engine:
+        def __init__(self):
+            self.quit_calls = 0
+            engines.append(self)
+
         def quit(self):
+            self.quit_calls += 1
             if not starting:
                 entered.set()
                 assert release.wait(5)
@@ -279,11 +288,18 @@ def test_mainwindow_defers_during_startup_or_blocked_engine_quit(qtbot, monkeypa
         manager.startup_failed.emit("late startup signal")
         manager.request_engine()
         assert calls == (["start"] if starting else [])
-        assert window.plot_widget.matlab_save_thread is None
+        assert window._plot_widget is None
+        assert window._control_panel is None
+        assert window.findChildren(MatlabEngineManager) == [manager]
     finally:
         release.set()
         qtbot.waitUntil(lambda: window._shutdown_complete)
     assert calls == (["start", "quit"] if starting else ["quit"])
+    assert window._plot_widget is None
+    assert window._control_panel is None
+    assert window.findChildren(MatlabEngineManager) == [manager]
+    assert len(engines) == 1
+    assert engines[0].quit_calls == 1
 
 
 def test_matlab_shutdown_and_fig_retirement_exit_in_fresh_process(tmp_path):

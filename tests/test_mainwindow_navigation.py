@@ -1,6 +1,7 @@
 """Navigation order and menu conventions must not activate physical devices."""
 
 import pytest
+import shiboken6
 from PySide6.QtCore import QSettings
 from PySide6.QtGui import QKeySequence
 
@@ -8,6 +9,7 @@ from app_settings import AppSettings
 from config_model import AppConfig
 from hardware.dummy_pm5020 import DummyPM5020
 from hardware.pm5020_types import PM5020State
+from ui import main_window as main_window_module
 from ui.main_window import MainWindow
 
 
@@ -31,8 +33,11 @@ def test_fresh_window_uses_monitor_scan_alignment_order(qtbot, monkeypatch, tmp_
     ]
     assert window.tab_widget.currentIndex() == 0
     assert window.tab_widget.widget(0) is window.second_tab
-    assert window.tab_widget.widget(1) is window.first_tab
-    assert all(window.tab_widget.widget(index).objectName() == f"DeferredTab{index}" for index in range(2, 6))
+    assert all(window.tab_widget.widget(index).objectName() == f"DeferredTab{index}" for index in range(1, 6))
+    assert window._first_tab is None
+    assert window._control_panel is None
+    assert window._plot_widget is None
+    assert window.matlab_engine_manager.parent() is window
     assert window._alignment_tab is None
     assert window._pm5020_panel is None
     assert window._edfa_panel is None
@@ -88,6 +93,135 @@ def test_shg_lazily_brings_up_only_its_pm5020_dependency(qtbot, monkeypatch, tmp
     assert window._alignment_tab is None
     assert window._edfa_panel is None
     assert not window._pm5020_panel.task.worker_thread.isRunning()
+    window.close()
+
+
+def test_scan_tab_constructs_once_and_shares_matlab_manager(qtbot, monkeypatch, tmp_path):
+    settings = AppSettings(QSettings(str(tmp_path / "scan-on-demand.ini"), QSettings.Format.IniFormat))
+    window = _make_window(qtbot, monkeypatch, settings)
+    manager = window.matlab_engine_manager
+    assert window._plot_widget is None
+    assert window._control_panel is None
+    assert window.findChildren(main_window_module.MatlabEngineManager) == [manager]
+    manager.schedule_prewarm()
+    assert window._plot_widget is None
+    assert window._control_panel is None
+    window.tab_widget.setCurrentIndex(1)
+    assert window._plot_widget is window.plot_widget
+    assert window._control_panel is window.control_panel
+    assert window.plot_widget.matlab_engine_manager is manager
+    assert window.findChildren(main_window_module.MatlabEngineManager) == [manager]
+    assert window.tab_widget.widget(1) is window.first_tab
+    scan = window.plot_widget
+    window.tab_widget.setCurrentIndex(0)
+    window.tab_widget.setCurrentIndex(1)
+    assert window.plot_widget is scan
+    assert window.findChildren(main_window_module.MatlabEngineManager) == [manager]
+    window.close()
+
+
+def test_unvisited_scan_tab_does_not_construct_on_close(qtbot, monkeypatch, tmp_path):
+    settings = AppSettings(QSettings(str(tmp_path / "never-scan.ini"), QSettings.Format.IniFormat))
+    window = _make_window(qtbot, monkeypatch, settings)
+    window.matlab_engine_manager.schedule_prewarm()
+    assert window._plot_widget is None
+    window.close()
+    assert window._plot_widget is None
+    assert window._control_panel is None
+
+
+def test_new_scan_and_alignment_views_replay_active_synchronized_reservation(qtbot, monkeypatch, tmp_path):
+    settings = AppSettings(QSettings(str(tmp_path / "sync-state-replay.ini"), QSettings.Format.IniFormat))
+    window = _make_window(qtbot, monkeypatch, settings)
+    window.tab_widget.setCurrentIndex(5)
+    shg = window._shg_tab
+    assert shg is not None
+    assert window._control_panel is None
+    assert window._alignment_tab is None
+    protocol = window.synchronized_owner_leases
+    request = protocol.reserve(ct400_generation=1, pm5020_generation=1)
+    shg._request = request
+    try:
+        window.tab_widget.setCurrentIndex(1)
+        assert window.control_panel.ct400_operation_state == "SYNCHRONIZED"
+        window.tab_widget.setCurrentIndex(2)
+        assert window.alignment_tab._ct400_operation_state == "SYNCHRONIZED"
+    finally:
+        protocol.acknowledge_ct400_complete(request, generation=request.ct400_generation)
+        protocol.acknowledge_pm_complete(request, generation=request.pm5020_generation)
+        protocol.release_after_cleanup(request)
+        shg._request = None
+        window.close()
+
+
+def test_failed_scan_construction_retires_partial_widget_graph(qtbot, monkeypatch, tmp_path):
+    settings = AppSettings(QSettings(str(tmp_path / "failed-scan-construction.ini"), QSettings.Format.IniFormat))
+    window = _make_window(qtbot, monkeypatch, settings)
+    real_control_panel = main_window_module.CT400ControlPanel
+    real_plot_widget = main_window_module.PlotWidget
+    created_controls = []
+    created_plots = []
+
+    def create_control_panel(*args, **kwargs):
+        control = real_control_panel(*args, **kwargs)
+        created_controls.append(control)
+        return control
+
+    def fail_plot_widget(*args, **kwargs):
+        created_plots.append(real_plot_widget(*args, **kwargs))
+        raise RuntimeError("injected deferred PlotWidget construction failure")
+
+    monkeypatch.setattr(main_window_module, "CT400ControlPanel", create_control_panel)
+    monkeypatch.setattr(main_window_module, "PlotWidget", fail_plot_widget)
+    try:
+        with pytest.raises(RuntimeError, match="injected deferred PlotWidget construction failure"):
+            window._ensure_lazy_tab(1)
+
+        partial_control = created_controls[0]
+        partial_plot = created_plots[0]
+        partial_container = partial_control.parent()
+        assert partial_container is not None
+        assert partial_plot.parent() is partial_container
+        qtbot.waitUntil(
+            lambda: not shiboken6.isValid(partial_control) and not shiboken6.isValid(partial_plot), timeout=1500
+        )
+        assert not shiboken6.isValid(partial_container)
+        assert window._control_panel is None
+        assert window._plot_widget is None
+        assert 1 in window._lazy_tab_placeholders
+
+        monkeypatch.setattr(main_window_module, "PlotWidget", real_plot_widget)
+        window._ensure_lazy_tab(1)
+        assert window._control_panel is created_controls[-1]
+        assert window._plot_widget is not None
+        assert window._first_tab is window.tab_widget.widget(1)
+    finally:
+        for widget in (*created_controls, *created_plots):
+            if shiboken6.isValid(widget) and widget.parent() is None:
+                widget.deleteLater()
+        window.close()
+
+
+def test_scan_created_after_ct400_discovery_inherits_device_and_detectors(qtbot, monkeypatch, tmp_path):
+    from hardware.ct400_types import Detector
+    from hardware.dummy_ct400 import DummyCT400
+
+    settings = AppSettings(QSettings(str(tmp_path / "late-scan.ini"), QSettings.Format.IniFormat))
+    settings.set_scan_detectors([1, 3])
+    window = _make_window(qtbot, monkeypatch, settings)
+    dummy = DummyCT400(scan_duration=0)
+    window._on_ct400_initialized(dummy)
+    assert window._control_panel is None
+    assert window.tab_widget.currentIndex() == 0
+    window.tab_widget.setCurrentIndex(1)
+    panel = window.control_panel
+    assert panel.ct400 is dummy
+    assert panel.is_simulated
+    assert panel.is_instrument_connected
+    assert {detector for detector, checkbox in panel.scan_detector_cbs.items() if checkbox.isChecked()} == {
+        Detector.DE_1,
+        Detector.DE_3,
+    }
     window.close()
 
 

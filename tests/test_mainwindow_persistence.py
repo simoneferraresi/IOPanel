@@ -66,7 +66,7 @@ def test_mainwindow_restores_and_saves_preferences_without_hardware_operations(t
         _pm5020_panel=SimpleNamespace(save_preferences=lambda target: pm5020_save_calls.append(target)),
         main_splitter=splitter,
         tab_widget=tabs,
-        control_panel=SimpleNamespace(
+        _control_panel=SimpleNamespace(
             scan_detector_cbs=checkboxes,
             _selected_scan_detectors=lambda: [Detector.DE_1, Detector.DE_3, Detector.DE_4],
         ),
@@ -90,7 +90,8 @@ def test_mainwindow_restores_and_saves_preferences_without_hardware_operations(t
     assert window.restored_geometry == QByteArray(b"saved-geometry")
     assert splitter.restored_sizes == [600, 400]
     assert tabs.currentIndex() == 0
-    assert [checkboxes[detector].checked for detector in scan_detectors] == [True, False, True, True]
+    # Scan view has not been created; its detector checkboxes are intentionally untouched.
+    assert all(not hasattr(checkboxes[detector], "checked") for detector in scan_detectors)
 
     main_window_module.MainWindow._save_ui_preferences(window)
     assert pm5020_save_calls == [settings]
@@ -151,7 +152,8 @@ def test_mainwindow_restore_preferences_falls_back_for_invalid_tab_and_splitter(
     assert window.restored_geometry == QByteArray(b"saved-geometry")
     assert splitter.restored_sizes is None
     assert tabs.currentIndex() == 0
-    assert [checkbox.checked for checkbox in checkboxes.values()] == [True, False, True, False]
+    assert [checkbox.checked for checkbox in checkboxes.values()] == [False] * 4
+    assert settings.scan_detectors() == [1, 3]
 
 
 def test_camera_panel_uses_persisted_screenshot_directory(qtbot, tmp_path):
