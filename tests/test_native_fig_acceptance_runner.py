@@ -100,5 +100,7 @@ def test_parent_supervisor_observes_owned_matlab_after_child_exit(tmp_path, monk
 
     report = json.loads((tmp_path / "supervisor.json").read_text(encoding="utf-8"))
     assert result == 0
-    assert report["post_child_exit_observation_seconds"] == acceptance.POST_CHILD_EXIT_POLL_INTERVAL_SECONDS
+    # Native scheduler overshoot is valid: one requested 250 ms poll can take longer.
+    # The exact virtual-clock delay is tested separately above.
+    assert report["post_child_exit_observation_seconds"] >= acceptance.POST_CHILD_EXIT_POLL_INTERVAL_SECONDS
     assert report["test_owned_matlab_processes_observed"][0]["exited_during_post_child_observation"]
