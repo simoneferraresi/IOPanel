@@ -19,9 +19,7 @@ from hardware.edfa_gpib import GPIBReadOnlyReader, parse_status
 from hardware.edfa_types import (
     EDFAConfiguration,
     EDFAControlMode,
-    EDFAOpticalPower,
     EDFAProtocolError,
-    EDFAStatus,
     EDFATelemetry,
     PowerUnit,
 )
@@ -49,7 +47,7 @@ class EDFAEmissionAction(Enum):
 
 # Deliberate small allowlist. An arbitrary string can never reach write().
 _ALLOWED_PREFIXES = frozenset({"SOUR:POW", "SOUR:GAIN", "SOUR:CURR", "UNIT:POW"})
-_SITE_REFERENCE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{7,79}\\Z")
+_SITE_REFERENCE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{7,79}\Z")
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,7 +133,7 @@ def format_write_command(request: EDFAWriteRequest) -> str:
             EDFAWriteKind.GAIN: "SOUR:GAIN",
             EDFAWriteKind.CURRENT: "SOUR:CURR",
         }[request.kind]
-        command = f"{prefix} {request.value:.9g}"
+        command = f"{prefix} {float(request.value):.9g}"
     if command.split(" ", 1)[0] not in _ALLOWED_PREFIXES:
         raise EDFAProtocolError("Write command is not allowlisted")
     return command
