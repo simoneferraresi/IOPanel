@@ -47,3 +47,17 @@ def test_script_requires_operator_approval_for_every_physical_stage() -> None:
     assert "--max-queries" in source
     assert "--max-seconds" in source
     assert "acceptance.json" in source
+
+
+def test_native_stderr_compatibility_preserves_real_exit_code() -> None:
+    """Windows PowerShell 5.1 must not mistake uv progress on stderr for failure."""
+    source = SCRIPT.read_text(encoding="utf-8")
+    assert "$savedErrorActionPreference = $ErrorActionPreference" in source
+    assert "$ErrorActionPreference = 'Continue'" in source
+    assert "$ErrorActionPreference = $savedErrorActionPreference" in source
+    assert "$code = $LASTEXITCODE" in source
+    assert "if ($code -ne 0)" in source
+    # The same guarded runner handles offline, physical and GUI invocations.
+    assert source.count("*>") == 1
+    assert "Run-Captured 'Bounded physical read-only diagnostic'" in source
+    assert "Run-Captured 'GUI process'" in source
