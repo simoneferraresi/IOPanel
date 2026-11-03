@@ -20,6 +20,7 @@ class EDFAMonitorWorker(BaseWorker):
     state_changed = Signal(object, str)
     identity_ready = Signal(str)
     telemetry_ready = Signal(object)
+    configuration_ready = Signal(object)
     error_occurred = Signal(str)
 
     def __init__(
@@ -102,6 +103,21 @@ class EDFAMonitorWorker(BaseWorker):
             logger.exception("EDFA telemetry failed")
             self.stop_monitoring()
             self.error_occurred.emit(f"EDFA read-only telemetry failed: {exc}")
+            self._publish()
+
+    @Slot()
+    def read_configuration(self) -> None:
+        """Manual-only, worker-serialized readback; never a timer callback."""
+        backend = self._backend
+        if backend is None or backend.state is not EDFAState.IDLE or self._monitoring:
+            self.error_occurred.emit("Stop monitoring and connect the EDFA before reading configuration.")
+            self._publish()
+            return
+        try:
+            self.configuration_ready.emit(backend.read_configuration())
+        except Exception as exc:
+            logger.exception("EDFA configuration readback failed")
+            self.error_occurred.emit(f"EDFA configuration readback failed: {exc}")
             self._publish()
 
     @Slot(int)
