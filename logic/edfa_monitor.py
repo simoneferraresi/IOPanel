@@ -7,7 +7,12 @@ from collections.abc import Callable
 
 from PySide6.QtCore import QTimer, Signal, Slot
 
-from hardware.edfa_controls import EDFAWriteOutcome, EDFAWritePolicy, EDFAWriteRequest, EDFAWriteResult
+from hardware.edfa_controls import (
+    EDFAWriteOutcome,
+    EDFAWritePolicy,
+    EDFAWriteRequest,
+    EDFAWriteResult,
+)
 from hardware.dummy_edfa import DummyEDFA
 from hardware.edfa_types import EDFAState
 from hardware.interfaces import AbstractEDFA
@@ -152,7 +157,7 @@ class EDFAMonitorWorker(BaseWorker):
         try:
             operation = getattr(backend, "apply_control", None)
             if not callable(operation):
-                raise RuntimeError("Backend does not support typed M4 writes")
+                raise TypeError("Backend does not support typed M4 writes")
             self.control_finished.emit(operation(request))
         except Exception as exc:
             logger.exception("EDFA supervised write failed")
