@@ -19,9 +19,9 @@ from hardware.edfa_types import (
     EDFACommunicationError,
     EDFAConfiguration,
     EDFAProtocolError,
-    EDFAStatus,
     EDFAState,
     EDFAStateError,
+    EDFAStatus,
     EDFATelemetry,
 )
 from hardware.interfaces import AbstractEDFA
