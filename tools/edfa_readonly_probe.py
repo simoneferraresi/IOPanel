@@ -114,16 +114,17 @@ def run(
             "telemetry": summarize_telemetry(report),
         }
         if qualification_query:
-            raw_reply, value = device.read_qualification_query(qualification_query)
+            raw_reply, value, qualification_status = device.read_qualification_query(qualification_query)
             unit = (
                 "A" if ":CURR:" in qualification_query else
                 "dB" if ":GAIN:" in qualification_query else
-                "dBm" if report.status.logarithmic_power_units else "W"
+                "dBm" if qualification_status.logarithmic_power_units else "W"
             )
             result["qualification"] = {
                 "command": qualification_query,
                 "raw_reply": raw_reply,
                 "numeric_value": value,
+                "status_raw_word": qualification_status.raw_word,
                 "reported_unit": unit,
                 "physically_qualified": False,
             }
