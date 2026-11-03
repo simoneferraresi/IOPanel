@@ -73,6 +73,8 @@ def test_each_physical_action_is_locked_without_site_optin(qtbot):
 
 def test_confirmation_pending_and_result_cleanup(qtbot, monkeypatch):
     panel = prepare_panel(qtbot)
+    # Keep the request queued: the real worker runs on a separate Qt thread.
+    panel.control_requested.disconnect(panel.worker.apply_control)
     requests = []
     panel.control_requested.connect(requests.append)
     field = panel.setting_fields[EDFAWriteKind.POWER]
@@ -94,6 +96,8 @@ def test_confirmation_pending_and_result_cleanup(qtbot, monkeypatch):
 
 def test_device_unit_combobox_does_not_write_until_separate_confirmation(qtbot, monkeypatch):
     panel = prepare_panel(qtbot)
+    # Keep the request queued: the real worker runs on a separate Qt thread.
+    panel.control_requested.disconnect(panel.worker.apply_control)
     requests = []
     panel.control_requested.connect(requests.append)
     panel.device_units_combo.setCurrentIndex(1)
