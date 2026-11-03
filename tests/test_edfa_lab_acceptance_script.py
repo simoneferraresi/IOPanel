@@ -75,3 +75,23 @@ def test_native_stderr_compatibility_preserves_real_exit_code() -> None:
     assert source.count("*>") == 1
     assert "Run-Captured 'Bounded physical read-only diagnostic'" in source
     assert "Run-Captured 'GUI process'" in source
+
+
+def test_session_gap_is_independent_and_in_report() -> None:
+    source = SCRIPT.read_text(encoding="utf-8")
+    assert "[int]$InterSessionDelayMs = 0" in source
+    assert "[ValidateSet(0,100,250,500,1000)]" in source
+    assert """'--inter-session-delay-ms',"$InterSessionDelayMs" """ .strip() in source
+    assert """'--interquery-delay-ms',"$InterqueryDelayMs" """ .strip() in source
+    assert "inter_session_delay_ms = $InterSessionDelayMs" in source
+    assert "interquery_delay_ms = $InterqueryDelayMs" in source
+
+
+def test_readonly_failure_is_not_misreported_as_not_run() -> None:
+    source = SCRIPT.read_text(encoding="utf-8")
+    start = source.index("Require-Gate 'Type READONLY-APPROVED")
+    begun = source.index("$report.read_only = 'IN_PROGRESS'")
+    physical = source.index("Run-Captured 'Bounded physical read-only diagnostic'")
+    success = source.index("$report.read_only = 'PASS_READ_ONLY_ONLY'")
+    failed = source.index("if ($report.read_only -eq 'IN_PROGRESS') { $report.read_only = 'FAILED' }")
+    assert start < begun < physical < success < failed
