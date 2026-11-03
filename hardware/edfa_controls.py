@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from threading import Event
-from typing import Callable, Protocol
+from typing import Protocol
 
 from hardware.edfa_gpib import GPIBReadOnlyReader, parse_status
 from hardware.edfa_types import (
@@ -82,7 +83,7 @@ class EDFAWriteRequest:
 
     def __post_init__(self) -> None:
         if not isinstance(self.kind, EDFAWriteKind):
-            raise ValueError("Unrecognized EDFA write operation")
+            raise TypeError("Unrecognized EDFA write operation")
         if self.kind is EDFAWriteKind.POWER_UNITS:
             if self.value not in (PowerUnit.W, PowerUnit.DBM) or self.unit is not None:
                 raise ValueError("Device unit selection requires PowerUnit.W or PowerUnit.DBM")
@@ -120,7 +121,7 @@ class EDFAWriteSession(Protocol):
 def format_emission_command(action: EDFAEmissionAction) -> str:
     """Typed simulator/protocol representation only; physical ON remains locked."""
     if not isinstance(action, EDFAEmissionAction):
-        raise ValueError("Unknown emission action")
+        raise TypeError("Unknown emission action")
     return f"SOUR:POW:STAT {action.value}"
 
 
@@ -261,7 +262,7 @@ def execute_supervised_write(
     command = format_write_command(request)
     try:
         session.write(command)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — opaque VISA exceptions imply uncertain instrument state.
         return EDFAWriteResult(
             request, EDFAWriteOutcome.UNKNOWN, before, None,
             f"VISA write raised {type(exc).__name__}; command may have taken effect. Verify instrument physically.",
@@ -277,9 +278,9 @@ def execute_supervised_write(
         if physical and after_telemetry.output_power_non_numeric_reply != "Off":
             raise EDFAProtocolError("Output no longer reports 'Off' after write; physical verification required")
         after = _read_value(request, after_telemetry, after_config)
-        if request.kind is EDFAWriteKind.POWER and after_telemetry.power_setpoint is not None:
-            if after_telemetry.power_setpoint.unit is not request.unit:
-                raise EDFAProtocolError("Power setpoint readback unit changed unexpectedly")
+        if (request.kind is EDFAWriteKind.POWER and after_telemetry.power_setpoint is not None
+            and after_telemetry.power_setpoint.unit is not request.unit):
+            raise EDFAProtocolError("Power setpoint readback unit changed unexpectedly")
         if request.kind is EDFAWriteKind.POWER_UNITS:
             expected = request.value
             actual = PowerUnit.DBM if after_config.status.logarithmic_power_units else PowerUnit.W
