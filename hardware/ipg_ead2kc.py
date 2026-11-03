@@ -19,6 +19,7 @@ from hardware.edfa_types import (
     EDFACommunicationError,
     EDFAConfiguration,
     EDFAProtocolError,
+    EDFAStatus,
     EDFAState,
     EDFAStateError,
     EDFATelemetry,
@@ -184,7 +185,7 @@ class IPGEAD2KCGPIB(AbstractEDFA):
                     raise
                 raise EDFACommunicationError("EDFA configuration readback failed; explicit recovery required") from exc
 
-    def read_qualification_query(self, command: str) -> tuple[str, float]:
+    def read_qualification_query(self, command: str) -> tuple[str, float, EDFAStatus]:
         """Single non-mutating manual candidate, for supervised CLI qualification.
 
         This command cannot be selected by the GUI and cannot be arbitrary SCPI.
@@ -202,7 +203,7 @@ class IPGEAD2KCGPIB(AbstractEDFA):
                 end = parse_status(session.query("SOUR:POW:STAT?"))
                 if (start.raw_word ^ end.raw_word) & _CONFIGURATION_CONSISTENCY_BITS:
                     raise EDFAProtocolError("EDFA mode, units or capabilities changed during qualification readback")
-                return result
+                return (*result, start)
             except Exception as exc:
                 self._state = EDFAState.ERROR
                 if isinstance(exc, EDFAProtocolError):
