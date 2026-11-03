@@ -249,9 +249,7 @@ def test_configuration_model_rejects_inconsistent_units_and_values() -> None:
 
 
 def test_probe_options_stay_operator_gated_and_capture_raw_reply() -> None:
-    config = AppConfig.from_ini_dict(
-        {"Instruments": {"edfa_backend": "physical", "edfa_gpib_resource_name": RESOURCE}}
-    )
+    config = AppConfig.from_ini_dict({"Instruments": {"edfa_backend": "physical", "edfa_gpib_resource_name": RESOURCE}})
     called: list[str] = []
 
     class FakeBackend:
