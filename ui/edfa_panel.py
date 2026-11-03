@@ -302,6 +302,186 @@ class EDFAReadOnlyPanel(QWidget):
         self.stop_button.clicked.connect(self.request_stop)
         self._update_controls()
 
+    def _build_amplifier_controls(self) -> QGroupBox:
+        """Supervised controls live in the expanding dashboard, never the left column."""
+        group = QGroupBox("Amplifier controls (supervised)")
+        group.setObjectName("edfaAmplifierControlsGroup")
+        style_group_box_title(group)
+        grid = QGridLayout(group)
+        grid.setContentsMargins(10, 14, 10, 8)
+        grid.setHorizontalSpacing(6)
+        grid.setVerticalSpacing(5)
+        grid.setColumnStretch(1, 1)
+        self.setting_fields: dict[EDFAWriteKind, QLineEdit] = {}
+        self.setting_buttons: dict[EDFAWriteKind, QPushButton] = {}
+        self.setting_states: dict[EDFAWriteKind, QLabel] = {}
+        self.setting_limits: dict[EDFAWriteKind, QLabel] = {}
+        definitions = (
+            (EDFAWriteKind.POWER, "Power setpoint", "W / dBm"),
+            (EDFAWriteKind.GAIN, "Gain setpoint", "dB"),
+            (EDFAWriteKind.CURRENT, "Current setpoint", "A"),
+        )
+        for i, (kind, caption, unit) in enumerate(definitions):
+            row = 2 * i
+            grid.addWidget(QLabel(caption), row, 0)
+            field = QLineEdit()
+            field.setObjectName(f"edfa{kind.name.title()}Entry")
+            field.setPlaceholderText("Read device first")
+            field.setToolTip("Editing never sends a command. Apply requires a separate confirmation.")
+            field.textEdited.connect(lambda _text, k=kind: self._mark_setting_dirty(k))
+            grid.addWidget(field, row, 1)
+            units = QLabel(unit)
+            if kind is EDFAWriteKind.POWER:
+                self.power_entry_unit = units
+            grid.addWidget(units, row, 2)
+            apply = QPushButton("Apply")
+            apply.setObjectName(f"edfa{kind.name.title()}Apply")
+            apply.clicked.connect(lambda _checked=False, k=kind: self.request_apply_setting(k))
+            grid.addWidget(apply, row, 3)
+            detail = QLabel("Device readback —; hardware max —")
+            detail.setWordWrap(True)
+            detail.setFont(make_font("sans", 9))
+            grid.addWidget(detail, row + 1, 0, 1, 3)
+            state = QLabel("—")
+            state.setFont(make_font("sans", 9))
+            grid.addWidget(state, row + 1, 3)
+            self.setting_fields[kind] = field
+            self.setting_buttons[kind] = apply
+            self.setting_states[kind] = state
+            self.setting_limits[kind] = detail
+
+        grid.addWidget(QLabel("Device power units"), 6, 0)
+        self.device_units_combo = QComboBox()
+        self.device_units_combo.setObjectName("edfaDeviceUnitsCombo")
+        self.device_units_combo.addItem("W", PowerUnit.W)
+        self.device_units_combo.addItem("dBm", PowerUnit.DBM)
+        self.device_units_combo.currentIndexChanged.connect(lambda _index: self._update_controls())
+        grid.addWidget(self.device_units_combo, 6, 1, 1, 2)
+        self.device_units_apply = QPushButton("Change")
+        self.device_units_apply.setObjectName("edfaDeviceUnitsApply")
+        self.device_units_apply.setToolTip("Changes instrument reporting units; not a display-only conversion")
+        self.device_units_apply.clicked.connect(self.request_device_units)
+        grid.addWidget(self.device_units_apply, 6, 3)
+
+        self.control_feedback = QLabel(
+            "Setpoint writes are disabled by default. Mode changes and physical emission ON are unavailable."
+        )
+        self.control_feedback.setObjectName("edfaControlFeedback")
+        self.control_feedback.setWordWrap(True)
+        self.control_feedback.setFont(make_font("sans", 9))
+        grid.addWidget(self.control_feedback, 7, 0, 1, 4)
+        return group
+
+    def _mark_setting_dirty(self, kind: EDFAWriteKind) -> None:
+        self._field_dirty[kind] = True
+        self.setting_states[kind].setText("Pending")
+        self._update_controls()
+
+    def _populate_setting(self, kind: EDFAWriteKind, value: float | None, text: str) -> None:
+        self.setting_limits[kind].setText(text)
+        if value is not None and not self._field_dirty[kind]:
+            self.setting_fields[kind].setText(f"{value:.9g}")
+            self.setting_states[kind].setText("Readback")
+
+    def request_apply_setting(self, kind: EDFAWriteKind) -> None:
+        if kind not in self.setting_fields or not self.setting_buttons[kind].isEnabled():
+            return
+        config = self._last_configuration
+        if config is None:
+            return
+        try:
+            number = float(self.setting_fields[kind].text().strip())
+            unit = (
+                (PowerUnit.DBM if config.status.logarithmic_power_units else PowerUnit.W)
+                if kind is EDFAWriteKind.POWER else None
+            )
+            request = EDFAWriteRequest(kind, number, unit=unit)
+        except (ValueError, TypeError) as exc:
+            self._on_error(f"Invalid proposed EDFA setpoint: {exc}")
+            return
+        self._confirm_and_send(request)
+
+    def request_device_units(self) -> None:
+        if not self.device_units_apply.isEnabled():
+            return
+        target = self.device_units_combo.currentData()
+        try:
+            request = EDFAWriteRequest(EDFAWriteKind.POWER_UNITS, target)
+        except ValueError as exc:
+            self._on_error(str(exc))
+            return
+        self._confirm_and_send(request)
+
+    def _confirm_and_send(self, request: EDFAWriteRequest) -> None:
+        from datetime import UTC, datetime, timedelta
+
+        config = self._last_configuration
+        if (
+            config is None or self._last_telemetry is None
+            or datetime.now(UTC) - config.acquired_at_utc > timedelta(minutes=2)
+        ):
+            self._on_error("Configuration readback is missing or older than 2 minutes; refresh before Apply.")
+            return
+        if self._control_pending or self._operation_pending or self._monitoring or self._shutdown_requested:
+            return
+        is_physical = self.backend_mode == "physical"
+        message = (
+            f"Proposed {request.kind.value}: {request.value}"
+            + (f" {request.unit.value}" if request.unit is not None else "")
+            + "\n\nDevice setpoint/limits will be queried again before any write. "
+            "One command will be sent at most once; post-write readback may fail.\n\n"
+            "Do you authorize this single setting change?"
+        )
+        if is_physical:
+            message += (
+                "\n\nCONFIRM INDEPENDENTLY: physical emission is OFF at the amplifier; "
+                "key switch, interlocks, optical route and laboratory authorization were checked. "
+                "The internal status and 'Off' token are NOT independent safety checks."
+                f"\nApproval: {self._write_policy.site_reference}."
+            )
+        answer = QMessageBox.question(
+            self, "Confirm supervised EDFA operation", message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        request = EDFAWriteRequest(
+            request.kind, request.value, unit=request.unit,
+            operator_confirmed=True, emission_off_attested=is_physical,
+        )
+        self._pending_control = request
+        self._control_pending = True
+        self.control_feedback.setText(f"Pending: {request.kind.value}; device value not yet confirmed.")
+        self._update_controls()
+        self.control_requested.emit(request)
+
+    @Slot(object)
+    def _on_control_finished(self, result: EDFAWriteResult) -> None:
+        if self._shutdown_requested:
+            return
+        if result.request is not self._pending_control:
+            return
+        self._control_pending = False
+        self._pending_control = None
+        self.control_feedback.setText(
+            f"{result.outcome.value.upper()}: requested={result.request.value}; "
+            f"before={result.before}; after={result.after}. {result.message}"
+        )
+        if result.outcome is EDFAWriteOutcome.CONFIRMED:
+            if result.request.kind is not EDFAWriteKind.POWER_UNITS:
+                self._field_dirty[result.request.kind] = False
+            else:
+                self._clear_configuration()
+            if result.telemetry is not None:
+                self._on_telemetry(result.telemetry)
+            if result.configuration is not None:
+                self._on_configuration(result.configuration)
+        elif result.outcome in (EDFAWriteOutcome.UNKNOWN, EDFAWriteOutcome.MISMATCH):
+            self._clear_telemetry()
+            self.error_label.setText("EDFA state UNKNOWN after write. Physically verify before reconnecting.")
+            self.error_label.show()
+        self._update_controls()
+
     @property
     def shutdown_finished(self) -> bool:
         return self._shutdown_complete or not self._thread_started
