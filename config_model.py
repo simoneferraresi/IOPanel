@@ -18,7 +18,7 @@ Python's `configparser` into a format Pydantic can validate.
 import re
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class ConfigSemanticError(ValueError):
@@ -61,6 +61,29 @@ class InstrumentsConfig(BaseModel):
     edfa_gpib_timeout_ms: int = Field(default=3000, ge=100, le=60000)
     edfa_gpib_write_termination: Literal["none", "lf", "cr", "crlf"] = Field(default="none")
     edfa_gpib_read_termination: Literal["none", "lf", "cr", "crlf"] = Field(default="none")
+    # M4 physical writes are off unless a *separate, uncommitted* site-local
+    # INI supplies approval and all THREE independent operating ceilings.
+    edfa_m4_write_enabled: bool = Field(default=False)
+    edfa_m4_site_reference: str = Field(default="")
+    edfa_m4_approved_power_w: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    edfa_m4_approved_gain_db: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    edfa_m4_approved_current_a: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def validate_edfa_m4_site_approval(self) -> "InstrumentsConfig":
+        if self.edfa_m4_write_enabled:
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{7,79}", self.edfa_m4_site_reference):
+                raise ValueError("M4 write opt-in requires a documented site approval reference")
+            if any(
+                x is None
+                for x in (
+                    self.edfa_m4_approved_power_w,
+                    self.edfa_m4_approved_gain_db,
+                    self.edfa_m4_approved_current_a,
+                )
+            ):
+                raise ValueError("M4 requires independently approved power, gain and current laboratory ceilings")
+        return self
 
     @field_validator("edfa_gpib_resource_name")
     @classmethod
