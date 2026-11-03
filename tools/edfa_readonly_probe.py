@@ -116,9 +116,13 @@ def run(
         if qualification_query:
             raw_reply, value, qualification_status = device.read_qualification_query(qualification_query)
             unit = (
-                "A" if ":CURR:" in qualification_query else
-                "dB" if ":GAIN:" in qualification_query else
-                "dBm" if qualification_status.logarithmic_power_units else "W"
+                "A"
+                if ":CURR:" in qualification_query
+                else "dB"
+                if ":GAIN:" in qualification_query
+                else "dBm"
+                if qualification_status.logarithmic_power_units
+                else "W"
             )
             result["qualification"] = {
                 "command": qualification_query,
