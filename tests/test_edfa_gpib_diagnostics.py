@@ -127,8 +127,11 @@ def test_successful_single_session_has_exact_qualified_query_sequence() -> None:
 def test_no_listeners_is_reported_and_never_retried(phase: str) -> None:
     visa = FakeVisa(fail_command="SOUR:GAIN:SPO?", fail_phase=phase)
     result = run_diagnostics(
-        config(), connect_readonly=True, operator_confirmed=True,
-        sessions=3, manager_factory=lambda: FakeManager(visa),
+        config(),
+        connect_readonly=True,
+        operator_confirmed=True,
+        sessions=3,
+        manager_factory=lambda: FakeManager(visa),
     )
     assert result["status"] == "FAILED"
     assert visa.commands.count("SOUR:GAIN:SPO?") == 1
@@ -142,7 +145,9 @@ def test_no_listeners_is_reported_and_never_retried(phase: str) -> None:
 def test_failure_at_configuration_consistency_check_is_fatal() -> None:
     visa = FakeVisa(fail_final_status=True)
     result = run_diagnostics(
-        config(), connect_readonly=True, operator_confirmed=True,
+        config(),
+        connect_readonly=True,
+        operator_confirmed=True,
         manager_factory=lambda: FakeManager(visa),
     )
     assert result["status"] == "FAILED"
@@ -153,8 +158,11 @@ def test_failure_at_configuration_consistency_check_is_fatal() -> None:
 def test_query_budget_is_enforced_before_an_extra_command() -> None:
     visa = FakeVisa()
     result = run_diagnostics(
-        config(), connect_readonly=True, operator_confirmed=True,
-        max_queries=5, manager_factory=lambda: FakeManager(visa),
+        config(),
+        connect_readonly=True,
+        operator_confirmed=True,
+        max_queries=5,
+        manager_factory=lambda: FakeManager(visa),
     )
     assert result["status"] == "FAILED"
     assert result["completed_queries"] == 5
@@ -164,14 +172,19 @@ def test_query_budget_is_enforced_before_an_extra_command() -> None:
 
 def test_reopening_uses_distinct_sessions_and_never_sends_setters() -> None:
     visas: list[FakeVisa] = []
+
     def factory() -> FakeManager:
         visa = FakeVisa()
         visas.append(visa)
         return FakeManager(visa)
 
     result = run_diagnostics(
-        config(), connect_readonly=True, operator_confirmed=True,
-        plan="telemetry", sessions=2, manager_factory=factory,
+        config(),
+        connect_readonly=True,
+        operator_confirmed=True,
+        plan="telemetry",
+        sessions=2,
+        manager_factory=factory,
     )
     assert result["status"] == "PASSED_READ_ONLY_ONLY"
     assert result["completed_queries"] == 18
