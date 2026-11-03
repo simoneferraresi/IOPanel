@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QGroupBox, QMessageBox
 
 from hardware.dummy_edfa import DummyEDFA
 from hardware.edfa_controls import (
@@ -33,7 +33,7 @@ def test_controls_are_inert_until_connected_with_fresh_readbacks(qtbot):
     assert not panel.task.worker_thread.isRunning()
     assert not panel.setting_buttons[EDFAWriteKind.POWER].isEnabled()
     assert not panel.device_units_apply.isEnabled()
-    assert panel.findChildren(type(panel.controls_panel), "edfaAmplifierControlsGroup") == []
+    assert panel.controls_panel.findChild(QGroupBox, "edfaAmplifierControlsGroup") is None
     assert not hasattr(panel, "emission_button")
     panel.request_shutdown()
 
