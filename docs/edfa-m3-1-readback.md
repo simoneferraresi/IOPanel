@@ -49,8 +49,8 @@ demonstrated that special response.
 
 **Coverage denominator:** 14 commands in the *currently identified,
 non-mutating EAD-2K-C query inventory*, of which 14 have software
-implementations and 9 have already been exercised physically
-(`SOUR:POW:BACK?` was skipped because its capability bit was clear).
+implementations and 8 have already been exercised physically
+(the back-reflection query was skipped because its capability bit was clear).
 This is **not** a claim that the complete manufacturer's SCPI command table
 contains only 14 queries; exact total manual coverage cannot be measured
 without rechecking the full original manual. Of the five *new* readbacks:
