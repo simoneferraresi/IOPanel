@@ -182,7 +182,9 @@ def test_physical_configuration_failure_requires_explicit_close() -> None:
 def test_individual_qualification_returns_raw_numeric_and_keeps_allowlist() -> None:
     session = FakeSession()
     device, _ = connect(session)
-    assert device.read_qualification_query("SOUR:CURR:SPO?") == ("0.25", 0.25)
+    raw, value, status = device.read_qualification_query("SOUR:CURR:SPO?")
+    assert (raw, value) == ("0.25", 0.25)
+    assert status.raw_word == AGC_AVAILABLE
     assert session.calls == ["*IDN?", "SOUR:POW:STAT?", "SOUR:CURR:SPO?", "SOUR:POW:STAT?"]
     with pytest.raises(EDFAProtocolError):
         device.read_qualification_query("*ESR?")
@@ -267,7 +269,7 @@ def test_probe_options_stay_operator_gated_and_capture_raw_reply() -> None:
 
         def read_qualification_query(self, command):
             called.append(command)
-            return "0.25", 0.25
+            return "0.25", 0.25, EDFAStatus(AGC_AVAILABLE)
 
         def read_configuration(self):
             called.append("configuration")
