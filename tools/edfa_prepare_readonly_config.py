@@ -13,7 +13,7 @@ import os
 import tempfile
 from pathlib import Path
 
-from config_model import AppConfig
+from config_model import AppConfig, InstrumentsConfig
 
 _EXPECTED_RESOURCE = "GPIB0::12::INSTR"
 
@@ -25,7 +25,7 @@ def _section(parser: configparser.ConfigParser, name: str) -> str | None:
     return matches[0] if matches else None
 
 
-def _validated_profile(ini: str):
+def _validated_profile(ini: str) -> InstrumentsConfig:
     # Match the application's real INI reader, including interpolation checks.
     reader = configparser.ConfigParser()
     reader.read_string(ini)
