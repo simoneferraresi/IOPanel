@@ -15,11 +15,11 @@ import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from config_model import AppConfig
 from hardware.edfa_gpib import _READ_QUERIES
-from hardware.ipg_ead2kc import IPGEAD2KCGPIB, _default_manager_factory
+from hardware.ipg_ead2kc import IPGEAD2KCGPIB, VisaResourceManager, _default_manager_factory
 from tools.edfa_readonly_probe import read_configuration
 
 
@@ -211,8 +211,9 @@ def run_diagnostics(
         for session_number in range(1, sessions + 1):
             recorder.check_budget()
 
-            def factory(session_number: int = session_number) -> _QueryOnlyManager:
-                return _QueryOnlyManager(manager_factory(), recorder, session_number)
+            def factory(session_number: int = session_number) -> VisaResourceManager:
+                # Wrap VISA-like sessions without widening hardware permissions.
+                return cast(VisaResourceManager, _QueryOnlyManager(manager_factory(), recorder, session_number))
 
             device = IPGEAD2KCGPIB(
                 profile.edfa_gpib_resource_name,
