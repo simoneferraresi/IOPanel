@@ -95,3 +95,104 @@ jobs:
             pytest-ci-diagnostics/pytest.stderr.log
           if-no-files-found: warn
           retention-days: 14
+
+  # Real Windows PowerShell 5.1 process: prove the *complete Offline stage*,
+  # including detached checkout, native uv calls, atomic INI copy and dry run.
+  # CI uses an entirely synthetic local Git origin and a fake laboratory INI.
+  edfa-powershell51-offline:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/fix/edfa-gpib-forensic-diagnostics'
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v10.3.2
+        with:
+          version: "0.13.4"
+      - name: Exercise entire offline acceptance with Windows PowerShell 5.1
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $repo = $env:GITHUB_WORKSPACE
+          $sha = (& git -C $repo rev-parse HEAD).Trim()
+          if ($sha -cne $env:GITHUB_SHA) { throw 'Checkout is not the expected SHA' }
+          $branch = 'fix/edfa-gpib-forensic-diagnostics'
+          $localBranch = & git -C $repo show-ref --verify --hash ("refs/heads/" + $branch)
+          if ($LASTEXITCODE -ne 0) {
+            & git -C $repo branch $branch $sha
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to create synthetic local source branch' }
+          } elseif ($localBranch.Trim() -cne $sha) {
+            throw 'Synthetic local source branch has an unexpected commit'
+          }
+          # No GitHub network fetch: the qualification fetches from this local repository.
+          & git -C $repo remote set-url origin $repo
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to set local origin' }
+
+          $env:LOCALAPPDATA = Join-Path $env:RUNNER_TEMP 'IOPanel PS51 evidence – offline only'
+          New-Item -ItemType Directory -Force -Path $env:LOCALAPPDATA | Out-Null
+          $worktree = Join-Path $env:RUNNER_TEMP 'IOPanel pinned checkout – independent'
+          $lab = Join-Path $env:RUNNER_TEMP 'reviewed synthetic lab config.ini'
+          $fixture = @'
+          [Instruments]
+          edfa_backend = physical
+          edfa_gpib_resource_name = GPIB0::12::INSTR
+          edfa_m4_write_enabled = true
+
+          [Logging]
+          level = INFO
+          file = old.log
+          '@
+          [System.IO.File]::WriteAllText($lab, $fixture, (New-Object System.Text.UTF8Encoding($true)))
+          $before = (Get-FileHash -LiteralPath $lab -Algorithm SHA256).Hash
+          $script = Join-Path $repo 'tools/Test-IOPanel-EDFA-GPIB.ps1'
+          & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $script -Stage Offline -ExpectedSha $sha -RepoPath $repo -WorktreePath $worktree -LabConfig $lab
+          if ($LASTEXITCODE -ne 0) { throw "Offline PowerShell 5.1 qualification returned $LASTEXITCODE" }
+
+          $evidence = Join-Path $env:LOCALAPPDATA 'IOPanel/EDFA-GPIB-qualification'
+          $run = Get-ChildItem -LiteralPath $evidence -Directory | Sort-Object Name | Select-Object -Last 1
+          if (-not $run) { throw 'Acceptance evidence directory was not produced' }
+          $report = Get-Content -LiteralPath (Join-Path $run.FullName 'acceptance.json') -Raw | ConvertFrom-Json
+          if ($report.status -cne 'PASS_OFFLINE_ONLY' -or $report.offline -cne 'PASS') {
+            throw "Offline report incorrectly marked: $($report.status), $($report.offline)"
+          }
+          if ($report.read_only -cne 'NOT_RUN' -or $report.gui -cne 'NOT_RUN') {
+            throw 'Offline script attempted or reported a physical stage'
+          }
+          if ($report.tested_commit -cne $sha -or $report.physical_writes -cne 'DISABLED') {
+            throw 'SHA or write-disabled evidence mismatch'
+          }
+          foreach ($file in @('PowerShell-transcript.txt','uv-sync.log','ruff-check.log','ruff-format.log','pyright.log','edfa-tests.log','prepare-config.log','dry-run.log','config.gpib.readonly.ini')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $run.FullName $file) -PathType Leaf)) {
+              throw "Offline evidence file missing: $file"
+            }
+          }
+          $configCopy = Get-Content -LiteralPath (Join-Path $run.FullName 'config.gpib.readonly.ini') -Raw
+          if ($configCopy -notmatch '(?im)^edfa_m4_write_enabled\s*=\s*false\s*$') {
+            throw 'Sanitized INI did not explicitly disable M4 writes'
+          }
+          if ((Get-FileHash -LiteralPath $lab -Algorithm SHA256).Hash -cne $before) {
+            throw 'The original laboratory fixture was modified'
+          }
+          Write-Host "Windows PowerShell 5.1 full Offline acceptance PASSED: $sha"
+          Write-Host "Acceptance evidence: $($run.FullName)"
+
+          # Negative smoke test: the wrapper itself must produce a FAILED JSON
+          # and an exit code 2 when the reviewed INI is absent.
+          $missing = Join-Path $env:RUNNER_TEMP 'deliberately nonexistent EDFA INI.ini'
+          & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $script -Stage Offline -ExpectedSha $sha -RepoPath $repo -WorktreePath $worktree -LabConfig $missing
+          if ($LASTEXITCODE -ne 2) { throw 'Missing-INI wrapper failure did not exit 2' }
+          $failedRun = Get-ChildItem -LiteralPath $evidence -Directory | Sort-Object Name | Select-Object -Last 1
+          $failed = Get-Content -LiteralPath (Join-Path $failedRun.FullName 'acceptance.json') -Raw | ConvertFrom-Json
+          if ($failed.status -cne 'FAILED' -or $failed.offline -cne 'NOT_RUN') {
+            throw 'Failure-state JSON was not persisted correctly'
+          }
+      - name: Upload synthetic offline acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: edfa-powershell51-offline
+          path: ${{ runner.temp }}/IOPanel PS51 evidence – offline only/IOPanel/EDFA-GPIB-qualification/
+          if-no-files-found: warn
+          retention-days: 14
