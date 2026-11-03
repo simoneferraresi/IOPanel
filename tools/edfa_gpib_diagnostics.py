@@ -230,7 +230,7 @@ def run_diagnostics(
             finally:
                 device.close()
         report["status"] = "PASSED_READ_ONLY_ONLY"
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - preserve actual VISA failure in audit report.
         report["failure"] = {
             "type": type(exc).__name__,
             "message": str(exc),
@@ -266,7 +266,7 @@ def main() -> int:
             max_queries=args.max_queries,
             max_seconds=args.max_seconds,
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - CLI reports failures without touching hardware.
         parser.exit(2, f"EDFA diagnostic refused: {type(exc).__name__}: {exc}\n")
     if args.connect_readonly:
         root = args.report_dir or (
