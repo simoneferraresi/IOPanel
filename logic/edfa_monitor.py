@@ -131,6 +131,39 @@ class EDFAMonitorWorker(BaseWorker):
             self.error_occurred.emit(f"EDFA configuration readback failed: {exc}")
             self._publish()
 
+    @Slot(object)
+    def apply_control(self, request: EDFAWriteRequest) -> None:
+        """One transaction at a time, queued through the existing worker thread."""
+        if not isinstance(request, EDFAWriteRequest):
+            self.error_occurred.emit("Typed EDFA write request required.")
+            return
+        backend = self._backend
+        if request.cancelled.is_set() or self._shutting_down:
+            self.control_finished.emit(
+                EDFAWriteResult(request, EDFAWriteOutcome.CANCELLED, None, None, "Cancelled before execution")
+            )
+            return
+        if backend is None or backend.state is not EDFAState.IDLE or self._monitoring:
+            self.control_finished.emit(
+                EDFAWriteResult(request, EDFAWriteOutcome.REJECTED, None, None,
+                                "Connect and stop monitoring before changing a setting")
+            )
+            return
+        try:
+            operation = getattr(backend, "apply_control", None)
+            if not callable(operation):
+                raise RuntimeError("Backend does not support typed M4 writes")
+            self.control_finished.emit(operation(request))
+        except Exception as exc:
+            logger.exception("EDFA supervised write failed")
+            self.control_finished.emit(
+                EDFAWriteResult(request, EDFAWriteOutcome.REJECTED, None, None,
+                                f"Preflight/transport failed; no setter confirmed: {exc}")
+            )
+            self.error_occurred.emit(f"EDFA controlled operation failed: {exc}")
+        finally:
+            self._publish()
+
     @Slot(int)
     def start_monitoring(self, interval_ms: int) -> None:
         if self._timer is None or self._backend is None or self._backend.state is not EDFAState.IDLE:
@@ -173,6 +206,7 @@ class EDFAMonitorWorker(BaseWorker):
 
     @Slot()
     def shutdown(self) -> None:
+        self._shutting_down = True
         """Finish current queued operation, then release resources in their owner thread."""
         self._monitoring = False
         if self._timer is not None:
