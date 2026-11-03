@@ -168,6 +168,7 @@ class EDFATelemetry:
         if self.back_reflection_percent_of_max is not None and self.back_reflection_percent_of_max < 0:
             raise ValueError("back_reflection_percent_of_max cannot be negative")
 
+
 @dataclass(frozen=True, slots=True)
 class EDFAConfiguration:
     """Explicitly requested read-only settings/limits, not a telemetry sample.
