@@ -140,8 +140,8 @@ the reported output-power setpoint remained 0.20 W, current monitor
 no active low-input status bit. This is not evidence of optical safety
 or permission to enable emission. The reported 2.2 W limit is a
 configuration readback, not proof that such power is being produced.
-The standalone JSON's `physically_qualified: false` and
-`UNQUALIFIED` note are unchanged static software caveats and do not
+The standalone JSON now records the November 3, 2026 physical readback
+qualification for matched Rev 1.1.175 firmware. This evidence does not
 reflect a failed hardware response.
 
 Independent evidence for disconnect clearing, all simulated error
