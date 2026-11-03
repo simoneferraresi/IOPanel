@@ -45,6 +45,7 @@ class FakeVisa:
             "SOUR:TEMP:LEV?": "23.8",
             "INP?": "0.03",
             "INP:LIM:LOW?": "0.23",
+            "SOUR:POW:BACK?": "0",
             "SOUR:POW:LIM:HIGH?": "2.2",
             "SOUR:CURR:SPO?": "0.7",
             "SOUR:CURR:LIM:HIGH?": "2.4",
