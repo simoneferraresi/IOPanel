@@ -1,4 +1,4 @@
-"""Read-only EDFA service worker. The backend is owned by the worker's Qt thread."""
+"""EDFA service worker for serialized queries and supervised writes. The backend is owned by the worker's Qt thread."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from collections.abc import Callable
 
 from PySide6.QtCore import QTimer, Signal, Slot
 
+from hardware.edfa_controls import EDFAWriteOutcome, EDFAWritePolicy, EDFAWriteRequest, EDFAWriteResult
 from hardware.dummy_edfa import DummyEDFA
 from hardware.edfa_types import EDFAState
 from hardware.interfaces import AbstractEDFA
@@ -21,6 +22,7 @@ class EDFAMonitorWorker(BaseWorker):
     identity_ready = Signal(str)
     telemetry_ready = Signal(object)
     configuration_ready = Signal(object)
+    control_finished = Signal(object)
     error_occurred = Signal(str)
 
     def __init__(
@@ -28,6 +30,7 @@ class EDFAMonitorWorker(BaseWorker):
         *,
         simulator_factory: Callable[[], AbstractEDFA] = DummyEDFA,
         physical_factory: Callable[[str, int, str, str], AbstractEDFA] | None = None,
+        write_policy: EDFAWritePolicy | None = None,
     ) -> None:
         super().__init__()
         self._simulator_factory = simulator_factory
@@ -35,6 +38,8 @@ class EDFAMonitorWorker(BaseWorker):
         self._backend: AbstractEDFA | None = None
         self._timer: QTimer | None = None
         self._monitoring = False
+        self._write_policy = write_policy or EDFAWritePolicy()
+        self._shutting_down = False
 
     @Slot()
     def initialize(self) -> None:
@@ -69,6 +74,12 @@ class EDFAMonitorWorker(BaseWorker):
                 )
             else:
                 raise ValueError("Unsupported EDFA backend mode")
+            if mode == "physical":
+                policy_setter = getattr(backend, "configure_write_policy", None)
+                if callable(policy_setter):
+                    policy_setter(self._write_policy)
+                elif self._write_policy.enabled:
+                    raise ValueError("Physical backend lacks mandatory M4 policy gate")
             self._backend = backend
             backend.connect()
             self.identity_ready.emit(backend.identify())
