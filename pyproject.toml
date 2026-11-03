@@ -96,6 +96,7 @@ default-groups = ["lab"]
 include = [
     "hardware/interfaces.py",
     "hardware/edfa_types.py",
+    "hardware/edfa_controls.py",
     "hardware/edfa_gpib.py",
     "hardware/ipg_ead2kc.py",
     "logic/edfa_monitor.py",
