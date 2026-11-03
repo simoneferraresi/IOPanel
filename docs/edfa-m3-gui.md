@@ -80,3 +80,9 @@ They require their own command-contract review, safety gating, simulator tests,
 physically verified loss-of-seed behavior and explicit operator authorization.
 Future milestones may also add graphs, logging/export and coordinated nonlinear
 experiments.
+
+
+## M3.1 extension
+
+See [M3.1 extended readback and supervised qualification](edfa-m3-1-readback.md)
+for the strictly on-demand settings/limits dashboard and firmware-qualification requirements.
