@@ -1,4 +1,4 @@
-"""EDFA tab: explicit read-only connection and nonblocking telemetry display."""
+"""EDFA tab: read-only monitoring and separately gated supervised controls."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPushButton,
     QSizePolicy,
@@ -20,7 +21,21 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from hardware.edfa_types import EDFAConfiguration, EDFAOpticalPower, EDFAState, EDFATelemetry
+from hardware.edfa_controls import (
+    EDFAWriteKind,
+    EDFAWriteOutcome,
+    EDFAWritePolicy,
+    EDFAWriteRequest,
+    EDFAWriteResult,
+)
+from hardware.edfa_types import (
+    EDFAConfiguration,
+    EDFAControlMode,
+    EDFAOpticalPower,
+    EDFAState,
+    EDFATelemetry,
+    PowerUnit,
+)
 from logic.edfa_monitor import EDFAMonitorWorker
 from logic.task_runner import TaskRunner
 from ui.typography import make_font, style_group_box_title
@@ -41,6 +56,7 @@ class EDFAReadOnlyPanel(QWidget):
     disconnect_requested = Signal()
     read_requested = Signal()
     configuration_requested = Signal()
+    control_requested = Signal(object)
     start_requested = Signal(int)
     stop_requested = Signal()
     shutdown_requested = Signal()
@@ -59,6 +75,7 @@ class EDFAReadOnlyPanel(QWidget):
         write_termination: str = "none",
         read_termination: str = "none",
         worker: EDFAMonitorWorker | None = None,
+        write_policy: EDFAWritePolicy | None = None,
     ) -> None:
         super().__init__(parent)
         if backend_mode not in {"simulation", "physical"}:
@@ -81,8 +98,15 @@ class EDFAReadOnlyPanel(QWidget):
         self._last_error: str | None = None
         self._last_configuration: EDFAConfiguration | None = None
         self._configuration_pending = False
+        self._control_pending = False
+        self._pending_control: EDFAWriteRequest | None = None
+        self._last_telemetry: EDFATelemetry | None = None
+        self._write_policy = write_policy or EDFAWritePolicy()
+        self._field_dirty: dict[EDFAWriteKind, bool] = {
+            kind: False for kind in (EDFAWriteKind.POWER, EDFAWriteKind.GAIN, EDFAWriteKind.CURRENT)
+        }
 
-        self.worker = worker if worker is not None else EDFAMonitorWorker()
+        self.worker = worker if worker is not None else EDFAMonitorWorker(write_policy=self._write_policy)
         self.task = TaskRunner(self.worker, auto_start_run=False)
         self.task.worker_thread.setObjectName("EDFA-readonly-monitor")
         self.task.worker_thread.started.connect(self.worker.initialize)
@@ -91,6 +115,7 @@ class EDFAReadOnlyPanel(QWidget):
         self.disconnect_requested.connect(self.worker.disconnect_instrument)
         self.read_requested.connect(self.worker.read_once)
         self.configuration_requested.connect(self.worker.read_configuration)
+        self.control_requested.connect(self.worker.apply_control)
         self.start_requested.connect(self.worker.start_monitoring)
         self.stop_requested.connect(self.worker.stop_monitoring)
         self.shutdown_requested.connect(self.worker.shutdown)
@@ -98,6 +123,7 @@ class EDFAReadOnlyPanel(QWidget):
         self.worker.identity_ready.connect(self._set_identity)
         self.worker.telemetry_ready.connect(self._on_telemetry)
         self.worker.configuration_ready.connect(self._on_configuration)
+        self.worker.control_finished.connect(self._on_control_finished)
         self.worker.error_occurred.connect(self._on_error)
 
         self._shutdown_timer = QTimer(self)
@@ -134,7 +160,7 @@ class EDFAReadOnlyPanel(QWidget):
         self.configuration_button.setMinimumHeight(35)
         self.configuration_button.setToolTip(
             "On-demand configuration and limits: never part of periodic monitoring; "
-            "new physical GPIB queries require supervised qualification."
+            "M3.1 readbacks were qualified on firmware Rev 1.1.175 (2026-11-03)."
         )
         operation_layout.addWidget(self.configuration_button)
         interval_row = QHBoxLayout()
@@ -174,8 +200,8 @@ class EDFAReadOnlyPanel(QWidget):
         self.error_label.hide()
         controls_layout.addWidget(self.error_label)
         self.safety_label = QLabel(
-            "Read-only observations cannot certify safe optical conditions. "
-            "This tab provides no emission, gain, diode-current, or optical-power controls."
+            "No emission enablement or mode selection is available. Readbacks do not "
+            "prove optical safety; physical setpoint writes require site approval."
         )
         self.safety_label.setObjectName("edfaSafetyLabel")
         self.safety_label.setWordWrap(True)
@@ -260,7 +286,14 @@ class EDFAReadOnlyPanel(QWidget):
         metric(health_grid, "edfaReflectionLabel", "Back-reflection (% of max.)", 1, 1, size=12)
         metric(health_grid, "edfaRawStatusLabel", "Raw status word", 2, 0, size=12)
         metric(health_grid, "edfaUpdatedLabel", "Sampled at (UTC)", 2, 1, size=12)
-        dashboard_layout.addWidget(health, stretch=1)
+        health_column = QWidget()
+        health_stack = QVBoxLayout(health_column)
+        health_stack.setContentsMargins(0, 0, 0, 0)
+        health_stack.setSpacing(10)
+        health_stack.addWidget(health)
+        health_stack.addWidget(self._build_amplifier_controls())
+        health_stack.addStretch(1)
+        dashboard_layout.addWidget(health_column, stretch=1)
         root.addWidget(self.dashboard_panel, stretch=1)
 
         self.read_button.clicked.connect(self.request_read)
