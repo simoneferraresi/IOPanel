@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
+import math
 import threading
 from datetime import UTC, datetime
-import math
 from typing import override
 
 from hardware.edfa_controls import (
     EDFAEmissionAction,
-    EDFAWriteKind,
     EDFAWriteOutcome,
     EDFAWritePolicy,
     EDFAWriteRequest,
@@ -21,10 +20,10 @@ from hardware.edfa_types import (
     EDFACommunicationError,
     EDFAConfiguration,
     EDFAOpticalPower,
+    EDFAProtocolError,
     EDFAState,
     EDFAStateError,
     EDFAStatus,
-    EDFAProtocolError,
     EDFATelemetry,
     PowerUnit,
 )
