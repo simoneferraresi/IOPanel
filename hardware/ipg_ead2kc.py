@@ -13,6 +13,7 @@ import logging
 import re
 import threading
 import time
+import uuid
 from collections.abc import Callable
 from typing import Protocol, Self, override
 
@@ -83,10 +84,11 @@ class _ObservedVisaSession:
     never opens, closes, clears, retries or changes a GPIB command.
     """
 
-    def __init__(self, raw: VisaSession, resource: str, connection_number: int) -> None:
+    def __init__(self, raw: VisaSession, resource: str, connection_number: int, session_id: str) -> None:
         self._raw = raw
         self._resource = resource
         self._connection_number = connection_number
+        self._session_id = session_id
         self._operation_number = 0
 
     def _transact(self, method: str, message: str) -> object:
@@ -96,7 +98,7 @@ class _ObservedVisaSession:
         label = message if method == "query" else message.partition(" ")[0]
         start = time.monotonic()
         context = (
-            f"resource={self._resource} conn={self._connection_number} "
+            f"resource={self._resource} conn={self._connection_number} session_id={self._session_id} "
             f"op={number} thread={threading.get_ident()} kind={method} command={label!r}"
         )
         logger.debug("EDFA GPIB begin %s", context)
@@ -162,6 +164,7 @@ class IPGEAD2KCGPIB(AbstractEDFA):
         self._session: VisaSession | None = None
         self._observed: _ObservedVisaSession | None = None
         self._connection_number = 0
+        self._session_id = "not-opened"
         self._identity: str | None = None
         self._state = EDFAState.DISCONNECTED
         self._lock = threading.RLock()
@@ -190,11 +193,15 @@ class IPGEAD2KCGPIB(AbstractEDFA):
                 self._session.write_termination = _TERMINATIONS[self.write_termination]
                 self._session.read_termination = _TERMINATIONS[self.read_termination]
                 self._connection_number += 1
-                self._observed = _ObservedVisaSession(self._session, self.resource_name, self._connection_number)
+                self._session_id = uuid.uuid4().hex[:12]
+                self._observed = _ObservedVisaSession(
+                    self._session, self.resource_name, self._connection_number, self._session_id
+                )
                 logger.info(
-                    "EDFA GPIB session open resource=%s conn=%d thread=%d timeout_ms=%d write_term=%s read_term=%s",
+                    "EDFA GPIB session open resource=%s conn=%d session_id=%s thread=%d timeout_ms=%d write_term=%s read_term=%s",
                     self.resource_name,
                     self._connection_number,
+                    self._session_id,
                     threading.get_ident(),
                     self.timeout_ms,
                     self.write_termination,
@@ -355,9 +362,10 @@ class IPGEAD2KCGPIB(AbstractEDFA):
         problems: list[tuple[str, Exception]] = []
         if self._session is not None:
             logger.info(
-                "EDFA GPIB session close attempt resource=%s conn=%d thread=%d",
+                "EDFA GPIB session close attempt resource=%s conn=%d session_id=%s thread=%d",
                 self.resource_name,
                 self._connection_number,
+                self._session_id,
                 threading.get_ident(),
             )
             try:
@@ -368,7 +376,7 @@ class IPGEAD2KCGPIB(AbstractEDFA):
             else:
                 self._session = None
                 self._observed = None
-                logger.info("EDFA GPIB session closed resource=%s conn=%d", self.resource_name, self._connection_number)
+                logger.info("EDFA GPIB session closed resource=%s session_id=%s", self.resource_name, self._session_id)
         # Preserve the manager while a session remains unclosed. Retrying a
         # session close through an already-disposed manager is not reliable.
         if self._manager is not None and self._session is None:
