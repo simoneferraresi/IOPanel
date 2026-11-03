@@ -198,7 +198,8 @@ class IPGEAD2KCGPIB(AbstractEDFA):
                     self._session, self.resource_name, self._connection_number, self._session_id
                 )
                 logger.info(
-                    "EDFA GPIB session open resource=%s conn=%d session_id=%s thread=%d timeout_ms=%d write_term=%s read_term=%s",
+                    "EDFA GPIB session open resource=%s conn=%d session_id=%s thread=%d timeout_ms=%d "
+                    "write_term=%s read_term=%s",
                     self.resource_name,
                     self._connection_number,
                     self._session_id,
