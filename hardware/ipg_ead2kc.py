@@ -14,9 +14,10 @@ import threading
 from collections.abc import Callable
 from typing import Protocol, Self, override
 
-from hardware.edfa_gpib import GPIBQuerySession, GPIBReadOnlyReader, parse_status
+from hardware.edfa_gpib import EXTENDED_READ_QUERIES, GPIBQuerySession, GPIBReadOnlyReader, parse_status
 from hardware.edfa_types import (
     EDFACommunicationError,
+    EDFAConfiguration,
     EDFAProtocolError,
     EDFAState,
     EDFAStateError,
@@ -29,6 +30,7 @@ logger = logging.getLogger("LabApp.IPGEAD2KC")
 _GPIB_RESOURCE = re.compile(r"GPIB(?:0|[1-9][0-9]*)::(?:[1-9]|[12][0-9]|30)::INSTR", re.IGNORECASE)
 _REQUIRED_IDENTITY_TOKEN = "EAD-2K-C"
 _CONSISTENCY_BITS = (1 << 18) | (1 << 21) | (1 << 22)
+_CONFIGURATION_CONSISTENCY_BITS = _CONSISTENCY_BITS | (1 << 0) | (1 << 9) | (1 << 16) | (1 << 20)
 _TERMINATIONS = {"none": None, "lf": "\n", "cr": "\r", "crlf": "\r\n"}
 
 
@@ -164,6 +166,48 @@ class IPGEAD2KCGPIB(AbstractEDFA):
                 if isinstance(exc, EDFAProtocolError):
                     raise
                 raise EDFACommunicationError("EDFA GPIB telemetry read failed; explicit recovery required") from exc
+
+    @override
+    def read_configuration(self) -> EDFAConfiguration:
+        """Explicit on-demand readback; never part of the telemetry timer."""
+        with self._lock:
+            session = self._require_idle()
+            try:
+                report = GPIBReadOnlyReader(session).read_configuration()
+                end_status = parse_status(session.query("SOUR:POW:STAT?"))
+                if (report.status.raw_word ^ end_status.raw_word) & _CONFIGURATION_CONSISTENCY_BITS:
+                    raise EDFAProtocolError("EDFA mode, units or capabilities changed during configuration readback")
+                return report
+            except Exception as exc:
+                self._state = EDFAState.ERROR
+                if isinstance(exc, EDFAProtocolError):
+                    raise
+                raise EDFACommunicationError("EDFA configuration readback failed; explicit recovery required") from exc
+
+    def read_qualification_query(self, command: str) -> tuple[str, float]:
+        """Single non-mutating manual candidate, for supervised CLI qualification.
+
+        This command cannot be selected by the GUI and cannot be arbitrary SCPI.
+        Any unexpected response or communication failure requires close/reconnect.
+        """
+        if command not in EXTENDED_READ_QUERIES:
+            raise EDFAProtocolError(f"Not an approved EDFA qualification query: {command!r}")
+        with self._lock:
+            session = self._require_idle()
+            try:
+                start = parse_status(session.query("SOUR:POW:STAT?"))
+                if command.startswith("SOUR:GAIN:") and not start.agc_available:
+                    raise EDFAProtocolError("AGC capability is not advertised; refusing gain readback")
+                result = GPIBReadOnlyReader(session).read_qualification_value(command)
+                end = parse_status(session.query("SOUR:POW:STAT?"))
+                if (start.raw_word ^ end.raw_word) & _CONFIGURATION_CONSISTENCY_BITS:
+                    raise EDFAProtocolError("EDFA mode, units or capabilities changed during qualification readback")
+                return result
+            except Exception as exc:
+                self._state = EDFAState.ERROR
+                if isinstance(exc, EDFAProtocolError):
+                    raise
+                raise EDFACommunicationError("EDFA qualification readback failed; explicit recovery required") from exc
 
     @override
     def close(self) -> None:
