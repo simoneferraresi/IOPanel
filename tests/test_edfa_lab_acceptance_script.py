@@ -20,13 +20,27 @@ def test_script_requires_pinned_reviewed_sha_and_separate_detached_worktree() ->
     assert "if ($checkout -cne $ExpectedSha)" in source
 
 
-def test_script_disables_physical_parameter_writes_in_copied_config() -> None:
+def test_script_prepares_readonly_ini_without_multiline_python_source() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
-    assert "Copy-Item -LiteralPath $LabConfig -Destination $readonlyIni" in source
-    assert 'cfg[instrument]["edfa_m4_write_enabled"] = "false"' in source
-    assert '"GPIB0::12::INSTR"' in source
+    assert "tools.edfa_prepare_readonly_config" in source
+    assert "'--source',$LabConfig" in source
+    assert "'--destination',$readonlyIni" in source
+    assert "'--log-file',$guiLog" in source
+    assert "python -c $sanitize" not in source
+    assert "Copy-Item -LiteralPath $LabConfig" not in source
     assert "GuiApproved" not in source
     assert "GUI-WRITE-APPROVED" not in source
+
+
+def test_offline_status_is_only_marked_pass_after_safe_ini_and_dry_run() -> None:
+    source = SCRIPT.read_text(encoding="utf-8")
+    assert source.index("Run-Captured 'Prepare and validate read-only INI'") < source.index(
+        "Run-Captured 'No-VISA dry run'"
+    )
+    assert source.index("Run-Captured 'No-VISA dry run'") < source.index("$report.offline = 'PASS'")
+    assert "if ($Stage -eq 'Offline')" in source
+    assert "$report.status = 'PASS_OFFLINE_ONLY'" in source
+    assert "ls-files --others --exclude-standard" in source
 
 
 def test_script_distinguishes_gui_process_success_from_manual_acceptance() -> None:
