@@ -219,16 +219,16 @@ def _check_limits(
             raise ValueError("Power setpoint unit is stale or differs from device reporting units")
         if config.power_limit.unit is not actual_unit:
             raise ValueError("Hardware maximum power unit is inconsistent")
-        amount = float(request.value)
+        amount = request.numeric_value
         if amount > config.power_limit.value or _power_w(amount, actual_unit) > _ceiling(policy.maximum_power_w):
             raise ValueError("Requested power exceeds hardware limit or approved laboratory ceiling")
     elif request.kind is EDFAWriteKind.GAIN:
-        if config.gain_limit_db is None or float(request.value) > min(
+        if config.gain_limit_db is None or request.numeric_value > min(
             config.gain_limit_db, _ceiling(policy.maximum_gain_db)
         ):
             raise ValueError("Requested gain exceeds hardware limit or approved laboratory ceiling")
     elif request.kind is EDFAWriteKind.CURRENT:
-        if float(request.value) > min(config.diode_current_limit_a, _ceiling(policy.maximum_current_a)):
+        if request.numeric_value > min(config.diode_current_limit_a, _ceiling(policy.maximum_current_a)):
             raise ValueError("Requested current exceeds hardware limit or approved laboratory ceiling")
     elif request.value is (PowerUnit.DBM if status.logarithmic_power_units else PowerUnit.W):
         raise ValueError("Instrument already reports the requested power unit")
@@ -242,7 +242,9 @@ def _verified(request: EDFAWriteRequest, after: float | PowerUnit) -> bool:
         EDFAWriteKind.GAIN: 0.05,
         EDFAWriteKind.CURRENT: 0.0005,
     }[request.kind]
-    return math.isclose(float(request.value), float(after), rel_tol=0.0, abs_tol=tolerance)
+    return isinstance(after, (int, float)) and math.isclose(
+        request.numeric_value, after, rel_tol=0.0, abs_tol=tolerance
+    )
 
 
 def execute_supervised_write(
