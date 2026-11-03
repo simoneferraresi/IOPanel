@@ -80,6 +80,7 @@ class EDFAReadOnlyPanel(QWidget):
         self._last_observations: str | None = None
         self._last_error: str | None = None
         self._last_configuration: EDFAConfiguration | None = None
+        self._configuration_pending = False
 
         self.worker = worker if worker is not None else EDFAMonitorWorker()
         self.task = TaskRunner(self.worker, auto_start_run=False)
@@ -301,6 +302,7 @@ class EDFAReadOnlyPanel(QWidget):
         self._last_observations = None
         self._last_error = None
         self._last_configuration = None
+        self._configuration_pending = False
         self._clear_configuration()
         self._activity = "Connecting"
         self.error_label.clear()
@@ -336,6 +338,7 @@ class EDFAReadOnlyPanel(QWidget):
             or self._operation_pending
             or self._backend_state is not EDFAState.IDLE
             or self._monitoring
+            or self._configuration_pending
         ):
             return
         if self.backend_mode == "physical":
@@ -351,6 +354,8 @@ class EDFAReadOnlyPanel(QWidget):
             )
             if result != QMessageBox.StandardButton.Yes:
                 return
+        self._configuration_pending = True
+        self._update_controls()
         self.configuration_requested.emit()
 
     def request_monitoring(self) -> None:
@@ -377,8 +382,10 @@ class EDFAReadOnlyPanel(QWidget):
         self._activity = activity
         self._operation_pending = activity in {"Connecting", "Disconnecting"}
         self._monitoring = activity == "Monitoring (read-only)"
-        if state is EDFAState.DISCONNECTED:
-            self._clear_telemetry()
+        if state is not EDFAState.IDLE:
+            self._configuration_pending = False
+            if state in (EDFAState.DISCONNECTED, EDFAState.ERROR):
+                self._clear_telemetry()
         self._update_controls()
         self._publish_status_observations()
         self.connection_status_changed.emit(state, activity)
@@ -445,6 +452,8 @@ class EDFAReadOnlyPanel(QWidget):
         if self._shutdown_requested:
             return
         self._last_configuration = report
+        self._configuration_pending = False
+        self._update_controls()
         gain_available = report.status.agc_available
         values = {
             "edfaPowerLimitLabel": format_edfa_power(report.power_limit),
@@ -468,6 +477,8 @@ class EDFAReadOnlyPanel(QWidget):
 
     @Slot(str)
     def _on_error(self, message: str) -> None:
+        self._configuration_pending = False
+        self._update_controls()
         self._last_error = message
         self.error_label.setText(message)
         self.error_label.setVisible(bool(message))
@@ -512,7 +523,7 @@ class EDFAReadOnlyPanel(QWidget):
         ready = self._backend_state is EDFAState.IDLE
         blocked = self._operation_pending or self._shutdown_requested
         self.read_button.setEnabled(not blocked and ready)
-        self.configuration_button.setEnabled(not blocked and ready and not self._monitoring)
+        self.configuration_button.setEnabled(not blocked and ready and not self._monitoring and not self._configuration_pending)
         self.start_button.setEnabled(not blocked and ready and not self._monitoring)
         self.stop_button.setEnabled(not self._shutdown_requested and self._monitoring)
         self.interval_combo.setEnabled(not blocked and not self._monitoring)
