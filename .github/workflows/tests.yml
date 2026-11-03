@@ -181,13 +181,23 @@ jobs:
           # Negative smoke test: the wrapper itself must produce a FAILED JSON
           # and an exit code 2 when the reviewed INI is absent.
           $missing = Join-Path $env:RUNNER_TEMP 'deliberately nonexistent EDFA INI.ini'
-          & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $script -Stage Offline -ExpectedSha $sha -RepoPath $repo -WorktreePath $worktree -LabConfig $missing
-          if ($LASTEXITCODE -ne 2) { throw 'Missing-INI wrapper failure did not exit 2' }
+          $previousAction = $ErrorActionPreference
+          try {
+            # Expected native exit 2 must not become a terminating PS7 error.
+            $ErrorActionPreference = 'Continue'
+            & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $script -Stage Offline -ExpectedSha $sha -RepoPath $repo -WorktreePath $worktree -LabConfig $missing
+            $negativeExit = $LASTEXITCODE
+          } finally {
+            $ErrorActionPreference = $previousAction
+          }
+          if ($negativeExit -ne 2) { throw "Missing-INI wrapper failure exited $negativeExit, expected 2" }
           $failedRun = Get-ChildItem -LiteralPath $evidence -Directory | Sort-Object Name | Select-Object -Last 1
           $failed = Get-Content -LiteralPath (Join-Path $failedRun.FullName 'acceptance.json') -Raw | ConvertFrom-Json
           if ($failed.status -cne 'FAILED' -or $failed.offline -cne 'NOT_RUN') {
             throw 'Failure-state JSON was not persisted correctly'
           }
+          # Reset the deliberately nonzero native status before the step exits.
+          exit 0
       - name: Upload synthetic offline acceptance evidence
         if: always()
         uses: actions/upload-artifact@v7.0.2
