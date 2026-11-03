@@ -112,6 +112,11 @@ try {
     Assert-Native 'Verify clean worktree'
     & git -C $WorktreePath diff --cached --quiet
     Assert-Native 'Verify clean index'
+    $untracked = & git -C $WorktreePath ls-files --others --exclude-standard
+    Assert-Native 'Check untracked worktree files'
+    if ($untracked) {
+        throw "Isolated worktree contains untracked files; refusing to execute an altered checkout"
+    }
     Write-Host "Verified isolated SHA: $checkout"
     Push-Location $WorktreePath
     try {
@@ -127,46 +132,29 @@ try {
                 'tests/test_edfa_gpib_diagnostics.py',
                 'tests/test_edfa_gpib_transport.py',
                 'tests/test_edfa_extended_readback.py',
-                'tests/test_edfa_supervised_controls.py'
+                'tests/test_edfa_supervised_controls.py',
+                'tests/test_edfa_prepare_readonly_config.py',
+                'tests/test_edfa_lab_acceptance_script.py'
             )
         } finally {
             $env:QT_QPA_PLATFORM = $oldQt
         }
-        $report.offline = 'PASS'
-        Write-Host 'Offline checks PASS. No VISA session was opened.'
+        Write-Host 'Lint, typecheck and fake-VISA tests passed; completing offline qualification.'
 
         $readonlyIni = Join-Path $runDir 'config.gpib.readonly.ini'
-        Copy-Item -LiteralPath $LabConfig -Destination $readonlyIni
-        $sanitize = @'
-import configparser, pathlib, sys
-path, logfile = map(pathlib.Path, sys.argv[1:3])
-cfg = configparser.ConfigParser(interpolation=None)
-with path.open(encoding="utf-8-sig") as src:
-    cfg.read_file(src)
-instrument = next((s for s in cfg.sections() if s.casefold() == "instruments"), None)
-if instrument is None:
-    raise SystemExit("Missing [Instruments]")
-cfg[instrument]["edfa_m4_write_enabled"] = "false"
-logging_section = next((s for s in cfg.sections() if s.casefold() == "logging"), None)
-if logging_section is None:
-    cfg.add_section("Logging")
-    logging_section = "Logging"
-cfg[logging_section]["file"] = str(logfile)
-cfg[logging_section]["level"] = "DEBUG"
-with path.open("w", encoding="utf-8") as dst:
-    cfg.write(dst)
-from tools.edfa_readonly_probe import read_configuration
-profile = read_configuration(path).instruments
-if profile.edfa_backend != "physical" or profile.edfa_gpib_resource_name != "GPIB0::12::INSTR":
-    raise SystemExit("Unexpected EDFA backend/address; stop")
-if profile.edfa_m4_write_enabled:
-    raise SystemExit("Physical EDFA parameter writes are still enabled; stop")
-'@
-        & uv run --no-sync python -c $sanitize $readonlyIni $guiLog
-        Assert-Native 'Create and validate read-only INI'
+        # Passing Python source through -c corrupts quoted strings under Windows
+        # PowerShell 5.1 native argument marshalling (seen on the laboratory PC).
+        # Invoke a checked-in module using path arguments instead.
+        Run-Captured 'Prepare and validate read-only INI' 'prepare-config.log' @(
+            'run','--no-sync','python','-m','tools.edfa_prepare_readonly_config',
+            '--source',$LabConfig,'--destination',$readonlyIni,'--log-file',$guiLog
+        )
+        $report.readonly_config = $readonlyIni
         Run-Captured 'No-VISA dry run' 'dry-run.log' @(
             'run','--no-sync','python','-m','tools.edfa_gpib_diagnostics','--config',$readonlyIni
         )
+        $report.offline = 'PASS'
+        Write-Host 'Offline stage PASS: checks, safe INI preparation and no-VISA dry run completed.'
         if ($Stage -eq 'Offline') {
             $report.status = 'PASS_OFFLINE_ONLY'
         } else {
