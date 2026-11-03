@@ -218,3 +218,33 @@ def test_driver_transaction_audit_records_exact_failure_context(caplog: pytest.L
     assert "thread=" in caplog.text
     assert visa.commands.count("SOUR:POW:SPO?") == 1
     device.close()
+
+def test_opt_in_interquery_delay_is_applied_only_between_queries(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tools import edfa_gpib_diagnostics as diagnostics
+
+    slept: list[float] = []
+    monkeypatch.setattr(diagnostics.time, "sleep", slept.append)
+    visa = FakeVisa()
+    result = run_diagnostics(
+        config(),
+        connect_readonly=True,
+        operator_confirmed=True,
+        interquery_delay_ms=50,
+        manager_factory=lambda: FakeManager(visa),
+    )
+    assert result["status"] == "PASSED_READ_ONLY_ONLY"
+    assert slept == [0.05] * 15
+
+
+def test_invalid_pacing_parameter_rejected_without_visa_manager() -> None:
+    def forbidden():
+        raise AssertionError("unapproved pacing must not create VISA manager")
+
+    with pytest.raises(ValueError, match="predeclared diagnostic delay"):
+        run_diagnostics(
+            config(),
+            connect_readonly=True,
+            operator_confirmed=True,
+            interquery_delay_ms=1000,
+            manager_factory=forbidden,
+        )
