@@ -249,3 +249,100 @@ def test_invalid_pacing_parameter_rejected_without_visa_manager() -> None:
             interquery_delay_ms=1000,
             manager_factory=forbidden,
         )
+
+
+def test_session_delay_waits_only_after_both_visas_close(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tools import edfa_gpib_diagnostics as diagnostics
+
+    order: list[str | tuple[str, float]] = []
+
+    class TrackedVisa(FakeVisa):
+        def close(self) -> None:
+            order.append("session_close")
+            super().close()
+
+    class TrackedManager(FakeManager):
+        def close(self) -> None:
+            order.append("manager_close")
+            super().close()
+
+    def manager_factory() -> TrackedManager:
+        return TrackedManager(TrackedVisa())
+
+    monkeypatch.setattr(diagnostics.time, "sleep", lambda seconds: order.append(("sleep", seconds)))
+    result = run_diagnostics(
+        config(),
+        connect_readonly=True,
+        operator_confirmed=True,
+        sessions=2,
+        inter_session_delay_ms=250,
+        interquery_delay_ms=0,
+        max_queries=32,
+        manager_factory=manager_factory,
+    )
+    assert result["status"] == "PASSED_READ_ONLY_ONLY"
+    assert result["completed_queries"] == 32
+    assert result["inter_session_delay_ms"] == 250
+    assert order == ["session_close", "manager_close", ("sleep", 0.25), "session_close", "manager_close"]
+    entries = result["events"]
+    wait_start = next(i for i, e in enumerate(entries) if e["event"] == "inter_session_wait_start")
+    wait_end = next(i for i, e in enumerate(entries) if e["event"] == "inter_session_wait_end")
+    first_close = next(i for i, e in enumerate(entries) if e["event"] == "manager_close_success")
+    second_open = next(i for i, e in enumerate(entries) if e["event"] == "session_open_start" and e["session"] == 2)
+    assert first_close < wait_start < wait_end < second_open
+    assert entries[wait_start]["requested_ms"] == 250
+    assert entries[wait_end]["requested_ms"] == 250
+    assert isinstance(entries[wait_end]["measured_ms"], (int, float))
+    assert not any(e["event"] == "query_error" for e in entries)
+
+
+def test_session_delay_does_not_run_after_failure_or_final_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tools import edfa_gpib_diagnostics as diagnostics
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(diagnostics.time, "sleep", sleeps.append)
+    result = run_diagnostics(
+        config(),
+        connect_readonly=True,
+        operator_confirmed=True,
+        sessions=3,
+        inter_session_delay_ms=500,
+        manager_factory=lambda: FakeManager(FakeVisa(fail_command="INP?", fail_phase="viWrite")),
+    )
+    assert result["status"] == "FAILED"
+    assert result["completed_queries"] == 7
+    assert sleeps == []
+    assert not any(e["event"].startswith("inter_session_wait") for e in result["events"])
+
+
+def test_default_session_delay_does_not_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tools import edfa_gpib_diagnostics as diagnostics
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(diagnostics.time, "sleep", sleeps.append)
+    result = run_diagnostics(
+        config(),
+        connect_readonly=True,
+        operator_confirmed=True,
+        sessions=2,
+        manager_factory=lambda: FakeManager(FakeVisa()),
+    )
+    assert result["status"] == "PASSED_READ_ONLY_ONLY"
+    assert result["inter_session_delay_ms"] == 0
+    assert sleeps == []
+
+
+@pytest.mark.parametrize("delay_ms", [-1, 1, 25, 75, 251, 1200])
+def test_invalid_session_delay_is_rejected_before_visas_open(delay_ms: int) -> None:
+    def forbidden():
+        raise AssertionError("Invalid inter-session delay must never create a VISA manager")
+
+    with pytest.raises(ValueError, match="inter-session delay"):
+        run_diagnostics(
+            config(),
+            connect_readonly=True,
+            operator_confirmed=True,
+            sessions=2,
+            inter_session_delay_ms=delay_ms,
+            manager_factory=forbidden,
+        )
