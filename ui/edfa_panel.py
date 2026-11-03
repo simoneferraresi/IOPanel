@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from hardware.edfa_types import EDFAOpticalPower, EDFAState, EDFATelemetry
+from hardware.edfa_types import EDFAConfiguration, EDFAOpticalPower, EDFAState, EDFATelemetry
 from logic.edfa_monitor import EDFAMonitorWorker
 from logic.task_runner import TaskRunner
 from ui.typography import make_font, style_group_box_title
@@ -40,6 +40,7 @@ class EDFAReadOnlyPanel(QWidget):
     connect_requested = Signal(str, str, int, str, str)
     disconnect_requested = Signal()
     read_requested = Signal()
+    configuration_requested = Signal()
     start_requested = Signal(int)
     stop_requested = Signal()
     shutdown_requested = Signal()
@@ -78,6 +79,7 @@ class EDFAReadOnlyPanel(QWidget):
         self._identity_text = ""
         self._last_observations: str | None = None
         self._last_error: str | None = None
+        self._last_configuration: EDFAConfiguration | None = None
 
         self.worker = worker if worker is not None else EDFAMonitorWorker()
         self.task = TaskRunner(self.worker, auto_start_run=False)
@@ -87,12 +89,14 @@ class EDFAReadOnlyPanel(QWidget):
         self.connect_requested.connect(self.worker.connect_instrument)
         self.disconnect_requested.connect(self.worker.disconnect_instrument)
         self.read_requested.connect(self.worker.read_once)
+        self.configuration_requested.connect(self.worker.read_configuration)
         self.start_requested.connect(self.worker.start_monitoring)
         self.stop_requested.connect(self.worker.stop_monitoring)
         self.shutdown_requested.connect(self.worker.shutdown)
         self.worker.state_changed.connect(self._on_state)
         self.worker.identity_ready.connect(self._set_identity)
         self.worker.telemetry_ready.connect(self._on_telemetry)
+        self.worker.configuration_ready.connect(self._on_configuration)
         self.worker.error_occurred.connect(self._on_error)
 
         self._shutdown_timer = QTimer(self)
@@ -124,6 +128,14 @@ class EDFAReadOnlyPanel(QWidget):
         self.read_button.setObjectName("edfaReadButton")
         self.read_button.setMinimumHeight(35)
         operation_layout.addWidget(self.read_button)
+        self.configuration_button = QPushButton("Read configuration")
+        self.configuration_button.setObjectName("edfaConfigurationButton")
+        self.configuration_button.setMinimumHeight(35)
+        self.configuration_button.setToolTip(
+            "On-demand configuration and limits: never part of periodic monitoring; "
+            "new physical GPIB queries require supervised qualification."
+        )
+        operation_layout.addWidget(self.configuration_button)
         interval_row = QHBoxLayout()
         interval_row.addWidget(QLabel("Update every:"))
         self.interval_combo = QComboBox()
@@ -208,7 +220,29 @@ class EDFAReadOnlyPanel(QWidget):
         metric(optical_grid, "edfaInputLabel", "Input optical power (indicative)", 0, 1, size=18)
         metric(optical_grid, "edfaInputThresholdLabel", "Reported minimum input", 1, 0)
         metric(optical_grid, "edfaSetpointLabel", "Output setpoint (not measured)", 1, 1)
-        dashboard_layout.addWidget(optical, stretch=1)
+        optical_column = QWidget()
+        optical_stack = QVBoxLayout(optical_column)
+        optical_stack.setContentsMargins(0, 0, 0, 0)
+        optical_stack.setSpacing(10)
+        optical_stack.addWidget(optical)
+
+        configuration = QGroupBox("Configuration and limits (manual refresh)")
+        configuration.setObjectName("edfaConfigurationGroup")
+        style_group_box_title(configuration)
+        configuration_grid = QGridLayout(configuration)
+        configuration_grid.setContentsMargins(10, 14, 10, 8)
+        configuration_grid.setSpacing(5)
+        for column in range(2):
+            configuration_grid.setColumnStretch(column, 1)
+        metric(configuration_grid, "edfaPowerLimitLabel", "Output power limit", 0, 0, size=12)
+        metric(configuration_grid, "edfaCurrentSetpointLabel", "Diode current setpoint", 0, 1, size=12)
+        metric(configuration_grid, "edfaCurrentLimitLabel", "Diode current limit", 1, 0, size=12)
+        metric(configuration_grid, "edfaGainSetpointLabel", "Gain setpoint", 1, 1, size=12)
+        metric(configuration_grid, "edfaGainLimitLabel", "Gain limit", 2, 0, size=12)
+        metric(configuration_grid, "edfaConfigUpdatedLabel", "Settings read at (UTC)", 2, 1, size=11)
+        optical_stack.addWidget(configuration)
+        optical_stack.addStretch(1)
+        dashboard_layout.addWidget(optical_column, stretch=1)
 
         health = QGroupBox("Amplifier status")
         health.setObjectName("edfaHealthGroup")
@@ -229,6 +263,7 @@ class EDFAReadOnlyPanel(QWidget):
         root.addWidget(self.dashboard_panel, stretch=1)
 
         self.read_button.clicked.connect(self.request_read)
+        self.configuration_button.clicked.connect(self.request_configuration)
         self.start_button.clicked.connect(self.request_monitoring)
         self.stop_button.clicked.connect(self.request_stop)
         self._update_controls()
@@ -265,6 +300,8 @@ class EDFAReadOnlyPanel(QWidget):
         self._identity_text = ""
         self._last_observations = None
         self._last_error = None
+        self._last_configuration = None
+        self._clear_configuration()
         self._activity = "Connecting"
         self.error_label.clear()
         self.error_label.hide()
@@ -292,6 +329,29 @@ class EDFAReadOnlyPanel(QWidget):
         if self._shutdown_requested or self._operation_pending or self._backend_state is not EDFAState.IDLE:
             return
         self.read_requested.emit()
+
+    def request_configuration(self) -> None:
+        if (
+            self._shutdown_requested
+            or self._operation_pending
+            or self._backend_state is not EDFAState.IDLE
+            or self._monitoring
+        ):
+            return
+        if self.backend_mode == "physical":
+            result = QMessageBox.question(
+                self,
+                "Confirm extended read-only EDFA queries",
+                "Five new configuration readbacks have not yet been qualified on this firmware. "
+                "Use the supervised CLI command-by-command procedure first. "
+                "These reads do not enable emission, but can change GPIB remote/local state "
+                "and may time out. Is this readback explicitly authorized?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if result != QMessageBox.StandardButton.Yes:
+                return
+        self.configuration_requested.emit()
 
     def request_monitoring(self) -> None:
         if self._shutdown_requested or self._operation_pending or self._monitoring:
@@ -333,6 +393,10 @@ class EDFAReadOnlyPanel(QWidget):
     def _on_telemetry(self, report: EDFATelemetry) -> None:
         if self._shutdown_requested:
             return
+        previous = self._last_configuration
+        relevant_bits = (1 << 0) | (1 << 9) | (1 << 16) | (1 << 18) | (1 << 20)
+        if previous is not None and (previous.status.raw_word ^ report.status.raw_word) & relevant_bits:
+            self._clear_configuration()
         data = {
             "edfaOutputLabel": format_edfa_power(
                 report.output_power, nonnumeric_reply=report.output_power_non_numeric_reply
@@ -376,6 +440,32 @@ class EDFAReadOnlyPanel(QWidget):
         self.error_label.clear()
         self.error_label.hide()
 
+    @Slot(object)
+    def _on_configuration(self, report: EDFAConfiguration) -> None:
+        if self._shutdown_requested:
+            return
+        self._last_configuration = report
+        gain_available = report.status.agc_available
+        values = {
+            "edfaPowerLimitLabel": format_edfa_power(report.power_limit),
+            "edfaCurrentSetpointLabel": f"{report.diode_current_setpoint_a:.5g} A",
+            "edfaCurrentLimitLabel": f"{report.diode_current_limit_a:.5g} A",
+            "edfaGainSetpointLabel": (
+                f"{report.gain_setpoint_db:.5g} dB" if report.gain_setpoint_db is not None else
+                "Not available" if not gain_available else "—"
+            ),
+            "edfaGainLimitLabel": (
+                f"{report.gain_limit_db:.5g} dB" if report.gain_limit_db is not None else
+                "Not available" if not gain_available else "—"
+            ),
+            "edfaConfigUpdatedLabel": report.acquired_at_utc.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        for key, value in values.items():
+            self.reading_labels[key].setText(value)
+        self._last_error = None
+        self.error_label.clear()
+        self.error_label.hide()
+
     @Slot(str)
     def _on_error(self, message: str) -> None:
         self._last_error = message
@@ -383,10 +473,23 @@ class EDFAReadOnlyPanel(QWidget):
         self.error_label.setVisible(bool(message))
         self._publish_status_observations()
 
+    def _clear_configuration(self) -> None:
+        self._last_configuration = None
+        for key in (
+            "edfaPowerLimitLabel",
+            "edfaCurrentSetpointLabel",
+            "edfaCurrentLimitLabel",
+            "edfaGainSetpointLabel",
+            "edfaGainLimitLabel",
+            "edfaConfigUpdatedLabel",
+        ):
+            self.reading_labels[key].setText("—")
+
     def _clear_telemetry(self) -> None:
         for label in self.reading_labels.values():
             label.setText("—")
         self._last_observations = None
+        self._last_configuration = None
 
     def _publish_status_observations(self) -> None:
         """Publish connection and last observation together, never a stale disconnect."""
@@ -409,6 +512,7 @@ class EDFAReadOnlyPanel(QWidget):
         ready = self._backend_state is EDFAState.IDLE
         blocked = self._operation_pending or self._shutdown_requested
         self.read_button.setEnabled(not blocked and ready)
+        self.configuration_button.setEnabled(not blocked and ready and not self._monitoring)
         self.start_button.setEnabled(not blocked and ready and not self._monitoring)
         self.stop_button.setEnabled(not self._shutdown_requested and self._monitoring)
         self.interval_combo.setEnabled(not blocked and not self._monitoring)
