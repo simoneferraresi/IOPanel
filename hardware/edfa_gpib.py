@@ -14,7 +14,14 @@ import re
 from datetime import UTC, datetime
 from typing import Protocol
 
-from hardware.edfa_types import EDFAConfiguration, EDFAOpticalPower, EDFAProtocolError, EDFAStatus, EDFATelemetry, PowerUnit
+from hardware.edfa_types import (
+    EDFAConfiguration,
+    EDFAOpticalPower,
+    EDFAProtocolError,
+    EDFAStatus,
+    EDFATelemetry,
+    PowerUnit,
+)
 
 _READ_QUERIES = frozenset(
     {
