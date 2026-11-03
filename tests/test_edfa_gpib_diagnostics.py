@@ -219,6 +219,7 @@ def test_driver_transaction_audit_records_exact_failure_context(caplog: pytest.L
     assert visa.commands.count("SOUR:POW:SPO?") == 1
     device.close()
 
+
 def test_opt_in_interquery_delay_is_applied_only_between_queries(monkeypatch: pytest.MonkeyPatch) -> None:
     from tools import edfa_gpib_diagnostics as diagnostics
 
