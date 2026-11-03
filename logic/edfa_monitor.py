@@ -206,8 +206,8 @@ class EDFAMonitorWorker(BaseWorker):
 
     @Slot()
     def shutdown(self) -> None:
+        """Finish/cancel queued work, then release resources in the owner thread."""
         self._shutting_down = True
-        """Finish current queued operation, then release resources in their owner thread."""
         self._monitoring = False
         if self._timer is not None:
             self._timer.stop()
