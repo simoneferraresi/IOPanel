@@ -20,8 +20,8 @@ from hardware.edfa_controls import (
     EDFAWriteOutcome,
     EDFAWritePolicy,
     EDFAWriteRequest,
-    EDFAWriteSession,
     EDFAWriteResult,
+    EDFAWriteSession,
     execute_supervised_write,
 )
 from hardware.edfa_gpib import EXTENDED_READ_QUERIES, GPIBQuerySession, GPIBReadOnlyReader, parse_status
