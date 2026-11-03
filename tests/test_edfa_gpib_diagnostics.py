@@ -11,7 +11,7 @@ from hardware.edfa_types import EDFACommunicationError, EDFAState, EDFAStateErro
 from hardware.ipg_ead2kc import IPGEAD2KCGPIB
 from tools.edfa_gpib_diagnostics import _QueryOnlySession, _Recorder, run_diagnostics
 
-STATUS = (1 << 0) | (1 << 20) | (1 << 21) | (1 << 22)
+STATUS = (1 << 0) | (1 << 20) | (1 << 21)  # Lab snapshot: 3145729, reflection monitor unavailable
 
 
 class NoListeners(OSError):
