@@ -58,8 +58,18 @@ function Require-Gate([string]$prompt, [string]$expected) {
 }
 function Run-Captured([string]$label, [string]$filename, [string[]]$arguments) {
     $path = Join-Path $runDir $filename
-    & uv @arguments *> $path
-    $code = $LASTEXITCODE
+    # Windows PowerShell 5.1 may treat a native program's informational stderr
+    # as NativeCommandError when redirected while ErrorActionPreference is Stop.
+    # Localize the compatibility workaround to the native call, then determine
+    # actual process success strictly from LASTEXITCODE (never from stderr).
+    $savedErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        & uv @arguments *> $path
+        $code = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $savedErrorActionPreference
+    }
     if ($code -ne 0) {
         Write-Host "--- $label log tail ---"
         Get-Content -LiteralPath $path -Tail 60 | Out-Host
@@ -165,8 +175,13 @@ if profile.edfa_m4_write_enabled:
             Write-Host 'Even query-only connections can affect GPIB remote/local state.'
             Require-Gate 'Type READONLY-APPROVED to run bounded physical queries' 'READONLY-APPROVED'
             $maxQueries = $Sessions * 16
-            & uv run --no-sync python -m tools.edfa_gpib_diagnostics --config $readonlyIni --connect-readonly --operator-confirmed --plan telemetry-configuration --sessions $Sessions --max-queries $maxQueries --max-seconds 120 --interquery-delay-ms $InterqueryDelayMs --report-dir $runDir *> (Join-Path $runDir 'edfa-physical-probe.log')
-            Assert-Native 'Bounded physical read-only diagnostic'
+            Run-Captured 'Bounded physical read-only diagnostic' 'edfa-physical-probe.log' @(
+                'run','--no-sync','python','-m','tools.edfa_gpib_diagnostics',
+                '--config',$readonlyIni,'--connect-readonly','--operator-confirmed',
+                '--plan','telemetry-configuration','--sessions',"$Sessions",
+                '--max-queries',"$maxQueries",'--max-seconds','120',
+                '--interquery-delay-ms',"$InterqueryDelayMs",'--report-dir',$runDir
+            )
             $report.read_only = 'PASS_READ_ONLY_ONLY'
             $report.status = 'PASS_READ_ONLY_ONLY'
             Write-Host 'Read-only query plan completed; this is NOT authorization for EDFA writes.'
@@ -177,8 +192,9 @@ if profile.edfa_m4_write_enabled:
                 Run-Captured 'Install optional GUI dependencies' 'uv-sync-gui.log' @(
                     'sync','--locked','--extra','test','--extra','lint','--extra','typecheck'
                 )
-                & uv run --no-sync python app.py --config $readonlyIni *> (Join-Path $runDir 'gui-stdout.log')
-                Assert-Native 'GUI process'
+                Run-Captured 'GUI process' 'gui-stdout.log' @(
+                    'run','--no-sync','python','app.py','--config',$readonlyIni
+                )
                 $contents = ''
                 if (Test-Path -LiteralPath $guiLog) {
                     $contents += (Get-Content -LiteralPath $guiLog -Raw)
