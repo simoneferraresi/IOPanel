@@ -104,3 +104,28 @@ Keep each physical test a separate operator-approved session with verified optic
 | E: inspect controller model, bus topology, cables, NI-VISA/488.2 and firmware | Identify physical and configuration confounders | Correlation with a single cable/controller/device or competing bus owner increases its priority for controlled follow-up |
 
 Do **not** automatically repeat tests until an error has occurred: record the timestamp, last successful query, failed `viWrite` or `viRead`, reported signed/hex status, active controller and VISA session, other attached GPIB devices, and environmental/operator conditions.
+
+
+## Session-lifecycle pacing hypothesis (after Experiment B, 2026-11-03)
+
+The operator reported that **Experiment A** passed all 16 reads in one session with no software inter-query delay. **Experiment B**, with two sequential sessions and no added delays, finished the first 16 queries and failed at global attempt 24 (the second session's `INP:LIM:LOW?`, the eighth query in that session) with `VI_ERROR_NLISTENERS` (`-1073807265`). The earlier `INP:LIM:LOW?` in the first session succeeded. The first resource-manager close was logged at approximately 375 ms and the second session open began around 422 ms, an observed interval of approximately **47 ms**. The logged timestamps are coarse and do not measure GPIB handshake timing. Evidence supplied by the operator: `20261103-160132-4737/edfa-gpib-20261103T150158672929Z.json`. The forensic JSON counted 24 **attempts** (23 successes and one failure); the wrapper returned exit 2 with no automatic retry or reset and successful close records.
+
+To test whether an additional *inter-session* idle interval changes the outcome, the read-only diagnostic now provides `--inter-session-delay-ms` with the bounded choices **0, 100, 250, 500, or 1000 ms**. This is **different from** `--interquery-delay-ms`, which remains independently settable to 0, 10, 50, or 100 ms. Both default to 0. Only the explicit diagnostic harness uses this setting: no global driver timing, GUI monitoring or connection-recovery semantics are changed.
+
+The delay occurs **only after the previous instrument session and resource manager have both closed successfully**, and only if another session is planned. It never occurs after the final session or when a session/query fails. The JSON records the requested delay in `inter_session_delay_ms`, and each gap emits `inter_session_wait_start` / `inter_session_wait_end` with `requested_ms` and `measured_ms`. These monotonic timestamps indicate software pacing, not measured GPIB bus-line levels. Existing query/duration budgets and stop-on-first-error behavior remain enforced.
+
+### Next separately supervised lab comparison: Experiment B2
+
+After a new pinned-SHA **Offline** acceptance succeeds on the laboratory PC, and only with independently verified optical safety and exclusive GPIB ownership, run a **single** operator-gated two-session plan:
+
+```powershell
+# Supply the verified new commit SHA and your reviewed lab paths.
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
+    -Stage ReadOnly -ExpectedSha $sha -RepoPath $repo `
+    -WorktreePath $worktree -LabConfig $cfg `
+    -Sessions 2 -InterqueryDelayMs 0 -InterSessionDelayMs 250
+```
+
+Expected if successful: 32/32 query attempts succeeded; two clean session/manager closes; one explicit session-wait pair recording approximately 250 ms. If a no-listener error reappears, stop, preserve its index/session/command, and make **no automatic retry, bus clear/IFC or reset**. A successful B2 after a failed B is *suggestive*, not a causal proof of recovery by pacing: the error is intermittent and there is no statistically controlled repeated-trial sample. Different query counts and inter-query timings must not be mixed into this comparison. Other bus owners, cable/controller issues and EDFA firmware state remain competing hypotheses.
+
+The acceptance script now sets `read_only = IN_PROGRESS` only after the operator gate passes and the physical plan is about to launch; an exception during that plan is recorded as `read_only = FAILED` in `acceptance.json`, rather than the previously misleading `NOT_RUN` (used for a declined gate or unrequested stage). `offline = PASS` can remain independently true.
