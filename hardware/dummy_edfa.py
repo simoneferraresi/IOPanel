@@ -60,8 +60,11 @@ class DummyEDFA(AbstractEDFA):
         self._emission_on = False
         self.write_commands: list[str] = []
         self._simulation_policy = EDFAWritePolicy(
-            enabled=True, site_reference="SIMULATION", maximum_power_w=2.0,
-            maximum_gain_db=30.0, maximum_current_a=1.0,
+            enabled=True,
+            site_reference="SIMULATION",
+            maximum_power_w=2.0,
+            maximum_gain_db=30.0,
+            maximum_current_a=1.0,
         )
 
     @property
@@ -143,8 +146,9 @@ class DummyEDFA(AbstractEDFA):
             if not isinstance(request, EDFAWriteRequest):
                 raise EDFAProtocolError("Typed EDFAWriteRequest required")
             if self._emission_on:
-                return EDFAWriteResult(request, EDFAWriteOutcome.REJECTED, None, None,
-                                       "Simulator emission active: setpoint write refused")
+                return EDFAWriteResult(
+                    request, EDFAWriteOutcome.REJECTED, None, None, "Simulator emission active: setpoint write refused"
+                )
             session = _DummyWriteSession(self)
             try:
                 result = execute_supervised_write(session, request, self._simulation_policy, physical=False)
@@ -234,8 +238,7 @@ class _DummyWriteSession:
         prefix, _, argument = message.partition(" ")
         if prefix == "SOUR:POW":
             dev._power_sp_w = (
-                10 ** ((float(argument) - 30) / 10) if dev._status.logarithmic_power_units
-                else float(argument)
+                10 ** ((float(argument) - 30) / 10) if dev._status.logarithmic_power_units else float(argument)
             )
         elif prefix == "SOUR:GAIN":
             dev._gain_sp_db = float(argument)

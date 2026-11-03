@@ -55,7 +55,7 @@ class WriteSession:
         if self.fail_post_read and self.writes:
             raise OSError("injected post-write timeout")
         if self.flip_status_on_read and len(self.queries) >= 3:
-            self.status ^= (1 << 18)
+            self.status ^= 1 << 18
         dBm = bool(self.status & (1 << 18))
         def power(w: float) -> str:
             return str(10 * math.log10(w * 1000) if dBm else w)
@@ -168,11 +168,15 @@ def test_site_opt_in_requires_all_approved_ceilings_and_reference():
         EDFAWritePolicy(True, "LAB-EDFA-M4-001", None, 20.0, 0.5)
     with pytest.raises(ValidationError):
         AppConfig(instruments={"edfa_m4_write_enabled": True})
-    cfg = AppConfig(instruments={
-        "edfa_m4_write_enabled": True, "edfa_m4_site_reference": "LAB-EDFA-M4-001",
-        "edfa_m4_approved_power_w": 0.5, "edfa_m4_approved_gain_db": 20,
-        "edfa_m4_approved_current_a": 0.5,
-    })
+    cfg = AppConfig(
+        instruments={
+            "edfa_m4_write_enabled": True,
+            "edfa_m4_site_reference": "LAB-EDFA-M4-001",
+            "edfa_m4_approved_power_w": 0.5,
+            "edfa_m4_approved_gain_db": 20,
+            "edfa_m4_approved_current_a": 0.5,
+        }
+    )
     assert cfg.instruments.edfa_m4_write_enabled
     assert not AppConfig().instruments.edfa_m4_write_enabled
 

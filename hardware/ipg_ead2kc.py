@@ -242,7 +242,10 @@ class IPGEAD2KCGPIB(AbstractEDFA):
                 raise EDFAProtocolError("Typed EDFAWriteRequest required")
             try:
                 result = execute_supervised_write(
-                    session, request, self._write_policy, physical=True,
+                    session,
+                    request,
+                    self._write_policy,
+                    physical=True,
                     pre_write_guard=lambda: self._require_idle(),
                 )
             except (EDFAProtocolError, EDFACommunicationError, OSError) as exc:

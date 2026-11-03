@@ -115,7 +115,10 @@ def test_worker_rejects_cancelled_queued_write_without_simulated_write():
     worker.control_finished.connect(results.append)
     worker.connect_instrument("simulation", "", 3000, "none", "none")
     req = EDFAWriteRequest(
-        EDFAWriteKind.POWER, 0.3, PowerUnit.W, operator_confirmed=True,
+        EDFAWriteKind.POWER,
+        0.3,
+        PowerUnit.W,
+        operator_confirmed=True,
     )
     req.cancelled.set()
     worker.apply_control(req)

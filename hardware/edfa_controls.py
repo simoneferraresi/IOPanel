@@ -194,7 +194,11 @@ def _check_limits(
         raise ValueError("AGC capability is not advertised")
     if request.kind is EDFAWriteKind.POWER:
         actual_unit = PowerUnit.DBM if status.logarithmic_power_units else PowerUnit.W
-        if request.unit is not actual_unit or telemetry.power_setpoint is None or telemetry.power_setpoint.unit is not actual_unit:
+        if (
+            request.unit is not actual_unit
+            or telemetry.power_setpoint is None
+            or telemetry.power_setpoint.unit is not actual_unit
+        ):
             raise ValueError("Power setpoint unit is stale or differs from device reporting units")
         if config.power_limit.unit is not actual_unit:
             raise ValueError("Hardware maximum power unit is inconsistent")
@@ -202,7 +206,9 @@ def _check_limits(
         if amount > config.power_limit.value or _power_w(amount, actual_unit) > float(policy.maximum_power_w):
             raise ValueError("Requested power exceeds hardware limit or approved laboratory ceiling")
     elif request.kind is EDFAWriteKind.GAIN:
-        if config.gain_limit_db is None or float(request.value) > min(config.gain_limit_db, float(policy.maximum_gain_db)):
+        if config.gain_limit_db is None or float(request.value) > min(
+            config.gain_limit_db, float(policy.maximum_gain_db)
+        ):
             raise ValueError("Requested gain exceeds hardware limit or approved laboratory ceiling")
     elif request.kind is EDFAWriteKind.CURRENT:
         if float(request.value) > min(config.diode_current_limit_a, float(policy.maximum_current_a)):
@@ -237,9 +243,13 @@ def execute_supervised_write(
     explicit close, fresh operator verification and reconnect.
     """
     if not policy.enabled or not request.operator_confirmed:
-        return EDFAWriteResult(request, EDFAWriteOutcome.REJECTED, None, None, "Write gate/operator confirmation absent")
+        return EDFAWriteResult(
+            request, EDFAWriteOutcome.REJECTED, None, None, "Write gate/operator confirmation absent"
+        )
     if physical and not request.emission_off_attested:
-        return EDFAWriteResult(request, EDFAWriteOutcome.REJECTED, None, None, "Independent emission-OFF attestation absent")
+        return EDFAWriteResult(
+            request, EDFAWriteOutcome.REJECTED, None, None, "Independent emission-OFF attestation absent"
+        )
     if request.cancelled.is_set():
         return EDFAWriteResult(request, EDFAWriteOutcome.CANCELLED, None, None, "Cancelled before any write")
     try:
@@ -264,7 +274,10 @@ def execute_supervised_write(
         session.write(command)
     except Exception as exc:  # noqa: BLE001 — opaque VISA exceptions imply uncertain instrument state.
         return EDFAWriteResult(
-            request, EDFAWriteOutcome.UNKNOWN, before, None,
+            request,
+            EDFAWriteOutcome.UNKNOWN,
+            before,
+            None,
             f"VISA write raised {type(exc).__name__}; command may have taken effect. Verify instrument physically.",
         )
     try:
@@ -278,29 +291,49 @@ def execute_supervised_write(
         if physical and after_telemetry.output_power_non_numeric_reply != "Off":
             raise EDFAProtocolError("Output no longer reports 'Off' after write; physical verification required")
         after = _read_value(request, after_telemetry, after_config)
-        if (request.kind is EDFAWriteKind.POWER and after_telemetry.power_setpoint is not None
-            and after_telemetry.power_setpoint.unit is not request.unit):
+        if (
+            request.kind is EDFAWriteKind.POWER
+            and after_telemetry.power_setpoint is not None
+            and after_telemetry.power_setpoint.unit is not request.unit
+        ):
             raise EDFAProtocolError("Power setpoint readback unit changed unexpectedly")
         if request.kind is EDFAWriteKind.POWER_UNITS:
             expected = request.value
             actual = PowerUnit.DBM if after_config.status.logarithmic_power_units else PowerUnit.W
             if actual is not expected:
-                return EDFAWriteResult(request, EDFAWriteOutcome.MISMATCH, before, actual,
-                                       "Device did not confirm requested units; physical verification required",
-                                       after_telemetry, after_config)
+                return EDFAWriteResult(
+                    request,
+                    EDFAWriteOutcome.MISMATCH,
+                    before,
+                    actual,
+                    "Device did not confirm requested units; physical verification required",
+                    after_telemetry,
+                    after_config,
+                )
         if not _verified(request, after):
             return EDFAWriteResult(
-                request, EDFAWriteOutcome.MISMATCH, before, after,
+                request,
+                EDFAWriteOutcome.MISMATCH,
+                before,
+                after,
                 "Setpoint readback disagrees with request; physical verification required",
-                after_telemetry, after_config,
+                after_telemetry,
+                after_config,
             )
         return EDFAWriteResult(
-            request, EDFAWriteOutcome.CONFIRMED, before, after,
+            request,
+            EDFAWriteOutcome.CONFIRMED,
+            before,
+            after,
             "Device readback matches request within documented numerical tolerance",
-            after_telemetry, after_config,
+            after_telemetry,
+            after_config,
         )
     except Exception as exc:  # noqa: BLE001 — arbitrary VISA reply failures leave device state uncertain.
         return EDFAWriteResult(
-            request, EDFAWriteOutcome.UNKNOWN, before, None,
+            request,
+            EDFAWriteOutcome.UNKNOWN,
+            before,
+            None,
             f"Post-write verification failed ({type(exc).__name__}); state unknown; physical verification required.",
         )

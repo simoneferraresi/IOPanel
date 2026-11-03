@@ -150,8 +150,13 @@ class EDFAMonitorWorker(BaseWorker):
             return
         if backend is None or backend.state is not EDFAState.IDLE or self._monitoring:
             self.control_finished.emit(
-                EDFAWriteResult(request, EDFAWriteOutcome.REJECTED, None, None,
-                                "Connect and stop monitoring before changing a setting")
+                EDFAWriteResult(
+                    request,
+                    EDFAWriteOutcome.REJECTED,
+                    None,
+                    None,
+                    "Connect and stop monitoring before changing a setting",
+                )
             )
             return
         try:
@@ -162,8 +167,13 @@ class EDFAMonitorWorker(BaseWorker):
         except Exception as exc:
             logger.exception("EDFA supervised write failed")
             self.control_finished.emit(
-                EDFAWriteResult(request, EDFAWriteOutcome.REJECTED, None, None,
-                                f"Preflight/transport failed; no setter confirmed: {exc}")
+                EDFAWriteResult(
+                    request,
+                    EDFAWriteOutcome.REJECTED,
+                    None,
+                    None,
+                    f"Preflight/transport failed; no setter confirmed: {exc}",
+                )
             )
             self.error_occurred.emit(f"EDFA controlled operation failed: {exc}")
         finally:
