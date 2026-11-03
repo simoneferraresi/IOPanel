@@ -7,13 +7,13 @@ from collections.abc import Callable
 
 from PySide6.QtCore import QTimer, Signal, Slot
 
+from hardware.dummy_edfa import DummyEDFA
 from hardware.edfa_controls import (
     EDFAWriteOutcome,
     EDFAWritePolicy,
     EDFAWriteRequest,
     EDFAWriteResult,
 )
-from hardware.dummy_edfa import DummyEDFA
 from hardware.edfa_types import EDFAState
 from hardware.interfaces import AbstractEDFA
 from hardware.ipg_ead2kc import IPGEAD2KCGPIB
