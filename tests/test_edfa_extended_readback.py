@@ -98,7 +98,7 @@ def test_extended_reader_all_five_commands_and_raw_replies() -> None:
     assert configuration.gain_setpoint_db == 15.5
     assert configuration.gain_limit_db == 30.0
     assert dict(configuration.raw_replies) == NEW_REPLIES
-    assert set(command for command, _ in configuration.raw_replies) == EXTENDED_READ_QUERIES
+    assert {command for command, _ in configuration.raw_replies} == EXTENDED_READ_QUERIES
     assert session.calls == [
         "SOUR:POW:STAT?",
         "SOUR:POW:LIM:HIGH?",
@@ -229,15 +229,15 @@ def test_simulator_gain_capability_and_fault_recovery() -> None:
 
 
 def test_configuration_model_rejects_inconsistent_units_and_values() -> None:
-    fields = dict(
-        status=EDFAStatus(AGC_AVAILABLE),
-        power_limit=EDFAOpticalPower(2.0, PowerUnit.W),
-        diode_current_setpoint_a=0.5,
-        diode_current_limit_a=1.0,
-        gain_setpoint_db=15.0,
-        gain_limit_db=30.0,
-        acquired_at_utc=datetime.now(UTC),
-    )
+    fields = {
+        "status": EDFAStatus(AGC_AVAILABLE),
+        "power_limit": EDFAOpticalPower(2.0, PowerUnit.W),
+        "diode_current_setpoint_a": 0.5,
+        "diode_current_limit_a": 1.0,
+        "gain_setpoint_db": 15.0,
+        "gain_limit_db": 30.0,
+        "acquired_at_utc": datetime.now(UTC),
+    }
     with pytest.raises(ValueError, match="unit"):
         EDFAConfiguration(**{**fields, "power_limit": EDFAOpticalPower(33, PowerUnit.DBM)})
     with pytest.raises(ValueError, match="finite"):
