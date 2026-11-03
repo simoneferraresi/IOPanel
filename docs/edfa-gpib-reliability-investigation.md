@@ -71,3 +71,36 @@ Record exact GPIB controller model and firmware, NI-VISA/NI-488.2 driver version
 - **Emission control:** not qualified and excluded.
 
 The original laboratory script's 'All selected stages completed' must never be treated as GUI hardware acceptance if the GUI log shows an EDFA VISA exception. A manual GUI pass must be separately attested and logged. A successful native VISA close never demonstrates optical emission OFF.
+
+
+## Windows PowerShell 5.1 acceptance: two separate laboratory failures (2026-11-03)
+
+The first operator-run `-Stage Offline` attempt at `d274d61` exited after confirming the pinned worktree. Windows PowerShell 5.1 with `$ErrorActionPreference = 'Stop'` interpreted `uv`'s informational native stderr as a terminating error. The follow-up commit `98a6695` confined `Continue` to captured native execution, restored the original preference and explicitly checked `$LASTEXITCODE`. The next lab execution progressed through lint, type checking and fake-VISA tests, supporting this first correction.
+
+That second attempt, at `98a6695`, failed later in copied-INI preparation with `SyntaxError: '(' was never closed` at `raise SystemExit(Missing`. Its inline multiline Python `-c` code actually contained `raise SystemExit("Missing [Instruments]")`. Loss of quotes at the Windows PowerShell/native `uv`/`python` command-line boundary is the leading explanation; the log alone does **not** identify conclusively which native process boundary discarded them. No instrument was accessed in either failed attempt.
+
+The replacement eliminates the vulnerable command-line path rather than changing quote escaping:
+
+- `tools.edfa_prepare_readonly_config` accepts ordinary `--source`, `--destination` and `--log-file` path arguments. It requires exactly one Instruments section, a physical backend and `GPIB0::12::INSTR`.
+- It forces `edfa_m4_write_enabled = false`, redirects the GUI diagnostic log into the evidence directory and validates the complete resulting INI through the application's typed configuration model and matching parsing rules.
+- Only **after** successful validation does it atomically publish a temporary write-disabled file. The source is never written, an existing destination is rejected, and validation failures leave no final destination.
+- The PowerShell report sets `offline = PASS` only after lint, formatting, Pyright, fake-VISA tests, safe INI creation and a no-VISA dry run have all completed.
+- Untracked files in a reused checkout now cause rejection; existing clean pinned detached worktrees are reusable without destructive deletion.
+
+Hardware-independent tests cover original-file preservation, preexisting destinations, write-enabled source INIs, malformed/missing files, malformed sections, wrong backend/address, typed-validation failures, Unicode and space-containing paths, log redirection, and the CLI's exit codes. The Windows-only test runs the CLI through a **real Windows PowerShell 5.1 process**. A separate GitHub Actions Windows job runs the **entire Offline acceptance script**, with local-only synthetic Git origin, isolated worktree, synthetic INI, actual `uv` invocations, report/evidence assertions and negative exit-code/report checks. Its outcomes must be checked at the exact final commit SHA.
+
+A Windows CI PASS validates that CI's Windows environment and **synthetic input** exercised the complete Offline path. It does not establish successful execution on the laboratory PC, does not exercise real GPIB, and does not authorize read-only physical communication or M4 writes. The next lab rerun must be `-Stage Offline` only, using a newly reviewed SHA.
+
+## Next supervised read-only experiments: isolated hypotheses
+
+Keep each physical test a separate operator-approved session with verified optical isolation, independently established emission state, exclusive GPIB ownership, and no setters, clear/reset, automatic retry, or startup connection. Stop at the first error.
+
+| Test | Diagnostic purpose | Interpretation of evidence (not proof of cause) |
+| --- | --- | --- |
+| A: 1 session, 0 ms pacing, 16-query plan | Baseline reproducibility under a single VISA lifetime | A first-write listener failure suggests address/bus/device readiness; a late failure suggests state/sequence dependence, but does not isolate hardware |
+| B: 2 sequential sessions, 0 ms pacing | Test sensitivity to closing and reopening a VISA resource | Failures following reopen strengthen session/controller/listener-transition hypotheses; equal failures in both weaken a purely reopen-specific explanation |
+| C: 1 session, 50 ms pacing | Test whether command cadence affects observed listener failures | Fewer failures are consistent with timing sensitivity but do not prove a required timing interval; a failure despite pacing weakens simple cadence explanations |
+| D: separately supervised NI-MAX / I/O Trace read-only observations | Compare Python-independent controller behavior and capture native timestamps/handshakes | A similar failure outside Python weakens application-only explanations; consistent NI-MAX success narrows differences but cannot exclude intermittent cabling |
+| E: inspect controller model, bus topology, cables, NI-VISA/488.2 and firmware | Identify physical and configuration confounders | Correlation with a single cable/controller/device or competing bus owner increases its priority for controlled follow-up |
+
+Do **not** automatically repeat tests until an error has occurred: record the timestamp, last successful query, failed `viWrite` or `viRead`, reported signed/hex status, active controller and VISA session, other attached GPIB devices, and environmental/operator conditions.
