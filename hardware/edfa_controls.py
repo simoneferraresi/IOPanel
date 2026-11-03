@@ -268,6 +268,14 @@ def execute_supervised_write(
         )
     try:
         after_telemetry, after_config = _snapshot(session)
+        # Any unexpected status transition after an attempted write can mean
+        # emission/mode/fault conditions changed; never report CONFIRMED.
+        changed = before_config.status.raw_word ^ after_config.status.raw_word
+        expected_change = (1 << 18) if request.kind is EDFAWriteKind.POWER_UNITS else 0
+        if changed & ~expected_change:
+            raise EDFAProtocolError("Status changed after write; active mode/emission/fault state is unknown")
+        if physical and after_telemetry.output_power_non_numeric_reply != "Off":
+            raise EDFAProtocolError("Output no longer reports 'Off' after write; physical verification required")
         after = _read_value(request, after_telemetry, after_config)
         if request.kind is EDFAWriteKind.POWER and after_telemetry.power_setpoint is not None:
             if after_telemetry.power_setpoint.unit is not request.unit:
