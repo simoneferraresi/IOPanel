@@ -12,7 +12,7 @@ from .ct400_types import (
     PowerData,
     ScanWaitResult,
 )
-from .edfa_types import EDFAState, EDFATelemetry
+from .edfa_types import EDFAConfiguration, EDFAState, EDFATelemetry
 from .pm5020_types import (
     BurstAcquisitionConfig,
     BurstPowerData,
@@ -163,6 +163,9 @@ class AbstractEDFA(ABC):
 
     @abstractmethod
     def read_telemetry(self) -> EDFATelemetry: ...
+
+    @abstractmethod
+    def read_configuration(self) -> EDFAConfiguration: ...
 
     @abstractmethod
     def close(self) -> None: ...

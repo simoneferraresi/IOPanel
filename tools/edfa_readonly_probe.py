@@ -13,7 +13,8 @@ import json
 from pathlib import Path
 
 from config_model import AppConfig
-from hardware.edfa_types import EDFAOpticalPower, EDFATelemetry
+from hardware.edfa_gpib import EXTENDED_READ_QUERIES
+from hardware.edfa_types import EDFAConfiguration, EDFAOpticalPower, EDFATelemetry
 from hardware.ipg_ead2kc import IPGEAD2KCGPIB
 
 
@@ -51,10 +52,38 @@ def summarize_telemetry(report: EDFATelemetry) -> dict[str, object]:
     }
 
 
+def summarize_configuration(report: EDFAConfiguration) -> dict[str, object]:
+    return {
+        "status_raw_word": report.status.raw_word,
+        "control_mode": report.status.control_mode.name if report.status.control_mode else None,
+        "power_limit": _power(report.power_limit),
+        "diode_current_setpoint_a": report.diode_current_setpoint_a,
+        "diode_current_limit_a": report.diode_current_limit_a,
+        "gain_setpoint_db": report.gain_setpoint_db,
+        "gain_limit_db": report.gain_limit_db,
+        "gain_unavailable_reason": None if report.status.agc_available else "AGC capability bit is clear",
+        "raw_replies": dict(report.raw_replies),
+        "captured_utc": report.acquired_at_utc.isoformat(),
+        "note": "UNQUALIFIED NEW PHYSICAL READBACKS UNTIL SEPARATE LAB TEST; NO SAFETY INFERENCE",
+    }
+
+
 def run(
-    config: AppConfig, *, connect_readonly: bool, operator_confirmed: bool, backend_factory=IPGEAD2KCGPIB
+    config: AppConfig,
+    *,
+    connect_readonly: bool,
+    operator_confirmed: bool,
+    backend_factory=IPGEAD2KCGPIB,
+    extended_configuration: bool = False,
+    qualification_query: str | None = None,
 ) -> dict[str, object]:
     profile = config.instruments
+    if qualification_query is not None and qualification_query not in EXTENDED_READ_QUERIES:
+        raise ValueError("Only the five audited extended readback commands can be qualified")
+    if qualification_query and extended_configuration:
+        raise ValueError("Select either one qualification query or the full configuration readback")
+    if not connect_readonly and (qualification_query or extended_configuration):
+        raise ValueError("Extended readbacks require --connect-readonly and explicit operator confirmation")
     if not connect_readonly:
         return {
             "mode": "dry-run",
@@ -78,12 +107,34 @@ def run(
         device.connect()
         identity = device.identify()
         report = device.read_telemetry()
-        return {
+        result: dict[str, object] = {
             "mode": "physical-readonly",
             "resource": profile.edfa_gpib_resource_name,
             "identity": identity,
             "telemetry": summarize_telemetry(report),
         }
+        if qualification_query:
+            raw_reply, value, qualification_status = device.read_qualification_query(qualification_query)
+            unit = (
+                "A"
+                if ":CURR:" in qualification_query
+                else "dB"
+                if ":GAIN:" in qualification_query
+                else "dBm"
+                if qualification_status.logarithmic_power_units
+                else "W"
+            )
+            result["qualification"] = {
+                "command": qualification_query,
+                "raw_reply": raw_reply,
+                "numeric_value": value,
+                "status_raw_word": qualification_status.raw_word,
+                "reported_unit": unit,
+                "physically_qualified": False,
+            }
+        elif extended_configuration:
+            result["configuration"] = summarize_configuration(device.read_configuration())
+        return result
     finally:
         device.close()
 
@@ -95,12 +146,25 @@ def main() -> int:
     parser.add_argument(
         "--operator-confirmed", action="store_true", help="Confirm supervised physical setup and approval"
     )
+    extended = parser.add_mutually_exclusive_group()
+    extended.add_argument(
+        "--qualification-query",
+        choices=sorted(EXTENDED_READ_QUERIES),
+        help="ONE unqualified model-specific readback; requires physical flags; no automatic retry",
+    )
+    extended.add_argument(
+        "--extended-configuration",
+        action="store_true",
+        help="Read all five new configuration queries, only AFTER individual lab qualification",
+    )
     arguments = parser.parse_args()
     try:
         result = run(
             read_configuration(arguments.config),
             connect_readonly=arguments.connect_readonly,
             operator_confirmed=arguments.operator_confirmed,
+            qualification_query=arguments.qualification_query,
+            extended_configuration=arguments.extended_configuration,
         )
     except Exception as exc:  # noqa: BLE001 - CLI must report errors while still closing VISA resources.
         parser.exit(2, f"EDFA read-only probe failed: {type(exc).__name__}: {exc}\n")

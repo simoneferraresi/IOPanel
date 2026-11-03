@@ -14,7 +14,14 @@ import re
 from datetime import UTC, datetime
 from typing import Protocol
 
-from hardware.edfa_types import EDFAOpticalPower, EDFAProtocolError, EDFAStatus, EDFATelemetry, PowerUnit
+from hardware.edfa_types import (
+    EDFAConfiguration,
+    EDFAOpticalPower,
+    EDFAProtocolError,
+    EDFAStatus,
+    EDFATelemetry,
+    PowerUnit,
+)
 
 _READ_QUERIES = frozenset(
     {
@@ -27,6 +34,23 @@ _READ_QUERIES = frozenset(
         "SOUR:POW:BACK?",
         "SOUR:CURR?",
         "SOUR:TEMP:LEV?",
+        "SOUR:CURR:SPO?",
+        "SOUR:CURR:LIM:HIGH?",
+        "SOUR:GAIN:SPO?",
+        "SOUR:GAIN:LIM:HIGH?",
+        "SOUR:POW:LIM:HIGH?",
+    }
+)
+# These five commands were transcribed in a previous review of IPG
+# P21-006000 Rev A pp. 31-32. Firmware Rev 1.1.175 has NOT yet
+# physically qualified them; no standard/event queries are included.
+EXTENDED_READ_QUERIES = frozenset(
+    {
+        "SOUR:CURR:SPO?",
+        "SOUR:CURR:LIM:HIGH?",
+        "SOUR:GAIN:SPO?",
+        "SOUR:GAIN:LIM:HIGH?",
+        "SOUR:POW:LIM:HIGH?",
     }
 )
 _INTEGER = re.compile(r"(?:STA:\s*)?([0-9]+)", flags=re.IGNORECASE)
@@ -104,6 +128,49 @@ class GPIBReadOnlyReader:
 
     def identify(self) -> str:
         return parse_identity(self._query("*IDN?"))
+
+    def read_qualification_value(self, command: str) -> tuple[str, float]:
+        """One explicitly selected qualified-for-software candidate; never arbitrary SCPI.
+
+        This is intended for the operator-gated CLI. Unknown commands or
+        malformed numeric responses fail without silently inferring support.
+        """
+        if command not in EXTENDED_READ_QUERIES:
+            raise EDFAProtocolError(f"Not an approved extended readback query: {command!r}")
+        raw = _text(self._query(command))
+        return raw, parse_number(raw)
+
+    def read_configuration(self) -> EDFAConfiguration:
+        """Read rarely changing settings only when explicitly requested.
+
+        Never used by the periodic telemetry poll. Gain readbacks are skipped
+        if status bit 20 does not advertise AGC availability.
+        """
+        status = parse_status(self._query("SOUR:POW:STAT?"))
+        raw_replies: list[tuple[str, str]] = []
+
+        def numeric(command: str) -> float:
+            raw = _text(self._query(command))
+            value = parse_number(raw)
+            raw_replies.append((command, raw))
+            return value
+
+        power_unit = PowerUnit.DBM if status.logarithmic_power_units else PowerUnit.W
+        power_limit = EDFAOpticalPower(numeric("SOUR:POW:LIM:HIGH?"), power_unit)
+        current_setpoint = numeric("SOUR:CURR:SPO?")
+        current_limit = numeric("SOUR:CURR:LIM:HIGH?")
+        gain_setpoint = numeric("SOUR:GAIN:SPO?") if status.agc_available else None
+        gain_limit = numeric("SOUR:GAIN:LIM:HIGH?") if status.agc_available else None
+        return EDFAConfiguration(
+            status=status,
+            power_limit=power_limit,
+            diode_current_setpoint_a=current_setpoint,
+            diode_current_limit_a=current_limit,
+            gain_setpoint_db=gain_setpoint,
+            gain_limit_db=gain_limit,
+            acquired_at_utc=datetime.now(UTC),
+            raw_replies=tuple(raw_replies),
+        )
 
     def read_telemetry(self) -> EDFATelemetry:
         status = parse_status(self._query("SOUR:POW:STAT?"))

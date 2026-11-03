@@ -167,3 +167,41 @@ class EDFATelemetry:
             raise ValueError("diode_current_a cannot be negative")
         if self.back_reflection_percent_of_max is not None and self.back_reflection_percent_of_max < 0:
             raise ValueError("back_reflection_percent_of_max cannot be negative")
+
+
+@dataclass(frozen=True, slots=True)
+class EDFAConfiguration:
+    """Explicitly requested read-only settings/limits, not a telemetry sample.
+
+    Numeric fields are device readbacks. None in the gain fields means the
+    status register did not advertise AGC capability; it is not zero gain.
+    The five raw GPIB responses are retained for supervised qualification.
+    """
+
+    status: EDFAStatus
+    power_limit: EDFAOpticalPower
+    diode_current_setpoint_a: float
+    diode_current_limit_a: float
+    acquired_at_utc: datetime
+    gain_setpoint_db: float | None = None
+    gain_limit_db: float | None = None
+    raw_replies: tuple[tuple[str, str], ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.acquired_at_utc.tzinfo is None or self.acquired_at_utc.utcoffset() is None:
+            raise ValueError("acquired_at_utc must be timezone-aware")
+        for name in ("diode_current_setpoint_a", "diode_current_limit_a"):
+            value = getattr(self, name)
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(f"{name} must be finite and non-negative")
+        for name in ("gain_setpoint_db", "gain_limit_db"):
+            value = getattr(self, name)
+            if value is not None and not math.isfinite(value):
+                raise ValueError(f"{name} must be finite when present")
+        if (self.gain_setpoint_db is None) != (self.gain_limit_db is None):
+            raise ValueError("gain setpoint and limit must both be available or both absent")
+        if not self.status.agc_available and self.gain_setpoint_db is not None:
+            raise ValueError("gain fields cannot be reported without advertised AGC capability")
+        expected_power_unit = PowerUnit.DBM if self.status.logarithmic_power_units else PowerUnit.W
+        if self.power_limit.unit is not expected_power_unit:
+            raise ValueError("power limit unit disagrees with status bit 18")

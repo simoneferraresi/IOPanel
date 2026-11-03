@@ -8,6 +8,7 @@ from typing import override
 
 from hardware.edfa_types import (
     EDFACommunicationError,
+    EDFAConfiguration,
     EDFAOpticalPower,
     EDFAState,
     EDFAStateError,
@@ -88,6 +89,23 @@ class DummyEDFA(AbstractEDFA):
                 ),
                 power_setpoint=EDFAOpticalPower(30.0 if unit is PowerUnit.DBM else 1.0, unit),
                 back_reflection_percent_of_max=0.0 if status.back_reflection_monitor_available else None,
+            )
+
+    @override
+    def read_configuration(self) -> EDFAConfiguration:
+        with self._lock:
+            self._require_idle()
+            self._fail("read_configuration")
+            status = self._status
+            unit = PowerUnit.DBM if status.logarithmic_power_units else PowerUnit.W
+            return EDFAConfiguration(
+                status=status,
+                power_limit=EDFAOpticalPower(33.0 if unit is PowerUnit.DBM else 2.0, unit),
+                diode_current_setpoint_a=0.25,
+                diode_current_limit_a=1.0,
+                gain_setpoint_db=15.0 if status.agc_available else None,
+                gain_limit_db=30.0 if status.agc_available else None,
+                acquired_at_utc=datetime.now(UTC),
             )
 
     def set_status_word(self, word: int) -> None:
