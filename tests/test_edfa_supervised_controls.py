@@ -57,8 +57,10 @@ class WriteSession:
         if self.flip_status_on_read and len(self.queries) >= 3:
             self.status ^= 1 << 18
         dBm = bool(self.status & (1 << 18))
+
         def power(w: float) -> str:
             return str(10 * math.log10(w * 1000) if dBm else w)
+
         responses = {
             "*IDN?": "IPG EAD-2K-C, Rev 1.1.175",
             "SOUR:POW:STAT?": str(self.status),
