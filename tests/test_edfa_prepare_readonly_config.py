@@ -70,9 +70,7 @@ def test_valid_copy_forces_write_off_and_redirects_logging_without_changing_sour
         (BASE + "\n[instruments]\nedfa_backend = simulation\n", "duplicate"),
     ],
 )
-def test_unsafe_or_malformed_input_is_rejected_without_destination(
-    tmp_path: Path, content: str, problem: str
-) -> None:
+def test_unsafe_or_malformed_input_is_rejected_without_destination(tmp_path: Path, content: str, problem: str) -> None:
     source, destination, logfile = _prepare(tmp_path, content)
     original = source.read_bytes()
     with pytest.raises((ValueError, configparser.Error), match=f"(?i){problem}"):
