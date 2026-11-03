@@ -460,12 +460,18 @@ class EDFAReadOnlyPanel(QWidget):
             "edfaCurrentSetpointLabel": f"{report.diode_current_setpoint_a:.5g} A",
             "edfaCurrentLimitLabel": f"{report.diode_current_limit_a:.5g} A",
             "edfaGainSetpointLabel": (
-                f"{report.gain_setpoint_db:.5g} dB" if report.gain_setpoint_db is not None else
-                "Not available" if not gain_available else "—"
+                f"{report.gain_setpoint_db:.5g} dB"
+                if report.gain_setpoint_db is not None
+                else "Not available"
+                if not gain_available
+                else "—"
             ),
             "edfaGainLimitLabel": (
-                f"{report.gain_limit_db:.5g} dB" if report.gain_limit_db is not None else
-                "Not available" if not gain_available else "—"
+                f"{report.gain_limit_db:.5g} dB"
+                if report.gain_limit_db is not None
+                else "Not available"
+                if not gain_available
+                else "—"
             ),
             "edfaConfigUpdatedLabel": report.acquired_at_utc.strftime("%Y-%m-%d %H:%M:%S"),
         }
@@ -523,7 +529,9 @@ class EDFAReadOnlyPanel(QWidget):
         ready = self._backend_state is EDFAState.IDLE
         blocked = self._operation_pending or self._shutdown_requested
         self.read_button.setEnabled(not blocked and ready)
-        self.configuration_button.setEnabled(not blocked and ready and not self._monitoring and not self._configuration_pending)
+        self.configuration_button.setEnabled(
+            not blocked and ready and not self._monitoring and not self._configuration_pending
+        )
         self.start_button.setEnabled(not blocked and ready and not self._monitoring)
         self.stop_button.setEnabled(not self._shutdown_requested and self._monitoring)
         self.interval_combo.setEnabled(not blocked and not self._monitoring)
