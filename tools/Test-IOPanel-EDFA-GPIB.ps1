@@ -24,7 +24,9 @@ param(
     [ValidateRange(1,3)]
     [int]$Sessions = 1,
     [ValidateSet(0,10,50,100)]
-    [int]$InterqueryDelayMs = 0
+    [int]$InterqueryDelayMs = 0,
+    [ValidateSet(0,100,250,500,1000)]
+    [int]$InterSessionDelayMs = 0
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -45,6 +47,9 @@ $report = [ordered]@{
     read_only = 'NOT_RUN'
     gui = 'NOT_RUN'
     physical_writes = 'DISABLED'
+    planned_sessions = $Sessions
+    interquery_delay_ms = $InterqueryDelayMs
+    inter_session_delay_ms = $InterSessionDelayMs
     optical_emission_state = 'NOT VERIFIED BY SOFTWARE'
     result_directory = $runDir
     failure = $null
@@ -163,12 +168,15 @@ try {
             Write-Host 'Even query-only connections can affect GPIB remote/local state.'
             Require-Gate 'Type READONLY-APPROVED to run bounded physical queries' 'READONLY-APPROVED'
             $maxQueries = $Sessions * 16
+            Write-Host "Plan: $Sessions session(s); inter-query delay $InterqueryDelayMs ms; inter-session delay $InterSessionDelayMs ms."
+            $report.read_only = 'IN_PROGRESS'
             Run-Captured 'Bounded physical read-only diagnostic' 'edfa-physical-probe.log' @(
                 'run','--no-sync','python','-m','tools.edfa_gpib_diagnostics',
                 '--config',$readonlyIni,'--connect-readonly','--operator-confirmed',
                 '--plan','telemetry-configuration','--sessions',"$Sessions",
                 '--max-queries',"$maxQueries",'--max-seconds','120',
-                '--interquery-delay-ms',"$InterqueryDelayMs",'--report-dir',$runDir
+                '--interquery-delay-ms',"$InterqueryDelayMs",
+                '--inter-session-delay-ms',"$InterSessionDelayMs",'--report-dir',$runDir
             )
             $report.read_only = 'PASS_READ_ONLY_ONLY'
             $report.status = 'PASS_READ_ONLY_ONLY'
@@ -205,6 +213,7 @@ try {
         Pop-Location
     }
 } catch {
+    if ($report.read_only -eq 'IN_PROGRESS') { $report.read_only = 'FAILED' }
     $report.status = 'FAILED'
     $report.failure = $_.Exception.Message
     Write-Host ("QUALIFICATION FAILED: " + $_.Exception.Message) -ForegroundColor Red
