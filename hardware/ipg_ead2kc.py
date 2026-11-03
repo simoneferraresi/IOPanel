@@ -241,6 +241,7 @@ class IPGEAD2KCGPIB(AbstractEDFA):
             if not isinstance(request, EDFAWriteRequest):
                 raise EDFAProtocolError("Typed EDFAWriteRequest required")
             try:
+
                 def guard_idle() -> None:
                     self._require_idle()
 

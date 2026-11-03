@@ -95,7 +95,11 @@ class EDFAWriteRequest:
             if self.value not in (PowerUnit.W, PowerUnit.DBM) or self.unit is not None:
                 raise ValueError("Device unit selection requires PowerUnit.W or PowerUnit.DBM")
         else:
-            if isinstance(self.value, bool) or not isinstance(self.value, (int, float)) or not math.isfinite(self.numeric_value):
+            if (
+                isinstance(self.value, bool)
+                or not isinstance(self.value, (int, float))
+                or not math.isfinite(self.numeric_value)
+            ):
                 raise ValueError("EDFA setting must be a finite number, not a boolean or text")
             if self.kind is EDFAWriteKind.POWER:
                 if self.unit not in (PowerUnit.W, PowerUnit.DBM):
