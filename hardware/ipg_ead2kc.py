@@ -12,6 +12,8 @@ import importlib
 import logging
 import re
 import threading
+import time
+import uuid
 from collections.abc import Callable
 from typing import Protocol, Self, override
 
@@ -20,6 +22,7 @@ from hardware.edfa_controls import (
     EDFAWritePolicy,
     EDFAWriteRequest,
     EDFAWriteResult,
+    EDFAWriteSession,
     execute_supervised_write,
 )
 from hardware.edfa_gpib import EXTENDED_READ_QUERIES, GPIBQuerySession, GPIBReadOnlyReader, parse_status
@@ -74,6 +77,61 @@ def _default_manager_factory() -> VisaResourceManager:
         raise EDFACommunicationError("Unable to initialize the installed VISA resource manager") from exc
 
 
+class _ObservedVisaSession:
+    """Audit query/write transactions without changing the native VISA resource.
+
+    The physical backend exclusively owns the original session. This adapter
+    never opens, closes, clears, retries or changes a GPIB command.
+    """
+
+    def __init__(self, raw: VisaSession, resource: str, connection_number: int, session_id: str) -> None:
+        self._raw = raw
+        self._resource = resource
+        self._connection_number = connection_number
+        self._session_id = session_id
+        self._operation_number = 0
+
+    def _transact(self, method: str, message: str) -> object:
+        self._operation_number += 1
+        number = self._operation_number
+        # Never expose numerical physical setpoints in the transport audit.
+        label = message if method == "query" else message.partition(" ")[0]
+        start = time.monotonic()
+        context = (
+            f"resource={self._resource} conn={self._connection_number} session_id={self._session_id} "
+            f"op={number} thread={threading.get_ident()} kind={method} command={label!r}"
+        )
+        logger.debug("EDFA GPIB begin %s", context)
+        try:
+            outcome = getattr(self._raw, method)(message)
+        except Exception as exc:
+            elapsed_ms = (time.monotonic() - start) * 1000.0
+            code = getattr(exc, "error_code", None)
+            code_hex = f"0x{(code & 0xFFFFFFFF):08X}" if isinstance(code, int) else "unavailable"
+            logger.error(
+                "EDFA GPIB failure %s elapsed_ms=%.3f error=%s visa_code=%s visa_hex=%s",
+                context,
+                elapsed_ms,
+                type(exc).__name__,
+                code,
+                code_hex,
+            )
+            exc.add_note(f"EDFA VISA operation failed: {context}; visa_code={code}; visa_hex={code_hex}")
+            raise
+        elapsed_ms = (time.monotonic() - start) * 1000.0
+        logger.debug("EDFA GPIB success %s elapsed_ms=%.3f", context, elapsed_ms)
+        return outcome
+
+    def query(self, message: str) -> str:
+        reply = self._transact("query", message)
+        if not isinstance(reply, str):
+            raise EDFAProtocolError("VISA query did not return a text response")
+        return reply
+
+    def write(self, message: str) -> object:
+        return self._transact("write", message)
+
+
 class IPGEAD2KCGPIB(AbstractEDFA):
     """An exclusive read-only session with conservative recovery semantics.
 
@@ -104,6 +162,9 @@ class IPGEAD2KCGPIB(AbstractEDFA):
         self._manager_factory = manager_factory or _default_manager_factory
         self._manager: VisaResourceManager | None = None
         self._session: VisaSession | None = None
+        self._observed: _ObservedVisaSession | None = None
+        self._connection_number = 0
+        self._session_id = "not-opened"
         self._identity: str | None = None
         self._state = EDFAState.DISCONNECTED
         self._lock = threading.RLock()
@@ -131,7 +192,23 @@ class IPGEAD2KCGPIB(AbstractEDFA):
                 self._session.timeout = self.timeout_ms
                 self._session.write_termination = _TERMINATIONS[self.write_termination]
                 self._session.read_termination = _TERMINATIONS[self.read_termination]
-                identity = GPIBReadOnlyReader(self._session).identify()
+                self._connection_number += 1
+                self._session_id = uuid.uuid4().hex[:12]
+                self._observed = _ObservedVisaSession(
+                    self._session, self.resource_name, self._connection_number, self._session_id
+                )
+                logger.info(
+                    "EDFA GPIB session open resource=%s conn=%d session_id=%s thread=%d timeout_ms=%d "
+                    "write_term=%s read_term=%s",
+                    self.resource_name,
+                    self._connection_number,
+                    self._session_id,
+                    threading.get_ident(),
+                    self.timeout_ms,
+                    self.write_termination,
+                    self.read_termination,
+                )
+                identity = GPIBReadOnlyReader(self._observed).identify()
                 if _REQUIRED_IDENTITY_TOKEN.casefold() not in identity.casefold():
                     raise EDFAProtocolError(
                         "GPIB identification does not establish EAD-2K-C identity; "
@@ -277,14 +354,21 @@ class IPGEAD2KCGPIB(AbstractEDFA):
             self._state = EDFAState.DISCONNECTED
             self._identity = None
 
-    def _require_idle(self) -> VisaSession:
-        if self._state is not EDFAState.IDLE or self._session is None:
+    def _require_idle(self) -> EDFAWriteSession:
+        if self._state is not EDFAState.IDLE or self._observed is None:
             raise EDFAStateError(f"EDFA is not ready for queries ({self._state.name.lower()})")
-        return self._session
+        return self._observed
 
     def _close_owned_resources(self) -> list[tuple[str, Exception]]:
         problems: list[tuple[str, Exception]] = []
         if self._session is not None:
+            logger.info(
+                "EDFA GPIB session close attempt resource=%s conn=%d session_id=%s thread=%d",
+                self.resource_name,
+                self._connection_number,
+                self._session_id,
+                threading.get_ident(),
+            )
             try:
                 self._session.close()
             except Exception as exc:
@@ -292,6 +376,8 @@ class IPGEAD2KCGPIB(AbstractEDFA):
                 problems.append(("session", exc))
             else:
                 self._session = None
+                self._observed = None
+                logger.info("EDFA GPIB session closed resource=%s session_id=%s", self.resource_name, self._session_id)
         # Preserve the manager while a session remains unclosed. Retrying a
         # session close through an already-disposed manager is not reliable.
         if self._manager is not None and self._session is None:
