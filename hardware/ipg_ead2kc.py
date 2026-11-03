@@ -15,7 +15,6 @@ import threading
 from collections.abc import Callable
 from typing import Protocol, Self, override
 
-from hardware.edfa_gpib import EXTENDED_READ_QUERIES, GPIBQuerySession, GPIBReadOnlyReader, parse_status
 from hardware.edfa_controls import (
     EDFAWriteOutcome,
     EDFAWritePolicy,
@@ -23,6 +22,7 @@ from hardware.edfa_controls import (
     EDFAWriteResult,
     execute_supervised_write,
 )
+from hardware.edfa_gpib import EXTENDED_READ_QUERIES, GPIBQuerySession, GPIBReadOnlyReader, parse_status
 from hardware.edfa_types import (
     EDFACommunicationError,
     EDFAConfiguration,
