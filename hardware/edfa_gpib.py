@@ -41,9 +41,9 @@ _READ_QUERIES = frozenset(
         "SOUR:POW:LIM:HIGH?",
     }
 )
-# These five commands were transcribed in a previous review of IPG
-# P21-006000 Rev A pp. 31-32. Firmware Rev 1.1.175 has NOT yet
-# physically qualified them; no standard/event queries are included.
+# These five readbacks were physically verified on IPG EAD-2K-C firmware
+# Rev 1.1.175 on 2026-11-03 (manual P21-006000 Rev A pp.31-32).
+# Standard/event commands remain outside the read-only allowlist.
 EXTENDED_READ_QUERIES = frozenset(
     {
         "SOUR:CURR:SPO?",
