@@ -76,7 +76,6 @@ def _default_manager_factory() -> VisaResourceManager:
         raise EDFACommunicationError("Unable to initialize the installed VISA resource manager") from exc
 
 
-
 class _ObservedVisaSession:
     """Audit query/write transactions without changing the native VISA resource.
 
@@ -193,8 +192,7 @@ class IPGEAD2KCGPIB(AbstractEDFA):
                 self._connection_number += 1
                 self._observed = _ObservedVisaSession(self._session, self.resource_name, self._connection_number)
                 logger.info(
-                    "EDFA GPIB session open resource=%s conn=%d thread=%d timeout_ms=%d "
-                    "write_term=%s read_term=%s",
+                    "EDFA GPIB session open resource=%s conn=%d thread=%d timeout_ms=%d write_term=%s read_term=%s",
                     self.resource_name,
                     self._connection_number,
                     threading.get_ident(),
