@@ -65,7 +65,7 @@ def test_valid_copy_forces_write_off_and_redirects_logging_without_changing_sour
         ("[Logging]\nlevel = DEBUG\n", "Missing"),
         (BASE.replace("edfa_backend = physical", "edfa_backend = simulation"), "backend"),
         (BASE.replace("GPIB0::12::INSTR", "GPIB0::11::INSTR"), "resource"),
-        ("[Instruments]\nthis is not an assignment\n", "ParsingError"),
+        ("[Instruments]\nthis is not an assignment\n", "parsing errors"),
         (BASE + "edfa_gpib_timeout_ms = 4\n", "validation"),
         (BASE + "\n[instruments]\nedfa_backend = simulation\n", "duplicate"),
     ],
