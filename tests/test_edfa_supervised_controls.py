@@ -157,7 +157,7 @@ def test_invalid_payload_never_becomes_scpi(kind, value, unit):
 @pytest.mark.parametrize("action", [EDFAEmissionAction.OFF, EDFAEmissionAction.ON])
 def test_emission_representation_only(action):
     assert format_emission_command(action) == f"SOUR:POW:STAT {action.value}"
-    with pytest.raises(ValueError):
+    with pytest.raises(TypeError):
         format_emission_command("ON")
 
 
