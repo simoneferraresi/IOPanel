@@ -81,8 +81,8 @@ def test_session_gap_is_independent_and_in_report() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
     assert "[int]$InterSessionDelayMs = 0" in source
     assert "[ValidateSet(0,100,250,500,1000)]" in source
-    assert """'--inter-session-delay-ms',"$InterSessionDelayMs" """ .strip() in source
-    assert """'--interquery-delay-ms',"$InterqueryDelayMs" """ .strip() in source
+    assert "'--inter-session-delay-ms',\"$InterSessionDelayMs\"" in source
+    assert "'--interquery-delay-ms',\"$InterqueryDelayMs\"" in source
     assert "inter_session_delay_ms = $InterSessionDelayMs" in source
     assert "interquery_delay_ms = $InterqueryDelayMs" in source
 
