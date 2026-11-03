@@ -169,6 +169,7 @@ def run_diagnostics(
     plan: str = "telemetry-configuration",
     sessions: int = 1,
     interquery_delay_ms: int = 0,
+    inter_session_delay_ms: int = 0,
     max_queries: int = 60,
     max_seconds: float = 60.0,
     manager_factory: ManagerFactory = _default_manager_factory,
@@ -180,6 +181,8 @@ def run_diagnostics(
         raise ValueError("Session, query or duration budget outside the approved bounds")
     if interquery_delay_ms not in (0, 10, 50, 100):
         raise ValueError("Select a predeclared diagnostic delay: 0, 10, 50 or 100 ms")
+    if inter_session_delay_ms not in (0, 100, 250, 500, 1000):
+        raise ValueError("Select a predeclared inter-session delay: 0, 100, 250, 500 or 1000 ms")
     profile = config.instruments
     if not connect_readonly:
         return {"mode": "dry-run", "message": "No VISA session created or SCPI command transmitted"}
@@ -199,6 +202,7 @@ def run_diagnostics(
         "plan": plan,
         "sessions_planned": sessions,
         "interquery_delay_ms": interquery_delay_ms,
+        "inter_session_delay_ms": inter_session_delay_ms,
         "max_queries": max_queries,
         "max_seconds": max_seconds,
         "optical_state": "NOT VERIFIED BY SOFTWARE",
@@ -230,6 +234,28 @@ def run_diagnostics(
                     device.read_configuration()
             finally:
                 device.close()
+            if session_number < sessions:
+                # The previous instrument AND resource manager are already closed.
+                # Never add pacing after a failure or after the last session.
+                recorder.check_budget()
+                recorder.record(
+                    "inter_session_wait_start",
+                    session=session_number,
+                    next_session=session_number + 1,
+                    requested_ms=inter_session_delay_ms,
+                )
+                gap_start = time.monotonic()
+                if inter_session_delay_ms:
+                    time.sleep(inter_session_delay_ms / 1000.0)
+                actual_ms = round((time.monotonic() - gap_start) * 1000, 3)
+                recorder.record(
+                    "inter_session_wait_end",
+                    session=session_number,
+                    next_session=session_number + 1,
+                    requested_ms=inter_session_delay_ms,
+                    measured_ms=actual_ms,
+                )
+                recorder.check_budget()
         report["status"] = "PASSED_READ_ONLY_ONLY"
     except Exception as exc:  # noqa: BLE001 - preserve actual VISA failure in audit report.
         report["failure"] = {
@@ -252,6 +278,7 @@ def main() -> int:
     parser.add_argument("--plan", choices=("telemetry", "telemetry-configuration"), default="telemetry-configuration")
     parser.add_argument("--sessions", type=int, default=1)
     parser.add_argument("--interquery-delay-ms", type=int, default=0)
+    parser.add_argument("--inter-session-delay-ms", type=int, default=0)
     parser.add_argument("--max-queries", type=int, default=60)
     parser.add_argument("--max-seconds", type=float, default=60.0)
     parser.add_argument("--report-dir", type=Path, default=None)
@@ -264,6 +291,7 @@ def main() -> int:
             plan=args.plan,
             sessions=args.sessions,
             interquery_delay_ms=args.interquery_delay_ms,
+            inter_session_delay_ms=args.inter_session_delay_ms,
             max_queries=args.max_queries,
             max_seconds=args.max_seconds,
         )
