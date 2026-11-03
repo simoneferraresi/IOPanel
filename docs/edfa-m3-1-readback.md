@@ -5,16 +5,19 @@
 **Model:** IPG EAD-2K-C; physical unit reported `IPG EAD-2K-C, Rev 1.1.175`.
 **Source:** earlier operator-provided photographs of IPG P21-006000 Rev A,
 pp. 27–32 (protocol), and P21-008000 Rev A, pp. 33–34 (specifications).
-The photographs are **not committed**, and the five additional query strings
-below derive from an earlier manual review rather than a fresh independently
-inspectable transcription. Public EAD-family brochures and manuals for
+The original photographs have now been rechecked directly in the operator-provided
+`EDFA manual.zip` archive: `IMG_5264.jpeg` (GPIB command table p.31),
+`IMG_5265.jpeg` (p.32), `IMG_5298.jpeg` (status bits p.29), and
+`IMG_5266.jpeg` (optical specifications p.33). All five queries, expected
+readback meanings and units match this model's manual. The photographs are
+**not committed to the repository**. Public EAD-family brochures and manuals for
 *other* models are not substitutes for this command table.
 
 M3.1 adds five narrowly allowlisted, **non-setting** GPIB readbacks.
 No emission control, power/gain/current writes, reset, event clearing,
 arbitrary SCPI, bus enumeration, auto-connect or automatic new-command polling
 is introduced. Physical connection remains operator gated and may change the
-VISA/GPIB remote/local state. **No new command has been physically verified.**
+VISA/GPIB remote/local state. **All five new commands returned valid numeric readbacks on the laboratory unit (2026-11-03); GUI readback was also observed.**
 
 ### Command-coverage inventory
 
@@ -36,11 +39,11 @@ Evidence levels:
 | `SOUR:POW:BACK?` | Reflected power monitor | percent of device maximum | Only query when bit 22 set; bit clear on lab unit | M1–M3, offline; physical query skipped |
 | `SOUR:CURR?` | Measured pump-diode current | amperes | Not programmed current | M1–M3, physical |
 | `SOUR:TEMP:LEV?` | Case temperature | °C | Not a safety interlock | M1–M3, physical |
-| `SOUR:POW:LIM:HIGH?` | Hardware-reported output-power limit | W or dBm (bit 18) | Model-specific command; must qualify firmware reply | **M3.1 offline; physical pending** |
-| `SOUR:CURR:SPO?` | Programmed diode-current setpoint | amperes | Not measured diode current | **M3.1 offline; physical pending** |
-| `SOUR:CURR:LIM:HIGH?` | Hardware-reported diode-current limit | amperes | Not a universal model constant | **M3.1 offline; physical pending** |
-| `SOUR:GAIN:SPO?` | Programmed gain setpoint | dB | Skipped unless AGC-available bit 20 set; mode-dependent meaning unqualified | **M3.1 offline; physical pending** |
-| `SOUR:GAIN:LIM:HIGH?` | Hardware-reported gain limit | dB | Skipped unless AGC-available bit 20 set; mode-dependent meaning unqualified | **M3.1 offline; physical pending** |
+| `SOUR:POW:LIM:HIGH?` | Hardware-reported output-power limit | W or dBm (bit 18) | Model-specific command; must qualify firmware reply | **M3.1 manual-confirmed and physical readback verified (2026-11-03)** |
+| `SOUR:CURR:SPO?` | Programmed diode-current setpoint | amperes | Not measured diode current | **M3.1 manual-confirmed and physical readback verified (2026-11-03)** |
+| `SOUR:CURR:LIM:HIGH?` | Hardware-reported diode-current limit | amperes | Not a universal model constant | **M3.1 manual-confirmed and physical readback verified (2026-11-03)** |
+| `SOUR:GAIN:SPO?` | Programmed gain setpoint | dB | Skipped unless AGC-available bit 20 set; mode-dependent meaning unqualified | **M3.1 manual-confirmed and physical readback verified (2026-11-03)** |
+| `SOUR:GAIN:LIM:HIGH?` | Hardware-reported gain limit | dB | Skipped unless AGC-available bit 20 set; mode-dependent meaning unqualified | **M3.1 manual-confirmed and physical readback verified (2026-11-03)** |
 
 The raw response is stored for each successful additional readback. No
 generic fallback command forms are attempted. A response of `Off` for any
@@ -49,12 +52,14 @@ demonstrated that special response.
 
 **Coverage denominator:** 14 commands in the *currently identified,
 non-mutating EAD-2K-C query inventory*, of which 14 have software
-implementations and 8 have already been exercised physically
+implementations and **13 have been exercised physically**
 (the back-reflection query was skipped because its capability bit was clear).
 This is **not** a claim that the complete manufacturer's SCPI command table
 contains only 14 queries; exact total manual coverage cannot be measured
 without rechecking the full original manual. Of the five *new* readbacks:
-0/5 physically qualified, 5/5 available for offline regression tests.
+5/5 successfully tested individually and together on firmware Rev 1.1.175,
+and 5/5 covered by offline regression tests. Tests covered the observed
+emission-off APC state, not every possible operating mode.
 
 ### Explicitly deferred standard/event commands
 
@@ -100,6 +105,50 @@ without rechecking the full original manual. Of the five *new* readbacks:
 If the hardware firmware rejects a readback, do not automatically substitute
 a different query string or fake a zero. No "unsupported" result is inferred
 merely from a timeout; investigate under a separate approval.
+
+### M3.1 laboratory and GUI acceptance evidence — 2026-11-03
+
+On the laboratory PC, the operator ran the standalone read-only probe
+using `GPIB0::12::INSTR`. The eight submitted logs comprised a dry run,
+a baseline, five individual new-query sessions and a combined configuration
+snapshot. Every physical session identified `IPG EAD-2K-C, Rev 1.1.175`
+and returned status word `3145729` (APC active, AGC available,
+input-power monitor available, linear power units). No failures or status
+inconsistencies were reported.
+
+| Query | Individual raw response | Meaning confirmed from manual | Combined readback |
+| --- | --- | --- | --- |
+| `SOUR:CURR:SPO?` | `0.700` | Current setpoint, 0.700 A | 0.700 A |
+| `SOUR:CURR:LIM:HIGH?` | `2.400` | Maximum current, 2.400 A | 2.400 A |
+| `SOUR:POW:LIM:HIGH?` | `2.200` | Maximum output-power setting, 2.200 W | 2.200 W |
+| `SOUR:GAIN:SPO?` | `37.0` | Gain setpoint, 37.0 dB | 37.0 dB |
+| `SOUR:GAIN:LIM:HIGH?` | `38.0` | Maximum gain, 38.0 dB | 38.0 dB |
+
+Combined capture time: `2026-11-03T10:32:11.120260+00:00`.
+The operator subsequently exercised the new GUI manual-refresh panel and
+provided a screenshot timestamped `2026-11-03 10:38:04 UTC`. Its five
+displayed values match the independent combined readback exactly; the
+manual refresh and timestamp display are therefore observed to work on the
+physical amplifier. The operator also reported normal GUI behavior.
+
+**Important boundaries:** The control mode remained APC, so a readable
+gain setpoint does not imply AGC is active. In these seven physical
+sessions, `SOUR:POW?` returned `Off` (not a measured zero);
+the reported output-power setpoint remained 0.20 W, current monitor
+0.021 A and case temperature 23.4 °C. Input monitor values of
+0.05–0.11 mW were below the reported 0.23 mW input threshold, despite
+no active low-input status bit. This is not evidence of optical safety
+or permission to enable emission. The reported 2.2 W limit is a
+configuration readback, not proof that such power is being produced.
+The standalone JSON's `physically_qualified: false` and
+`UNQUALIFIED` note are unchanged static software caveats and do not
+reflect a failed hardware response.
+
+Independent evidence for disconnect clearing, all simulated error
+recoveries, resource cleanup/remote-local effects and behavior in other
+control modes was not supplied; offline tests cover the software paths.
+The manual photographs and laboratory logs remain operator-supplied,
+not stored in Git.
 
 ### Historical physical reference — 2026-11-03
 
