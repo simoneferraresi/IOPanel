@@ -81,6 +81,13 @@ class EDFAWriteRequest:
     emission_off_attested: bool = False
     cancelled: Event = field(default_factory=Event, compare=False, repr=False)
 
+    @property
+    def numeric_value(self) -> float:
+        """Type-narrow a validated numeric setting; unit-selection is never numeric."""
+        if isinstance(self.value, bool) or not isinstance(self.value, (int, float)):
+            raise TypeError("Expected numeric EDFA setpoint value")
+        return float(self.value)
+
     def __post_init__(self) -> None:
         if not isinstance(self.kind, EDFAWriteKind):
             raise TypeError("Unrecognized EDFA write operation")
@@ -88,16 +95,16 @@ class EDFAWriteRequest:
             if self.value not in (PowerUnit.W, PowerUnit.DBM) or self.unit is not None:
                 raise ValueError("Device unit selection requires PowerUnit.W or PowerUnit.DBM")
         else:
-            if type(self.value) not in (float, int) or not math.isfinite(self.value):
+            if isinstance(self.value, bool) or not isinstance(self.value, (int, float)) or not math.isfinite(self.numeric_value):
                 raise ValueError("EDFA setting must be a finite number, not a boolean or text")
             if self.kind is EDFAWriteKind.POWER:
                 if self.unit not in (PowerUnit.W, PowerUnit.DBM):
                     raise ValueError("Power setpoint requires explicit W or dBm units")
-                if self.unit is PowerUnit.W and self.value < 0:
+                if self.unit is PowerUnit.W and self.numeric_value < 0:
                     raise ValueError("Linear optical power cannot be negative")
             elif self.unit is not None:
                 raise ValueError("Gain/current setpoints have fixed dB/A units")
-            if self.kind is EDFAWriteKind.CURRENT and self.value < 0:
+            if self.kind is EDFAWriteKind.CURRENT and self.numeric_value < 0:
                 raise ValueError("Diode current cannot be negative")
 
 
@@ -134,7 +141,7 @@ def format_write_command(request: EDFAWriteRequest) -> str:
             EDFAWriteKind.GAIN: "SOUR:GAIN",
             EDFAWriteKind.CURRENT: "SOUR:CURR",
         }[request.kind]
-        command = f"{prefix} {float(request.value):.9g}"
+        command = f"{prefix} {request.numeric_value:.9g}"
     if command.split(" ", 1)[0] not in _ALLOWED_PREFIXES:
         raise EDFAProtocolError("Write command is not allowlisted")
     return command
@@ -179,6 +186,12 @@ def _power_w(value: float, unit: PowerUnit) -> float:
     return value if unit is PowerUnit.W else 10.0 ** ((value - 30.0) / 10.0)
 
 
+def _ceiling(value: float | None) -> float:
+    if value is None:
+        raise ValueError("Independent laboratory operating ceiling is absent")
+    return value
+
+
 def _check_limits(
     request: EDFAWriteRequest, policy: EDFAWritePolicy, telemetry: EDFATelemetry, config: EDFAConfiguration
 ) -> None:
@@ -203,15 +216,15 @@ def _check_limits(
         if config.power_limit.unit is not actual_unit:
             raise ValueError("Hardware maximum power unit is inconsistent")
         amount = float(request.value)
-        if amount > config.power_limit.value or _power_w(amount, actual_unit) > float(policy.maximum_power_w):
+        if amount > config.power_limit.value or _power_w(amount, actual_unit) > _ceiling(policy.maximum_power_w):
             raise ValueError("Requested power exceeds hardware limit or approved laboratory ceiling")
     elif request.kind is EDFAWriteKind.GAIN:
         if config.gain_limit_db is None or float(request.value) > min(
-            config.gain_limit_db, float(policy.maximum_gain_db)
+            config.gain_limit_db, _ceiling(policy.maximum_gain_db)
         ):
             raise ValueError("Requested gain exceeds hardware limit or approved laboratory ceiling")
     elif request.kind is EDFAWriteKind.CURRENT:
-        if float(request.value) > min(config.diode_current_limit_a, float(policy.maximum_current_a)):
+        if float(request.value) > min(config.diode_current_limit_a, _ceiling(policy.maximum_current_a)):
             raise ValueError("Requested current exceeds hardware limit or approved laboratory ceiling")
     elif request.value is (PowerUnit.DBM if status.logarithmic_power_units else PowerUnit.W):
         raise ValueError("Instrument already reports the requested power unit")
