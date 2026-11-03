@@ -222,8 +222,8 @@ Never use these commands to diagnose missing optical output by switching
 emission on. If resource release cannot be confirmed, do not reconnect
 until the operator restores and verifies the instrument state.
 
-## Deferred M4
+## Deferred versus implemented in M4
 
-Mode selection; APC/AGC/ACC changes; power/gain/current setters; emission;
+M4-A now adds **site-gated, operator-confirmed** power/gain/current setpoint and power-unit writes in a separate control path. The five M3.1 readback queries were physically verified on 2026-11-03; their earlier software-only warnings are obsolete. No physical M4 writes have yet been qualified. Mode selection and physical emission;
 seed-loss/interlock qualification; and stateful control safety remain
 **outside M3.1**. Avoid adding setters to the read-only abstraction.
