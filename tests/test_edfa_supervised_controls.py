@@ -123,7 +123,7 @@ def connect(session: WriteSession, policy: EDFAWritePolicy = SITE) -> IPGEAD2KCG
 
 
 @pytest.mark.parametrize(
-    ("request", "command"),
+    ("write_request", "command"),
     [
         (approved(EDFAWriteKind.POWER, 0.123456789, PowerUnit.W), "SOUR:POW 0.123456789"),
         (approved(EDFAWriteKind.POWER, 27.1, PowerUnit.DBM), "SOUR:POW 27.1"),
@@ -133,8 +133,8 @@ def connect(session: WriteSession, policy: EDFAWritePolicy = SITE) -> IPGEAD2KCG
         (approved(EDFAWriteKind.POWER_UNITS, PowerUnit.W), "UNIT:POW W"),
     ],
 )
-def test_exact_allowlisted_commands(request, command):
-    assert format_write_command(request) == command
+def test_exact_allowlisted_commands(write_request, command):
+    assert format_write_command(write_request) == command
 
 
 @pytest.mark.parametrize(
@@ -219,16 +219,16 @@ def test_success_fresh_preflight_single_write_and_post_verification():
 
 
 @pytest.mark.parametrize(
-    ("status", "request", "command"),
+    ("status", "write_request", "command"),
     [
         (AGC, approved(EDFAWriteKind.GAIN, 19.0), "SOUR:GAIN 19"),
         (ACC, approved(EDFAWriteKind.CURRENT, 0.35), "SOUR:CURR 0.35"),
     ],
 )
-def test_mode_specific_gain_and_current_writes(status, request, command):
+def test_mode_specific_gain_and_current_writes(status, write_request, command):
     session = WriteSession(status)
     device = connect(session)
-    result = device.apply_control(request)
+    result = device.apply_control(write_request)
     assert result.outcome is EDFAWriteOutcome.CONFIRMED
     assert session.writes == [command]
     device.close()
