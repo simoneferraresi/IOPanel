@@ -299,7 +299,7 @@ def execute_supervised_write(
             "Device readback matches request within documented numerical tolerance",
             after_telemetry, after_config,
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — arbitrary VISA reply failures leave device state uncertain.
         return EDFAWriteResult(
             request, EDFAWriteOutcome.UNKNOWN, before, None,
             f"Post-write verification failed ({type(exc).__name__}); state unknown; physical verification required.",
