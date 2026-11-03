@@ -108,6 +108,7 @@ include = [
     "tools/audit_pm5020_sync_run.py",
     "ui/edfa_panel.py",
     "tools/edfa_readonly_probe.py",
+    "tools/edfa_gpib_diagnostics.py",
     "hardware/dummy_edfa.py",
     "hardware/pm5020.py",
     "hardware/pm5020_types.py",
