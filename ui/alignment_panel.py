@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QRadioButton,
+    QSizePolicy,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -260,6 +261,8 @@ class AlignmentPanel(QWidget):
         self._plot3d_initializing = False
         self._pending_mapping = None
         self._plot_host = QWidget(self)
+        # The 3D visualizer yields vertical space before the alignment controls.
+        self._plot_host.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored)
         self._plot_host_layout = QVBoxLayout(self._plot_host)
         self._plot_host_layout.setContentsMargins(0, 0, 0, 0)
         self._plot_placeholder = QLabel("Select Auto Alignment to initialize the 3D viewer")

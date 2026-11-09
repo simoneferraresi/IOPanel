@@ -367,6 +367,8 @@ class PowerMonitorTraceWidget(QWidget):
 
     def __init__(self, settings: AppSettings | None = None, parent: QWidget | None = None):
         super().__init__(parent)
+        # The trace must never dictate the minimum height of the camera splitter.
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored)
         self.app_settings = settings
         self.settings: PowerMonitorAcquisitionSettings | None = None
         self.current_recording: PowerMonitorRecording | None = None
@@ -410,6 +412,7 @@ class PowerMonitorTraceWidget(QWidget):
         plot_layout.setRowStretch(0, 1)
         plot_layout.setColumnStretch(0, 1)
         self.plot_widget = pg.PlotWidget(background="w", parent=self.plot_container)
+        self.plot_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored)
         _configure_power_monitor_axes(self.plot_widget, bottom_label="Elapsed time (s)", show_x_grid=True)
         self.plot_widget.setTitle("Power Monitor Recording", **pyqtgraph_title_style())
         plot_layout.addWidget(self.plot_widget, 0, 0)
@@ -918,6 +921,8 @@ class HistogramWidget(QtWidgets.QWidget):
 
     def __init__(self, control_panel, detector_keys: list[str], parent: QWidget | None = None):
         super().__init__(parent)
+        # Let the controls beside the histogram determine the tab minimum.
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored)
         if not detector_keys:
             logger.warning("HistogramWidget initialized with no detector keys.")
         logger.info(f"Initializing HistogramWidget for detectors: {detector_keys}")
@@ -958,6 +963,7 @@ class HistogramWidget(QtWidgets.QWidget):
         plot_layout.setRowStretch(0, 1)
         plot_layout.setColumnStretch(0, 1)
         self.plot_widget = pg.PlotWidget(background="w", parent=self.plot_container)
+        self.plot_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored)
         plot_layout.addWidget(self.plot_widget, 0, 0)
         self.overlay_controls = QWidget(self.plot_container)
         self.overlay_controls.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
@@ -1302,6 +1308,8 @@ class PlotWidget(QWidget):
         matlab_engine_manager: MatlabEngineManager | None = None,
     ):
         super().__init__(parent)
+        # The scan controls, not the plot size hint, limit vertical shrinking.
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored)
         if not isinstance(shared_settings, ScanSettings):
             logger.warning("PlotWidget needs a valid ScanSettings object for metadata.")
             self.shared_settings = ScanSettings()  # Dummy settings
@@ -1384,7 +1392,7 @@ class PlotWidget(QWidget):
         plot_layout.setRowStretch(0, 1)
         plot_layout.setColumnStretch(0, 1)
         self.plot_widget = pg.PlotWidget(background="w", parent=self.plot_container)
-        self.plot_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.plot_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored)
         plot_layout.addWidget(self.plot_widget, 0, 0)
         layout.addWidget(self.plot_container, stretch=1)
 

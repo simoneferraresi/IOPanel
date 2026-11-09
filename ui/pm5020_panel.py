@@ -154,8 +154,9 @@ class PM5020ChannelControls(QGroupBox):
         self.plot.setLabel("bottom", "Elapsed time", units="s")
         self.plot.setLabel("left", "Optical power", units=default_unit)
         self.plot.showGrid(x=True, y=True, alpha=0.2)
-        self.plot.setMinimumHeight(155)
-        self.plot.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        # The two traces may shrink below their former 155 px floor; the
+        # adjacent channel controls remain the actual minimum-height bound.
+        self.plot.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored)
         self.plot.setTitle(f"CH{channel.value} Power vs Time", **pyqtgraph_title_style())
         self.curve = self.plot.plot(pen=pg.mkPen("#1976d2" if channel is PowerChannel.CH1 else "#d95f02", width=2))
         self.plot_host = QWidget()

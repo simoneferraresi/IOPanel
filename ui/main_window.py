@@ -42,7 +42,6 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSplitter,
     QStatusBar,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -103,6 +102,7 @@ from ui.constants import (
     MSG_CAMERA_WAITING,
     PROP_STATUS,
 )
+from ui.active_page_tabs import ActivePageTabWidget
 from ui.control_panel import (
     CT400ConnectionWorker,
     CT400ControlPanel,
@@ -1299,7 +1299,7 @@ class MainWindow(QMainWindow):
         control_layout = QVBoxLayout(self.control_container)  # Update variable name usage here too
         control_layout.setContentsMargins(0, 0, 0, 0)
         control_layout.setSpacing(5)
-        self.tab_widget = QTabWidget()
+        self.tab_widget = ActivePageTabWidget()
         self.tab_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         control_layout.addWidget(self.tab_widget)
         splitter.addWidget(self.camera_container)
@@ -1548,6 +1548,9 @@ class MainWindow(QMainWindow):
                 self.tab_widget.setCurrentIndex(current)
             self._lazy_tab_placeholders.pop(index)
             placeholder.deleteLater()
+            # The replacement was performed with tab signals blocked. Refresh
+            # the selected page's minimum so the camera splitter can shrink.
+            self.tab_widget.updateGeometry()
             if index == 2:
                 alignment_panel = cast("AlignmentPanel", panel)
                 self._alignment_tab = alignment_panel
