@@ -94,6 +94,7 @@ from logic.power_monitor_recording import (
     PowerMonitorRecording,
     PowerMonitorRecordingSample,
 )
+from ui.active_page_tabs import ActivePageTabWidget
 from ui.camera_widgets import CameraPanel
 from ui.constants import (
     ID_CT400_STATUS_LABEL,
@@ -102,7 +103,6 @@ from ui.constants import (
     MSG_CAMERA_WAITING,
     PROP_STATUS,
 )
-from ui.active_page_tabs import ActivePageTabWidget
 from ui.control_panel import (
     CT400ConnectionWorker,
     CT400ControlPanel,
