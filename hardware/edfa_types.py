@@ -1,4 +1,4 @@
-"""Pure, unit-explicit models for the IPG EAD-2K-C read-only integration.
+"""Pure, unit-explicit models for the IPG EAD-2K-C integration.
 
 Status bits follow the photographed EAD-2K-C manual, P21-006000 Rev A,
 page 29. Status flags must never be treated as an independent safety interlock.

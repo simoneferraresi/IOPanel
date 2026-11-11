@@ -73,9 +73,10 @@ numeric units, raw status and graceful shutdown under both successful and
 failed VISA operations. Do not connect the CT400 or enable EDFA emission as
 a substitute for this separate GUI-readout acceptance gate.
 
-The available space in the left column intentionally remains uncluttered
-for later amplifier controls. Mode selection, setpoint changes, gain/current
-changes and optical emission controls are **not implemented in M3**.
+The M3 left column remains dedicated to acquisition. M4 adds a separate
+Amplifier controls group in the expanding dashboard; site-gated, separately
+confirmed setpoint writes are distinct from M3 read-only monitoring.
+Physical mode changes and emission controls remain unavailable.
 They require their own command-contract review, safety gating, simulator tests,
 physically verified loss-of-seed behavior and explicit operator authorization.
 Future milestones may also add graphs, logging/export and coordinated nonlinear

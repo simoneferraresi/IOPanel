@@ -1498,9 +1498,17 @@ class MainWindow(QMainWindow):
                 panel.shutdown_complete.connect(self._resume_close_after_pm5020)
                 panel.shutdown_timeout.connect(lambda message: self.statusBar().showMessage(message, 0))
             elif index == 4:
+                from hardware.edfa_controls import EDFAWritePolicy
                 from ui.edfa_panel import EDFAReadOnlyPanel
 
                 edfa_options = self.config.instruments
+                policy = EDFAWritePolicy(
+                    enabled=edfa_options.edfa_m4_write_enabled,
+                    site_reference=edfa_options.edfa_m4_site_reference,
+                    maximum_power_w=edfa_options.edfa_m4_approved_power_w,
+                    maximum_gain_db=edfa_options.edfa_m4_approved_gain_db,
+                    maximum_current_a=edfa_options.edfa_m4_approved_current_a,
+                )
                 panel = EDFAReadOnlyPanel(
                     self,
                     backend_mode=edfa_options.edfa_backend,
@@ -1508,6 +1516,7 @@ class MainWindow(QMainWindow):
                     timeout_ms=edfa_options.edfa_gpib_timeout_ms,
                     write_termination=edfa_options.edfa_gpib_write_termination,
                     read_termination=edfa_options.edfa_gpib_read_termination,
+                    write_policy=policy,
                 )
                 panel.shutdown_complete.connect(self._resume_close_after_edfa)
                 panel.shutdown_timeout.connect(lambda message: self.statusBar().showMessage(message, 0))

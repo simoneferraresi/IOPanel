@@ -1,7 +1,8 @@
-"""Explicitly opened read-only GPIB/VISA backend for the IPG EAD-2K-C.
+"""Explicitly opened GPIB/VISA backend for the IPG EAD-2K-C.
 
-Never opens a bus on import/initialization, never searches addresses, and never
-sends an emission, reset, mode, gain, power, or current *write* command.
+Never opens a bus on import/initialization or searches addresses. Physical
+setpoint writes require separately enabled site policy and supervised attestation;
+no physical emission, mode, reset or event-clearing commands are exposed.
 A GPIB session may nonetheless enter remote mode: physical use is operator gated.
 """
 
@@ -14,6 +15,13 @@ import threading
 from collections.abc import Callable
 from typing import Protocol, Self, override
 
+from hardware.edfa_controls import (
+    EDFAWriteOutcome,
+    EDFAWritePolicy,
+    EDFAWriteRequest,
+    EDFAWriteResult,
+    execute_supervised_write,
+)
 from hardware.edfa_gpib import EXTENDED_READ_QUERIES, GPIBQuerySession, GPIBReadOnlyReader, parse_status
 from hardware.edfa_types import (
     EDFACommunicationError,
@@ -39,6 +47,8 @@ class VisaSession(GPIBQuerySession, Protocol):
     timeout: int
     write_termination: str | None
     read_termination: str | None
+
+    def write(self, message: str) -> object: ...
 
     def close(self) -> None: ...
 
@@ -97,6 +107,7 @@ class IPGEAD2KCGPIB(AbstractEDFA):
         self._identity: str | None = None
         self._state = EDFAState.DISCONNECTED
         self._lock = threading.RLock()
+        self._write_policy = EDFAWritePolicy()  # Never inherited from a generic connected session.
 
     @property
     @override
@@ -209,6 +220,46 @@ class IPGEAD2KCGPIB(AbstractEDFA):
                 if isinstance(exc, EDFAProtocolError):
                     raise
                 raise EDFACommunicationError("EDFA qualification readback failed; explicit recovery required") from exc
+
+    def configure_write_policy(self, policy: EDFAWritePolicy) -> None:
+        """Site-local policy is injected by the UI worker, never read from shared defaults."""
+        if not isinstance(policy, EDFAWritePolicy):
+            raise TypeError("Expected EDFAWritePolicy")
+        with self._lock:
+            if self._state is not EDFAState.DISCONNECTED:
+                raise EDFAStateError("Set write policy before connecting; no mid-session elevation")
+            self._write_policy = policy
+
+    def apply_control(self, request: EDFAWriteRequest) -> EDFAWriteResult:
+        """Single supervised transaction on the unique owner-thread VISA session.
+
+        Mismatch/ambiguous write => ERROR and manual verification, never
+        automatic retry or rollback. Release of VISA does not stop emission.
+        """
+        with self._lock:
+            session = self._require_idle()
+            if not isinstance(request, EDFAWriteRequest):
+                raise EDFAProtocolError("Typed EDFAWriteRequest required")
+            try:
+
+                def guard_idle() -> None:
+                    self._require_idle()
+
+                result = execute_supervised_write(
+                    session,
+                    request,
+                    self._write_policy,
+                    physical=True,
+                    pre_write_guard=guard_idle,
+                )
+            except (EDFAProtocolError, EDFACommunicationError, OSError) as exc:
+                self._state = EDFAState.ERROR
+                raise EDFACommunicationError(
+                    "EDFA write preflight failed without a command; explicit recovery required"
+                ) from exc
+            if result.outcome in (EDFAWriteOutcome.UNKNOWN, EDFAWriteOutcome.MISMATCH):
+                self._state = EDFAState.ERROR
+            return result
 
     @override
     def close(self) -> None:

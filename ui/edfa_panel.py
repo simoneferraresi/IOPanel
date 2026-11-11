@@ -1,4 +1,4 @@
-"""EDFA tab: explicit read-only connection and nonblocking telemetry display."""
+"""EDFA tab: read-only monitoring and separately gated supervised controls."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPushButton,
     QSizePolicy,
@@ -20,7 +21,21 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from hardware.edfa_types import EDFAConfiguration, EDFAOpticalPower, EDFAState, EDFATelemetry
+from hardware.edfa_controls import (
+    EDFAWriteKind,
+    EDFAWriteOutcome,
+    EDFAWritePolicy,
+    EDFAWriteRequest,
+    EDFAWriteResult,
+)
+from hardware.edfa_types import (
+    EDFAConfiguration,
+    EDFAControlMode,
+    EDFAOpticalPower,
+    EDFAState,
+    EDFATelemetry,
+    PowerUnit,
+)
 from logic.edfa_monitor import EDFAMonitorWorker
 from logic.task_runner import TaskRunner
 from ui.typography import make_font, style_group_box_title
@@ -41,6 +56,7 @@ class EDFAReadOnlyPanel(QWidget):
     disconnect_requested = Signal()
     read_requested = Signal()
     configuration_requested = Signal()
+    control_requested = Signal(object)
     start_requested = Signal(int)
     stop_requested = Signal()
     shutdown_requested = Signal()
@@ -59,6 +75,7 @@ class EDFAReadOnlyPanel(QWidget):
         write_termination: str = "none",
         read_termination: str = "none",
         worker: EDFAMonitorWorker | None = None,
+        write_policy: EDFAWritePolicy | None = None,
     ) -> None:
         super().__init__(parent)
         if backend_mode not in {"simulation", "physical"}:
@@ -81,8 +98,15 @@ class EDFAReadOnlyPanel(QWidget):
         self._last_error: str | None = None
         self._last_configuration: EDFAConfiguration | None = None
         self._configuration_pending = False
+        self._control_pending = False
+        self._pending_control: EDFAWriteRequest | None = None
+        self._last_telemetry: EDFATelemetry | None = None
+        self._write_policy = write_policy or EDFAWritePolicy()
+        self._field_dirty: dict[EDFAWriteKind, bool] = {
+            kind: False for kind in (EDFAWriteKind.POWER, EDFAWriteKind.GAIN, EDFAWriteKind.CURRENT)
+        }
 
-        self.worker = worker if worker is not None else EDFAMonitorWorker()
+        self.worker = worker if worker is not None else EDFAMonitorWorker(write_policy=self._write_policy)
         self.task = TaskRunner(self.worker, auto_start_run=False)
         self.task.worker_thread.setObjectName("EDFA-readonly-monitor")
         self.task.worker_thread.started.connect(self.worker.initialize)
@@ -91,6 +115,7 @@ class EDFAReadOnlyPanel(QWidget):
         self.disconnect_requested.connect(self.worker.disconnect_instrument)
         self.read_requested.connect(self.worker.read_once)
         self.configuration_requested.connect(self.worker.read_configuration)
+        self.control_requested.connect(self.worker.apply_control)
         self.start_requested.connect(self.worker.start_monitoring)
         self.stop_requested.connect(self.worker.stop_monitoring)
         self.shutdown_requested.connect(self.worker.shutdown)
@@ -98,6 +123,7 @@ class EDFAReadOnlyPanel(QWidget):
         self.worker.identity_ready.connect(self._set_identity)
         self.worker.telemetry_ready.connect(self._on_telemetry)
         self.worker.configuration_ready.connect(self._on_configuration)
+        self.worker.control_finished.connect(self._on_control_finished)
         self.worker.error_occurred.connect(self._on_error)
 
         self._shutdown_timer = QTimer(self)
@@ -134,7 +160,7 @@ class EDFAReadOnlyPanel(QWidget):
         self.configuration_button.setMinimumHeight(35)
         self.configuration_button.setToolTip(
             "On-demand configuration and limits: never part of periodic monitoring; "
-            "new physical GPIB queries require supervised qualification."
+            "M3.1 readbacks were qualified on firmware Rev 1.1.175 (2026-11-03)."
         )
         operation_layout.addWidget(self.configuration_button)
         interval_row = QHBoxLayout()
@@ -174,8 +200,8 @@ class EDFAReadOnlyPanel(QWidget):
         self.error_label.hide()
         controls_layout.addWidget(self.error_label)
         self.safety_label = QLabel(
-            "Read-only observations cannot certify safe optical conditions. "
-            "This tab provides no emission, gain, diode-current, or optical-power controls."
+            "No emission enablement or mode selection is available. Readbacks do not "
+            "prove optical safety; physical setpoint writes require site approval."
         )
         self.safety_label.setObjectName("edfaSafetyLabel")
         self.safety_label.setWordWrap(True)
@@ -260,13 +286,208 @@ class EDFAReadOnlyPanel(QWidget):
         metric(health_grid, "edfaReflectionLabel", "Back-reflection (% of max.)", 1, 1, size=12)
         metric(health_grid, "edfaRawStatusLabel", "Raw status word", 2, 0, size=12)
         metric(health_grid, "edfaUpdatedLabel", "Sampled at (UTC)", 2, 1, size=12)
-        dashboard_layout.addWidget(health, stretch=1)
+        health_column = QWidget()
+        health_stack = QVBoxLayout(health_column)
+        health_stack.setContentsMargins(0, 0, 0, 0)
+        health_stack.setSpacing(10)
+        health_stack.addWidget(health)
+        health_stack.addWidget(self._build_amplifier_controls())
+        health_stack.addStretch(1)
+        dashboard_layout.addWidget(health_column, stretch=1)
         root.addWidget(self.dashboard_panel, stretch=1)
 
         self.read_button.clicked.connect(self.request_read)
         self.configuration_button.clicked.connect(self.request_configuration)
         self.start_button.clicked.connect(self.request_monitoring)
         self.stop_button.clicked.connect(self.request_stop)
+        self._update_controls()
+
+    def _build_amplifier_controls(self) -> QGroupBox:
+        """Supervised controls live in the expanding dashboard, never the left column."""
+        group = QGroupBox("Amplifier controls (supervised)")
+        group.setObjectName("edfaAmplifierControlsGroup")
+        style_group_box_title(group)
+        grid = QGridLayout(group)
+        grid.setContentsMargins(10, 14, 10, 8)
+        grid.setHorizontalSpacing(6)
+        grid.setVerticalSpacing(5)
+        grid.setColumnStretch(1, 1)
+        self.setting_fields: dict[EDFAWriteKind, QLineEdit] = {}
+        self.setting_buttons: dict[EDFAWriteKind, QPushButton] = {}
+        self.setting_states: dict[EDFAWriteKind, QLabel] = {}
+        self.setting_limits: dict[EDFAWriteKind, QLabel] = {}
+        definitions = (
+            (EDFAWriteKind.POWER, "Power setpoint", "W / dBm"),
+            (EDFAWriteKind.GAIN, "Gain setpoint", "dB"),
+            (EDFAWriteKind.CURRENT, "Current setpoint", "A"),
+        )
+        for i, (kind, caption, unit) in enumerate(definitions):
+            row = 2 * i
+            grid.addWidget(QLabel(caption), row, 0)
+            field = QLineEdit()
+            field.setObjectName(f"edfa{kind.name.title()}Entry")
+            field.setPlaceholderText("Read device first")
+            field.setToolTip("Editing never sends a command. Apply requires a separate confirmation.")
+            field.textEdited.connect(lambda _text, k=kind: self._mark_setting_dirty(k))
+            grid.addWidget(field, row, 1)
+            units = QLabel(unit)
+            if kind is EDFAWriteKind.POWER:
+                self.power_entry_unit = units
+            grid.addWidget(units, row, 2)
+            apply = QPushButton("Apply")
+            apply.setObjectName(f"edfa{kind.name.title()}Apply")
+            apply.clicked.connect(lambda _checked=False, k=kind: self.request_apply_setting(k))
+            grid.addWidget(apply, row, 3)
+            detail = QLabel("Device readback —; hardware max —")
+            detail.setWordWrap(True)
+            detail.setFont(make_font("sans", 9))
+            grid.addWidget(detail, row + 1, 0, 1, 3)
+            state = QLabel("—")
+            state.setFont(make_font("sans", 9))
+            grid.addWidget(state, row + 1, 3)
+            self.setting_fields[kind] = field
+            self.setting_buttons[kind] = apply
+            self.setting_states[kind] = state
+            self.setting_limits[kind] = detail
+
+        grid.addWidget(QLabel("Device power units"), 6, 0)
+        self.device_units_combo = QComboBox()
+        self.device_units_combo.setObjectName("edfaDeviceUnitsCombo")
+        self.device_units_combo.addItem("W", PowerUnit.W)
+        self.device_units_combo.addItem("dBm", PowerUnit.DBM)
+        self.device_units_combo.currentIndexChanged.connect(lambda _index: self._update_controls())
+        grid.addWidget(self.device_units_combo, 6, 1, 1, 2)
+        self.device_units_apply = QPushButton("Change")
+        self.device_units_apply.setObjectName("edfaDeviceUnitsApply")
+        self.device_units_apply.setToolTip("Changes instrument reporting units; not a display-only conversion")
+        self.device_units_apply.clicked.connect(self.request_device_units)
+        grid.addWidget(self.device_units_apply, 6, 3)
+
+        self.control_feedback = QLabel(
+            "Setpoint writes are disabled by default. Mode changes and physical emission ON are unavailable."
+        )
+        self.control_feedback.setObjectName("edfaControlFeedback")
+        self.control_feedback.setWordWrap(True)
+        self.control_feedback.setFont(make_font("sans", 9))
+        grid.addWidget(self.control_feedback, 7, 0, 1, 4)
+        return group
+
+    def _mark_setting_dirty(self, kind: EDFAWriteKind) -> None:
+        self._field_dirty[kind] = True
+        self.setting_states[kind].setText("Pending")
+        self._update_controls()
+
+    def _populate_setting(self, kind: EDFAWriteKind, value: float | None, text: str) -> None:
+        self.setting_limits[kind].setText(text)
+        if value is not None and not self._field_dirty[kind]:
+            self.setting_fields[kind].setText(f"{value:.9g}")
+            self.setting_states[kind].setText("Readback")
+
+    def request_apply_setting(self, kind: EDFAWriteKind) -> None:
+        if kind not in self.setting_fields or not self.setting_buttons[kind].isEnabled():
+            return
+        config = self._last_configuration
+        if config is None:
+            return
+        try:
+            number = float(self.setting_fields[kind].text().strip())
+            unit = (
+                (PowerUnit.DBM if config.status.logarithmic_power_units else PowerUnit.W)
+                if kind is EDFAWriteKind.POWER
+                else None
+            )
+            request = EDFAWriteRequest(kind, number, unit=unit)
+        except (ValueError, TypeError) as exc:
+            self._on_error(f"Invalid proposed EDFA setpoint: {exc}")
+            return
+        self._confirm_and_send(request)
+
+    def request_device_units(self) -> None:
+        if not self.device_units_apply.isEnabled():
+            return
+        target = self.device_units_combo.currentData()
+        try:
+            request = EDFAWriteRequest(EDFAWriteKind.POWER_UNITS, target)
+        except ValueError as exc:
+            self._on_error(str(exc))
+            return
+        self._confirm_and_send(request)
+
+    def _confirm_and_send(self, request: EDFAWriteRequest) -> None:
+        from datetime import UTC, datetime, timedelta
+
+        config = self._last_configuration
+        if (
+            config is None
+            or self._last_telemetry is None
+            or datetime.now(UTC) - config.acquired_at_utc > timedelta(minutes=2)
+        ):
+            self._on_error("Configuration readback is missing or older than 2 minutes; refresh before Apply.")
+            return
+        if self._control_pending or self._operation_pending or self._monitoring or self._shutdown_requested:
+            return
+        is_physical = self.backend_mode == "physical"
+        message = (
+            f"Proposed {request.kind.value}: {request.value}"
+            + (f" {request.unit.value}" if request.unit is not None else "")
+            + "\n\nDevice setpoint/limits will be queried again before any write. "
+            "One command will be sent at most once; post-write readback may fail.\n\n"
+            "Do you authorize this single setting change?"
+        )
+        if is_physical:
+            message += (
+                "\n\nCONFIRM INDEPENDENTLY: physical emission is OFF at the amplifier; "
+                "key switch, interlocks, optical route and laboratory authorization were checked. "
+                "The internal status and 'Off' token are NOT independent safety checks."
+                f"\nApproval: {self._write_policy.site_reference}."
+            )
+        answer = QMessageBox.question(
+            self,
+            "Confirm supervised EDFA operation",
+            message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        request = EDFAWriteRequest(
+            request.kind,
+            request.value,
+            unit=request.unit,
+            operator_confirmed=True,
+            emission_off_attested=is_physical,
+        )
+        self._pending_control = request
+        self._control_pending = True
+        self.control_feedback.setText(f"Pending: {request.kind.value}; device value not yet confirmed.")
+        self._update_controls()
+        self.control_requested.emit(request)
+
+    @Slot(object)
+    def _on_control_finished(self, result: EDFAWriteResult) -> None:
+        if self._shutdown_requested:
+            return
+        if result.request is not self._pending_control:
+            return
+        self._control_pending = False
+        self._pending_control = None
+        self.control_feedback.setText(
+            f"{result.outcome.value.upper()}: requested={result.request.value}; "
+            f"before={result.before}; after={result.after}. {result.message}"
+        )
+        if result.outcome is EDFAWriteOutcome.CONFIRMED:
+            if result.request.kind is not EDFAWriteKind.POWER_UNITS:
+                self._field_dirty[result.request.kind] = False
+            else:
+                self._clear_configuration()
+            if result.telemetry is not None:
+                self._on_telemetry(result.telemetry)
+            if result.configuration is not None:
+                self._on_configuration(result.configuration)
+        elif result.outcome in (EDFAWriteOutcome.UNKNOWN, EDFAWriteOutcome.MISMATCH):
+            self._clear_telemetry()
+            self.error_label.setText("EDFA state UNKNOWN after write. Physically verify before reconnecting.")
+            self.error_label.show()
         self._update_controls()
 
     @property
@@ -302,6 +523,7 @@ class EDFAReadOnlyPanel(QWidget):
         self._last_observations = None
         self._last_error = None
         self._last_configuration = None
+        self._last_telemetry = None
         self._configuration_pending = False
         self._clear_configuration()
         self._activity = "Connecting"
@@ -316,6 +538,8 @@ class EDFAReadOnlyPanel(QWidget):
         )
 
     def request_disconnect(self) -> None:
+        if self._pending_control is not None:
+            self._pending_control.cancelled.set()
         if self._shutdown_requested or self._operation_pending or self._backend_state is EDFAState.DISCONNECTED:
             return
         self._operation_pending = True
@@ -328,7 +552,12 @@ class EDFAReadOnlyPanel(QWidget):
         self.disconnect_requested.emit()
 
     def request_read(self) -> None:
-        if self._shutdown_requested or self._operation_pending or self._backend_state is not EDFAState.IDLE:
+        if (
+            self._control_pending
+            or self._shutdown_requested
+            or self._operation_pending
+            or self._backend_state is not EDFAState.IDLE
+        ):
             return
         self.read_requested.emit()
 
@@ -339,15 +568,15 @@ class EDFAReadOnlyPanel(QWidget):
             or self._backend_state is not EDFAState.IDLE
             or self._monitoring
             or self._configuration_pending
+            or self._control_pending
         ):
             return
         if self.backend_mode == "physical":
             result = QMessageBox.question(
                 self,
                 "Confirm extended read-only EDFA queries",
-                "Five new configuration readbacks have not yet been qualified on this firmware. "
-                "Use the supervised CLI command-by-command procedure first. "
-                "These reads do not enable emission, but can change GPIB remote/local state "
+                "Five M3.1 configuration readbacks were successfully qualified on firmware Rev 1.1.175 "
+                "on 2026-11-03. These reads do not enable emission but may change GPIB remote/local state "
                 "and may time out. Is this readback explicitly authorized?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
@@ -359,7 +588,13 @@ class EDFAReadOnlyPanel(QWidget):
         self.configuration_requested.emit()
 
     def request_monitoring(self) -> None:
-        if self._shutdown_requested or self._operation_pending or self._monitoring:
+        if (
+            self._control_pending
+            or self._configuration_pending
+            or self._shutdown_requested
+            or self._operation_pending
+            or self._monitoring
+        ):
             return
         if self._backend_state is EDFAState.IDLE:
             self.start_requested.emit(int(self.interval_combo.currentData()))
@@ -384,6 +619,8 @@ class EDFAReadOnlyPanel(QWidget):
         self._monitoring = activity == "Monitoring (read-only)"
         if state is not EDFAState.IDLE:
             self._configuration_pending = False
+            if self._pending_control is not None:
+                self._pending_control.cancelled.set()
             if state in (EDFAState.DISCONNECTED, EDFAState.ERROR):
                 self._clear_telemetry()
         self._update_controls()
@@ -400,6 +637,7 @@ class EDFAReadOnlyPanel(QWidget):
     def _on_telemetry(self, report: EDFATelemetry) -> None:
         if self._shutdown_requested:
             return
+        self._last_telemetry = report
         previous = self._last_configuration
         relevant_bits = (1 << 0) | (1 << 9) | (1 << 16) | (1 << 18) | (1 << 20)
         if previous is not None and (previous.status.raw_word ^ report.status.raw_word) & relevant_bits:
@@ -442,10 +680,18 @@ class EDFAReadOnlyPanel(QWidget):
         ):
             alarms.append("Input reading below device threshold (even if the input-low flag is clear)")
         self._last_observations = "; ".join(alarms) if alarms else "No alarm bits asserted (not a safety check)"
+        if report.power_setpoint is not None:
+            self.power_entry_unit.setText(report.power_setpoint.unit.value)
+            self._populate_setting(
+                EDFAWriteKind.POWER,
+                report.power_setpoint.value,
+                f"Readback {format_edfa_power(report.power_setpoint)}",
+            )
         self._last_error = None
         self._publish_status_observations()
         self.error_label.clear()
         self.error_label.hide()
+        self._update_controls()
 
     @Slot(object)
     def _on_configuration(self, report: EDFAConfiguration) -> None:
@@ -477,6 +723,22 @@ class EDFAReadOnlyPanel(QWidget):
         }
         for key, value in values.items():
             self.reading_labels[key].setText(value)
+        self.setting_limits[EDFAWriteKind.POWER].setText(f"Device max {format_edfa_power(report.power_limit)}")
+        self._populate_setting(
+            EDFAWriteKind.GAIN,
+            report.gain_setpoint_db,
+            f"Readback {report.gain_setpoint_db} dB / hardware max {report.gain_limit_db} dB"
+            if report.gain_setpoint_db is not None
+            else "AGC capability unavailable",
+        )
+        self._populate_setting(
+            EDFAWriteKind.CURRENT,
+            report.diode_current_setpoint_a,
+            f"Readback {report.diode_current_setpoint_a:.5g} A / hardware max {report.diode_current_limit_a:.5g} A",
+        )
+        self.power_entry_unit.setText("dBm" if report.status.logarithmic_power_units else "W")
+        desired_unit = PowerUnit.DBM if report.status.logarithmic_power_units else PowerUnit.W
+        self.device_units_combo.setCurrentIndex(self.device_units_combo.findData(desired_unit))
         self._last_error = None
         self.error_label.clear()
         self.error_label.hide()
@@ -484,6 +746,8 @@ class EDFAReadOnlyPanel(QWidget):
     @Slot(str)
     def _on_error(self, message: str) -> None:
         self._configuration_pending = False
+        self._control_pending = False
+        self._pending_control = None
         self._update_controls()
         self._last_error = message
         self.error_label.setText(message)
@@ -492,6 +756,9 @@ class EDFAReadOnlyPanel(QWidget):
 
     def _clear_configuration(self) -> None:
         self._last_configuration = None
+        for kind in self.setting_limits:
+            self.setting_limits[kind].setText("Device readback —; hardware max —")
+            self.setting_states[kind].setText("—")
         for key in (
             "edfaPowerLimitLabel",
             "edfaCurrentSetpointLabel",
@@ -507,6 +774,11 @@ class EDFAReadOnlyPanel(QWidget):
             label.setText("—")
         self._last_observations = None
         self._last_configuration = None
+        self._last_telemetry = None
+        for kind, field in self.setting_fields.items():
+            field.clear()
+            self._field_dirty[kind] = False
+            self.setting_states[kind].setText("—")
 
     def _publish_status_observations(self) -> None:
         """Publish connection and last observation together, never a stale disconnect."""
@@ -527,7 +799,7 @@ class EDFAReadOnlyPanel(QWidget):
 
     def _update_controls(self) -> None:
         ready = self._backend_state is EDFAState.IDLE
-        blocked = self._operation_pending or self._shutdown_requested
+        blocked = self._operation_pending or self._shutdown_requested or self._control_pending
         self.read_button.setEnabled(not blocked and ready)
         self.configuration_button.setEnabled(
             not blocked and ready and not self._monitoring and not self._configuration_pending
@@ -535,11 +807,43 @@ class EDFAReadOnlyPanel(QWidget):
         self.start_button.setEnabled(not blocked and ready and not self._monitoring)
         self.stop_button.setEnabled(not self._shutdown_requested and self._monitoring)
         self.interval_combo.setEnabled(not blocked and not self._monitoring)
+        configuration = self._last_configuration
+        telemetry = self._last_telemetry
+        mode = configuration.status.control_mode if configuration is not None else None
+        ready_for_setting = (
+            ready
+            and not blocked
+            and not self._monitoring
+            and not self._configuration_pending
+            and configuration is not None
+            and telemetry is not None
+            and configuration.status.raw_word == telemetry.status.raw_word
+            and (self.backend_mode == "simulation" or self._write_policy.enabled)
+        )
+        required_modes = {
+            EDFAWriteKind.POWER: EDFAControlMode.APC,
+            EDFAWriteKind.GAIN: EDFAControlMode.AGC,
+            EDFAWriteKind.CURRENT: EDFAControlMode.ACC,
+        }
+        for kind, button in self.setting_buttons.items():
+            supported = ready_for_setting and mode is required_modes[kind]
+            if kind is EDFAWriteKind.GAIN and configuration is not None:
+                supported = supported and configuration.status.agc_available
+            button.setEnabled(supported)
+            self.setting_fields[kind].setEnabled(supported)
+        self.device_units_combo.setEnabled(ready_for_setting)
+        desired_unit = self.device_units_combo.currentData()
+        current_unit = (
+            PowerUnit.DBM if configuration is not None and configuration.status.logarithmic_power_units else PowerUnit.W
+        )
+        self.device_units_apply.setEnabled(ready_for_setting and desired_unit is not current_unit)
 
     def request_shutdown(self) -> None:
         if self._shutdown_requested or self._shutdown_complete:
             return
         self._shutdown_requested = True
+        if self._pending_control is not None:
+            self._pending_control.cancelled.set()
         self._monitoring = False
         self._update_controls()
         if self.task.worker_thread.isRunning():

@@ -1,4 +1,4 @@
-"""Read-only EDFA service worker. The backend is owned by the worker's Qt thread."""
+"""EDFA service worker for serialized queries and supervised writes. The backend is owned by the worker's Qt thread."""
 
 from __future__ import annotations
 
@@ -8,6 +8,12 @@ from collections.abc import Callable
 from PySide6.QtCore import QTimer, Signal, Slot
 
 from hardware.dummy_edfa import DummyEDFA
+from hardware.edfa_controls import (
+    EDFAWriteOutcome,
+    EDFAWritePolicy,
+    EDFAWriteRequest,
+    EDFAWriteResult,
+)
 from hardware.edfa_types import EDFAState
 from hardware.interfaces import AbstractEDFA
 from hardware.ipg_ead2kc import IPGEAD2KCGPIB
@@ -21,6 +27,7 @@ class EDFAMonitorWorker(BaseWorker):
     identity_ready = Signal(str)
     telemetry_ready = Signal(object)
     configuration_ready = Signal(object)
+    control_finished = Signal(object)
     error_occurred = Signal(str)
 
     def __init__(
@@ -28,6 +35,7 @@ class EDFAMonitorWorker(BaseWorker):
         *,
         simulator_factory: Callable[[], AbstractEDFA] = DummyEDFA,
         physical_factory: Callable[[str, int, str, str], AbstractEDFA] | None = None,
+        write_policy: EDFAWritePolicy | None = None,
     ) -> None:
         super().__init__()
         self._simulator_factory = simulator_factory
@@ -35,6 +43,8 @@ class EDFAMonitorWorker(BaseWorker):
         self._backend: AbstractEDFA | None = None
         self._timer: QTimer | None = None
         self._monitoring = False
+        self._write_policy = write_policy or EDFAWritePolicy()
+        self._shutting_down = False
 
     @Slot()
     def initialize(self) -> None:
@@ -69,6 +79,12 @@ class EDFAMonitorWorker(BaseWorker):
                 )
             else:
                 raise ValueError("Unsupported EDFA backend mode")
+            if mode == "physical":
+                policy_setter = getattr(backend, "configure_write_policy", None)
+                if callable(policy_setter):
+                    policy_setter(self._write_policy)
+                elif self._write_policy.enabled:
+                    raise ValueError("Physical backend lacks mandatory M4 policy gate")
             self._backend = backend
             backend.connect()
             self.identity_ready.emit(backend.identify())
@@ -120,6 +136,49 @@ class EDFAMonitorWorker(BaseWorker):
             self.error_occurred.emit(f"EDFA configuration readback failed: {exc}")
             self._publish()
 
+    @Slot(object)
+    def apply_control(self, request: EDFAWriteRequest) -> None:
+        """One transaction at a time, queued through the existing worker thread."""
+        if not isinstance(request, EDFAWriteRequest):
+            self.error_occurred.emit("Typed EDFA write request required.")
+            return
+        backend = self._backend
+        if request.cancelled.is_set() or self._shutting_down:
+            self.control_finished.emit(
+                EDFAWriteResult(request, EDFAWriteOutcome.CANCELLED, None, None, "Cancelled before execution")
+            )
+            return
+        if backend is None or backend.state is not EDFAState.IDLE or self._monitoring:
+            self.control_finished.emit(
+                EDFAWriteResult(
+                    request,
+                    EDFAWriteOutcome.REJECTED,
+                    None,
+                    None,
+                    "Connect and stop monitoring before changing a setting",
+                )
+            )
+            return
+        try:
+            operation = getattr(backend, "apply_control", None)
+            if not callable(operation):
+                raise TypeError("Backend does not support typed M4 writes")
+            self.control_finished.emit(operation(request))
+        except Exception as exc:
+            logger.exception("EDFA supervised write failed")
+            self.control_finished.emit(
+                EDFAWriteResult(
+                    request,
+                    EDFAWriteOutcome.REJECTED,
+                    None,
+                    None,
+                    f"Preflight/transport failed; no setter confirmed: {exc}",
+                )
+            )
+            self.error_occurred.emit(f"EDFA controlled operation failed: {exc}")
+        finally:
+            self._publish()
+
     @Slot(int)
     def start_monitoring(self, interval_ms: int) -> None:
         if self._timer is None or self._backend is None or self._backend.state is not EDFAState.IDLE:
@@ -162,7 +221,8 @@ class EDFAMonitorWorker(BaseWorker):
 
     @Slot()
     def shutdown(self) -> None:
-        """Finish current queued operation, then release resources in their owner thread."""
+        """Finish/cancel queued work, then release resources in the owner thread."""
+        self._shutting_down = True
         self._monitoring = False
         if self._timer is not None:
             self._timer.stop()

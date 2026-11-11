@@ -64,7 +64,7 @@ def summarize_configuration(report: EDFAConfiguration) -> dict[str, object]:
         "gain_unavailable_reason": None if report.status.agc_available else "AGC capability bit is clear",
         "raw_replies": dict(report.raw_replies),
         "captured_utc": report.acquired_at_utc.isoformat(),
-        "note": "UNQUALIFIED NEW PHYSICAL READBACKS UNTIL SEPARATE LAB TEST; NO SAFETY INFERENCE",
+        "note": "FIVE M3.1 QUERIES VERIFIED ON FW REV 1.1.175 (2026-11-03); NO EMISSION/WRITE SAFETY INFERENCE",
     }
 
 
@@ -130,7 +130,12 @@ def run(
                 "numeric_value": value,
                 "status_raw_word": qualification_status.raw_word,
                 "reported_unit": unit,
-                "physically_qualified": False,
+                "previous_lab_qualification": (
+                    "Readback verified 2026-11-03 on firmware Rev 1.1.175"
+                    if "Rev 1.1.175" in identity
+                    else "Firmware not matched to the qualified laboratory configuration"
+                ),
+                "physically_qualified": "Rev 1.1.175" in identity,
             }
         elif extended_configuration:
             result["configuration"] = summarize_configuration(device.read_configuration())
@@ -150,12 +155,12 @@ def main() -> int:
     extended.add_argument(
         "--qualification-query",
         choices=sorted(EXTENDED_READ_QUERIES),
-        help="ONE unqualified model-specific readback; requires physical flags; no automatic retry",
+        help="ONE manufacturer-approved readback (verified on Rev 1.1.175); no automatic retry",
     )
     extended.add_argument(
         "--extended-configuration",
         action="store_true",
-        help="Read all five new configuration queries, only AFTER individual lab qualification",
+        help="Read five M3.1 queries verified on Rev 1.1.175; confirm current instrument firmware",
     )
     arguments = parser.parse_args()
     try:
